@@ -1,0 +1,23 @@
+# Environment variables
+.env
+
+# Dependencies
+node_modules/
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Sequelize
+# Note: config.json should use placeholder values, real credentials in .env
+# Uncomment if you want to keep config.json private:
+# config/config.json
+
+# Logs
+logs/
+*.log
+
