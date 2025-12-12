@@ -30,9 +30,16 @@ const UserReliability = sequelize.define('user_reliability', {
     type: DataTypes.INTEGER,
     defaultValue: 0,
   },
-  reliability_score: {
+  // Removed reliability_score - redundant, use role-specific scores instead
+  coach_reliability_score: {
     type: DataTypes.DECIMAL(5, 2),
     defaultValue: 100.00,
+    allowNull: true,
+  },
+  student_reliability_score: {
+    type: DataTypes.DECIMAL(5, 2),
+    defaultValue: 100.00,
+    allowNull: true,
   },
   badges: {
     type: DataTypes.JSON,
@@ -44,7 +51,8 @@ const UserReliability = sequelize.define('user_reliability', {
   createdAt: false,
   updatedAt: 'last_updated',
   indexes: [
-    { fields: ['reliability_score'] },
+    { fields: ['coach_reliability_score'] },
+    { fields: ['student_reliability_score'] },
   ],
 });
 

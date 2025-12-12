@@ -156,7 +156,7 @@ export const addCoachCourt = async (req, res) => {
     const userId = req.user.id;
     const { court_id, rate_modifier, preferred, notes, create_private } = req.body;
 
-    if (req.user.role !== 'coach') {
+    if (req.user.role !== 'coach' && req.user.role !== 'admin') {
       return res.status(403).json(createErrorResponse('Only coaches can add courts'));
     }
 
