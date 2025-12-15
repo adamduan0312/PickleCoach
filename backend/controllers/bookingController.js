@@ -1,8 +1,10 @@
-import { Booking, Lesson, User, BookingPlayer, Payment, RescheduleHistory, CourtLocation } from '../models/index.js';
+import { Booking, Lesson, User, BookingPlayer, Payment, RescheduleHistory, CancellationHistory, CourtLocation } from '../models/index.js';
 import { successResponse, errorResponse } from '../utils/response.js';
 import { getPagination, getPagingData } from '../utils/pagination.js';
 import { Op } from 'sequelize';
 import { logAudit } from '../utils/audit.js';
+import { affectsReliability, sanitizeResponse } from '../services/reliabilityPenaltyService.js';
+import { updateUserReliability } from '../services/reliabilityService.js';
 import * as paymentService from '../services/paymentService.js';
 
 export const getBookings = async (req, res) => {
@@ -48,6 +50,7 @@ export const getBookingById = async (req, res) => {
         { model: BookingPlayer, as: 'players', include: [{ model: User, as: 'player', attributes: ['id', 'full_name'] }] },
         { model: Payment, as: 'payments' },
         { model: RescheduleHistory, as: 'rescheduleHistory', order: [['requested_at', 'DESC']] },
+        { model: CancellationHistory, as: 'cancellationHistory', order: [['cancelled_at', 'DESC']] },
       ],
     });
 
@@ -59,7 +62,16 @@ export const getBookingById = async (req, res) => {
       return errorResponse(res, 'Unauthorized', 403);
     }
 
-    return successResponse(res, booking, 'Booking retrieved successfully');
+    // Sanitize reschedule history - remove affects_reliability from frontend
+    const bookingJson = booking.toJSON();
+    if (bookingJson.rescheduleHistory && Array.isArray(bookingJson.rescheduleHistory)) {
+      bookingJson.rescheduleHistory = bookingJson.rescheduleHistory.map(record => sanitizeResponse(record));
+    }
+    if (bookingJson.cancellationHistory && Array.isArray(bookingJson.cancellationHistory)) {
+      bookingJson.cancellationHistory = bookingJson.cancellationHistory.map(record => sanitizeResponse(record));
+    }
+
+    return successResponse(res, bookingJson, 'Booking retrieved successfully');
   } catch (error) {
     console.error('Get booking error:', error);
     return errorResponse(res, 'Failed to retrieve booking', 500);
@@ -164,7 +176,12 @@ export const updateBookingStatus = async (req, res) => {
 export const cancelBooking = async (req, res) => {
   try {
     const { id } = req.params;
-    const { reason } = req.body;
+    const { reason, reason_notes } = req.body;
+
+    // Reason is required and validated by schema
+    if (!reason) {
+      return errorResponse(res, 'Reason is required for cancellation', 400);
+    }
 
     const booking = await Booking.findByPk(id);
     if (!booking) {
@@ -175,19 +192,87 @@ export const cancelBooking = async (req, res) => {
       return errorResponse(res, 'Booking cannot be cancelled', 400);
     }
 
+    // Determine who is cancelling
     const cancelledBy = req.user.role === 'admin' ? 'admin' : 
                        req.user.id === booking.coach_id ? 'coach' : 'student';
+
+    // Admin cancellations NEVER affect reliability
+    // Only marketplace participant actions (student/coach) can affect reliability
+    const willAffectReliability = cancelledBy === 'admin' ? false : affectsReliability(reason);
+
+    // Calculate if cancellation is late (within 24 hours of scheduled time)
+    const hoursUntilBooking = (new Date(booking.scheduled_at) - new Date()) / (1000 * 60 * 60);
+    const isLateCancel = hoursUntilBooking < 24;
+
+    // Calculate refund and penalty amounts (basic implementation - can be enhanced)
+    let refund_amount = 0;
+    let penalty_amount = 0;
+    let penalty_reason = null;
+
+    // If late cancellation by student, may apply penalty
+    if (isLateCancel && cancelledBy === 'student') {
+      // For now, refund 50% for late cancellations, but this can be configured per business rules
+      refund_amount = booking.price * 0.5;
+      penalty_amount = booking.price * 0.5;
+      penalty_reason = 'Late cancellation';
+    } else if (cancelledBy === 'coach') {
+      // Coach cancellations typically get full refund to student
+      refund_amount = booking.price;
+      penalty_reason = 'Coach cancellation';
+    } else {
+      // Early student cancellation gets full refund
+      refund_amount = booking.price;
+    }
+
+    // Create cancellation history record
+    const cancellationHistory = await CancellationHistory.create({
+      booking_id: booking.id,
+      cancelled_by: cancelledBy,
+      reason,
+      reason_notes: reason_notes || null,
+      affects_reliability: willAffectReliability, // Always false for admin
+      refund_amount,
+      penalty_amount,
+      penalty_reason,
+    });
 
     const beforeState = booking.toJSON();
     await booking.update({
       status: 'cancelled',
       cancelled_by: cancelledBy,
       cancelled_at: new Date(),
+      // Lock messaging after cancellation
+      messaging_locked: true,
     });
 
     await logAudit(req.user.id, 'booking_cancelled', 'bookings', booking.id, beforeState, booking.toJSON(), req);
+    await logAudit(req.user.id, 'cancellation_recorded', 'cancellation_history', cancellationHistory.id, null, cancellationHistory.toJSON(), req);
 
-    return successResponse(res, booking, 'Booking cancelled successfully');
+    // Update reliability ONLY for marketplace participants (coach/student), never for admin
+    if (willAffectReliability && cancelledBy !== 'admin') {
+      const userIdToUpdate = cancelledBy === 'coach' ? booking.coach_id : booking.primary_student_id;
+      if (userIdToUpdate) {
+        // Double-check: ensure we're not updating an admin user
+        const userToUpdate = await User.findByPk(userIdToUpdate);
+        if (userToUpdate && userToUpdate.role !== 'admin') {
+          await updateUserReliability(userIdToUpdate).catch(err => {
+            console.error('Failed to update reliability after cancellation:', err);
+          });
+        }
+      }
+    }
+
+    // Handle refund if applicable (this would typically involve payment service)
+    // For now, we just record it in cancellation_history
+    // TODO: Integrate with paymentService to process actual refunds
+
+    // Sanitize response - remove affects_reliability from frontend
+    const sanitizedCancellation = sanitizeResponse(cancellationHistory);
+
+    return successResponse(res, {
+      booking: booking.toJSON(),
+      cancellation: sanitizedCancellation,
+    }, 'Booking cancelled successfully');
   } catch (error) {
     console.error('Cancel booking error:', error);
     return errorResponse(res, 'Failed to cancel booking', 500);

@@ -7,5 +7,7 @@ const router = express.Router();
 router.get('/dashboard', authenticate, authorize('admin'), adminController.getDashboardStats);
 router.get('/alerts', authenticate, authorize('admin'), adminController.getAlerts);
 router.put('/alerts/:id/resolve', authenticate, authorize('admin'), adminController.resolveAlert);
+router.post('/users', authenticate, authorize('admin'), adminController.createAdmin);
+router.put('/users/:id/reliability', authenticate, authorize('admin'), adminController.adjustUserReliability);
 
 export default router;

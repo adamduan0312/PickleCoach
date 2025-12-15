@@ -23,13 +23,22 @@ const CancellationHistory = sequelize.define('cancellation_history', {
     type: DataTypes.DECIMAL(12, 2),
     defaultValue: 0,
   },
+  reason: {
+    type: DataTypes.ENUM('weather', 'emergency', 'sickness', 'travel_delay', 'schedule_conflict', 'forgot', 'other'),
+    allowNull: true,
+  },
+  reason_notes: {
+    type: DataTypes.STRING(255),
+    allowNull: true,
+  },
   penalty_reason: {
     type: DataTypes.STRING(255),
     allowNull: true,
   },
-  notes: {
-    type: DataTypes.TEXT,
-    allowNull: true,
+  affects_reliability: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: true,
   },
   refund_payment_id: {
     type: DataTypes.INTEGER,
@@ -43,7 +52,10 @@ const CancellationHistory = sequelize.define('cancellation_history', {
   indexes: [
     { fields: ['booking_id'] },
     { fields: ['cancelled_at'] },
+    { fields: ['cancelled_by'] },
+    { fields: ['affects_reliability'] },
     { fields: ['booking_id', 'cancelled_at'] },
+    { fields: ['cancelled_by', 'affects_reliability', 'cancelled_at'] },
   ],
 });
 

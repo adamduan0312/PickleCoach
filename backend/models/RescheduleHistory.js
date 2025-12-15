@@ -36,8 +36,17 @@ const RescheduleHistory = sequelize.define('reschedule_history', {
     defaultValue: 'pending',
   },
   reason: {
-    type: DataTypes.TEXT,
+    type: DataTypes.ENUM('weather', 'emergency', 'sickness', 'travel_delay', 'schedule_conflict', 'forgot', 'other'),
     allowNull: true,
+  },
+  reason_notes: {
+    type: DataTypes.STRING(255),
+    allowNull: true,
+  },
+  affects_reliability: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: true,
   },
   paid_reschedule: {
     type: DataTypes.BOOLEAN,
@@ -60,8 +69,10 @@ const RescheduleHistory = sequelize.define('reschedule_history', {
     { fields: ['booking_id'] },
     { fields: ['requested_by'] },
     { fields: ['requested_at'] },
+    { fields: ['affects_reliability'] },
     { fields: ['paid_reschedule'] },
     { fields: ['booking_id', 'requested_at'] },
+    { fields: ['requested_by', 'affects_reliability', 'requested_at'] },
   ],
 });
 

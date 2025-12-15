@@ -54,6 +54,15 @@ export const startWorkers = () => {
     }
   });
 
+  // Monthly coach reliability reset: 1st of each month at 3 AM
+  cron.schedule('0 3 1 * *', async () => {
+    try {
+      await reliabilityWorker.monthlyCoachReliabilityReset();
+    } catch (error) {
+      logger.error('Error in monthly coach reliability reset:', error);
+    }
+  });
+
   workersRunning = true;
   logger.info('Background workers started successfully');
 };

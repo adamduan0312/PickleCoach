@@ -1,11 +1,18 @@
-import { RescheduleHistory, Booking, Payment } from '../models/index.js';
+import { RescheduleHistory, Booking, Payment, User } from '../models/index.js';
 import { successResponse, errorResponse } from '../utils/response.js';
 import { logAudit } from '../utils/audit.js';
+import { affectsReliability, sanitizeResponse } from '../services/reliabilityPenaltyService.js';
+import { updateUserReliability } from '../services/reliabilityService.js';
 import { Op } from 'sequelize';
 
 export const requestReschedule = async (req, res) => {
   try {
-    const { booking_id, new_scheduled_at, reason, paid_reschedule = false } = req.body;
+    const { booking_id, new_scheduled_at, reason, reason_notes, paid_reschedule = false } = req.body;
+
+    // Reason is required and validated by schema
+    if (!reason) {
+      return errorResponse(res, 'Reason is required for reschedule', 400);
+    }
 
     const booking = await Booking.findByPk(booking_id);
     if (!booking) {
@@ -25,9 +32,6 @@ export const requestReschedule = async (req, res) => {
       return errorResponse(res, 'Cannot reschedule to the past', 400);
     }
 
-    const totalReschedules = booking.reschedule_count + booking.extra_paid_reschedules;
-    const maxReschedules = booking.reschedule_limit + booking.extra_paid_reschedules;
-
     if (!paid_reschedule && booking.reschedule_count >= booking.reschedule_limit) {
       return errorResponse(res, 'Free reschedule limit reached. Please purchase a paid reschedule.', 400);
     }
@@ -35,14 +39,20 @@ export const requestReschedule = async (req, res) => {
     const requestedBy = req.user.role === 'admin' ? 'admin' :
                        req.user.id === booking.coach_id ? 'coach' : 'student';
 
+    // Admin actions NEVER affect reliability
+    // Only marketplace participant actions (student/coach) can affect reliability
+    const willAffectReliability = requestedBy === 'admin' ? false : affectsReliability(reason);
+
     const rescheduleHistory = await RescheduleHistory.create({
       booking_id,
       requested_by: requestedBy,
       old_scheduled_at: booking.scheduled_at,
       new_scheduled_at: newScheduledDate,
       reason,
+      reason_notes: reason_notes || null,
+      affects_reliability: willAffectReliability, // Always false for admin
       paid_reschedule,
-      approval_status: 'pending',
+      approval_status: 'auto_approved', // Auto-approve for now, can be changed to 'pending' if approval workflow needed
     });
 
     if (paid_reschedule) {
@@ -59,7 +69,24 @@ export const requestReschedule = async (req, res) => {
 
     await logAudit(req.user.id, 'reschedule_requested', 'reschedule_history', rescheduleHistory.id, null, rescheduleHistory.toJSON(), req);
 
-    return successResponse(res, rescheduleHistory, 'Reschedule requested successfully', 201);
+    // Update reliability ONLY for marketplace participants (coach/student), never for admin
+    if (willAffectReliability && requestedBy !== 'admin') {
+      const userIdToUpdate = requestedBy === 'coach' ? booking.coach_id : booking.primary_student_id;
+      if (userIdToUpdate) {
+        // Double-check: ensure we're not updating an admin user
+        const userToUpdate = await User.findByPk(userIdToUpdate);
+        if (userToUpdate && userToUpdate.role !== 'admin') {
+          await updateUserReliability(userIdToUpdate).catch(err => {
+            console.error('Failed to update reliability after reschedule:', err);
+          });
+        }
+      }
+    }
+
+    // Sanitize response - remove affects_reliability from frontend
+    const sanitizedResponse = sanitizeResponse(rescheduleHistory);
+
+    return successResponse(res, sanitizedResponse, 'Reschedule requested successfully', 201);
   } catch (error) {
     console.error('Request reschedule error:', error);
     return errorResponse(res, 'Failed to request reschedule', 500);
@@ -99,7 +126,10 @@ export const approveReschedule = async (req, res) => {
 
     await logAudit(req.user.id, 'reschedule_approved', 'reschedule_history', rescheduleHistory.id, null, rescheduleHistory.toJSON(), req);
 
-    return successResponse(res, rescheduleHistory, 'Reschedule approved successfully');
+    // Sanitize response - remove affects_reliability from frontend
+    const sanitizedResponse = sanitizeResponse(rescheduleHistory);
+
+    return successResponse(res, sanitizedResponse, 'Reschedule approved successfully');
   } catch (error) {
     console.error('Approve reschedule error:', error);
     return errorResponse(res, 'Failed to approve reschedule', 500);
@@ -121,7 +151,10 @@ export const getRescheduleHistory = async (req, res) => {
       order: [['requested_at', 'DESC']],
     });
 
-    return successResponse(res, history, 'Reschedule history retrieved successfully');
+    // Sanitize all responses - remove affects_reliability from frontend
+    const sanitizedHistory = history.map(record => sanitizeResponse(record));
+
+    return successResponse(res, sanitizedHistory, 'Reschedule history retrieved successfully');
   } catch (error) {
     console.error('Get reschedule history error:', error);
     return errorResponse(res, 'Failed to retrieve reschedule history', 500);

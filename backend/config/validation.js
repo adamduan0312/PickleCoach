@@ -1,4 +1,5 @@
 import Joi from 'joi';
+import { getValidReasons } from '../services/reliabilityPenaltyService.js';
 
 // Environment variable validation
 export const envSchema = Joi.object({
@@ -23,7 +24,7 @@ export const registerSchema = Joi.object({
   full_name: Joi.string().min(2).max(100).required(),
   email: Joi.string().email().max(150).required(),
   password: Joi.string().min(8).required(),
-  role: Joi.string().valid('student', 'coach', 'admin').default('student'),
+  role: Joi.string().valid('student', 'coach').required(), // Remove 'admin' and make required
   phone: Joi.string().max(30).optional(),
   timezone: Joi.string().default('UTC'),
 });
@@ -58,8 +59,14 @@ export const createPaymentSchema = Joi.object({
 export const rescheduleSchema = Joi.object({
   booking_id: Joi.number().integer().positive().required(),
   new_scheduled_at: Joi.date().iso().greater('now').required(),
-  reason: Joi.string().max(500).optional(),
+  reason: Joi.string().valid(...getValidReasons()).required(),
+  reason_notes: Joi.string().max(255).optional(),
   paid_reschedule: Joi.boolean().default(false),
+});
+
+export const cancellationSchema = Joi.object({
+  reason: Joi.string().valid(...getValidReasons()).required(),
+  reason_notes: Joi.string().max(255).optional(),
 });
 
 export const reviewSchema = Joi.object({

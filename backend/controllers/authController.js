@@ -10,7 +10,7 @@ const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
 
 export const register = async (req, res) => {
   try {
-    const { full_name, email, password, role = 'student', phone, timezone } = req.body;
+    const { full_name, email, password, role, phone, timezone } = req.body;
 
     const existingUser = await User.findOne({ where: { email } });
     if (existingUser) {
@@ -33,12 +33,14 @@ export const register = async (req, res) => {
 
     await logAudit(user.id, 'user_registered', 'users', user.id, null, user.toJSON(), req);
 
+    // Return user data - role is only 'student' or 'coach' from registration
+    // Never expose admin role option to normal users
     return successResponse(res, {
       user: {
         id: user.id,
         full_name: user.full_name,
         email: user.email,
-        role: user.role,
+        role: user.role, // Will be 'student' or 'coach' only
       },
       token,
     }, 'User registered successfully', 201);
@@ -74,6 +76,9 @@ export const login = async (req, res) => {
 
     await logAudit(user.id, 'user_login', 'users', user.id, null, user.toJSON(), req);
 
+    // Return user data - role will be 'student', 'coach', or 'admin'
+    // Frontend should handle admin differently (redirect to admin dashboard)
+    // Normal users won't see admin-related UI elements
     return successResponse(res, {
       user: {
         id: user.id,
