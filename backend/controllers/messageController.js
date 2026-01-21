@@ -49,7 +49,6 @@ export const getConversationById = async (req, res) => {
           order: [['created_at', 'ASC']],
           include: [
             { model: User, as: 'sender', attributes: ['id', 'full_name', 'avatar_url'] },
-            { model: User, as: 'receiver', attributes: ['id', 'full_name', 'avatar_url'] },
           ],
         },
       ],
@@ -70,20 +69,30 @@ export const createConversation = async (req, res) => {
   try {
     const { booking_id } = req.body;
 
-    if (booking_id) {
-      const booking = await Booking.findByPk(booking_id);
-      if (!booking) {
-        return errorResponse(res, 'Booking not found', 404);
-      }
+    // booking_id is REQUIRED - conversations must be booking-scoped
+    if (!booking_id) {
+      return errorResponse(res, 'booking_id is required', 400);
+    }
 
-      if (req.user.id !== booking.coach_id && req.user.id !== booking.primary_student_id && req.user.role !== 'admin') {
-        return errorResponse(res, 'Unauthorized', 403);
-      }
+    const booking = await Booking.findByPk(booking_id);
+    if (!booking) {
+      return errorResponse(res, 'Booking not found', 404);
+    }
 
-      const existingConversation = await Conversation.findOne({ where: { booking_id } });
-      if (existingConversation) {
-        return successResponse(res, existingConversation, 'Conversation already exists');
-      }
+    if (req.user.id !== booking.coach_id && req.user.id !== booking.primary_student_id && req.user.role !== 'admin') {
+      return errorResponse(res, 'Unauthorized', 403);
+    }
+
+    // Check if messaging is locked (unlocks only after payment capture)
+    // This prevents pre-booking messaging as per architecture spec
+    if (booking.messaging_locked && req.user.role !== 'admin') {
+      return errorResponse(res, 'Messaging is locked for this booking. Payment must be captured first.', 403);
+    }
+
+    // Check if conversation already exists for this booking
+    const existingConversation = await Conversation.findOne({ where: { booking_id } });
+    if (existingConversation) {
+      return successResponse(res, existingConversation, 'Conversation already exists');
     }
 
     const conversation = await Conversation.create({ booking_id });
@@ -106,33 +115,32 @@ export const sendMessage = async (req, res) => {
       return errorResponse(res, 'Conversation not found', 404);
     }
 
-    if (conversation.booking) {
-      if (conversation.booking.messaging_locked && req.user.role !== 'admin') {
-        return errorResponse(res, 'Messaging is locked for this booking', 403);
-      }
-
-      if (req.user.id !== conversation.booking.coach_id && 
-          req.user.id !== conversation.booking.primary_student_id && 
-          req.user.role !== 'admin') {
-        return errorResponse(res, 'Unauthorized', 403);
-      }
-
-      const receiverId = req.user.id === conversation.booking.coach_id 
-        ? conversation.booking.primary_student_id 
-        : conversation.booking.coach_id;
-
-      const message = await Message.create({
-        conversation_id,
-        sender_id: req.user.id,
-        receiver_id: receiverId,
-        content,
-        attachments,
-      });
-
-      return successResponse(res, message, 'Message sent successfully', 201);
+    // All conversations must have a booking (booking_id is required)
+    if (!conversation.booking) {
+      return errorResponse(res, 'Conversation must be associated with a booking', 400);
     }
 
-    return errorResponse(res, 'Invalid conversation', 400);
+    // Check if messaging is locked (unlocks only after payment capture)
+    if (conversation.booking.messaging_locked && req.user.role !== 'admin') {
+      return errorResponse(res, 'Messaging is locked for this booking. Payment must be captured first.', 403);
+    }
+
+    // Verify user is authorized (must be coach or student on the booking)
+    if (req.user.id !== conversation.booking.coach_id && 
+        req.user.id !== conversation.booking.primary_student_id && 
+        req.user.role !== 'admin') {
+      return errorResponse(res, 'Unauthorized', 403);
+    }
+
+    // Receiver is inferred from conversation booking (no need to store receiver_id)
+    const message = await Message.create({
+      conversation_id,
+      sender_id: req.user.id,
+      content,
+      attachments,
+    });
+
+    return successResponse(res, message, 'Message sent successfully', 201);
   } catch (error) {
     console.error('Send message error:', error);
     return errorResponse(res, 'Failed to send message', 500);
@@ -142,13 +150,27 @@ export const sendMessage = async (req, res) => {
 export const markMessageAsRead = async (req, res) => {
   try {
     const { id } = req.params;
-    const message = await Message.findByPk(id);
+    const message = await Message.findByPk(id, {
+      include: [
+        { model: Conversation, as: 'conversation', include: [{ model: Booking, as: 'booking' }] },
+      ],
+    });
 
     if (!message) {
       return errorResponse(res, 'Message not found', 404);
     }
 
-    if (req.user.id !== message.receiver_id && req.user.role !== 'admin') {
+    // Determine receiver from conversation booking
+    const booking = message.conversation?.booking;
+    if (!booking) {
+      return errorResponse(res, 'Message conversation missing booking', 400);
+    }
+
+    const receiverId = message.sender_id === booking.coach_id 
+      ? booking.primary_student_id 
+      : booking.coach_id;
+
+    if (req.user.id !== receiverId && req.user.role !== 'admin') {
       return errorResponse(res, 'Unauthorized', 403);
     }
 

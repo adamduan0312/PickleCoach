@@ -1,4 +1,4 @@
-import { UserReliability, Booking, RescheduleHistory, CancellationHistory, User } from '../models/index.js';
+import { UserReliability, Booking, RescheduleHistory, CancellationHistory, User, Dispute, DisputeType } from '../models/index.js';
 import { Op } from 'sequelize';
 
 /**
@@ -119,16 +119,74 @@ const calculateCoachMetrics = async (userId) => {
     return hoursBefore >= 0 && hoursBefore < 24;
   }).length;
 
-  // Count coach cancellations where affects_reliability = true
-  const coach_cancels = cancellations.filter(c => c.cancelled_by === 'coach' && c.affects_reliability).length;
+  // Count coach cancellations where affects_reliability = true, excluding late cancellations to avoid double-penalization
+  const coach_cancels = cancellations.filter(c => {
+    if (c.cancelled_by !== 'coach' || !c.affects_reliability) return false;
+    const hoursBefore = (new Date(c.booking.scheduled_at) - new Date(c.cancelled_at)) / (1000 * 60 * 60);
+    // Exclude late cancellations (within 24 hours) - they are penalized separately
+    return hoursBefore < 0 || hoursBefore >= 24;
+  }).length;
 
-  // TODO: Calculate no-shows (could check disputes or booking status)
-  const no_shows = 0;
+  // Calculate no-shows: bookings that were scheduled but never completed or cancelled
+  // A no-show is a booking that:
+  // 1. Has status 'confirmed' or 'awaiting_verification'
+  // 2. Scheduled time has passed (more than 2 hours ago)
+  // 3. Has a dispute opened for 'no_show' type, OR booking was never completed/cancelled
+  const noShowDisputeType = await DisputeType.findOne({ where: { code: 'no_show' } });
+  
+  const now = new Date();
+  const twoHoursAgo = new Date(now.getTime() - 2 * 60 * 60 * 1000);
+  
+  const noShowBookings = await Booking.findAll({
+    where: {
+      id: { [Op.in]: coachBookingIds },
+      status: { [Op.in]: ['confirmed', 'awaiting_verification'] },
+      scheduled_at: { [Op.lt]: twoHoursAgo },
+    },
+  });
+  
+  let no_shows = 0;
+  for (const booking of noShowBookings) {
+    // Check if there's a no-show dispute
+    if (noShowDisputeType) {
+      const noShowDispute = await Dispute.findOne({
+        where: {
+          booking_id: booking.id,
+          dispute_type_id: noShowDisputeType.id,
+        },
+      });
+      if (noShowDispute) {
+        no_shows++;
+        continue;
+      }
+    }
+    // If no dispute, check if booking was never completed or cancelled
+    // (This is a conservative approach - only count if clearly a no-show)
+    const hasCancellation = await CancellationHistory.findOne({
+      where: { booking_id: booking.id },
+    });
+    if (!hasCancellation && booking.status !== 'completed') {
+      // Likely a no-show, but be conservative - only count if past scheduled time significantly
+      const hoursPastScheduled = (now - new Date(booking.scheduled_at)) / (1000 * 60 * 60);
+      if (hoursPastScheduled > 24) {
+        no_shows++;
+      }
+    }
+  }
+
+  // Calculate paid reschedules from reschedule history
+  const paidReschedules = await RescheduleHistory.count({
+    where: {
+      booking_id: { [Op.in]: coachBookingIds },
+      requested_by: 'coach',
+      paid_reschedule: true,
+    },
+  });
 
   return {
     total_bookings: coachBookings.length,
     reschedules,
-    paid_reschedules: 0, // TODO: Calculate from reschedule history
+    paid_reschedules: paidReschedules,
     late_cancels,
     no_shows,
     coach_cancels,
@@ -184,11 +242,55 @@ const calculateStudentMetrics = async (userId) => {
     return hoursBefore >= 0 && hoursBefore < 24;
   }).length;
 
-  // Count all student cancellations where affects_reliability = true
-  const student_cancels = cancellations.filter(c => c.cancelled_by === 'student' && c.affects_reliability).length;
+  // Count student cancellations where affects_reliability = true, excluding late cancellations to avoid double-penalization
+  const student_cancels = cancellations.filter(c => {
+    if (c.cancelled_by !== 'student' || !c.affects_reliability) return false;
+    const hoursBefore = (new Date(c.booking.scheduled_at) - new Date(c.cancelled_at)) / (1000 * 60 * 60);
+    // Exclude late cancellations (within 24 hours) - they are penalized separately
+    return hoursBefore < 0 || hoursBefore >= 24;
+  }).length;
 
-  // TODO: Calculate no-shows (could check disputes or booking status)
-  const no_shows = 0;
+  // Calculate no-shows: bookings that were scheduled but never completed or cancelled
+  const noShowDisputeType = await DisputeType.findOne({ where: { code: 'no_show' } });
+  
+  const now = new Date();
+  const twoHoursAgo = new Date(now.getTime() - 2 * 60 * 60 * 1000);
+  
+  const noShowBookings = await Booking.findAll({
+    where: {
+      id: { [Op.in]: studentBookingIds },
+      status: { [Op.in]: ['confirmed', 'awaiting_verification'] },
+      scheduled_at: { [Op.lt]: twoHoursAgo },
+    },
+  });
+  
+  let no_shows = 0;
+  for (const booking of noShowBookings) {
+    // Check if there's a no-show dispute
+    if (noShowDisputeType) {
+      const noShowDispute = await Dispute.findOne({
+        where: {
+          booking_id: booking.id,
+          dispute_type_id: noShowDisputeType.id,
+        },
+      });
+      if (noShowDispute) {
+        no_shows++;
+        continue;
+      }
+    }
+    // If no dispute, check if booking was never completed or cancelled
+    const hasCancellation = await CancellationHistory.findOne({
+      where: { booking_id: booking.id },
+    });
+    if (!hasCancellation && booking.status !== 'completed') {
+      // Likely a no-show, but be conservative
+      const hoursPastScheduled = (now - new Date(booking.scheduled_at)) / (1000 * 60 * 60);
+      if (hoursPastScheduled > 24) {
+        no_shows++;
+      }
+    }
+  }
 
   return {
     total_bookings: studentBookings.length,

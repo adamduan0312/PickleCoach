@@ -15,10 +15,6 @@ const Message = sequelize.define('messages', {
     type: DataTypes.INTEGER,
     allowNull: true,
   },
-  receiver_id: {
-    type: DataTypes.INTEGER,
-    allowNull: true,
-  },
   content: {
     type: DataTypes.TEXT,
     allowNull: false,
@@ -39,7 +35,6 @@ const Message = sequelize.define('messages', {
   indexes: [
     { fields: ['conversation_id'] },
     { fields: ['sender_id'] },
-    { fields: ['receiver_id'] },
   ],
 });
 

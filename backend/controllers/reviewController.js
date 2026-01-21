@@ -35,7 +35,7 @@ export const getReviews = async (req, res) => {
 
 export const createReview = async (req, res) => {
   try {
-    const { booking_id, target_user_id, rating, comment, attendance_badges, visibility } = req.body;
+    const { booking_id, target_user_id, rating, comment, attendance_badges, visibility } = req.validated;
 
     const booking = await Booking.findByPk(booking_id);
     if (!booking) {

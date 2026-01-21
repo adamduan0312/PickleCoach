@@ -47,6 +47,8 @@ export const createBookingSchema = Joi.object({
   scheduled_at: Joi.date().iso().greater('now').required(),
   duration_minutes: Joi.number().integer().min(15).optional(),
   player_ids: Joi.array().items(Joi.number().integer()).optional(),
+  court_location_id: Joi.number().integer().positive().optional(),
+  payment_method: Joi.string().valid('stripe', 'apple_pay', 'google_pay', 'card').default('stripe'),
 });
 
 export const createPaymentSchema = Joi.object({
@@ -76,4 +78,14 @@ export const reviewSchema = Joi.object({
   comment: Joi.string().max(1000).optional(),
   attendance_badges: Joi.array().items(Joi.string()).optional(),
   visibility: Joi.string().valid('public', 'private', 'semi_public').default('public'),
+});
+
+export const createConversationSchema = Joi.object({
+  booking_id: Joi.number().integer().positive().required(),
+});
+
+export const sendMessageSchema = Joi.object({
+  conversation_id: Joi.number().integer().positive().required(),
+  content: Joi.string().min(1).max(5000).required(),
+  attachments: Joi.array().items(Joi.object()).optional(),
 });

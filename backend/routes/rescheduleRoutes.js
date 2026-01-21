@@ -8,6 +8,5 @@ const router = express.Router();
 
 router.get('/', authenticate, rescheduleController.getRescheduleHistory);
 router.post('/request', authenticate, validateRequest(rescheduleSchema), rescheduleController.requestReschedule);
-router.put('/:id/approve', authenticate, rescheduleController.approveReschedule);
 
 export default router;

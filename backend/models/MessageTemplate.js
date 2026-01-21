@@ -19,6 +19,10 @@ const MessageTemplate = sequelize.define('message_templates', {
     type: DataTypes.STRING(200),
     allowNull: true,
   },
+  deleted_at: {
+    type: DataTypes.DATE,
+    allowNull: true,
+  },
 }, {
   tableName: 'message_templates',
   timestamps: true,

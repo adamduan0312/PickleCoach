@@ -49,6 +49,10 @@ class User extends Model {
           allowNull: false,
           defaultValue: true,
         },
+        deleted_at: {
+          type: DataTypes.DATE,
+          allowNull: true,
+        },
         last_login: {
           type: DataTypes.DATE,
           allowNull: true,
@@ -64,6 +68,7 @@ class User extends Model {
         indexes: [
           { fields: ['role'] },
           { fields: ['is_active'] },
+          { fields: ['deleted_at'] },
           { fields: ['email'], unique: true },
         ],
       }

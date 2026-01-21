@@ -97,7 +97,7 @@ export const monthlyCoachReliabilityReset = async () => {
         });
 
         // Reset reliability for coaches (all coaches in the query are valid)
-        if (coachBookings > 0 || true) { // All coaches get reset
+        if (coachBookings > 0) {
           // Get or create reliability record
           const [reliability, created] = await UserReliability.findOrCreate({
             where: { user_id: coach.id },

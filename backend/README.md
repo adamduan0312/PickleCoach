@@ -21,13 +21,15 @@ A comprehensive backend API for the PickleCoach platform built with Node.js, Exp
 ```
 backend/
 ├── config/
-│   ├── db.js              # MySQL connection pool
-│   └── sequelize.js       # Sequelize configuration
+│   ├── config.json        # Sequelize CLI configuration
+│   ├── logger.js          # Winston logger configuration
+│   └── validation.js      # Joi validation schemas
 ├── controllers/           # Request handlers
 │   ├── adminController.js
 │   ├── authController.js
 │   ├── bookingController.js
 │   ├── coachController.js
+│   ├── courtController.js
 │   ├── disputeController.js
 │   ├── lessonController.js
 │   ├── messageController.js
@@ -35,29 +37,53 @@ backend/
 │   ├── paymentController.js
 │   ├── rescheduleController.js
 │   ├── reviewController.js
-│   └── userController.js
+│   ├── userController.js
+│   └── webhookController.js
 ├── middleware/
 │   ├── auth.js            # Authentication & authorization
 │   ├── errorHandler.js    # Error handling
+│   ├── rateLimiter.js     # Rate limiting
+│   ├── requestId.js       # Request ID tracking
 │   └── validator.js       # Request validation
+├── migrations/            # Database migrations
+│   └── [timestamp]-[name].cjs
 ├── models/                # Sequelize models
 │   ├── index.js           # Model associations
-│   └── [Model].js         # Individual models
+│   ├── sequelize.js       # Sequelize instance
+│   └── [Model].js         # Individual models (30 models)
 ├── routes/                # API routes
 │   ├── index.js           # Route aggregator
 │   └── [Entity]Routes.js  # Entity-specific routes
+├── scripts/               # Utility scripts
+│   ├── check-and-mark-migration.js
+│   ├── compare-schema.js
+│   └── fix-sequelize-meta.cjs
+├── seeders/               # Database seeders
+│   └── [timestamp]-[name].cjs
 ├── services/              # Business logic
 │   ├── bookingService.js
+│   ├── courtImportService.js
 │   ├── notificationService.js
 │   ├── paymentService.js
-│   └── reliabilityService.js
+│   ├── reliabilityPenaltyService.js
+│   ├── reliabilityService.js
+│   └── stripeService.js
 ├── utils/                 # Utility functions
 │   ├── audit.js
 │   ├── errors.js
 │   ├── pagination.js
 │   └── response.js
+├── workers/               # Background workers
+│   ├── autoConfirmWorker.js
+│   ├── chargePaidRescheduleWorker.js
+│   ├── index.js
+│   ├── payoutWorker.js
+│   ├── reliabilityWorker.js
+│   ├── reminderWorker.js
+│   └── retryFailedPaymentsWorker.js
+├── logs/                  # Application logs (gitignored)
 ├── .gitignore
-├── env.example
+├── env.development.example # Environment template
 ├── package.json
 └── server.js              # Application entry point
 ```
@@ -71,9 +97,11 @@ backend/
 
 2. **Configure Environment**
    ```bash
-   cp env.example .env
+   cp env.development.example .env.development
    ```
-   Update `.env` with your database credentials and JWT secret.
+   Update `.env.development` with your database credentials and JWT secret.
+   
+   **Note**: The application uses environment-specific `.env` files (e.g., `.env.development`, `.env.production`) based on `NODE_ENV`.
 
 3. **Database Setup**
    - Create MySQL database using the provided SQL schema
@@ -90,80 +118,23 @@ backend/
 
 ## API Endpoints
 
-### Authentication
-- `POST /api/auth/register` - Register new user
-- `POST /api/auth/login` - User login
-- `GET /api/auth/profile` - Get current user profile
-- `PUT /api/auth/profile` - Update current user profile
+For a complete list of all API endpoints with detailed descriptions, see **[API_ENDPOINTS.md](./API_ENDPOINTS.md)**.
 
-### Users
-- `GET /api/users` - Get all users (admin only)
-- `GET /api/users/:id` - Get user by ID
-- `PUT /api/users/:id` - Update user (admin only)
-- `DELETE /api/users/:id` - Delete user (admin only)
-
-### Coaches
-- `GET /api/coaches` - Get all coaches
-- `GET /api/coaches/:id` - Get coach by ID
-- `POST /api/coaches/profile` - Create coach profile
-- `PUT /api/coaches/profile/:id` - Update coach profile
-- `POST /api/coaches/availability` - Create availability
-- `GET /api/coaches/:id/availability` - Get coach availability
-
-### Lessons
-- `GET /api/lessons` - Get all lessons
-- `GET /api/lessons/:id` - Get lesson by ID
-- `POST /api/lessons` - Create lesson (coach only)
-- `PUT /api/lessons/:id` - Update lesson
-- `DELETE /api/lessons/:id` - Delete lesson
-
-### Bookings
-- `GET /api/bookings` - Get bookings
-- `GET /api/bookings/:id` - Get booking by ID
-- `POST /api/bookings` - Create booking
-- `PUT /api/bookings/:id/status` - Update booking status
-- `POST /api/bookings/:id/cancel` - Cancel booking
-
-### Payments
-- `GET /api/payments` - Get payments
-- `GET /api/payments/:id` - Get payment by ID
-- `POST /api/payments` - Create payment
-- `PUT /api/payments/:id/status` - Update payment status (admin only)
-- `POST /api/payments/:id/refund` - Process refund (admin only)
-
-### Reschedules
-- `GET /api/reschedules` - Get reschedule history
-- `POST /api/reschedules/request` - Request reschedule
-- `PUT /api/reschedules/:id/approve` - Approve reschedule
-
-### Reviews
-- `GET /api/reviews` - Get reviews
-- `POST /api/reviews` - Create review
-- `PUT /api/reviews/:id` - Update review
-- `DELETE /api/reviews/:id` - Delete review
-
-### Messages
-- `GET /api/messages/conversations` - Get conversations
-- `GET /api/messages/conversations/:id` - Get conversation by ID
-- `POST /api/messages/conversations` - Create conversation
-- `POST /api/messages/send` - Send message
-- `PUT /api/messages/:id/read` - Mark message as read
-
-### Disputes
-- `GET /api/disputes` - Get disputes
-- `GET /api/disputes/:id` - Get dispute by ID
-- `POST /api/disputes` - Create dispute
-- `PUT /api/disputes/:id/resolve` - Resolve dispute (admin only)
-
-### Notifications
-- `GET /api/notifications` - Get notifications
-- `POST /api/notifications` - Create notification (admin only)
-- `PUT /api/notifications/:id/read` - Mark notification as read
-
-### Admin
-- `GET /api/admin/dashboard` - Get dashboard stats (admin only)
-- `GET /api/admin/alerts` - Get alerts (admin only)
-- `PUT /api/admin/alerts/:id/resolve` - Resolve alert (admin only)
+Quick reference:
+- **Authentication**: `/api/auth` - Register, login, refresh token, profile management
+- **Users**: `/api/users` - User management (admin only)
+- **Coaches**: `/api/coaches` - Coach profiles, availability, Stripe Connect
+- **Courts**: `/api/courts` - Court location search and management
+- **Lessons**: `/api/lessons` - Lesson creation and management
+- **Bookings**: `/api/bookings` - Booking system with rescheduling and cancellation
+- **Payments**: `/api/payments` - Payment processing and refunds
+- **Reschedules**: `/api/reschedules` - Reschedule history and requests
+- **Reviews**: `/api/reviews` - Review system
+- **Messages**: `/api/messages` - In-app messaging
+- **Disputes**: `/api/disputes` - Dispute management
+- **Notifications**: `/api/notifications` - Notification system
+- **Admin**: `/api/admin` - Admin dashboard and management
+- **Webhooks**: `/api/webhooks/stripe` - Stripe webhook handler
 
 ## Authentication
 
@@ -210,5 +181,17 @@ All models are defined in the `models/` directory and include:
 ## Development
 
 - Use `npm run dev` for development with auto-reload
-- Database models will auto-sync in development mode
-- Use migrations for production database changes
+- Use migrations for all database schema changes (see [MIGRATION_GUIDE.md](./MIGRATION_GUIDE.md))
+- Run seeders with `npm run db:seed` for demo data
+- See [QUICK_REFERENCE.md](./QUICK_REFERENCE.md) for common migration workflows
+
+## Documentation
+
+Additional documentation files:
+- **[API_ENDPOINTS.md](./API_ENDPOINTS.md)** - Complete API endpoint reference
+- **[ADMIN_SETUP.md](./ADMIN_SETUP.md)** - Admin account setup guide
+- **[MIGRATION_GUIDE.md](./MIGRATION_GUIDE.md)** - Complete migration guide (setup, workflow, helper scripts)
+- **[QUICK_REFERENCE.md](./QUICK_REFERENCE.md)** - Quick command reference for migrations
+- **[ENTERPRISE_ASSESSMENT.md](./ENTERPRISE_ASSESSMENT.md)** - Enterprise-level assessment
+- **[SCHEMA_VERIFICATION-BEGINNING-0F-JAN-2026.md](./SCHEMA_VERIFICATION-BEGINNING-0F-JAN-2026.md)** - Schema verification report
+

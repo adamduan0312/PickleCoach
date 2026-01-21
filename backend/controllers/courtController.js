@@ -43,8 +43,40 @@ export const searchCourts = async (req, res) => {
       limit: 100,
     });
 
-    // TODO: If no courts found, trigger lazy import from external API (Pickleheads, OpenStreetMap)
-    // For now, return empty array
+    // Lazy import: If no courts found, import from external APIs
+    if (courts.length === 0) {
+      try {
+        const { lazyImportCourts } = await import('../services/courtImportService.js');
+        const importedCourts = await lazyImportCourts(latitude, longitude, radiusMiles);
+        
+        // Re-fetch courts after import
+        const allCourts = await CourtLocation.findAll({
+          where: {
+            deleted_at: null,
+            latitude: {
+              [Op.between]: [latitude - latRange, latitude + latRange],
+            },
+            longitude: {
+              [Op.between]: [longitude - lngRange, longitude + lngRange],
+            },
+          },
+          include: [
+            {
+              model: User,
+              as: 'createdBy',
+              attributes: ['id', 'full_name'],
+            },
+          ],
+          limit: 100,
+        });
+        
+        return res.json(createResponse(allCourts, `Courts retrieved successfully (${importedCourts.length} imported)`));
+      } catch (importError) {
+        logger.error('Court lazy import failed:', importError);
+        // Return empty array if import fails
+        return res.json(createResponse([], 'Courts retrieved successfully (import failed)'));
+      }
+    }
 
     return res.json(createResponse(courts, 'Courts retrieved successfully'));
   } catch (error) {

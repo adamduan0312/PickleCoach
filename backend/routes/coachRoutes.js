@@ -15,4 +15,8 @@ router.get('/:id/availability', coachController.getCoachAvailability);
 // Coach court management
 router.post('/me/courts', authenticate, courtController.addCoachCourt);
 
+// Stripe Connect onboarding
+router.post('/me/stripe-connect/onboard', authenticate, coachController.initiateStripeConnectOnboarding);
+router.get('/me/stripe-connect/status', authenticate, coachController.getStripeConnectStatus);
+
 export default router;

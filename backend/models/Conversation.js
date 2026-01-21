@@ -9,7 +9,7 @@ const Conversation = sequelize.define('conversations', {
   },
   booking_id: {
     type: DataTypes.INTEGER,
-    allowNull: true,
+    allowNull: false,
   },
 }, {
   tableName: 'conversations',

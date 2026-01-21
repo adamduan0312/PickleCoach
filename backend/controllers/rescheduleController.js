@@ -3,11 +3,14 @@ import { successResponse, errorResponse } from '../utils/response.js';
 import { logAudit } from '../utils/audit.js';
 import { affectsReliability, sanitizeResponse } from '../services/reliabilityPenaltyService.js';
 import { updateUserReliability } from '../services/reliabilityService.js';
+import * as paymentService from '../services/paymentService.js';
 import { Op } from 'sequelize';
 
 export const requestReschedule = async (req, res) => {
   try {
-    const { booking_id, new_scheduled_at, reason, reason_notes, paid_reschedule = false } = req.body;
+    // booking_id can come from URL parameter (POST /api/bookings/:id/reschedule) or body
+    const booking_id = req.params.id || req.validated.booking_id;
+    const { new_scheduled_at, reason, reason_notes, paid_reschedule = false } = req.validated;
 
     // Reason is required and validated by schema
     if (!reason) {
@@ -43,6 +46,10 @@ export const requestReschedule = async (req, res) => {
     // Only marketplace participant actions (student/coach) can affect reliability
     const willAffectReliability = requestedBy === 'admin' ? false : affectsReliability(reason);
 
+    // For paid reschedules, set approval_status to 'pending' until payment is confirmed
+    // For free reschedules, auto-approve immediately
+    const approvalStatus = paid_reschedule ? 'pending' : 'auto_approved';
+
     const rescheduleHistory = await RescheduleHistory.create({
       booking_id,
       requested_by: requestedBy,
@@ -52,25 +59,52 @@ export const requestReschedule = async (req, res) => {
       reason_notes: reason_notes || null,
       affects_reliability: willAffectReliability, // Always false for admin
       paid_reschedule,
-      approval_status: 'auto_approved', // Auto-approve for now, can be changed to 'pending' if approval workflow needed
+      approval_status: approvalStatus,
     });
 
+    let paymentIntent = null;
+
+    // If paid reschedule, create PaymentIntent and DO NOT apply reschedule yet
     if (paid_reschedule) {
-      booking.extra_paid_reschedules += 1;
-    } else {
-      booking.reschedule_count += 1;
-    }
+      try {
+        const { payment, paymentIntent: intent } = await paymentService.createPaymentForPaidReschedule(
+          booking,
+          booking.primary_student_id,
+          rescheduleHistory.id
+        );
 
-    await booking.update({
-      scheduled_at: newScheduledDate,
-      reschedule_count: booking.reschedule_count,
-      extra_paid_reschedules: booking.extra_paid_reschedules,
-    });
+        // Link payment to reschedule history
+        await rescheduleHistory.update({ transaction_id: payment.id });
+        paymentIntent = intent;
+        
+        // DO NOT update booking yet - wait for payment confirmation
+        // DO NOT increment extra_paid_reschedules yet - wait for payment confirmation
+        // The reschedule will be applied in the webhook handler after payment succeeds
+      } catch (error) {
+        console.error('Error creating paid reschedule payment:', error);
+        // If payment creation fails, reject the reschedule request
+        await rescheduleHistory.update({ 
+          paid_reschedule: false,
+          approval_status: 'rejected',
+        });
+        return errorResponse(res, 'Failed to create payment for reschedule. Please try again.', 500);
+      }
+    } else {
+      // Free reschedule - apply immediately
+      booking.reschedule_count += 1;
+      await booking.update({
+        scheduled_at: newScheduledDate,
+        reschedule_count: booking.reschedule_count,
+      });
+    }
 
     await logAudit(req.user.id, 'reschedule_requested', 'reschedule_history', rescheduleHistory.id, null, rescheduleHistory.toJSON(), req);
 
-    // Update reliability ONLY for marketplace participants (coach/student), never for admin
-    if (willAffectReliability && requestedBy !== 'admin') {
+    // Update reliability score immediately for free reschedules with penalized reasons
+    // (Non-penalized reasons like weather/emergency don't affect reliability, so no update needed)
+    // Paid reschedules will update reliability after payment is confirmed (when the reschedule is actually applied)
+    // Note: Reliability impact is determined by the reason (via affectsReliability()), not by whether it's free or paid
+    if (!paid_reschedule && willAffectReliability && requestedBy !== 'admin') {
       const userIdToUpdate = requestedBy === 'coach' ? booking.coach_id : booking.primary_student_id;
       if (userIdToUpdate) {
         // Double-check: ensure we're not updating an admin user
@@ -86,53 +120,16 @@ export const requestReschedule = async (req, res) => {
     // Sanitize response - remove affects_reliability from frontend
     const sanitizedResponse = sanitizeResponse(rescheduleHistory);
 
-    return successResponse(res, sanitizedResponse, 'Reschedule requested successfully', 201);
+    // Include payment intent if paid reschedule
+    const response = { ...sanitizedResponse };
+    if (paymentIntent) {
+      response.payment_intent = paymentIntent;
+    }
+
+    return successResponse(res, response, 'Reschedule requested successfully', 201);
   } catch (error) {
     console.error('Request reschedule error:', error);
     return errorResponse(res, 'Failed to request reschedule', 500);
-  }
-};
-
-export const approveReschedule = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const rescheduleHistory = await RescheduleHistory.findByPk(id, {
-      include: [{ model: Booking, as: 'booking' }],
-    });
-
-    if (!rescheduleHistory) {
-      return errorResponse(res, 'Reschedule request not found', 404);
-    }
-
-    if (rescheduleHistory.approval_status !== 'pending') {
-      return errorResponse(res, 'Reschedule already processed', 400);
-    }
-
-    if (req.user.role !== 'admin' && 
-        req.user.id !== rescheduleHistory.booking.coach_id && 
-        req.user.id !== rescheduleHistory.booking.primary_student_id) {
-      return errorResponse(res, 'Unauthorized', 403);
-    }
-
-    await rescheduleHistory.update({
-      approval_status: 'approved',
-      approved_by: req.user.id,
-      approved_at: new Date(),
-    });
-
-    await rescheduleHistory.booking.update({
-      scheduled_at: rescheduleHistory.new_scheduled_at,
-    });
-
-    await logAudit(req.user.id, 'reschedule_approved', 'reschedule_history', rescheduleHistory.id, null, rescheduleHistory.toJSON(), req);
-
-    // Sanitize response - remove affects_reliability from frontend
-    const sanitizedResponse = sanitizeResponse(rescheduleHistory);
-
-    return successResponse(res, sanitizedResponse, 'Reschedule approved successfully');
-  } catch (error) {
-    console.error('Approve reschedule error:', error);
-    return errorResponse(res, 'Failed to approve reschedule', 500);
   }
 };
 

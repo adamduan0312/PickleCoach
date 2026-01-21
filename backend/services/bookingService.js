@@ -1,5 +1,72 @@
-import { Booking, Lesson, BookingPlayer, RescheduleHistory, sequelize } from '../models/index.js';
+import { Booking, Lesson, BookingPlayer, RescheduleHistory, CoachAvailability, sequelize } from '../models/index.js';
 import { Op } from 'sequelize';
+
+/**
+ * Check if coach is available at the requested time slot
+ * Validates against CoachAvailability records (coach-maintained availability)
+ */
+export const checkCoachAvailability = async (coachId, scheduledAt, durationMinutes) => {
+  const scheduledDate = new Date(scheduledAt);
+  const endTime = new Date(scheduledDate.getTime() + durationMinutes * 60000);
+  
+  // Get weekday (0 = Sunday, 1 = Monday, ..., 6 = Saturday)
+  const weekday = scheduledDate.getDay();
+  
+  // Get time portion as HH:MM:SS string for comparison
+  const scheduledTimeStr = scheduledDate.toTimeString().slice(0, 8); // HH:MM:SS
+  const endTimeStr = endTime.toTimeString().slice(0, 8);
+
+  // Find all availability records for this coach that are active
+  const availabilities = await CoachAvailability.findAll({
+    where: {
+      coach_id: coachId,
+      is_available: true,
+      weekday: weekday,
+    },
+  });
+
+  if (availabilities.length === 0) {
+    return { available: false, reason: 'Coach is not available on this day' };
+  }
+
+  // Check if any availability window covers the requested time slot
+  for (const availability of availabilities) {
+    // Check date range if specified
+    if (availability.start_date) {
+      const startDate = new Date(availability.start_date);
+      startDate.setHours(0, 0, 0, 0);
+      if (scheduledDate < startDate) {
+        continue; // Scheduled date is before availability start
+      }
+    }
+    
+    if (availability.end_date) {
+      const endDate = new Date(availability.end_date);
+      endDate.setHours(23, 59, 59, 999);
+      if (scheduledDate > endDate) {
+        continue; // Scheduled date is after availability end
+      }
+    }
+
+    // Check datetime window if specified
+    if (availability.start_datetime && availability.end_datetime) {
+      const availabilityStart = new Date(availability.start_datetime);
+      const availabilityEnd = new Date(availability.end_datetime);
+      
+      // Check if the entire booking slot (start to end) falls within availability window
+      // Booking starts at or after availability start datetime
+      // Booking ends at or before availability end datetime
+      if (scheduledDate >= availabilityStart && endTime <= availabilityEnd) {
+        return { available: true };
+      }
+    } else if (!availability.start_datetime && !availability.end_datetime) {
+      // No datetime restrictions, available all day (if weekday matches)
+      return { available: true };
+    }
+  }
+
+  return { available: false, reason: 'Coach is not available during this time slot' };
+};
 
 export const checkBookingAvailability = async (lessonId, scheduledAt, durationMinutes) => {
   const lesson = await Lesson.findByPk(lessonId);
@@ -7,10 +74,16 @@ export const checkBookingAvailability = async (lessonId, scheduledAt, durationMi
     return { available: false, reason: 'Lesson not found or inactive' };
   }
 
+  // Check coach availability first (coach-maintained availability)
+  const coachAvailability = await checkCoachAvailability(lesson.coach_id, scheduledAt, durationMinutes);
+  if (!coachAvailability.available) {
+    return coachAvailability;
+  }
+
   const scheduledDate = new Date(scheduledAt);
   const endTime = new Date(scheduledDate.getTime() + durationMinutes * 60000);
 
-  // Check for overlapping bookings
+  // Check for overlapping bookings (prevent double-booking)
   const overlappingBookings = await Booking.findAll({
     where: {
       lesson_id: lessonId,

@@ -4,6 +4,8 @@ import * as reminderWorker from './reminderWorker.js';
 import * as autoConfirmWorker from './autoConfirmWorker.js';
 import * as payoutWorker from './payoutWorker.js';
 import * as reliabilityWorker from './reliabilityWorker.js';
+import * as chargePaidRescheduleWorker from './chargePaidRescheduleWorker.js';
+import * as retryFailedPaymentsWorker from './retryFailedPaymentsWorker.js';
 
 let workersRunning = false;
 
@@ -42,6 +44,24 @@ export const startWorkers = () => {
       await payoutWorker.processPayouts();
     } catch (error) {
       logger.error('Error in payout worker:', error);
+    }
+  });
+
+  // Process paid reschedule payments: every 10 minutes
+  cron.schedule('*/10 * * * *', async () => {
+    try {
+      await chargePaidRescheduleWorker.processPaidReschedulePayments();
+    } catch (error) {
+      logger.error('Error in paid reschedule worker:', error);
+    }
+  });
+
+  // Retry failed payments: every 10 minutes
+  cron.schedule('*/10 * * * *', async () => {
+    try {
+      await retryFailedPaymentsWorker.retryFailedPayments();
+    } catch (error) {
+      logger.error('Error in retry failed payments worker:', error);
     }
   });
 

@@ -1,5 +1,6 @@
 import dotenv from 'dotenv';
-dotenv.config();
+const env = process.env.NODE_ENV || 'development';
+dotenv.config({ path: `.env.${env}` });
 
 import { Sequelize } from 'sequelize';
 import { createRequire } from 'module';
@@ -8,7 +9,6 @@ const config = require('../config/config.json');
 
 // Create Sequelize instance (Sequelize CLI standard approach)
 // This is the professional/industry-standard way
-const env = process.env.NODE_ENV || 'development';
 const dbConfig = config[env];
 
 // Allow environment variables to override config.json values

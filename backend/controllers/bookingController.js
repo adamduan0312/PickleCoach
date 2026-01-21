@@ -6,6 +6,7 @@ import { logAudit } from '../utils/audit.js';
 import { affectsReliability, sanitizeResponse } from '../services/reliabilityPenaltyService.js';
 import { updateUserReliability } from '../services/reliabilityService.js';
 import * as paymentService from '../services/paymentService.js';
+import { checkBookingAvailability } from '../services/bookingService.js';
 
 export const getBookings = async (req, res) => {
   try {
@@ -80,7 +81,7 @@ export const getBookingById = async (req, res) => {
 
 export const createBooking = async (req, res) => {
   try {
-    const { lesson_id, scheduled_at, duration_minutes, player_ids, court_location_id, payment_method = 'stripe' } = req.body;
+    const { lesson_id, scheduled_at, duration_minutes, player_ids, court_location_id, payment_method = 'stripe' } = req.validated;
 
     const lesson = await Lesson.findByPk(lesson_id);
     if (!lesson || !lesson.is_active) {
@@ -102,6 +103,15 @@ export const createBooking = async (req, res) => {
       if (!court || court.deleted_at) {
         return errorResponse(res, 'Court location not found', 404);
       }
+    }
+
+    // Check availability before creating booking (instant booking validation)
+    // This checks: 1) Coach availability (coach-maintained schedule)
+    //              2) No overlapping bookings (double-booking prevention)
+    const finalDuration = duration_minutes || lesson.duration_minutes;
+    const availabilityCheck = await checkBookingAvailability(lesson_id, scheduled_at, finalDuration);
+    if (!availabilityCheck.available) {
+      return errorResponse(res, availabilityCheck.reason || 'Time slot is not available', 400);
     }
 
     // Calculate reschedule deadline (default: 24 hours before scheduled time)
@@ -176,7 +186,7 @@ export const updateBookingStatus = async (req, res) => {
 export const cancelBooking = async (req, res) => {
   try {
     const { id } = req.params;
-    const { reason, reason_notes } = req.body;
+    const { reason, reason_notes } = req.validated;
 
     // Reason is required and validated by schema
     if (!reason) {
@@ -200,9 +210,9 @@ export const cancelBooking = async (req, res) => {
     // Only marketplace participant actions (student/coach) can affect reliability
     const willAffectReliability = cancelledBy === 'admin' ? false : affectsReliability(reason);
 
-    // Calculate if cancellation is late (within 24 hours of scheduled time)
+    // Calculate if cancellation is late (within 24 hours BEFORE scheduled time, not after)
     const hoursUntilBooking = (new Date(booking.scheduled_at) - new Date()) / (1000 * 60 * 60);
-    const isLateCancel = hoursUntilBooking < 24;
+    const isLateCancel = hoursUntilBooking >= 0 && hoursUntilBooking < 24;
 
     // Calculate refund and penalty amounts (basic implementation - can be enhanced)
     let refund_amount = 0;
@@ -262,9 +272,33 @@ export const cancelBooking = async (req, res) => {
       }
     }
 
-    // Handle refund if applicable (this would typically involve payment service)
-    // For now, we just record it in cancellation_history
-    // TODO: Integrate with paymentService to process actual refunds
+    // Process refund if applicable
+    if (refund_amount > 0) {
+      try {
+        // Find the payment for this booking
+        const payment = await Payment.findOne({
+          where: { booking_id: booking.id },
+        });
+
+        if (payment && payment.charge_id && payment.payment_status === 'captured') {
+          // Process refund through payment service
+          await paymentService.processRefund(
+            payment.id,
+            refund_amount,
+            cancelledBy === 'coach' ? 'coach_cancellation' : 'student_cancellation'
+          );
+          
+          // Update cancellation history with refund payment ID
+          await cancellationHistory.update({
+            refund_payment_id: payment.id,
+          });
+        }
+      } catch (refundError) {
+        // Log error but don't fail the cancellation
+        console.error('Error processing refund during cancellation:', refundError);
+        // The cancellation is still recorded, refund can be processed manually later
+      }
+    }
 
     // Sanitize response - remove affects_reliability from frontend
     const sanitizedCancellation = sanitizeResponse(cancellationHistory);

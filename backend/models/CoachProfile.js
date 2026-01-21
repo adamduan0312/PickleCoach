@@ -49,6 +49,18 @@ const CoachProfile = sequelize.define('coach_profiles', {
     type: DataTypes.INTEGER,
     defaultValue: 0,
   },
+  coach_commission_percent: {
+    type: DataTypes.DECIMAL(5, 2),
+    defaultValue: 92.00,
+  },
+  stripe_account_id: {
+    type: DataTypes.STRING(255),
+    allowNull: true,
+  },
+  deleted_at: {
+    type: DataTypes.DATE,
+    allowNull: true,
+  },
 }, {
   tableName: 'coach_profiles',
   timestamps: true,
@@ -56,6 +68,7 @@ const CoachProfile = sequelize.define('coach_profiles', {
   updatedAt: false,
   indexes: [
     { fields: ['skill_level', 'location', 'rating_average'] },
+    { fields: ['stripe_account_id'] },
   ],
 });
 

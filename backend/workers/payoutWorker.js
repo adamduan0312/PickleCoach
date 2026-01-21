@@ -72,8 +72,8 @@ export const processPayouts = async () => {
           }
         }
 
-        // Get coach's Stripe Connect account ID (if available)
-        // TODO: Store this in coach profile or user metadata
+        // Get coach's Stripe Connect account ID from coach profile
+        // This is stored in coach_profiles.stripe_account_id when coach completes Stripe onboarding
         const coachStripeAccountId = payment.coach.coachProfile?.stripe_account_id || null;
 
         // Process payout

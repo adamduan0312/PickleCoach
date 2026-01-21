@@ -55,7 +55,7 @@ export const getLessonById = async (req, res) => {
 
 export const createLesson = async (req, res) => {
   try {
-    const { title, description, duration_minutes, price, max_students } = req.body;
+    const { title, description, duration_minutes, price, max_students } = req.validated;
 
     if (req.user.role !== 'coach' && req.user.role !== 'admin') {
       return errorResponse(res, 'Only coaches can create lessons', 403);

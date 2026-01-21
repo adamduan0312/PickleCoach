@@ -10,7 +10,7 @@ const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
 
 export const register = async (req, res) => {
   try {
-    const { full_name, email, password, role, phone, timezone } = req.body;
+    const { full_name, email, password, role, phone, timezone } = req.validated;
 
     const existingUser = await User.findOne({ where: { email } });
     if (existingUser) {
@@ -52,7 +52,7 @@ export const register = async (req, res) => {
 
 export const login = async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { email, password } = req.validated;
 
     const user = await User.findOne({ where: { email } });
     if (!user) {
@@ -134,5 +134,63 @@ export const updateProfile = async (req, res) => {
   } catch (error) {
     logger.error('Update profile error:', error);
     return errorResponse(res, 'Failed to update profile', 500);
+  }
+};
+
+/**
+ * Refresh JWT token
+ * POST /api/auth/refresh
+ * Body: { token: string }
+ */
+export const refreshToken = async (req, res) => {
+  try {
+    const { token } = req.body;
+
+    if (!token) {
+      return errorResponse(res, 'Token is required', 400);
+    }
+
+    // Verify the existing token (even if expired, we can decode it)
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (error) {
+      // If token is expired, try to decode without verification
+      if (error.name === 'TokenExpiredError') {
+        decoded = jwt.decode(token);
+        if (!decoded) {
+          return errorResponse(res, 'Invalid token', 401);
+        }
+      } else {
+        return errorResponse(res, 'Invalid token', 401);
+      }
+    }
+
+    // Find the user
+    const user = await User.findByPk(decoded.userId);
+    if (!user || !user.is_active) {
+      return errorResponse(res, 'User not found or inactive', 401);
+    }
+
+    // Generate new token
+    const newToken = jwt.sign({ userId: user.id, role: user.role }, JWT_SECRET, {
+      expiresIn: JWT_EXPIRES_IN,
+    });
+
+    await logAudit(user.id, 'token_refreshed', 'users', user.id, null, { token_refreshed: true }, req);
+
+    return successResponse(res, {
+      token: newToken,
+      user: {
+        id: user.id,
+        full_name: user.full_name,
+        email: user.email,
+        role: user.role,
+        avatar_url: user.avatar_url,
+      },
+    }, 'Token refreshed successfully');
+  } catch (error) {
+    logger.error('Refresh token error:', error);
+    return errorResponse(res, 'Failed to refresh token', 500);
   }
 };

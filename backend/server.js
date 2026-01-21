@@ -12,14 +12,23 @@ import { logger } from './config/logger.js';
 import { envSchema } from './config/validation.js';
 import { startWorkers } from './workers/index.js';
 
+
+/* this line is only used when there is just one general ".env" file 
 dotenv.config();
+*/
+
+// Determine environment, default to 'development' if not set
+const env = process.env.NODE_ENV || 'development';
+
+// Load the corresponding .env file
+dotenv.config({ path: `.env.${env}` });
 
 // Validate environment variables
 const { error: envError, value: envVars } = envSchema.validate(process.env);
 if (envError) {
   logger.error('Environment validation error:', envError);
   process.exit(1);
-}
+} 
 
 const app = express();
 const port = envVars.PORT || 4000;
@@ -95,11 +104,13 @@ const startServer = async () => {
     await sequelize.authenticate();
     logger.info('Database connection established successfully.');
 
+    /*
     // Sync models (set to false in production, use migrations instead)
     if (process.env.NODE_ENV !== 'production') {
       await sequelize.sync({ alter: false });
       logger.info('Database models synchronized.');
     }
+    */
 
     const server = app.listen(port, () => {
       logger.info(`🚀 API listening on http://localhost:${port}`);

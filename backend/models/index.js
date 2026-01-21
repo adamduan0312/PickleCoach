@@ -21,7 +21,6 @@ const CancellationHistoryModule = await import('./CancellationHistory.js');
 const PayoutModule = await import('./Payout.js');
 const ReviewModule = await import('./Review.js');
 const UserReliabilityModule = await import('./UserReliability.js');
-const PrebookingInquiryModule = await import('./PrebookingInquiry.js');
 const ConversationModule = await import('./Conversation.js');
 const MessageModule = await import('./Message.js');
 const WebhookLogModule = await import('./WebhookLog.js');
@@ -55,7 +54,6 @@ const CancellationHistory = CancellationHistoryModule.default;
 const Payout = PayoutModule.default;
 const Review = ReviewModule.default;
 const UserReliability = UserReliabilityModule.default;
-const PrebookingInquiry = PrebookingInquiryModule.default;
 const Conversation = ConversationModule.default;
 const Message = MessageModule.default;
 const WebhookLog = WebhookLogModule.default;
@@ -89,10 +87,7 @@ User.hasMany(Payout, { foreignKey: 'coach_id', as: 'payouts' });
 User.hasMany(Review, { foreignKey: 'reviewer_id', as: 'reviewsGiven' });
 User.hasMany(Review, { foreignKey: 'target_user_id', as: 'reviewsReceived' });
 User.hasOne(UserReliability, { foreignKey: 'user_id', as: 'reliability' });
-User.hasMany(PrebookingInquiry, { foreignKey: 'student_id', as: 'inquiriesSent' });
-User.hasMany(PrebookingInquiry, { foreignKey: 'coach_id', as: 'inquiriesReceived' });
 User.hasMany(Message, { foreignKey: 'sender_id', as: 'sentMessages' });
-User.hasMany(Message, { foreignKey: 'receiver_id', as: 'receivedMessages' });
 User.hasMany(AuditLog, { foreignKey: 'user_id', as: 'auditLogs' });
 User.hasMany(Notification, { foreignKey: 'user_id', as: 'notifications' });
 User.hasMany(StudentFeedback, { foreignKey: 'coach_id', as: 'feedbackGiven' });
@@ -178,10 +173,6 @@ Review.belongsTo(User, { foreignKey: 'target_user_id', as: 'targetUser' });
 // UserReliability associations
 UserReliability.belongsTo(User, { foreignKey: 'user_id', as: 'user' });
 
-// PrebookingInquiry associations
-PrebookingInquiry.belongsTo(User, { foreignKey: 'student_id', as: 'student' });
-PrebookingInquiry.belongsTo(User, { foreignKey: 'coach_id', as: 'coach' });
-
 // Conversation associations
 Conversation.belongsTo(Booking, { foreignKey: 'booking_id', as: 'booking' });
 Conversation.hasMany(Message, { foreignKey: 'conversation_id', as: 'messages' });
@@ -189,7 +180,6 @@ Conversation.hasMany(Message, { foreignKey: 'conversation_id', as: 'messages' })
 // Message associations
 Message.belongsTo(Conversation, { foreignKey: 'conversation_id', as: 'conversation' });
 Message.belongsTo(User, { foreignKey: 'sender_id', as: 'sender' });
-Message.belongsTo(User, { foreignKey: 'receiver_id', as: 'receiver' });
 
 // AdminAlert associations
 AdminAlert.belongsTo(User, { foreignKey: 'related_user_id', as: 'relatedUser' });
@@ -239,7 +229,6 @@ export {
   Payout,
   Review,
   UserReliability,
-  PrebookingInquiry,
   Conversation,
   Message,
   WebhookLog,

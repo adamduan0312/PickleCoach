@@ -98,6 +98,8 @@ const handlePaymentIntentSucceeded = async (paymentIntent) => {
  * Handle payment_intent.payment_failed event
  */
 const handlePaymentIntentFailed = async (paymentIntent) => {
+  const { RescheduleHistory } = await import('../models/index.js');
+  
   const payment = await Payment.findOne({
     where: { payment_intent_id: paymentIntent.id },
   });
@@ -110,6 +112,21 @@ const handlePaymentIntentFailed = async (paymentIntent) => {
   await payment.update({
     payment_status: 'failed',
   });
+
+  // If this is a paid reschedule payment, reject the reschedule
+  const isPaidReschedule = payment.metadata?.type === 'paid_reschedule';
+  if (isPaidReschedule && payment.metadata?.reschedule_history_id) {
+    const rescheduleHistoryId = parseInt(payment.metadata.reschedule_history_id);
+    const rescheduleHistory = await RescheduleHistory.findByPk(rescheduleHistoryId);
+
+    if (rescheduleHistory) {
+      await rescheduleHistory.update({
+        approval_status: 'rejected',
+      });
+
+      logger.info(`Paid reschedule ${rescheduleHistoryId} rejected due to payment failure for PaymentIntent: ${paymentIntent.id}`);
+    }
+  }
 
   logger.info(`Payment failed for PaymentIntent: ${paymentIntent.id}`);
 };
@@ -163,7 +180,44 @@ const handleDisputeCreated = async (charge) => {
     });
   }
 
-  // TODO: Create dispute record in database
+  // Create dispute record in database
+  try {
+    const { Dispute, DisputeType } = await import('../models/index.js');
+    
+    // Find or use default dispute type (e.g., 'chargeback' or 'payment_dispute')
+    let disputeType = await DisputeType.findOne({
+      where: { code: 'chargeback' },
+    });
+    
+    // If no chargeback type exists, use the first available dispute type
+    if (!disputeType) {
+      disputeType = await DisputeType.findOne({
+        order: [['id', 'ASC']],
+      });
+    }
+    
+    if (disputeType) {
+      const dispute = await Dispute.create({
+        booking_id: payment.booking_id,
+        dispute_type_id: disputeType.id,
+        opened_by: 'system',
+        status: 'open',
+      });
+      
+      // Link dispute to payment
+      await payment.update({
+        dispute_id: dispute.id,
+      });
+      
+      logger.info(`Dispute record created (ID: ${dispute.id}) for charge: ${charge.id}`);
+    } else {
+      logger.warn(`No dispute types found in database. Cannot create dispute record for charge: ${charge.id}`);
+    }
+  } catch (disputeError) {
+    logger.error(`Error creating dispute record for charge ${charge.id}:`, disputeError);
+    // Don't throw - webhook processing should continue
+  }
+  
   logger.info(`Dispute created for charge: ${charge.id}`);
 };
 

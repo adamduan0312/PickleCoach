@@ -1,4 +1,6 @@
-# Quick Reference: Schema Changes Workflow
+# Quick Reference: Migration Commands
+
+> **Full guide**: See [MIGRATION_GUIDE.md](./MIGRATION_GUIDE.md) for complete workflow and explanations.
 
 ## 🚨 IMPORTANT: Where to Make Changes
 
@@ -97,14 +99,34 @@ module.exports = {
 };
 ```
 
-## ✅ Your Current Status
+## 🔧 Helper Scripts
+
+### Check and Mark Initial Migration
+```bash
+# After running SQL schema directly, mark initial migration as executed
+node scripts/check-and-mark-migration.js
+```
+
+### Compare Schema (Initial Setup Only)
+```bash
+# Verify database matches initial migration
+node scripts/compare-schema.js
+```
+
+## ✅ Current Status
 
 - ✅ **All models created** - 30 models matching your SQL schema
 - ✅ **Migrations folder ready** - Can create migrations now
 - ✅ **Sequelize CLI configured** - Ready to use
+- ✅ **Initial migrations created** - Schema and fix migrations exist
 
-## 🚀 Next Steps
+## 🚀 Quick Workflow
 
-1. **For initial setup**: Run your SQL schema in MySQL Workbench (one time)
-2. **For future changes**: Use migrations (as shown above)
-3. **Never edit SQL directly** - Always use migrations
+1. **Create migration**: `npx sequelize-cli migration:generate --name your-name`
+2. **Edit migration file**: Add your changes in `up()` and `down()`
+3. **Update model** (if structure changed): Edit model file
+4. **Run migration**: `npm run db:migrate`
+5. **Test**: Verify changes work
+6. **Commit**: `git add migrations/ models/`
+
+**For complete workflow and explanations, see [MIGRATION_GUIDE.md](./MIGRATION_GUIDE.md)**
