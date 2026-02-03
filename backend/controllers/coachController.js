@@ -3,6 +3,7 @@ import { successResponse, errorResponse } from '../utils/response.js';
 import { getPagination, getPagingData } from '../utils/pagination.js';
 import { Op } from 'sequelize';
 import { sequelize } from '../models/sequelize.js';
+import { logger } from '../config/logger.js';
 
 /**
  * Calculate distance between two lat/lng points using Haversine formula
@@ -21,7 +22,7 @@ const calculateDistance = (lat1, lng1, lat2, lng2) => {
 
 export const getCoaches = async (req, res) => {
   try {
-    const { page = 1, limit = 10, lat, lng, radius = 10, skill_level, min_rating } = req.query;
+    const { page, limit, lat, lng, radius, skill_level, min_rating } = req.validated;
     const { limit: queryLimit, offset } = getPagination(page, limit);
 
     const where = { role: 'coach', is_active: true };
@@ -39,10 +40,10 @@ export const getCoaches = async (req, res) => {
     }];
 
     // If GPS coordinates provided, filter by courts within radius
-    if (lat && lng) {
-      const latitude = parseFloat(lat);
-      const longitude = parseFloat(lng);
-      const radiusMiles = parseFloat(radius);
+    if (lat != null && lng != null) {
+      const latitude = lat;
+      const longitude = lng;
+      const radiusMiles = radius;
 
       // Calculate bounding box (rough approximation for initial filtering)
       const latRange = radiusMiles / 69; // ~69 miles per degree latitude
@@ -108,7 +109,7 @@ export const getCoaches = async (req, res) => {
     );
     return successResponse(res, response.items, 'Coaches retrieved successfully');
   } catch (error) {
-    console.error('Get coaches error:', error);
+    logger.error('Get coaches error:', error);
     return errorResponse(res, 'Failed to retrieve coaches', 500);
   }
 };
@@ -121,7 +122,7 @@ export const getCoachById = async (req, res) => {
       include: [
         { model: CoachProfile, as: 'coachProfile' },
         { model: CoachAvailability, as: 'availabilities' },
-        { model: Lesson, as: 'lessons', where: { is_active: true, deleted_at: null } },
+        { model: Lesson, as: 'lessons', where: { is_active: true, deleted_at: null }, required: false },
         { model: Review, as: 'reviewsReceived', limit: 10, order: [['created_at', 'DESC']] },
       ],
     });
@@ -132,7 +133,7 @@ export const getCoachById = async (req, res) => {
 
     return successResponse(res, coach, 'Coach retrieved successfully');
   } catch (error) {
-    console.error('Get coach error:', error);
+    logger.error('Get coach error:', error);
     return errorResponse(res, 'Failed to retrieve coach', 500);
   }
 };
@@ -141,21 +142,41 @@ export const createCoachProfile = async (req, res) => {
   try {
     const { user_id, headline, bio, hourly_rate, experience_years, skill_level, certifications, location } = req.body;
 
-    if (req.user.id !== parseInt(user_id) && req.user.role !== 'admin') {
+    // Use provided user_id or default to authenticated user's ID
+    // Allow admins to create profiles for other users
+    const targetUserId = user_id ? parseInt(user_id) : req.user.id;
+    
+    if (req.user.id !== targetUserId && req.user.role !== 'admin') {
       return errorResponse(res, 'Unauthorized', 403);
     }
 
-    const existingProfile = await CoachProfile.findOne({ where: { user_id } });
+    // Verify the target user has coach role (unless admin is creating it)
+    if (req.user.role !== 'admin') {
+      if (req.user.role !== 'coach') {
+        return errorResponse(res, 'Only users with coach role can create coach profiles', 403);
+      }
+    } else if (user_id) {
+      // Admin creating profile for another user - verify that user is a coach
+      const targetUser = await User.findByPk(targetUserId);
+      if (!targetUser) {
+        return errorResponse(res, 'User not found', 404);
+      }
+      if (targetUser.role !== 'coach') {
+        return errorResponse(res, 'Can only create coach profiles for users with coach role', 400);
+      }
+    }
+
+    const existingProfile = await CoachProfile.findOne({ where: { user_id: targetUserId } });
     if (existingProfile) {
       return errorResponse(res, 'Coach profile already exists', 409);
     }
 
     const profile = await CoachProfile.create({
-      user_id,
+      user_id: targetUserId,
       headline,
       bio,
       hourly_rate: hourly_rate || 0,
-      experience_years: experience_years || 0,
+      experience_years: experience_years ?? 0,
       skill_level: skill_level || 'intermediate',
       certifications,
       location,
@@ -163,15 +184,17 @@ export const createCoachProfile = async (req, res) => {
 
     return successResponse(res, profile, 'Coach profile created successfully', 201);
   } catch (error) {
-    console.error('Create coach profile error:', error);
-    return errorResponse(res, 'Failed to create coach profile', 500);
+    logger.error('Create coach profile error:', error);
+    // Include error details in response for debugging
+    const errorMessage = error.message || 'Failed to create coach profile';
+    return errorResponse(res, errorMessage, 500);
   }
 };
 
 export const updateCoachProfile = async (req, res) => {
   try {
     const { id } = req.params;
-    const profile = await CoachProfile.findByPk(id);
+    const profile = await CoachProfile.findOne({ where: { user_id: id } });
 
     if (!profile) {
       return errorResponse(res, 'Coach profile not found', 404);
@@ -181,7 +204,7 @@ export const updateCoachProfile = async (req, res) => {
       return errorResponse(res, 'Unauthorized', 403);
     }
 
-    const { headline, bio, hourly_rate, experience_years, skill_level, certifications, location } = req.body;
+    const { headline, bio, hourly_rate, experience_years, skill_level, certifications, location } = req.validated;
 
     await profile.update({
       headline: headline !== undefined ? headline : profile.headline,
@@ -195,14 +218,14 @@ export const updateCoachProfile = async (req, res) => {
 
     return successResponse(res, profile, 'Coach profile updated successfully');
   } catch (error) {
-    console.error('Update coach profile error:', error);
+    logger.error('Update coach profile error:', error);
     return errorResponse(res, 'Failed to update coach profile', 500);
   }
 };
 
 export const createAvailability = async (req, res) => {
   try {
-    const { coach_id, weekday, start_datetime, end_datetime, start_date, end_date, recurrence_rule, is_available } = req.body;
+    const { coach_id, weekday, start_datetime, end_datetime, start_date, end_date, recurrence_rule, is_available } = req.validated;
 
     if (req.user.id !== parseInt(coach_id) && req.user.role !== 'admin') {
       return errorResponse(res, 'Unauthorized', 403);
@@ -221,7 +244,7 @@ export const createAvailability = async (req, res) => {
 
     return successResponse(res, availability, 'Availability created successfully', 201);
   } catch (error) {
-    console.error('Create availability error:', error);
+    logger.error('Create availability error:', error);
     return errorResponse(res, 'Failed to create availability', 500);
   }
 };
@@ -236,7 +259,7 @@ export const getCoachAvailability = async (req, res) => {
 
     return successResponse(res, availabilities, 'Availability retrieved successfully');
   } catch (error) {
-    console.error('Get availability error:', error);
+    logger.error('Get availability error:', error);
     return errorResponse(res, 'Failed to retrieve availability', 500);
   }
 };
@@ -301,7 +324,7 @@ export const initiateStripeConnectOnboarding = async (req, res) => {
       expires_at: accountLink.expires_at,
     }, 'Stripe Connect onboarding initiated successfully', 201);
   } catch (error) {
-    console.error('Stripe Connect onboarding error:', error);
+    logger.error('Stripe Connect onboarding error:', error);
     return errorResponse(res, 'Failed to initiate Stripe Connect onboarding', 500);
   }
 };
@@ -346,7 +369,7 @@ export const getStripeConnectStatus = async (req, res) => {
       email: account.email,
     }, 'Stripe Connect status retrieved successfully');
   } catch (error) {
-    console.error('Get Stripe Connect status error:', error);
+    logger.error('Get Stripe Connect status error:', error);
     return errorResponse(res, 'Failed to retrieve Stripe Connect status', 500);
   }
 };

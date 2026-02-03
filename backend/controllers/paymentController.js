@@ -3,12 +3,13 @@ import { successResponse, errorResponse } from '../utils/response.js';
 import { getPagination, getPagingData } from '../utils/pagination.js';
 import { Op } from 'sequelize';
 import { logAudit } from '../utils/audit.js';
+import { logger } from '../config/logger.js';
 
 const PLATFORM_FEE_PERCENT = 8.00;
 
 export const getPayments = async (req, res) => {
   try {
-    const { page = 1, limit = 10, status, escrow_status, student_id, coach_id } = req.query;
+    const { page, limit, status, escrow_status, student_id, coach_id } = req.validated;
     const { limit: queryLimit, offset } = getPagination(page, limit);
 
     const where = {};
@@ -40,7 +41,7 @@ export const getPayments = async (req, res) => {
     const response = getPagingData(payments, page, queryLimit);
     return successResponse(res, response.items, 'Payments retrieved successfully');
   } catch (error) {
-    console.error('Get payments error:', error);
+    logger.error('Get payments error:', error);
     return errorResponse(res, 'Failed to retrieve payments', 500);
   }
 };
@@ -66,7 +67,7 @@ export const getPaymentById = async (req, res) => {
 
     return successResponse(res, payment, 'Payment retrieved successfully');
   } catch (error) {
-    console.error('Get payment error:', error);
+    logger.error('Get payment error:', error);
     return errorResponse(res, 'Failed to retrieve payment', 500);
   }
 };
@@ -111,7 +112,7 @@ export const createPayment = async (req, res) => {
 
     return successResponse(res, payment, 'Payment created successfully', 201);
   } catch (error) {
-    console.error('Create payment error:', error);
+    logger.error('Create payment error:', error);
     return errorResponse(res, 'Failed to create payment', 500);
   }
 };
@@ -119,7 +120,7 @@ export const createPayment = async (req, res) => {
 export const updatePaymentStatus = async (req, res) => {
   try {
     const { id } = req.params;
-    const { payment_status, escrow_status, charge_id, transfer_id, payout_id } = req.body;
+    const { payment_status, escrow_status, charge_id, transfer_id, payout_id } = req.validated;
 
     const payment = await Payment.findByPk(id);
     if (!payment) {
@@ -143,7 +144,7 @@ export const updatePaymentStatus = async (req, res) => {
 
     return successResponse(res, payment, 'Payment status updated successfully');
   } catch (error) {
-    console.error('Update payment status error:', error);
+    logger.error('Update payment status error:', error);
     return errorResponse(res, 'Failed to update payment status', 500);
   }
 };
@@ -162,7 +163,7 @@ export const processRefund = async (req, res) => {
       return errorResponse(res, 'Unauthorized', 403);
     }
 
-    const refundAmount = refund_amount || payment.total_charge_to_student;
+    const refundAmount = amount || payment.total_charge_to_student;
     if (refundAmount > payment.total_charge_to_student) {
       return errorResponse(res, 'Refund amount exceeds payment amount', 400);
     }
@@ -178,7 +179,7 @@ export const processRefund = async (req, res) => {
 
     return successResponse(res, payment, 'Refund processed successfully');
   } catch (error) {
-    console.error('Process refund error:', error);
+    logger.error('Process refund error:', error);
     return errorResponse(res, 'Failed to process refund', 500);
   }
 };

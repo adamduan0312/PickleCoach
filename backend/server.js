@@ -68,9 +68,11 @@ app.use((req, res, next) => {
   next();
 });
 
-// Rate limiting
-app.use('/api', rateLimiter(15 * 60 * 1000, 100)); // 100 requests per 15 minutes
-app.use('/api/auth', rateLimiter(15 * 60 * 1000, 10)); // Stricter limit for auth endpoints
+// Rate limiting (disabled in development for easier testing)
+if (env !== 'development') {
+  app.use('/api', rateLimiter(15 * 60 * 1000, 100)); // 100 requests per 15 minutes
+  app.use('/api/auth', rateLimiter(15 * 60 * 1000, 10)); // Stricter limit for auth endpoints
+}
 
 // Health check endpoint
 app.get('/health', async (req, res) => {
@@ -101,8 +103,10 @@ app.use(errorHandler);
 // Database connection and server start
 const startServer = async () => {
   try {
+    logger.info('🔄 Starting server initialization...');
+    logger.info('📊 Connecting to database...');
     await sequelize.authenticate();
-    logger.info('Database connection established successfully.');
+    logger.info('✅ Database connection established successfully.');
 
     /*
     // Sync models (set to false in production, use migrations instead)
@@ -115,7 +119,7 @@ const startServer = async () => {
     const server = app.listen(port, () => {
       logger.info(`🚀 API listening on http://localhost:${port}`);
       logger.info(`📦 Environment: ${process.env.NODE_ENV || 'development'}`);
-      logger.info(`🔒 Security: Helmet, CORS, Rate Limiting enabled`);
+      logger.info(`🔒 Security: Helmet, CORS${env !== 'development' ? ', Rate Limiting' : ' (Rate Limiting disabled in development)'} enabled`);
     });
 
     // Start background workers
@@ -128,6 +132,9 @@ const startServer = async () => {
     server.keepAliveTimeout = 65000;
     server.headersTimeout = 66000;
 
+    logger.info('✅ Server initialization complete - ready to accept requests');
+    logger.info('📡 Health check available at: http://localhost:' + port + '/health');
+
     return server;
   } catch (error) {
     logger.error('Unable to start server:', error);
@@ -135,13 +142,29 @@ const startServer = async () => {
   }
 };
 
-startServer();
+// Store server reference for graceful shutdown
+let serverInstance = null;
 
-// Graceful shutdown
+startServer().then((server) => {
+  serverInstance = server;
+}).catch((err) => {
+  logger.error('Server failed to start:', err);
+  process.exit(1);
+});
+
+// Graceful shutdown: stop accepting requests first, then close DB
 const gracefulShutdown = async (signal) => {
   logger.info(`${signal} signal received: starting graceful shutdown`);
   
   try {
+    if (serverInstance) {
+      await new Promise((resolve) => {
+        serverInstance.close(() => {
+          logger.info('HTTP server closed.');
+          resolve();
+        });
+      });
+    }
     await sequelize.close();
     logger.info('Database connection closed.');
     process.exit(0);

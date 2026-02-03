@@ -5,6 +5,7 @@ import { affectsReliability, sanitizeResponse } from '../services/reliabilityPen
 import { updateUserReliability } from '../services/reliabilityService.js';
 import * as paymentService from '../services/paymentService.js';
 import { Op } from 'sequelize';
+import { logger } from '../config/logger.js';
 
 export const requestReschedule = async (req, res) => {
   try {
@@ -81,7 +82,7 @@ export const requestReschedule = async (req, res) => {
         // DO NOT increment extra_paid_reschedules yet - wait for payment confirmation
         // The reschedule will be applied in the webhook handler after payment succeeds
       } catch (error) {
-        console.error('Error creating paid reschedule payment:', error);
+        logger.error('Error creating paid reschedule payment:', error);
         // If payment creation fails, reject the reschedule request
         await rescheduleHistory.update({ 
           paid_reschedule: false,
@@ -111,7 +112,7 @@ export const requestReschedule = async (req, res) => {
         const userToUpdate = await User.findByPk(userIdToUpdate);
         if (userToUpdate && userToUpdate.role !== 'admin') {
           await updateUserReliability(userIdToUpdate).catch(err => {
-            console.error('Failed to update reliability after reschedule:', err);
+            logger.error('Failed to update reliability after reschedule:', err);
           });
         }
       }
@@ -128,14 +129,14 @@ export const requestReschedule = async (req, res) => {
 
     return successResponse(res, response, 'Reschedule requested successfully', 201);
   } catch (error) {
-    console.error('Request reschedule error:', error);
+    logger.error('Request reschedule error:', error);
     return errorResponse(res, 'Failed to request reschedule', 500);
   }
 };
 
 export const getRescheduleHistory = async (req, res) => {
   try {
-    const { booking_id } = req.query;
+    const { booking_id } = req.validated;
     const where = {};
     if (booking_id) where.booking_id = booking_id;
 
@@ -153,7 +154,7 @@ export const getRescheduleHistory = async (req, res) => {
 
     return successResponse(res, sanitizedHistory, 'Reschedule history retrieved successfully');
   } catch (error) {
-    console.error('Get reschedule history error:', error);
+    logger.error('Get reschedule history error:', error);
     return errorResponse(res, 'Failed to retrieve reschedule history', 500);
   }
 };

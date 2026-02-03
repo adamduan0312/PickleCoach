@@ -148,6 +148,7 @@ const getEmailSubject = (type, payload) => {
     'booking_cancelled': 'Booking Cancelled',
     'payment_received': 'Payment Received',
     'payout_processed': 'Payout Processed',
+    'password_reset': 'Reset Your PickleCoach Password',
   };
   return subjects[type] || 'Notification from PickleCoach';
 };
@@ -176,6 +177,16 @@ const getEmailContent = (type, payload) => {
       <p>Your pickleball lesson starts in 1 hour at ${scheduledAt}.</p>
       <p>Coach: ${payload?.coach_name || 'Your coach'}</p>
       <p>See you there!</p>
+    `,
+    'password_reset': `
+      <h2>Reset Your Password</h2>
+      <p>You requested to reset your password for your PickleCoach account.</p>
+      <p>Click the link below to reset your password (expires in ${payload?.expires_in || '1 hour'}):</p>
+      <p><a href="${payload?.reset_url || '#'}" style="background-color: #4CAF50; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block;">Reset Password</a></p>
+      <p>Or copy and paste this URL into your browser:</p>
+      <p>${payload?.reset_url || ''}</p>
+      <p>If you didn't request this, please ignore this email.</p>
+      <p><small>This link will expire in ${payload?.expires_in || '1 hour'}.</small></p>
     `,
   };
   
@@ -287,7 +298,7 @@ export const sendReminderNotification = async (booking, reminderType) => {
       }
     }
   } catch (error) {
-    console.error('Error sending reminder notification:', error);
+    logger.error('Error sending reminder notification:', error);
     throw error;
   }
 };

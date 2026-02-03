@@ -2,10 +2,11 @@ import { Lesson, User, Booking } from '../models/index.js';
 import { successResponse, errorResponse } from '../utils/response.js';
 import { getPagination, getPagingData } from '../utils/pagination.js';
 import { Op } from 'sequelize';
+import { logger } from '../config/logger.js';
 
 export const getLessons = async (req, res) => {
   try {
-    const { page = 1, limit = 10, coach_id, min_price, max_price } = req.query;
+    const { page, limit, coach_id, min_price, max_price } = req.validated;
     const { limit: queryLimit, offset } = getPagination(page, limit);
 
     const where = { is_active: true, deleted_at: null };
@@ -27,7 +28,7 @@ export const getLessons = async (req, res) => {
     const response = getPagingData(lessons, page, queryLimit);
     return successResponse(res, response.items, 'Lessons retrieved successfully');
   } catch (error) {
-    console.error('Get lessons error:', error);
+    logger.error('Get lessons error:', error);
     return errorResponse(res, 'Failed to retrieve lessons', 500);
   }
 };
@@ -48,7 +49,7 @@ export const getLessonById = async (req, res) => {
 
     return successResponse(res, lesson, 'Lesson retrieved successfully');
   } catch (error) {
-    console.error('Get lesson error:', error);
+    logger.error('Get lesson error:', error);
     return errorResponse(res, 'Failed to retrieve lesson', 500);
   }
 };
@@ -72,7 +73,7 @@ export const createLesson = async (req, res) => {
 
     return successResponse(res, lesson, 'Lesson created successfully', 201);
   } catch (error) {
-    console.error('Create lesson error:', error);
+    logger.error('Create lesson error:', error);
     return errorResponse(res, 'Failed to create lesson', 500);
   }
 };
@@ -90,7 +91,7 @@ export const updateLesson = async (req, res) => {
       return errorResponse(res, 'Unauthorized', 403);
     }
 
-    const { title, description, duration_minutes, price, max_students, is_active } = req.body;
+    const { title, description, duration_minutes, price, max_students, is_active } = req.validated;
 
     await lesson.update({
       title: title || lesson.title,
@@ -103,7 +104,7 @@ export const updateLesson = async (req, res) => {
 
     return successResponse(res, lesson, 'Lesson updated successfully');
   } catch (error) {
-    console.error('Update lesson error:', error);
+    logger.error('Update lesson error:', error);
     return errorResponse(res, 'Failed to update lesson', 500);
   }
 };
@@ -125,7 +126,7 @@ export const deleteLesson = async (req, res) => {
 
     return successResponse(res, null, 'Lesson deleted successfully');
   } catch (error) {
-    console.error('Delete lesson error:', error);
+    logger.error('Delete lesson error:', error);
     return errorResponse(res, 'Failed to delete lesson', 500);
   }
 };

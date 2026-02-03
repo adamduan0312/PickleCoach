@@ -3,6 +3,21 @@
 /** @type {import('sequelize-cli').Migration} */
 module.exports = {
   async up(queryInterface, Sequelize) {
+    // Helper: add index only if it doesn't exist (idempotent for re-runs / partially-applied migrations)
+    const addIndexIfNotExists = async (qi, tableName, columns, options) => {
+      const indexName = options && options.name;
+      if (!indexName) {
+        await qi.addIndex(tableName, columns, options);
+        return;
+      }
+      try {
+        const indexes = await qi.showIndex(tableName);
+        const names = [...new Set(indexes.map((i) => (i.Key_name != null ? i.Key_name : i.name)))];
+        if (names.includes(indexName)) return;
+      } catch (_) {}
+      await qi.addIndex(tableName, columns, options);
+    };
+
     // Note: MySQL uses ENUM directly in column definitions, no separate type creation needed
 
     // 1. Users table (no dependencies)
@@ -68,10 +83,10 @@ module.exports = {
     });
 
     // Indexes for users
-    await queryInterface.addIndex('users', ['role'], { name: 'users_role' });
-    await queryInterface.addIndex('users', ['is_active'], { name: 'users_is_active' });
-    await queryInterface.addIndex('users', ['deleted_at'], { name: 'users_deleted_at' });
-    await queryInterface.addIndex('users', ['email'], { unique: true, name: 'users_email' });
+    await addIndexIfNotExists(queryInterface,'users', ['role'], { name: 'users_role' });
+    await addIndexIfNotExists(queryInterface,'users', ['is_active'], { name: 'users_is_active' });
+    await addIndexIfNotExists(queryInterface,'users', ['deleted_at'], { name: 'users_deleted_at' });
+    await addIndexIfNotExists(queryInterface,'users', ['email'], { unique: true, name: 'users_email' });
 
     // 2. DisputeType table (no dependencies)
     await queryInterface.createTable('dispute_types', {
@@ -217,8 +232,8 @@ module.exports = {
       },
     });
 
-    await queryInterface.addIndex('coach_profiles', ['skill_level', 'location', 'rating_average'], { name: 'coach_profiles_skill_location_rating' });
-    await queryInterface.addIndex('coach_profiles', ['stripe_account_id'], { name: 'coach_profiles_stripe_account_id' });
+    await addIndexIfNotExists(queryInterface,'coach_profiles', ['skill_level', 'location', 'rating_average'], { name: 'coach_profiles_skill_location_rating' });
+    await addIndexIfNotExists(queryInterface,'coach_profiles', ['stripe_account_id'], { name: 'coach_profiles_stripe_account_id' });
 
     // 5. CoachAvailability table (depends on users)
     await queryInterface.createTable('coach_availabilities', {
@@ -272,10 +287,10 @@ module.exports = {
       },
     });
 
-    await queryInterface.addIndex('coach_availabilities', ['coach_id'], { name: 'coach_availabilities_coach_id' });
-    await queryInterface.addIndex('coach_availabilities', ['weekday'], { name: 'coach_availabilities_weekday' });
-    await queryInterface.addIndex('coach_availabilities', ['start_date'], { name: 'coach_availabilities_start_date' });
-    await queryInterface.addIndex('coach_availabilities', ['end_date'], { name: 'coach_availabilities_end_date' });
+    await addIndexIfNotExists(queryInterface,'coach_availabilities', ['coach_id'], { name: 'coach_availabilities_coach_id' });
+    await addIndexIfNotExists(queryInterface,'coach_availabilities', ['weekday'], { name: 'coach_availabilities_weekday' });
+    await addIndexIfNotExists(queryInterface,'coach_availabilities', ['start_date'], { name: 'coach_availabilities_start_date' });
+    await addIndexIfNotExists(queryInterface,'coach_availabilities', ['end_date'], { name: 'coach_availabilities_end_date' });
 
     // 6. CourtLocation table (depends on users)
     await queryInterface.createTable('court_locations', {
@@ -338,9 +353,9 @@ module.exports = {
       },
     });
 
-    await queryInterface.addIndex('court_locations', ['latitude'], { name: 'court_locations_latitude' });
-    await queryInterface.addIndex('court_locations', ['longitude'], { name: 'court_locations_longitude' });
-    await queryInterface.addIndex('court_locations', ['name', 'address'], { unique: true, name: 'unique_court' });
+    await addIndexIfNotExists(queryInterface, 'court_locations', ['latitude'], { name: 'court_locations_latitude' });
+    await addIndexIfNotExists(queryInterface, 'court_locations', ['longitude'], { name: 'court_locations_longitude' });
+    await addIndexIfNotExists(queryInterface, 'court_locations', ['name', 'address'], { unique: true, name: 'unique_court' });
 
     // 7. CoachCourtLocation table (depends on users, court_locations)
     await queryInterface.createTable('coach_court_locations', {
@@ -393,7 +408,7 @@ module.exports = {
       },
     });
 
-    await queryInterface.addIndex('coach_court_locations', ['coach_id', 'court_id'], { unique: true, name: 'coach_court_locations_coach_id_court_id' });
+    await addIndexIfNotExists(queryInterface,'coach_court_locations', ['coach_id', 'court_id'], { unique: true, name: 'coach_court_locations_coach_id_court_id' });
 
     // 8. Lesson table (depends on users)
     await queryInterface.createTable('lessons', {
@@ -448,8 +463,8 @@ module.exports = {
       },
     });
 
-    await queryInterface.addIndex('lessons', ['coach_id', 'is_active'], { name: 'lessons_coach_id_is_active' });
-    await queryInterface.addIndex('lessons', ['price'], { name: 'lessons_price' });
+    await addIndexIfNotExists(queryInterface,'lessons', ['coach_id', 'is_active'], { name: 'lessons_coach_id_is_active' });
+    await addIndexIfNotExists(queryInterface,'lessons', ['price'], { name: 'lessons_price' });
 
     // 9. Booking table (depends on lessons, users, court_locations)
     await queryInterface.createTable('bookings', {
@@ -566,14 +581,14 @@ module.exports = {
       },
     });
 
-    await queryInterface.addIndex('bookings', ['coach_id'], { name: 'bookings_coach_id' });
-    await queryInterface.addIndex('bookings', ['primary_student_id'], { name: 'bookings_primary_student_id' });
-    await queryInterface.addIndex('bookings', ['scheduled_at'], { name: 'bookings_scheduled_at' });
-    await queryInterface.addIndex('bookings', ['status'], { name: 'bookings_status' });
-    await queryInterface.addIndex('bookings', ['payout_status'], { name: 'bookings_payout_status' });
-    await queryInterface.addIndex('bookings', ['court_location_id'], { name: 'bookings_court_location_id' });
-    await queryInterface.addIndex('bookings', ['coach_id', 'status', 'scheduled_at'], { name: 'bookings_coach_status_scheduled' });
-    await queryInterface.addIndex('bookings', ['primary_student_id', 'status', 'scheduled_at'], { name: 'bookings_student_status_scheduled' });
+    await addIndexIfNotExists(queryInterface,'bookings', ['coach_id'], { name: 'bookings_coach_id' });
+    await addIndexIfNotExists(queryInterface,'bookings', ['primary_student_id'], { name: 'bookings_primary_student_id' });
+    await addIndexIfNotExists(queryInterface,'bookings', ['scheduled_at'], { name: 'bookings_scheduled_at' });
+    await addIndexIfNotExists(queryInterface,'bookings', ['status'], { name: 'bookings_status' });
+    await addIndexIfNotExists(queryInterface,'bookings', ['payout_status'], { name: 'bookings_payout_status' });
+    await addIndexIfNotExists(queryInterface,'bookings', ['court_location_id'], { name: 'bookings_court_location_id' });
+    await addIndexIfNotExists(queryInterface,'bookings', ['coach_id', 'status', 'scheduled_at'], { name: 'bookings_coach_status_scheduled' });
+    await addIndexIfNotExists(queryInterface,'bookings', ['primary_student_id', 'status', 'scheduled_at'], { name: 'bookings_student_status_scheduled' });
 
     // 10. BookingPlayer table (depends on bookings, users)
     await queryInterface.createTable('booking_players', {
@@ -606,7 +621,7 @@ module.exports = {
       },
     });
 
-    await queryInterface.addIndex('booking_players', ['player_id'], { name: 'booking_players_player_id' });
+    await addIndexIfNotExists(queryInterface,'booking_players', ['player_id'], { name: 'booking_players_player_id' });
 
     // 11. Dispute table (depends on bookings, dispute_types, dispute_resolution_actions, users)
     await queryInterface.createTable('disputes', {
@@ -696,10 +711,10 @@ module.exports = {
       },
     });
 
-    await queryInterface.addIndex('disputes', ['status'], { name: 'disputes_status' });
-    await queryInterface.addIndex('disputes', ['dispute_type_id'], { name: 'disputes_dispute_type_id' });
-    await queryInterface.addIndex('disputes', ['admin_id'], { name: 'disputes_admin_id' });
-    await queryInterface.addIndex('disputes', ['escalated'], { name: 'disputes_escalated' });
+    await addIndexIfNotExists(queryInterface,'disputes', ['status'], { name: 'disputes_status' });
+    await addIndexIfNotExists(queryInterface,'disputes', ['dispute_type_id'], { name: 'disputes_dispute_type_id' });
+    await addIndexIfNotExists(queryInterface,'disputes', ['admin_id'], { name: 'disputes_admin_id' });
+    await addIndexIfNotExists(queryInterface,'disputes', ['escalated'], { name: 'disputes_escalated' });
 
     // 12. Payment table (depends on bookings, users, disputes)
     await queryInterface.createTable('payments', {
@@ -825,15 +840,15 @@ module.exports = {
       },
     });
 
-    await queryInterface.addIndex('payments', ['booking_id'], { name: 'payments_booking_id' });
-    await queryInterface.addIndex('payments', ['student_id'], { name: 'payments_student_id' });
-    await queryInterface.addIndex('payments', ['coach_id'], { name: 'payments_coach_id' });
-    await queryInterface.addIndex('payments', ['payment_intent_id'], { name: 'payments_payment_intent_id' });
-    await queryInterface.addIndex('payments', ['charge_id'], { name: 'payments_charge_id' });
-    await queryInterface.addIndex('payments', ['escrow_status'], { name: 'payments_escrow_status' });
-    await queryInterface.addIndex('payments', ['created_at'], { name: 'payments_created_at' });
-    await queryInterface.addIndex('payments', ['escrow_status', 'created_at'], { name: 'payments_escrow_created' });
-    await queryInterface.addIndex('payments', ['student_id', 'escrow_status'], { name: 'payments_student_escrow' });
+    await addIndexIfNotExists(queryInterface,'payments', ['booking_id'], { name: 'payments_booking_id' });
+    await addIndexIfNotExists(queryInterface,'payments', ['student_id'], { name: 'payments_student_id' });
+    await addIndexIfNotExists(queryInterface,'payments', ['coach_id'], { name: 'payments_coach_id' });
+    await addIndexIfNotExists(queryInterface,'payments', ['payment_intent_id'], { name: 'payments_payment_intent_id' });
+    await addIndexIfNotExists(queryInterface,'payments', ['charge_id'], { name: 'payments_charge_id' });
+    await addIndexIfNotExists(queryInterface,'payments', ['escrow_status'], { name: 'payments_escrow_status' });
+    await addIndexIfNotExists(queryInterface,'payments', ['created_at'], { name: 'payments_created_at' });
+    await addIndexIfNotExists(queryInterface,'payments', ['escrow_status', 'created_at'], { name: 'payments_escrow_created' });
+    await addIndexIfNotExists(queryInterface,'payments', ['student_id', 'escrow_status'], { name: 'payments_student_escrow' });
 
     // 13. RescheduleHistory table (depends on bookings, users, payments)
     await queryInterface.createTable('reschedule_history', {
@@ -920,13 +935,13 @@ module.exports = {
       },
     });
 
-    await queryInterface.addIndex('reschedule_history', ['booking_id'], { name: 'reschedule_history_booking_id' });
-    await queryInterface.addIndex('reschedule_history', ['requested_by'], { name: 'reschedule_history_requested_by' });
-    await queryInterface.addIndex('reschedule_history', ['requested_at'], { name: 'reschedule_history_requested_at' });
-    await queryInterface.addIndex('reschedule_history', ['affects_reliability'], { name: 'reschedule_history_affects_reliability' });
-    await queryInterface.addIndex('reschedule_history', ['paid_reschedule'], { name: 'reschedule_history_paid_reschedule' });
-    await queryInterface.addIndex('reschedule_history', ['booking_id', 'requested_at'], { name: 'reschedule_history_booking_requested' });
-    await queryInterface.addIndex('reschedule_history', ['requested_by', 'affects_reliability', 'requested_at'], { name: 'reschedule_history_requested_reliability' });
+    await addIndexIfNotExists(queryInterface,'reschedule_history', ['booking_id'], { name: 'reschedule_history_booking_id' });
+    await addIndexIfNotExists(queryInterface,'reschedule_history', ['requested_by'], { name: 'reschedule_history_requested_by' });
+    await addIndexIfNotExists(queryInterface,'reschedule_history', ['requested_at'], { name: 'reschedule_history_requested_at' });
+    await addIndexIfNotExists(queryInterface,'reschedule_history', ['affects_reliability'], { name: 'reschedule_history_affects_reliability' });
+    await addIndexIfNotExists(queryInterface,'reschedule_history', ['paid_reschedule'], { name: 'reschedule_history_paid_reschedule' });
+    await addIndexIfNotExists(queryInterface,'reschedule_history', ['booking_id', 'requested_at'], { name: 'reschedule_history_booking_requested' });
+    await addIndexIfNotExists(queryInterface,'reschedule_history', ['requested_by', 'affects_reliability', 'requested_at'], { name: 'reschedule_history_requested_reliability' });
 
     // 14. CancellationHistory table (depends on bookings, payments)
     await queryInterface.createTable('cancellation_history', {
@@ -991,12 +1006,12 @@ module.exports = {
       },
     });
 
-    await queryInterface.addIndex('cancellation_history', ['booking_id'], { name: 'cancellation_history_booking_id' });
-    await queryInterface.addIndex('cancellation_history', ['cancelled_at'], { name: 'cancellation_history_cancelled_at' });
-    await queryInterface.addIndex('cancellation_history', ['cancelled_by'], { name: 'cancellation_history_cancelled_by' });
-    await queryInterface.addIndex('cancellation_history', ['affects_reliability'], { name: 'cancellation_history_affects_reliability' });
-    await queryInterface.addIndex('cancellation_history', ['booking_id', 'cancelled_at'], { name: 'cancellation_history_booking_cancelled' });
-    await queryInterface.addIndex('cancellation_history', ['cancelled_by', 'affects_reliability', 'cancelled_at'], { name: 'cancellation_history_cancelled_reliability' });
+    await addIndexIfNotExists(queryInterface,'cancellation_history', ['booking_id'], { name: 'cancellation_history_booking_id' });
+    await addIndexIfNotExists(queryInterface,'cancellation_history', ['cancelled_at'], { name: 'cancellation_history_cancelled_at' });
+    await addIndexIfNotExists(queryInterface,'cancellation_history', ['cancelled_by'], { name: 'cancellation_history_cancelled_by' });
+    await addIndexIfNotExists(queryInterface,'cancellation_history', ['affects_reliability'], { name: 'cancellation_history_affects_reliability' });
+    await addIndexIfNotExists(queryInterface,'cancellation_history', ['booking_id', 'cancelled_at'], { name: 'cancellation_history_booking_cancelled' });
+    await addIndexIfNotExists(queryInterface,'cancellation_history', ['cancelled_by', 'affects_reliability', 'cancelled_at'], { name: 'cancellation_history_cancelled_reliability' });
 
     // 15. Payout table (depends on users, payments)
     await queryInterface.createTable('payouts', {
@@ -1056,8 +1071,8 @@ module.exports = {
       },
     });
 
-    await queryInterface.addIndex('payouts', ['coach_id'], { name: 'payouts_coach_id' });
-    await queryInterface.addIndex('payouts', ['payment_id'], { name: 'payouts_payment_id' });
+    await addIndexIfNotExists(queryInterface,'payouts', ['coach_id'], { name: 'payouts_coach_id' });
+    await addIndexIfNotExists(queryInterface,'payouts', ['payment_id'], { name: 'payouts_payment_id' });
 
     // 16. Review table (depends on bookings, users)
     await queryInterface.createTable('reviews', {
@@ -1119,9 +1134,9 @@ module.exports = {
       },
     });
 
-    await queryInterface.addIndex('reviews', ['target_user_id'], { name: 'reviews_target_user_id' });
-    await queryInterface.addIndex('reviews', ['reviewer_id'], { name: 'reviews_reviewer_id' });
-    await queryInterface.addIndex('reviews', ['target_user_id', 'created_at'], { name: 'reviews_target_created' });
+    await addIndexIfNotExists(queryInterface,'reviews', ['target_user_id'], { name: 'reviews_target_user_id' });
+    await addIndexIfNotExists(queryInterface,'reviews', ['reviewer_id'], { name: 'reviews_reviewer_id' });
+    await addIndexIfNotExists(queryInterface,'reviews', ['target_user_id', 'created_at'], { name: 'reviews_target_created' });
 
     // 17. UserReliability table (depends on users)
     await queryInterface.createTable('user_reliability', {
@@ -1174,7 +1189,7 @@ module.exports = {
       },
     });
 
-    await queryInterface.addIndex('user_reliability', ['reliability_score'], { name: 'user_reliability_reliability_score' });
+    await addIndexIfNotExists(queryInterface,'user_reliability', ['reliability_score'], { name: 'user_reliability_reliability_score' });
 
     // 18. Conversation table (depends on bookings)
     await queryInterface.createTable('conversations', {
@@ -1200,7 +1215,7 @@ module.exports = {
       },
     });
 
-    await queryInterface.addIndex('conversations', ['booking_id'], { name: 'conversations_booking_id' });
+    await addIndexIfNotExists(queryInterface,'conversations', ['booking_id'], { name: 'conversations_booking_id' });
 
     // 19. Message table (depends on conversations, users)
     await queryInterface.createTable('messages', {
@@ -1248,13 +1263,19 @@ module.exports = {
       },
     });
 
-    await queryInterface.addIndex('messages', ['conversation_id'], { name: 'messages_conversation_id' });
-    await queryInterface.addIndex('messages', ['sender_id'], { name: 'messages_sender_id' });
+    await addIndexIfNotExists(queryInterface,'messages', ['conversation_id'], { name: 'messages_conversation_id' });
+    await addIndexIfNotExists(queryInterface,'messages', ['sender_id'], { name: 'messages_sender_id' });
     
-    // Add FULLTEXT index for message content search
-    await queryInterface.sequelize.query(`
-      ALTER TABLE messages ADD FULLTEXT INDEX ft_messages_content (content);
-    `);
+    // Add FULLTEXT index for message content search (idempotent)
+    try {
+      const msgIndexes = await queryInterface.showIndex('messages');
+      const hasFt = msgIndexes.some((i) => (i.Key_name != null ? i.Key_name : i.name) === 'ft_messages_content');
+      if (!hasFt) {
+        await queryInterface.sequelize.query(`
+          ALTER TABLE messages ADD FULLTEXT INDEX ft_messages_content (content);
+        `);
+      }
+    } catch (_) {}
 
     // 20. WebhookLog table (no dependencies)
     await queryInterface.createTable('webhook_logs', {
@@ -1298,11 +1319,11 @@ module.exports = {
       },
     });
 
-    await queryInterface.addIndex('webhook_logs', ['provider'], { name: 'webhook_logs_provider' });
-    await queryInterface.addIndex('webhook_logs', ['event_type'], { name: 'webhook_logs_event_type' });
-    await queryInterface.addIndex('webhook_logs', ['received_at'], { name: 'webhook_logs_received_at' });
-    await queryInterface.addIndex('webhook_logs', ['provider', 'event_id'], { unique: true, name: 'webhook_logs_provider_event' });
-    await queryInterface.addIndex('webhook_logs', ['provider', 'event_type', 'received_at'], { name: 'webhook_logs_provider_type_received' });
+    await addIndexIfNotExists(queryInterface,'webhook_logs', ['provider'], { name: 'webhook_logs_provider' });
+    await addIndexIfNotExists(queryInterface,'webhook_logs', ['event_type'], { name: 'webhook_logs_event_type' });
+    await addIndexIfNotExists(queryInterface,'webhook_logs', ['received_at'], { name: 'webhook_logs_received_at' });
+    await addIndexIfNotExists(queryInterface,'webhook_logs', ['provider', 'event_id'], { unique: true, name: 'webhook_logs_provider_event' });
+    await addIndexIfNotExists(queryInterface,'webhook_logs', ['provider', 'event_type', 'received_at'], { name: 'webhook_logs_provider_type_received' });
 
     // 21. AuditLog table (depends on users)
     await queryInterface.createTable('audit_logs', {
@@ -1356,9 +1377,9 @@ module.exports = {
       },
     });
 
-    await queryInterface.addIndex('audit_logs', ['user_id'], { name: 'audit_logs_user_id' });
-    await queryInterface.addIndex('audit_logs', ['action'], { name: 'audit_logs_action' });
-    await queryInterface.addIndex('audit_logs', ['created_at'], { name: 'audit_logs_created_at' });
+    await addIndexIfNotExists(queryInterface,'audit_logs', ['user_id'], { name: 'audit_logs_user_id' });
+    await addIndexIfNotExists(queryInterface,'audit_logs', ['action'], { name: 'audit_logs_action' });
+    await addIndexIfNotExists(queryInterface,'audit_logs', ['created_at'], { name: 'audit_logs_created_at' });
 
     // 22. AdminAnalytics table (no dependencies)
     await queryInterface.createTable('admin_analytics', {
@@ -1476,9 +1497,9 @@ module.exports = {
       },
     });
 
-    await queryInterface.addIndex('admin_alerts', ['alert_type'], { name: 'admin_alerts_alert_type' });
-    await queryInterface.addIndex('admin_alerts', ['resolved'], { name: 'admin_alerts_resolved' });
-    await queryInterface.addIndex('admin_alerts', ['created_at'], { name: 'admin_alerts_created_at' });
+    await addIndexIfNotExists(queryInterface,'admin_alerts', ['alert_type'], { name: 'admin_alerts_alert_type' });
+    await addIndexIfNotExists(queryInterface,'admin_alerts', ['resolved'], { name: 'admin_alerts_resolved' });
+    await addIndexIfNotExists(queryInterface,'admin_alerts', ['created_at'], { name: 'admin_alerts_created_at' });
 
     // 24. CoachReport table (depends on users)
     await queryInterface.createTable('coach_reports', {
@@ -1524,8 +1545,8 @@ module.exports = {
       },
     });
 
-    await queryInterface.addIndex('coach_reports', ['coach_id'], { name: 'coach_reports_coach_id' });
-    await queryInterface.addIndex('coach_reports', ['report_month'], { name: 'coach_reports_report_month' });
+    await addIndexIfNotExists(queryInterface,'coach_reports', ['coach_id'], { name: 'coach_reports_coach_id' });
+    await addIndexIfNotExists(queryInterface,'coach_reports', ['report_month'], { name: 'coach_reports_report_month' });
 
     // 25. StudentFeedback table (depends on bookings, users)
     await queryInterface.createTable('student_feedback', {
@@ -1583,8 +1604,8 @@ module.exports = {
       },
     });
 
-    await queryInterface.addIndex('student_feedback', ['coach_id'], { name: 'student_feedback_coach_id' });
-    await queryInterface.addIndex('student_feedback', ['student_id'], { name: 'student_feedback_student_id' });
+    await addIndexIfNotExists(queryInterface,'student_feedback', ['coach_id'], { name: 'student_feedback_coach_id' });
+    await addIndexIfNotExists(queryInterface,'student_feedback', ['student_id'], { name: 'student_feedback_student_id' });
 
     // 26. MessageTemplate table (depends on users)
     await queryInterface.createTable('message_templates', {
@@ -1654,8 +1675,8 @@ module.exports = {
       },
     });
 
-    await queryInterface.addIndex('user_badges', ['user_id'], { name: 'user_badges_user_id' });
-    await queryInterface.addIndex('user_badges', ['badge_key'], { name: 'user_badges_badge_key' });
+    await addIndexIfNotExists(queryInterface,'user_badges', ['user_id'], { name: 'user_badges_user_id' });
+    await addIndexIfNotExists(queryInterface,'user_badges', ['badge_key'], { name: 'user_badges_badge_key' });
 
     // 28. SessionHistory table (depends on bookings, users)
     await queryInterface.createTable('session_history', {
@@ -1709,9 +1730,9 @@ module.exports = {
       },
     });
 
-    await queryInterface.addIndex('session_history', ['booking_id'], { name: 'session_history_booking_id' });
-    await queryInterface.addIndex('session_history', ['student_id'], { name: 'session_history_student_id' });
-    await queryInterface.addIndex('session_history', ['coach_id'], { name: 'session_history_coach_id' });
+    await addIndexIfNotExists(queryInterface,'session_history', ['booking_id'], { name: 'session_history_booking_id' });
+    await addIndexIfNotExists(queryInterface,'session_history', ['student_id'], { name: 'session_history_student_id' });
+    await addIndexIfNotExists(queryInterface,'session_history', ['coach_id'], { name: 'session_history_coach_id' });
 
     // 29. PromoCode table (no dependencies)
     await queryInterface.createTable('promo_codes', {
@@ -1752,8 +1773,8 @@ module.exports = {
       },
     });
 
-    await queryInterface.addIndex('promo_codes', ['code'], { name: 'promo_codes_code' });
-    await queryInterface.addIndex('promo_codes', ['expires_at'], { name: 'promo_codes_expires_at' });
+    await addIndexIfNotExists(queryInterface,'promo_codes', ['code'], { name: 'promo_codes_code' });
+    await addIndexIfNotExists(queryInterface,'promo_codes', ['expires_at'], { name: 'promo_codes_expires_at' });
 
     // 30. SystemJob table (depends on bookings)
     await queryInterface.createTable('system_jobs', {
@@ -1812,10 +1833,10 @@ module.exports = {
       },
     });
 
-    await queryInterface.addIndex('system_jobs', ['status'], { name: 'system_jobs_status' });
-    await queryInterface.addIndex('system_jobs', ['scheduled_at'], { name: 'system_jobs_scheduled_at' });
-    await queryInterface.addIndex('system_jobs', ['job_type'], { name: 'system_jobs_job_type' });
-    await queryInterface.addIndex('system_jobs', ['related_booking_id'], { name: 'system_jobs_related_booking_id' });
+    await addIndexIfNotExists(queryInterface,'system_jobs', ['status'], { name: 'system_jobs_status' });
+    await addIndexIfNotExists(queryInterface,'system_jobs', ['scheduled_at'], { name: 'system_jobs_scheduled_at' });
+    await addIndexIfNotExists(queryInterface,'system_jobs', ['job_type'], { name: 'system_jobs_job_type' });
+    await addIndexIfNotExists(queryInterface,'system_jobs', ['related_booking_id'], { name: 'system_jobs_related_booking_id' });
 
     // 31. Notification table (depends on users)
     await queryInterface.createTable('notifications', {
@@ -1874,11 +1895,11 @@ module.exports = {
       },
     });
 
-    await queryInterface.addIndex('notifications', ['user_id'], { name: 'notifications_user_id' });
-    await queryInterface.addIndex('notifications', ['status'], { name: 'notifications_status' });
-    await queryInterface.addIndex('notifications', ['channel'], { name: 'notifications_channel' });
-    await queryInterface.addIndex('notifications', ['entity_type', 'entity_id'], { name: 'notifications_entity' });
-    await queryInterface.addIndex('notifications', ['user_id', 'channel', 'read_at'], { name: 'notifications_user_channel_read' });
+    await addIndexIfNotExists(queryInterface,'notifications', ['user_id'], { name: 'notifications_user_id' });
+    await addIndexIfNotExists(queryInterface,'notifications', ['status'], { name: 'notifications_status' });
+    await addIndexIfNotExists(queryInterface,'notifications', ['channel'], { name: 'notifications_channel' });
+    await addIndexIfNotExists(queryInterface,'notifications', ['entity_type', 'entity_id'], { name: 'notifications_entity' });
+    await addIndexIfNotExists(queryInterface,'notifications', ['user_id', 'channel', 'read_at'], { name: 'notifications_user_channel_read' });
   },
 
   async down(queryInterface, Sequelize) {

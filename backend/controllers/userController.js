@@ -1,10 +1,11 @@
 import { User, CoachProfile, UserReliability } from '../models/index.js';
 import { successResponse, errorResponse } from '../utils/response.js';
 import { getPagination, getPagingData } from '../utils/pagination.js';
+import { logger } from '../config/logger.js';
 
 export const getAllUsers = async (req, res) => {
   try {
-    const { page = 1, limit = 10, role, is_active } = req.query;
+    const { page, limit, role, is_active } = req.validated;
     const { limit: queryLimit, offset } = getPagination(page, limit);
 
     const where = {};
@@ -22,7 +23,7 @@ export const getAllUsers = async (req, res) => {
     const response = getPagingData(users, page, queryLimit);
     return successResponse(res, response.items, 'Users retrieved successfully', 200);
   } catch (error) {
-    console.error('Get users error:', error);
+    logger.error('Get users error:', error);
     return errorResponse(res, 'Failed to retrieve users', 500);
   }
 };
@@ -44,7 +45,7 @@ export const getUserById = async (req, res) => {
 
     return successResponse(res, user, 'User retrieved successfully');
   } catch (error) {
-    console.error('Get user error:', error);
+    logger.error('Get user error:', error);
     return errorResponse(res, 'Failed to retrieve user', 500);
   }
 };
@@ -52,7 +53,7 @@ export const getUserById = async (req, res) => {
 export const updateUser = async (req, res) => {
   try {
     const { id } = req.params;
-    const { full_name, phone, timezone, is_active, role } = req.body;
+    const { full_name, phone, timezone, is_active, role } = req.validated;
 
     const user = await User.findByPk(id);
     if (!user) {
@@ -67,15 +68,18 @@ export const updateUser = async (req, res) => {
       role: role || user.role,
     });
 
+    // Echo all safe request fields so response shape matches update body; optional as null.
     return successResponse(res, {
       id: user.id,
       full_name: user.full_name,
       email: user.email,
       role: user.role,
       is_active: user.is_active,
+      phone: user.phone ?? null,
+      timezone: user.timezone ?? null,
     }, 'User updated successfully');
   } catch (error) {
-    console.error('Update user error:', error);
+    logger.error('Update user error:', error);
     return errorResponse(res, 'Failed to update user', 500);
   }
 };
@@ -92,7 +96,7 @@ export const deleteUser = async (req, res) => {
     await user.destroy();
     return successResponse(res, null, 'User deleted successfully');
   } catch (error) {
-    console.error('Delete user error:', error);
+    logger.error('Delete user error:', error);
     return errorResponse(res, 'Failed to delete user', 500);
   }
 };

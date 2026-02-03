@@ -84,7 +84,14 @@ export const startWorkers = () => {
   });
 
   workersRunning = true;
-  logger.info('Background workers started successfully');
+  logger.info('✅ Background workers started successfully');
+  logger.info('   - Reminder notifications: every minute');
+  logger.info('   - Auto-confirm lessons: every 5 minutes');
+  logger.info('   - Process payouts: every 10 minutes');
+  logger.info('   - Process paid reschedules: every 10 minutes');
+  logger.info('   - Retry failed payments: every 10 minutes');
+  logger.info('   - Recalculate reliability: daily at 2 AM');
+  logger.info('   - Monthly coach reliability reset: 1st of month at 3 AM');
 };
 
 /**

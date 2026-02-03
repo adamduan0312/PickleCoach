@@ -2,6 +2,20 @@
 
 This document outlines all the steps needed to get your PickleCoach backend from the current state to testing and then to production.
 
+---
+
+## Recent Improvements (Jan 2026)
+
+The following changes are already in the codebase; ensure migrations are run and docs are used as needed:
+
+- **Password reset flow:** `POST /api/auth/forgot-password` and `POST /api/auth/reset-password` are implemented. Run the password-reset migration if you haven’t (see Phase 1 Step 2).
+- **Logging:** Controllers use the configured logger instead of `console.error`.
+- **Request validation:** All relevant POST/PUT endpoints use Joi body validation; GET endpoints with query params use `validateQuery`. See `config/validation.js` and `middleware/validator.js`.
+- **Error responses:** Consistent format (e.g. 404, validation errors). See the "Error Responses" section in `API_ENDPOINTS.md`.
+- **Graceful shutdown:** Server closes HTTP connections before closing the database.
+
+**Docs:** Full API details (including error responses) → `API_ENDPOINTS.md`. Postman → `POSTMAN_SETUP_GUIDE.md` / `POSTMAN_QUICK_START.md`.
+
 ## Phase 1: Initial Setup & Testing (Development)
 
 ### ✅ Step 1: Environment Configuration ✅ DONE
@@ -48,7 +62,14 @@ This document outlines all the steps needed to get your PickleCoach backend from
    
    **Important:** This is a one-time step. After this, you can use normal migration workflow for any new schema changes.
 
-3. **Handle the fix migration** (if needed)
+3. **Run any new migrations** (e.g. password reset fields):
+   After the initial schema is marked, run new migrations normally:
+   ```bash
+   npm run db:migrate
+   ```
+   This applies migrations such as `20260126120000-add-password-reset-fields.cjs` (adds `password_reset_token`, `password_reset_expires` to users). 
+   
+4. **Handle the fix migration** (if needed)
    
    If you have the second migration file (`20260105172550-fix-foreign-keys-and-fulltext-index.cjs`), you may need to:
    
@@ -58,7 +79,7 @@ This document outlines all the steps needed to get your PickleCoach backend from
    node scripts/fix-sequelize-meta.cjs
    ```
 
-4. **(Optional) Seed demo data**
+5. **(Optional) Seed demo data**
    ```bash
    npm run db:seed
    ```
@@ -102,8 +123,13 @@ You need to create an admin account manually (see `ADMIN_SETUP.md` for details).
 
 **Option A: Using Node.js script** (Recommended)
 ```bash
-# Create the script if it doesn't exist
-node scripts/create-first-admin.js admin@picklecoach.com yourpassword "Admin Name"
+# Make sure your database is running first!
+# Then create the admin user:
+cd backend
+node scripts/create-first-admin.js adamduan0312@gmail.com "03122003" "Adam Duan"
+
+# Verify the user was created:
+node scripts/test-login.js adamduan0312@gmail.com "03122003"
 ```
 
 **Option B: Direct SQL**
@@ -135,6 +161,8 @@ VALUES (
    - `POST /api/auth/login` - Login as student
    - `POST /api/auth/login` - Login as coach
    - `POST /api/auth/login` - Login as admin
+   - `POST /api/auth/forgot-password` - Request password reset (body: `{ "email": "..." }`)
+   - `POST /api/auth/reset-password` - Reset password with token (body: `{ "token": "...", "password": "..." }`)
 
 3. **Save tokens as environment variables:**
    - Create Postman environment: "PickleCoach Dev"
@@ -450,6 +478,7 @@ npm audit fix
 - [ ] Health endpoint returns OK
 - [ ] User registration works
 - [ ] User login works
+- [ ] Forgot-password sends email (or returns success message); reset-password works with token
 - [ ] JWT tokens are generated correctly
 - [ ] Protected routes require authentication
 - [ ] Admin routes require admin role

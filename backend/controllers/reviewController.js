@@ -3,10 +3,11 @@ import { successResponse, errorResponse } from '../utils/response.js';
 import { getPagination, getPagingData } from '../utils/pagination.js';
 import { logAudit } from '../utils/audit.js';
 import { Op } from 'sequelize';
+import { logger } from '../config/logger.js';
 
 export const getReviews = async (req, res) => {
   try {
-    const { page = 1, limit = 10, target_user_id, reviewer_id } = req.query;
+    const { page, limit, target_user_id, reviewer_id } = req.validated;
     const { limit: queryLimit, offset } = getPagination(page, limit);
 
     const where = {};
@@ -28,7 +29,7 @@ export const getReviews = async (req, res) => {
     const response = getPagingData(reviews, page, queryLimit);
     return successResponse(res, response.items, 'Reviews retrieved successfully');
   } catch (error) {
-    console.error('Get reviews error:', error);
+    logger.error('Get reviews error:', error);
     return errorResponse(res, 'Failed to retrieve reviews', 500);
   }
 };
@@ -86,7 +87,7 @@ export const createReview = async (req, res) => {
 
     return successResponse(res, review, 'Review created successfully', 201);
   } catch (error) {
-    console.error('Create review error:', error);
+    logger.error('Create review error:', error);
     return errorResponse(res, 'Failed to create review', 500);
   }
 };
@@ -104,7 +105,7 @@ export const updateReview = async (req, res) => {
       return errorResponse(res, 'Unauthorized', 403);
     }
 
-    const { rating, comment, attendance_badges, visibility } = req.body;
+    const { rating, comment, attendance_badges, visibility } = req.validated;
     const beforeState = review.toJSON();
 
     await review.update({
@@ -118,7 +119,7 @@ export const updateReview = async (req, res) => {
 
     return successResponse(res, review, 'Review updated successfully');
   } catch (error) {
-    console.error('Update review error:', error);
+    logger.error('Update review error:', error);
     return errorResponse(res, 'Failed to update review', 500);
   }
 };
@@ -141,7 +142,7 @@ export const deleteReview = async (req, res) => {
 
     return successResponse(res, null, 'Review deleted successfully');
   } catch (error) {
-    console.error('Delete review error:', error);
+    logger.error('Delete review error:', error);
     return errorResponse(res, 'Failed to delete review', 500);
   }
 };

@@ -7,10 +7,11 @@ import { affectsReliability, sanitizeResponse } from '../services/reliabilityPen
 import { updateUserReliability } from '../services/reliabilityService.js';
 import * as paymentService from '../services/paymentService.js';
 import { checkBookingAvailability } from '../services/bookingService.js';
+import { logger } from '../config/logger.js';
 
 export const getBookings = async (req, res) => {
   try {
-    const { page = 1, limit = 10, status, coach_id, student_id } = req.query;
+    const { page, limit, status, coach_id, student_id } = req.validated;
     const { limit: queryLimit, offset } = getPagination(page, limit);
 
     const where = {};
@@ -34,7 +35,7 @@ export const getBookings = async (req, res) => {
     const response = getPagingData(bookings, page, queryLimit);
     return successResponse(res, response.items, 'Bookings retrieved successfully');
   } catch (error) {
-    console.error('Get bookings error:', error);
+    logger.error('Get bookings error:', error);
     return errorResponse(res, 'Failed to retrieve bookings', 500);
   }
 };
@@ -74,7 +75,7 @@ export const getBookingById = async (req, res) => {
 
     return successResponse(res, bookingJson, 'Booking retrieved successfully');
   } catch (error) {
-    console.error('Get booking error:', error);
+    logger.error('Get booking error:', error);
     return errorResponse(res, 'Failed to retrieve booking', 500);
   }
 };
@@ -152,7 +153,7 @@ export const createBooking = async (req, res) => {
       payment_intent_id: paymentIntent.id,
     }, 'Booking created successfully', 201);
   } catch (error) {
-    console.error('Create booking error:', error);
+    logger.error('Create booking error:', error);
     return errorResponse(res, 'Failed to create booking', 500);
   }
 };
@@ -160,7 +161,7 @@ export const createBooking = async (req, res) => {
 export const updateBookingStatus = async (req, res) => {
   try {
     const { id } = req.params;
-    const { status } = req.body;
+    const { status } = req.validated;
 
     const booking = await Booking.findByPk(id);
     if (!booking) {
@@ -178,7 +179,7 @@ export const updateBookingStatus = async (req, res) => {
 
     return successResponse(res, booking, 'Booking status updated successfully');
   } catch (error) {
-    console.error('Update booking status error:', error);
+    logger.error('Update booking status error:', error);
     return errorResponse(res, 'Failed to update booking status', 500);
   }
 };
@@ -266,7 +267,7 @@ export const cancelBooking = async (req, res) => {
         const userToUpdate = await User.findByPk(userIdToUpdate);
         if (userToUpdate && userToUpdate.role !== 'admin') {
           await updateUserReliability(userIdToUpdate).catch(err => {
-            console.error('Failed to update reliability after cancellation:', err);
+            logger.error('Failed to update reliability after cancellation:', err);
           });
         }
       }
@@ -295,7 +296,7 @@ export const cancelBooking = async (req, res) => {
         }
       } catch (refundError) {
         // Log error but don't fail the cancellation
-        console.error('Error processing refund during cancellation:', refundError);
+        logger.error('Error processing refund during cancellation:', refundError);
         // The cancellation is still recorded, refund can be processed manually later
       }
     }
@@ -308,7 +309,7 @@ export const cancelBooking = async (req, res) => {
       cancellation: sanitizedCancellation,
     }, 'Booking cancelled successfully');
   } catch (error) {
-    console.error('Cancel booking error:', error);
+    logger.error('Cancel booking error:', error);
     return errorResponse(res, 'Failed to cancel booking', 500);
   }
 };

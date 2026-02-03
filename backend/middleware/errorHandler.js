@@ -59,5 +59,10 @@ export const errorHandler = (err, req, res, next) => {
 };
 
 export const notFound = (req, res) => {
-  res.status(404).json({ error: 'Route not found' });
+  const requestId = req.id || 'unknown';
+  res.status(404).json({
+    success: false,
+    message: 'Route not found',
+    requestId,
+  });
 };

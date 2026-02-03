@@ -57,6 +57,14 @@ class User extends Model {
           type: DataTypes.DATE,
           allowNull: true,
         },
+        password_reset_token: {
+          type: DataTypes.STRING(255),
+          allowNull: true,
+        },
+        password_reset_expires: {
+          type: DataTypes.DATE,
+          allowNull: true,
+        },
       },
       {
         sequelize,
@@ -70,6 +78,7 @@ class User extends Model {
           { fields: ['is_active'] },
           { fields: ['deleted_at'] },
           { fields: ['email'], unique: true },
+          { fields: ['password_reset_token'] },
         ],
       }
     );

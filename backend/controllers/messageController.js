@@ -1,10 +1,11 @@
 import { Message, Conversation, Booking, User } from '../models/index.js';
 import { successResponse, errorResponse } from '../utils/response.js';
 import { getPagination, getPagingData } from '../utils/pagination.js';
+import { logger } from '../config/logger.js';
 
 export const getConversations = async (req, res) => {
   try {
-    const { booking_id } = req.query;
+    const { booking_id } = req.validated;
     const where = {};
     if (booking_id) where.booking_id = booking_id;
 
@@ -27,7 +28,7 @@ export const getConversations = async (req, res) => {
 
     return successResponse(res, conversations, 'Conversations retrieved successfully');
   } catch (error) {
-    console.error('Get conversations error:', error);
+    logger.error('Get conversations error:', error);
     return errorResponse(res, 'Failed to retrieve conversations', 500);
   }
 };
@@ -35,7 +36,7 @@ export const getConversations = async (req, res) => {
 export const getConversationById = async (req, res) => {
   try {
     const { id } = req.params;
-    const { page = 1, limit = 50 } = req.query;
+    const { page, limit } = req.validated;
     const { limit: queryLimit, offset } = getPagination(page, limit);
 
     const conversation = await Conversation.findByPk(id, {
@@ -60,7 +61,7 @@ export const getConversationById = async (req, res) => {
 
     return successResponse(res, conversation, 'Conversation retrieved successfully');
   } catch (error) {
-    console.error('Get conversation error:', error);
+    logger.error('Get conversation error:', error);
     return errorResponse(res, 'Failed to retrieve conversation', 500);
   }
 };
@@ -98,7 +99,7 @@ export const createConversation = async (req, res) => {
     const conversation = await Conversation.create({ booking_id });
     return successResponse(res, conversation, 'Conversation created successfully', 201);
   } catch (error) {
-    console.error('Create conversation error:', error);
+    logger.error('Create conversation error:', error);
     return errorResponse(res, 'Failed to create conversation', 500);
   }
 };
@@ -142,7 +143,7 @@ export const sendMessage = async (req, res) => {
 
     return successResponse(res, message, 'Message sent successfully', 201);
   } catch (error) {
-    console.error('Send message error:', error);
+    logger.error('Send message error:', error);
     return errorResponse(res, 'Failed to send message', 500);
   }
 };
@@ -177,7 +178,7 @@ export const markMessageAsRead = async (req, res) => {
     await message.update({ read_at: new Date() });
     return successResponse(res, message, 'Message marked as read');
   } catch (error) {
-    console.error('Mark message as read error:', error);
+    logger.error('Mark message as read error:', error);
     return errorResponse(res, 'Failed to mark message as read', 500);
   }
 };

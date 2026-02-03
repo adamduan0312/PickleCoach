@@ -3,10 +3,11 @@ import { successResponse, errorResponse } from '../utils/response.js';
 import { getPagination, getPagingData } from '../utils/pagination.js';
 import { logAudit } from '../utils/audit.js';
 import { Op } from 'sequelize';
+import { logger } from '../config/logger.js';
 
 export const getDisputes = async (req, res) => {
   try {
-    const { page = 1, limit = 10, status, booking_id } = req.query;
+    const { page, limit, status, booking_id } = req.validated;
     const { limit: queryLimit, offset } = getPagination(page, limit);
 
     const where = {};
@@ -43,7 +44,7 @@ export const getDisputes = async (req, res) => {
     const response = getPagingData(disputes, page, queryLimit);
     return successResponse(res, response.items, 'Disputes retrieved successfully');
   } catch (error) {
-    console.error('Get disputes error:', error);
+    logger.error('Get disputes error:', error);
     return errorResponse(res, 'Failed to retrieve disputes', 500);
   }
 };
@@ -74,14 +75,14 @@ export const getDisputeById = async (req, res) => {
 
     return successResponse(res, dispute, 'Dispute retrieved successfully');
   } catch (error) {
-    console.error('Get dispute error:', error);
+    logger.error('Get dispute error:', error);
     return errorResponse(res, 'Failed to retrieve dispute', 500);
   }
 };
 
 export const createDispute = async (req, res) => {
   try {
-    const { booking_id, dispute_type_id, notes } = req.body;
+    const { booking_id, dispute_type_id, notes } = req.validated;
 
     const booking = await Booking.findByPk(booking_id);
     if (!booking) {
@@ -114,7 +115,7 @@ export const createDispute = async (req, res) => {
 
     return successResponse(res, dispute, 'Dispute created successfully', 201);
   } catch (error) {
-    console.error('Create dispute error:', error);
+    logger.error('Create dispute error:', error);
     return errorResponse(res, 'Failed to create dispute', 500);
   }
 };
@@ -122,7 +123,7 @@ export const createDispute = async (req, res) => {
 export const resolveDispute = async (req, res) => {
   try {
     const { id } = req.params;
-    const { resolution_action_id, resolution_notes } = req.body;
+    const { resolution_action_id, resolution_notes } = req.validated;
 
     if (req.user.role !== 'admin') {
       return errorResponse(res, 'Only admins can resolve disputes', 403);
@@ -150,7 +151,7 @@ export const resolveDispute = async (req, res) => {
 
     return successResponse(res, dispute, 'Dispute resolved successfully');
   } catch (error) {
-    console.error('Resolve dispute error:', error);
+    logger.error('Resolve dispute error:', error);
     return errorResponse(res, 'Failed to resolve dispute', 500);
   }
 };

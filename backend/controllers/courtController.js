@@ -1,6 +1,6 @@
 import { CourtLocation, CoachCourtLocation, User } from '../models/index.js';
 import { Op } from 'sequelize';
-import { createResponse, createErrorResponse } from '../utils/response.js';
+import { successResponse, errorResponse } from '../utils/response.js';
 import { logger } from '../config/logger.js';
 
 /**
@@ -9,15 +9,10 @@ import { logger } from '../config/logger.js';
  */
 export const searchCourts = async (req, res) => {
   try {
-    const { lat, lng, radius = 10 } = req.query; // radius in miles
-
-    if (!lat || !lng) {
-      return res.status(400).json(createErrorResponse('Latitude and longitude are required'));
-    }
-
-    const latitude = parseFloat(lat);
-    const longitude = parseFloat(lng);
-    const radiusMiles = parseFloat(radius);
+    const { lat, lng, radius } = req.validated; // radius in miles
+    const latitude = lat;
+    const longitude = lng;
+    const radiusMiles = radius;
 
     // Calculate bounding box (rough approximation)
     const latRange = radiusMiles / 69; // ~69 miles per degree latitude

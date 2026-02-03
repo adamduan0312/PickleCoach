@@ -3,6 +3,7 @@ import { AdminAnalytics, AdminAlert, User, Booking, Payment, Dispute, UserReliab
 import { successResponse, errorResponse } from '../utils/response.js';
 import { logAudit } from '../utils/audit.js';
 import { Op } from 'sequelize';
+import { logger } from '../config/logger.js';
 
 export const getDashboardStats = async (req, res) => {
   try {
@@ -47,7 +48,7 @@ export const getDashboardStats = async (req, res) => {
       },
     }, 'Dashboard stats retrieved successfully');
   } catch (error) {
-    console.error('Get dashboard stats error:', error);
+    logger.error('Get dashboard stats error:', error);
     return errorResponse(res, 'Failed to retrieve dashboard stats', 500);
   }
 };
@@ -58,7 +59,7 @@ export const getAlerts = async (req, res) => {
       return errorResponse(res, 'Unauthorized', 403);
     }
 
-    const { resolved = false } = req.query;
+    const { resolved } = req.validated;
     const alerts = await AdminAlert.findAll({
       where: { resolved: resolved === 'true' },
       include: [
@@ -71,7 +72,7 @@ export const getAlerts = async (req, res) => {
 
     return successResponse(res, alerts, 'Alerts retrieved successfully');
   } catch (error) {
-    console.error('Get alerts error:', error);
+    logger.error('Get alerts error:', error);
     return errorResponse(res, 'Failed to retrieve alerts', 500);
   }
 };
@@ -92,7 +93,7 @@ export const resolveAlert = async (req, res) => {
     await alert.update({ resolved: true, resolved_at: new Date() });
     return successResponse(res, alert, 'Alert resolved successfully');
   } catch (error) {
-    console.error('Resolve alert error:', error);
+    logger.error('Resolve alert error:', error);
     return errorResponse(res, 'Failed to resolve alert', 500);
   }
 };
@@ -144,7 +145,7 @@ export const createAdmin = async (req, res) => {
       created_at: adminUser.created_at,
     }, 'Admin account created successfully', 201);
   } catch (error) {
-    console.error('Create admin error:', error);
+    logger.error('Create admin error:', error);
     return errorResponse(res, 'Failed to create admin account', 500);
   }
 };
@@ -223,7 +224,7 @@ export const adjustUserReliability = async (req, res) => {
       explanation,
     }, 'Reliability score adjusted successfully');
   } catch (error) {
-    console.error('Adjust reliability error:', error);
+    logger.error('Adjust reliability error:', error);
     return errorResponse(res, 'Failed to adjust reliability score', 500);
   }
 };
