@@ -14,7 +14,7 @@ The following changes are already in the codebase; ensure migrations are run and
 - **Error responses:** Consistent format (e.g. 404, validation errors). See the "Error Responses" section in `API_ENDPOINTS.md`.
 - **Graceful shutdown:** Server closes HTTP connections before closing the database.
 
-**Docs:** Full API details (including error responses) → `API_ENDPOINTS.md`. Postman → `POSTMAN_SETUP_GUIDE.md` / `POSTMAN_QUICK_START.md`.
+**Docs:** Full API details (including error responses) → `API_ENDPOINTS.md`. Postman and full setup → `PICKLECOACH_API_AND_SETUP_GUIDE.md` (project root).
 
 ## Phase 1: Initial Setup & Testing (Development)
 
@@ -569,4 +569,7 @@ npm audit fix
 ---
 
 **Last Updated:** January 2026
+
+
+---
 

@@ -926,7 +926,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"court_id\": \"{{court_id}}\",\n  \"rate_modifier\": 1.0,\n  \"preferred\": true,\n  \"notes\": \"My preferred court\",\n  \"create_private\": false,\n  \"name\": null,\n  \"address\": null,\n  \"latitude\": null,\n  \"longitude\": null\n}"
+							"raw": "{\n  \"court_id\": {{court_id}},\n  \"rate_modifier\": 1.0,\n  \"preferred\": true,\n  \"notes\": \"My preferred court\"\n}"
 						},
 						"url": {
 							"raw": "{{api_url}}/coaches/me/courts",
@@ -939,7 +939,7 @@
 								"courts"
 							]
 						},
-						"description": "Add a court location to coach's available courts"
+						"description": "Link an existing court to the coach's available courts. Create courts with POST /api/courts first (coaches are auto-linked when they create). Body: court_id (required), optional rate_modifier, preferred, notes."
 					},
 					"response": [],
 					"event": [
@@ -954,6 +954,51 @@
 									"pm.test(\"Court added successfully\", function () {",
 									"    var jsonData = pm.response.json();",
 									"    pm.expect(jsonData.success).to.be.true;",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "List My Courts",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{api_url}}/coaches/me/courts",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"coaches",
+								"me",
+								"courts"
+							]
+						},
+						"description": "List courts associated with the authenticated coach. Use after creating courts and adding them to your coach profile."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Returns courts data\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"    pm.expect(jsonData).to.have.property('data');",
+									"    pm.expect(jsonData.data).to.be.an('array');",
 									"});"
 								],
 								"type": "text/javascript"

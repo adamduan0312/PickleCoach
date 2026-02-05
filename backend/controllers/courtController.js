@@ -1,6 +1,6 @@
 import { CourtLocation, CoachCourtLocation, User } from '../models/index.js';
 import { Op } from 'sequelize';
-import { successResponse, errorResponse } from '../utils/response.js';
+import { successResponse, errorResponse, createErrorResponse, createResponse } from '../utils/response.js';
 import { logger } from '../config/logger.js';
 
 /**
@@ -175,43 +175,68 @@ export const createCourt = async (req, res) => {
 };
 
 /**
+ * GET /api/coaches/me/courts
+ * List courts associated with the authenticated coach
+ */
+export const getMyCoachCourts = async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    if (req.user.role !== 'coach' && req.user.role !== 'admin') {
+      return res.status(403).json(createErrorResponse('Only coaches can view their courts'));
+    }
+
+    const coachCourts = await CoachCourtLocation.findAll({
+      where: { coach_id: userId },
+      include: [
+        {
+          model: CourtLocation,
+          as: 'court',
+          where: { deleted_at: null },
+          required: true,
+          include: [
+            {
+              model: User,
+              as: 'createdBy',
+              attributes: ['id', 'full_name'],
+            },
+          ],
+        },
+      ],
+      order: [['preferred', 'DESC'], ['created_at', 'ASC']],
+    });
+
+    return res.status(200).json(createResponse(coachCourts, 'Courts retrieved successfully'));
+  } catch (error) {
+    logger.error('Error listing coach courts:', error);
+    return res.status(500).json(createErrorResponse('Failed to retrieve courts'));
+  }
+};
+
+/**
  * POST /api/coaches/me/courts
- * Coach adds themselves to an existing court or creates a private court
+ * Link an existing court to the coach's available courts.
+ * To create new courts (public or private), use POST /api/courts instead; coaches are auto-linked when they create a court.
  */
 export const addCoachCourt = async (req, res) => {
   try {
     const userId = req.user.id;
-    const { court_id, rate_modifier, preferred, notes, create_private } = req.body;
+    const { court_id, rate_modifier, preferred, notes } = req.body;
 
     if (req.user.role !== 'coach' && req.user.role !== 'admin') {
       return res.status(403).json(createErrorResponse('Only coaches can add courts'));
     }
 
-    let courtId = court_id;
-
-    // If creating a private court
-    if (create_private) {
-      const { name, address, latitude, longitude, notes: courtNotes } = req.body;
-      if (!name) {
-        return res.status(400).json(createErrorResponse('Court name is required for private courts'));
-      }
-
-      const privateCourt = await CourtLocation.create({
-        name,
-        address,
-        latitude: latitude ? parseFloat(latitude) : null,
-        longitude: longitude ? parseFloat(longitude) : null,
-        is_private: true,
-        is_verified: false,
-        created_by_user_id: userId,
-        source: 'manual',
-      });
-
-      courtId = privateCourt.id;
+    const courtId = court_id != null ? parseInt(court_id, 10) : null;
+    if (!courtId || Number.isNaN(courtId)) {
+      return res.status(400).json(createErrorResponse('Court ID is required and must be a number'));
     }
 
-    if (!courtId) {
-      return res.status(400).json(createErrorResponse('Court ID is required'));
+    const courtExists = await CourtLocation.findOne({
+      where: { id: courtId, deleted_at: null },
+    });
+    if (!courtExists) {
+      return res.status(404).json(createErrorResponse('Court not found'));
     }
 
     // Check if already linked
@@ -247,7 +272,16 @@ export const addCoachCourt = async (req, res) => {
     return res.status(201).json(createResponse({ coachCourt, court }, 'Court added successfully'));
   } catch (error) {
     logger.error('Error adding coach court:', error);
-    return res.status(500).json(createErrorResponse('Failed to add court'));
+    if (error.name === 'SequelizeForeignKeyConstraintError') {
+      return res.status(404).json(createErrorResponse('Court not found'));
+    }
+    if (error.name === 'SequelizeUniqueConstraintError') {
+      return res.status(409).json(createErrorResponse('Coach is already linked to this court'));
+    }
+    const message = process.env.NODE_ENV === 'development' && error?.message
+      ? error.message
+      : 'Failed to add court';
+    return res.status(500).json(createErrorResponse(message));
   }
 };
 

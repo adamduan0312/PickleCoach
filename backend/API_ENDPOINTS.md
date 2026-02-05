@@ -516,21 +516,87 @@ Authorization: Bearer <token>
   }
   ```
 
+**Coach courts workflow**
+- **Create courts** (public or private): Use **`POST /api/courts`** only. Body: `name` (required), optional `address`, `latitude`, `longitude`, `is_private` (default false), `notes`. If a **coach** creates the court, they are **automatically linked** to it (no separate “add to coach” call needed).
+- **Add an existing court to your list**: Use **`POST /api/coaches/me/courts`** when the court already exists (e.g. created by another coach or an admin). Body: `court_id` (required), optional `rate_modifier`, `preferred`, `notes`. This only creates the link; it does not create a new court.
+- **List your courts**: **`GET /api/coaches/me/courts`** returns all courts linked to the authenticated coach (including `court_id` and full court details).
+
+### `GET /api/coaches/me/courts`
+- **Auth**: Required (coach or admin)
+- **Description**: List courts associated with the authenticated coach
+- **Response** (Status: 200):
+  ```json
+  {
+    "success": true,
+    "message": "Courts retrieved successfully",
+    "data": [
+      {
+        "id": 1,
+        "coach_id": 2,
+        "court_id": 1,
+        "rate_modifier": "1.00",
+        "preferred": true,
+        "notes": "My preferred court",
+        "created_at": "...",
+        "updated_at": "...",
+        "court": {
+          "id": 1,
+          "name": "Central Park Pickleball Court",
+          "address": "123 Main St",
+          "latitude": 40.7,
+          "longitude": -74.0,
+          "is_private": false,
+          "is_verified": true,
+          "createdBy": { "id": 1, "full_name": "Admin User" }
+        }
+      }
+    ]
+  }
+  ```
+
+### `GET /api/coaches/me/courts`
+- **Auth**: Required (coach or admin)
+- **Description**: List courts associated with the authenticated coach
+- **Response** (Status: 200):
+  ```json
+  {
+    "success": true,
+    "message": "Courts retrieved successfully",
+    "data": [
+      {
+        "id": 1,
+        "coach_id": 2,
+        "court_id": 1,
+        "rate_modifier": "1.00",
+        "preferred": true,
+        "notes": "My preferred court",
+        "created_at": "...",
+        "updated_at": "...",
+        "court": {
+          "id": 1,
+          "name": "Central Park Pickleball Court",
+          "address": "123 Main St",
+          "latitude": 40.7,
+          "longitude": -74.0,
+          "is_private": false,
+          "is_verified": true,
+          "createdBy": { "id": 1, "full_name": "Admin User" }
+        }
+      }
+    ]
+  }
+  ```
+
 ### `POST /api/coaches/me/courts`
-- **Auth**: Required
-- **Description**: Add a court location to coach's available courts
+- **Auth**: Required (coach or admin)
+- **Description**: Link an **existing** court to the coach's available courts. Does not create a new court; use `POST /api/courts` to create courts (coaches are auto-linked when they create).
 - **Request Body**:
   ```json
   {
-    "court_id": "number (required if not creating private court)",
+    "court_id": "number (required)",
     "rate_modifier": "number (optional)",
     "preferred": "boolean (optional, defaults to false)",
-    "notes": "string (optional)",
-    "create_private": "boolean (optional, defaults to false)",
-    "name": "string (required if create_private is true)",
-    "address": "string (optional, required if create_private is true)",
-    "latitude": "number (optional)",
-    "longitude": "number (optional)"
+    "notes": "string (optional)"
   }
   ```
 - **Response** (Status: 201):
@@ -539,19 +605,30 @@ Authorization: Bearer <token>
     "success": true,
     "message": "Court added successfully",
     "data": {
-      "id": 1,
-      "coach_id": 2,
-      "court_id": 1,
-      "preferred": true,
-      "notes": "My preferred court",
+      "coachCourt": {
+        "id": 1,
+        "coach_id": 2,
+        "court_id": 1,
+        "rate_modifier": "1.00",
+        "preferred": true,
+        "notes": "My preferred court",
+        "created_at": "...",
+        "updated_at": "..."
+      },
       "court": {
         "id": 1,
         "name": "Central Park Pickleball Court",
-        "address": "123 Main St"
+        "address": "123 Main St",
+        "latitude": 40.7128,
+        "longitude": -74.006,
+        "is_private": false,
+        "is_verified": true,
+        "createdBy": { "id": 1, "full_name": "Admin User" }
       }
     }
   }
   ```
+- **Error responses**: `400` (court_id missing or invalid), `404` (court not found), `409` (coach already linked to this court).
 
 ### `POST /api/coaches/me/stripe-connect/onboard`
 - **Auth**: Required

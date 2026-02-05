@@ -165,14 +165,26 @@ export const updateCoachProfileSchema = Joi.object({
   location: Joi.string().max(255).allow('').optional(),
 });
 
+const WEEKDAY_NAMES = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+
 export const createAvailabilitySchema = Joi.object({
   coach_id: Joi.number().integer().positive().required(),
-  weekday: Joi.number().integer().min(0).max(6).optional(), // 0 = Sunday, 6 = Saturday
+  weekday: Joi.alternatives()
+    .try(
+      Joi.number().integer().min(0).max(6),
+      Joi.string().valid(...WEEKDAY_NAMES).insensitive()
+    )
+    .optional()
+    .custom((value) => {
+      if (value === undefined) return value;
+      if (typeof value === 'number') return value;
+      return WEEKDAY_NAMES.indexOf(String(value).toLowerCase());
+    }, 'weekday number or name'),
   start_datetime: Joi.date().iso().optional(),
   end_datetime: Joi.date().iso().optional(),
   start_date: Joi.date().iso().optional(),
   end_date: Joi.date().iso().optional(),
-  recurrence_rule: Joi.string().optional(),
+  recurrence_rule: Joi.string().optional().allow(null),
   is_available: Joi.boolean().optional(),
 });
 
