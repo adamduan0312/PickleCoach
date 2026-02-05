@@ -182,7 +182,7 @@ export const getMyCoachCourts = async (req, res) => {
   try {
     const userId = req.user.id;
 
-    if (req.user.role !== 'coach' && req.user.role !== 'admin') {
+    if (req.user.role !== 'coach') {
       return res.status(403).json(createErrorResponse('Only coaches can view their courts'));
     }
 
@@ -223,8 +223,8 @@ export const addCoachCourt = async (req, res) => {
     const userId = req.user.id;
     const { court_id, rate_modifier, preferred, notes } = req.body;
 
-    if (req.user.role !== 'coach' && req.user.role !== 'admin') {
-      return res.status(403).json(createErrorResponse('Only coaches can add courts'));
+    if (req.user.role !== 'coach') {
+      return res.status(403).json(createErrorResponse('Only coaches can add courts to their profile'));
     }
 
     const courtId = court_id != null ? parseInt(court_id, 10) : null;

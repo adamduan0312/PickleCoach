@@ -2261,7 +2261,7 @@ Authorization: Bearer <token>
 - **List your courts**: **`GET /api/coaches/me/courts`** returns all courts linked to the authenticated coach.
 
 ### `GET /api/coaches/me/courts`
-- **Auth**: Required (coach or admin)
+- **Auth**: Required (coach only)
 - **Description**: List courts associated with the authenticated coach
 - **Response** (Status: 200):
   ```json
@@ -2294,7 +2294,7 @@ Authorization: Bearer <token>
   ```
 
 ### `POST /api/coaches/me/courts`
-- **Auth**: Required (coach or admin)
+- **Auth**: Required (coach only; admins cannot add courts to their profile)
 - **Description**: Link an **existing** court to the coach's available courts. Does not create a new court; use `POST /api/courts` to create courts (coaches are auto-linked when they create).
 - **Request Body**:
   ```json
