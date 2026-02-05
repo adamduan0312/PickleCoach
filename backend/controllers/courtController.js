@@ -3,6 +3,27 @@ import { Op } from 'sequelize';
 import { successResponse, errorResponse, createErrorResponse, createResponse } from '../utils/response.js';
 import { logger } from '../config/logger.js';
 
+/** Max miles a new court can be from a coach's existing courts (prevents linking/creating courts far away) */
+const MAX_COURT_DISTANCE_MILES = 100;
+
+/**
+ * Distance between two points in miles (Haversine)
+ */
+const distanceMiles = (lat1, lng1, lat2, lng2) => {
+  if (lat1 == null || lng1 == null || lat2 == null || lng2 == null) return null;
+  const R = 3959;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLng = ((lng2 - lng1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLng / 2) *
+      Math.sin(dLng / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+};
+
 /**
  * GET /api/courts
  * Search courts by location (lazy import if needed)
@@ -133,6 +154,33 @@ export const createCourt = async (req, res) => {
       return res.status(400).json(createErrorResponse('Court name is required'));
     }
 
+    // If coach is creating: new court must be within MAX_COURT_DISTANCE_MILES of one of their existing courts (if any)
+    if (userRole === 'coach') {
+      const existingLinks = await CoachCourtLocation.findAll({
+        where: { coach_id: userId },
+        include: [{ model: CourtLocation, as: 'court', attributes: ['id', 'latitude', 'longitude'] }],
+      });
+      const existingCourtsWithLocation = existingLinks
+        .map((l) => l.court)
+        .filter((c) => c && c.latitude != null && c.longitude != null);
+      const newLat = latitude != null ? parseFloat(latitude) : null;
+      const newLng = longitude != null ? parseFloat(longitude) : null;
+      if (existingCourtsWithLocation.length > 0 && newLat != null && newLng != null) {
+        const withinRange = existingCourtsWithLocation.some(
+          (c) => distanceMiles(newLat, newLng, c.latitude, c.longitude) <= MAX_COURT_DISTANCE_MILES
+        );
+        if (!withinRange) {
+          return res
+            .status(400)
+            .json(
+              createErrorResponse(
+                `New court must be within ${MAX_COURT_DISTANCE_MILES} miles of your existing courts. When you move, remove old courts first then add new ones.`
+              )
+            );
+        }
+      }
+    }
+
     // Check for duplicate
     const existing = await CourtLocation.findOne({
       where: {
@@ -232,11 +280,36 @@ export const addCoachCourt = async (req, res) => {
       return res.status(400).json(createErrorResponse('Court ID is required and must be a number'));
     }
 
-    const courtExists = await CourtLocation.findOne({
+    const courtToAdd = await CourtLocation.findOne({
       where: { id: courtId, deleted_at: null },
     });
-    if (!courtExists) {
+    if (!courtToAdd) {
       return res.status(404).json(createErrorResponse('Court not found'));
+    }
+
+    // New court must be within MAX_COURT_DISTANCE_MILES of one of the coach's existing courts (if any)
+    const existingLinks = await CoachCourtLocation.findAll({
+      where: { coach_id: userId },
+      include: [{ model: CourtLocation, as: 'court', attributes: ['id', 'latitude', 'longitude'] }],
+    });
+    const existingCourtsWithLocation = existingLinks
+      .map((l) => l.court)
+      .filter((c) => c && c.latitude != null && c.longitude != null);
+    const newLat = courtToAdd.latitude != null ? parseFloat(courtToAdd.latitude) : null;
+    const newLng = courtToAdd.longitude != null ? parseFloat(courtToAdd.longitude) : null;
+    if (existingCourtsWithLocation.length > 0 && newLat != null && newLng != null) {
+      const withinRange = existingCourtsWithLocation.some(
+        (c) => distanceMiles(newLat, newLng, c.latitude, c.longitude) <= MAX_COURT_DISTANCE_MILES
+      );
+      if (!withinRange) {
+        return res
+          .status(400)
+          .json(
+            createErrorResponse(
+              `This court is more than ${MAX_COURT_DISTANCE_MILES} miles from your existing courts. Only link courts you can actually coach at. When you move, remove old courts first then add new ones.`
+            )
+          );
+      }
     }
 
     // Check if already linked
@@ -282,6 +355,38 @@ export const addCoachCourt = async (req, res) => {
       ? error.message
       : 'Failed to add court';
     return res.status(500).json(createErrorResponse(message));
+  }
+};
+
+/**
+ * DELETE /api/coaches/me/courts/:id
+ * Unlink a court from the coach (e.g. when moving to a new city).
+ * :id is the coach_court_location id (from GET /api/coaches/me/courts).
+ */
+export const deleteCoachCourt = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const linkId = req.params.id != null ? parseInt(req.params.id, 10) : null;
+
+    if (req.user.role !== 'coach') {
+      return res.status(403).json(createErrorResponse('Only coaches can remove courts from their profile'));
+    }
+    if (!linkId || Number.isNaN(linkId)) {
+      return res.status(400).json(createErrorResponse('Valid link ID is required'));
+    }
+
+    const link = await CoachCourtLocation.findOne({
+      where: { id: linkId, coach_id: userId },
+    });
+    if (!link) {
+      return res.status(404).json(createErrorResponse('Court link not found or you do not have access to it'));
+    }
+
+    await link.destroy();
+    return res.status(200).json(createResponse(null, 'Court removed from your profile'));
+  } catch (error) {
+    logger.error('Error removing coach court:', error);
+    return res.status(500).json(createErrorResponse('Failed to remove court'));
   }
 };
 

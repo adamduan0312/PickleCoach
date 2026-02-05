@@ -635,9 +635,18 @@
 							],
 							"path": [
 								"coaches"
+							],
+							"query": [
+								{ "key": "lat", "value": "37.78", "description": "Latitude (center for radius search, optional)", "disabled": true },
+								{ "key": "lng", "value": "-122.41", "description": "Longitude (center for radius search, optional)", "disabled": true },
+								{ "key": "radius", "value": "10", "description": "Miles from lat/lng (default 10, max 500)", "disabled": true },
+								{ "key": "skill_level", "value": "advanced", "description": "beginner | intermediate | advanced | professional", "disabled": true },
+								{ "key": "min_rating", "value": "4", "description": "Minimum rating 0-5", "disabled": true },
+								{ "key": "page", "value": "1", "description": "Page number", "disabled": true },
+								{ "key": "limit", "value": "10", "description": "Items per page", "disabled": true }
 							]
 						},
-						"description": "Search and get all coaches (public)"
+						"description": "Search and get all coaches (public). Query params: lat, lng (optional – center for radius), radius (miles, default 10, max 500), skill_level, min_rating, page, limit. Use lat+lng+radius to find coaches with courts near that point (e.g. \"Find coaches near me\")."
 					},
 					"response": [],
 					"event": [
@@ -999,6 +1008,53 @@
 									"    pm.expect(jsonData.success).to.be.true;",
 									"    pm.expect(jsonData).to.have.property('data');",
 									"    pm.expect(jsonData.data).to.be.an('array');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Remove Court from Coach",
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{api_url}}/coaches/me/courts/:id",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"coaches",
+								"me",
+								"courts",
+								":id"
+							],
+							"variable": [
+								{ "key": "id", "value": "1", "description": "Coach court link id from GET /api/coaches/me/courts (data[].id)" }
+							]
+						},
+						"description": "Unlink a court from the coach. Use when moving or no longer coaching at that court. :id is the coach_court_location id from List My Courts response (data[].id), not court_id."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Court removed\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
 									"});"
 								],
 								"type": "text/javascript"

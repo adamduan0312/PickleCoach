@@ -517,9 +517,10 @@ Authorization: Bearer <token>
   ```
 
 **Coach courts workflow**
-- **Create courts** (public or private): Use **`POST /api/courts`** only. Body: `name` (required), optional `address`, `latitude`, `longitude`, `is_private` (default false), `notes`. If a **coach** creates the court, they are **automatically linked** to it (no separate “add to coach” call needed).
-- **Add an existing court to your list**: Use **`POST /api/coaches/me/courts`** when the court already exists (e.g. created by another coach or an admin). Body: `court_id` (required), optional `rate_modifier`, `preferred`, `notes`. This only creates the link; it does not create a new court.
-- **List your courts**: **`GET /api/coaches/me/courts`** returns all courts linked to the authenticated coach (including `court_id` and full court details).
+- **Create courts** (public or private): Use **`POST /api/courts`** only. Body: `name` (required), optional `address`, `latitude`, `longitude`, `is_private` (default false), `notes`. If a **coach** creates the court, they are **automatically linked** to it. **Distance rule:** If the coach already has other courts, the new court must be within **100 miles** of one of them (prevents listing courts they can't coach at).
+- **Add an existing court to your list**: Use **`POST /api/coaches/me/courts`** when the court already exists. Body: `court_id` (required), optional `rate_modifier`, `preferred`, `notes`. **Distance rule:** If the coach already has other courts, the new court must be within **100 miles** of one of them.
+- **Remove a court** (e.g. when moving): Use **`DELETE /api/coaches/me/courts/:id`** where `:id` is the coach_court_location id (from GET /api/coaches/me/courts). After removing old courts, add courts in the new city and update profile **location**.
+- **List your courts**: **`GET /api/coaches/me/courts`** returns all courts linked to the authenticated coach (each item has `id` for use with DELETE).
 
 ### `GET /api/coaches/me/courts`
 - **Auth**: Required (coach only)
@@ -628,7 +629,20 @@ Authorization: Bearer <token>
     }
   }
   ```
-- **Error responses**: `400` (court_id missing or invalid), `404` (court not found), `409` (coach already linked to this court).
+- **Error responses**: `400` (court_id missing or invalid; or court more than 100 miles from your existing courts), `404` (court not found), `409` (coach already linked to this court).
+
+### `DELETE /api/coaches/me/courts/:id`
+- **Auth**: Required (coach only)
+- **Description**: Unlink a court from the coach's profile. Use when moving or when you no longer coach at that court. `:id` is the **coach_court_location** id (the `id` of each item in GET /api/coaches/me/courts), not the court_id.
+- **Response** (Status: 200):
+  ```json
+  {
+    "success": true,
+    "message": "Court removed from your profile",
+    "data": null
+  }
+  ```
+- **Error responses**: `400` (invalid id), `403` (not a coach), `404` (link not found or not yours).
 
 ### `POST /api/coaches/me/stripe-connect/onboard`
 - **Auth**: Required
@@ -717,7 +731,7 @@ Authorization: Bearer <token>
 
 ### `POST /api/courts`
 - **Auth**: Required (Coach or Admin only)
-- **Description**: Create a new court location
+- **Description**: Create a new court location. **Coaches:** If you already have other courts, the new court must be within **100 miles** of one of them (prevents listing courts you can't coach at). Admins are not subject to this rule.
 - **Request Body**:
   ```json
   {
@@ -746,6 +760,7 @@ Authorization: Bearer <token>
     }
   }
   ```
+- **Error responses**: For coaches with existing courts, `400` if the new court is more than 100 miles from all of your existing courts.
 
 ---
 

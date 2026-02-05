@@ -128,11 +128,12 @@ See `POSTMAN_SETUP_GUIDE.md` for detailed instructions and all endpoint test scr
 
 Use this sequence when adding courts to a coach in Postman (or in the app):
 
-1. **Create courts** (public or private): **`POST /api/courts`** only. If a coach creates the court, they are **automatically linked** to it.
-2. **Add an existing court to your list**: **`POST /api/coaches/me/courts`** with `court_id` (required) and optional `rate_modifier`, `preferred`, `notes`. Use when the court already exists (e.g. created by admin or another coach).
-3. **List your courts**: **`GET /api/coaches/me/courts`** returns all courts linked to the authenticated coach (including `court_id` and full court details).
+1. **Create courts** (public or private): **`POST /api/courts`** only. If a coach creates the court, they are **automatically linked** to it. **Distance rule:** If the coach already has other courts, the new court must be within **100 miles** of one of them.
+2. **Add an existing court**: **`POST /api/coaches/me/courts`** with `court_id` (required), optional `rate_modifier`, `preferred`, `notes`. **Distance rule:** New court must be within **100 miles** of one of your existing courts (if you have any).
+3. **Remove a court** (e.g. when moving): **`DELETE /api/coaches/me/courts/:id`** where `:id` is the link id from List My Courts. Then add courts in the new city and update your profile **location**.
+4. **List your courts**: **`GET /api/coaches/me/courts`** returns all linked courts (each item has `id` for use with DELETE).
 
-**In Postman:** **Courts** → **Create Court** to create courts; **Coaches** → **List My Courts** to see your linked courts; **Coaches** → **Add Court to Coach** with `court_id` to link an existing court to yourself.
+**In Postman:** **Courts** → **Create Court**; **Coaches** → **List My Courts**; **Coaches** → **Add Court to Coach**; **Coaches** → **Remove Court from Coach** (use link id from list).
 
 ---
 
@@ -2256,9 +2257,10 @@ Authorization: Bearer <token>
   ```
 
 **Coach courts workflow**
-- **Create courts** (public or private): Use **`POST /api/courts`** only. If a **coach** creates the court, they are **automatically linked** to it.
-- **Add an existing court to your list**: Use **`POST /api/coaches/me/courts`** with `court_id` (required), optional `rate_modifier`, `preferred`, `notes`. Use when the court already exists.
-- **List your courts**: **`GET /api/coaches/me/courts`** returns all courts linked to the authenticated coach.
+- **Create courts**: **`POST /api/courts`**. Coach is auto-linked. **Distance rule:** New court must be within **100 miles** of one of your existing courts (if any).
+- **Add existing court**: **`POST /api/coaches/me/courts`** with `court_id`. **Distance rule:** Court must be within **100 miles** of one of your existing courts (if any).
+- **Remove court** (e.g. when moving): **`DELETE /api/coaches/me/courts/:id`** (`:id` = link id from GET response). Then add new city courts and update profile location.
+- **List your courts**: **`GET /api/coaches/me/courts`** (each item has `id` for DELETE).
 
 ### `GET /api/coaches/me/courts`
 - **Auth**: Required (coach only)
@@ -2306,7 +2308,12 @@ Authorization: Bearer <token>
   }
   ```
 - **Response** (Status: 201): `data` contains `coachCourt` (id, coach_id, court_id, rate_modifier, preferred, notes, created_at, updated_at) and `court` (full court details including createdBy).
-- **Error responses**: `400` (court_id missing or invalid), `404` (court not found), `409` (coach already linked to this court).
+- **Error responses**: `400` (court_id missing/invalid or court &gt;100 miles from your existing courts), `404` (court not found), `409` (already linked).
+
+### `DELETE /api/coaches/me/courts/:id`
+- **Auth**: Required (coach only)
+- **Description**: Unlink a court from your profile. `:id` is the coach_court_location id (from GET /api/coaches/me/courts), not court_id. Use when moving or no longer coaching at that court.
+- **Response** (200): `{ "success": true, "message": "Court removed from your profile", "data": null }`.
 
 ### `POST /api/coaches/me/stripe-connect/onboard`
 - **Auth**: Required
