@@ -149,6 +149,9 @@ const getEmailSubject = (type, payload) => {
     'payment_received': 'Payment Received',
     'payout_processed': 'Payout Processed',
     'password_reset': 'Reset Your PickleCoach Password',
+    'email_verification': 'Verify Your PickleCoach Email',
+    'email_change_confirm': 'Confirm Your New PickleCoach Email',
+    'email_changed_notification': 'Your PickleCoach Email Was Changed',
   };
   return subjects[type] || 'Notification from PickleCoach';
 };
@@ -187,6 +190,30 @@ const getEmailContent = (type, payload) => {
       <p>${payload?.reset_url || ''}</p>
       <p>If you didn't request this, please ignore this email.</p>
       <p><small>This link will expire in ${payload?.expires_in || '1 hour'}.</small></p>
+    `,
+    'email_verification': `
+      <h2>Verify Your Email</h2>
+      <p>Thanks for creating a PickleCoach account.</p>
+      <p>Click the link below to verify your email address (expires in ${payload?.expires_in || '24 hours'}):</p>
+      <p><a href="${payload?.verify_url || '#'}" style="background-color: #4CAF50; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block;">Verify Email</a></p>
+      <p>Or copy and paste this URL into your browser:</p>
+      <p>${payload?.verify_url || ''}</p>
+      <p>If you didn't create this account, you can ignore this email.</p>
+    `,
+    'email_change_confirm': `
+      <h2>Confirm Your New Email</h2>
+      <p>You requested to change the email address on your PickleCoach account to <strong>${payload?.new_email || ''}</strong>.</p>
+      <p>Click the link below to confirm this change (expires in ${payload?.expires_in || '24 hours'}):</p>
+      <p><a href="${payload?.confirm_url || '#'}" style="background-color: #4CAF50; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block;">Confirm Email Change</a></p>
+      <p>Or copy and paste this URL into your browser:</p>
+      <p>${payload?.confirm_url || ''}</p>
+      <p>If you did not request this change, you can ignore this email.</p>
+    `,
+    'email_changed_notification': `
+      <h2>Your Email Address Was Changed</h2>
+      <p>The email address on your PickleCoach account was changed from <strong>${payload?.old_email || ''}</strong> to <strong>${payload?.new_email || ''}</strong>.</p>
+      <p>If you made this change, no further action is needed.</p>
+      <p>If you did <strong>not</strong> make this change, please contact support immediately.</p>
     `,
   };
   

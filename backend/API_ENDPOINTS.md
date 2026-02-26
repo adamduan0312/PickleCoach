@@ -11,6 +11,8 @@ Authorization: Bearer <token>
 
 **Response convention**: For create/update endpoints, the response body echoes all **safe** request-body fields (same keys, with `null` when optional and unset) so clients see a consistent shape and can easily compare request vs response in Postman. Sensitive fields (e.g. password) are never returned.
 
+**Delete behavior**: **Soft delete** (set `deleted_at` / `is_active: false`, row kept): users (self-delete `DELETE /api/auth/me`, admin `DELETE /api/users/:id`), coach profile (when user is deleted), courts (`DELETE /api/courts/:id`), lessons (`DELETE /api/lessons/:id`). **Hard delete** (row removed): coach availability (`DELETE /api/coaches/availability/:id` coach-only, or `DELETE /api/admin/coaches/:coachId/availability/:id` admin), coach–court link (`DELETE /api/coaches/me/courts/:id` coach-only, or `DELETE /api/admin/coaches/:coachId/courts/:linkId` admin), reviews (`DELETE /api/reviews/:id`). Bookings are cancelled via `POST /api/bookings/:id/cancel`, not deleted.
+
 ---
 
 ## Health Check
@@ -190,6 +192,116 @@ Authorization: Bearer <token>
 - **Error responses**: See full error response block above (400 invalid/expired token, 400 validation failed, 500 server error).
 - **Note**: Token expires after 1 hour.
 
+### `PUT /api/auth/change-password`
+- **Auth**: Required
+- **Description**: Change the current authenticated user's password using their existing password. **All existing sessions/tokens are revoked** via token versioning; clients should prompt the user to log in again if necessary.
+- **Request Body**:
+  ```json
+  {
+    "current_password": "string (required, existing password)",
+    "new_password": "string (required, min 8 chars)"
+  }
+  ```
+- **Response** (Status: 200):
+  ```json
+  {
+    "success": true,
+    "message": "Password changed successfully",
+    "data": null
+  }
+  ```
+- **Error responses**: `400` (missing fields, new_password too short, or current_password incorrect), `401` (missing or invalid token), `500` (server error).
+
+### `POST /api/auth/change-email/request`
+- **Auth**: Required
+- **Description**: Start a **2-step email change flow** for the authenticated user. Verifies the user's current password, checks that the new email is not already in use, and sends a confirmation email to the **new** email address with a tokenized link.
+- **Request Body**:
+  ```json
+  {
+    "new_email": "string (required, valid email, max 150 chars, must be different from current email)",
+    "password": "string (required, current account password)"
+  }
+  ```
+- **Response** (Status: 200):
+  ```json
+  {
+    "success": true,
+    "message": "Email change confirmation sent to new address",
+    "data": null
+  }
+  ```
+- **Behavior**:
+  - Stores a one-time `email_change_token`, `email_change_expires` (24h), and `email_change_new_email` on the user record.
+  - Sends a `email_change_confirm` notification via email to the new address with a link like:
+    `https://frontend/change-email/confirm?token=...`.
+- **Error responses**: `400` (validation failed, password incorrect, new_email equals current, or new_email already in use), `401` (missing or invalid token), `500` (server error).
+
+### `POST /api/auth/change-email/confirm`
+- **Auth**: None required (token-based)
+- **Description**: Confirm the email change using the token sent to the **new** email address.
+- **Request Body**:
+  ```json
+  {
+    "token": "string (required, email change token from email)"
+  }
+  ```
+- **Response** (Status: 200):
+  ```json
+  {
+    "success": true,
+    "message": "Email updated successfully",
+    "data": null
+  }
+  ```
+- **Behavior**:
+  - Validates the token (`email_change_token`) and ensures `email_change_expires` is in the future.
+  - Updates `user.email` to the pending `email_change_new_email`.
+  - Clears `email_change_token`, `email_change_expires`, and `email_change_new_email`.
+  - Sets `email_verified_at` to now (the new email is considered verified).
+  - Increments `token_version` for the user, revoking all existing JWTs.
+  - Sends a security notification (`email_changed_notification`) to the **old email** informing them that the email was changed.
+- **Error responses**: `400` (invalid or expired token), `500` (server error).
+
+### `POST /api/auth/verify-email/request`
+- **Auth**: Required
+- **Description**: Request a verification email for the current authenticated user's email address. Used by the frontend to implement a **hybrid verification UX**: users can browse without verifying, but must verify before bookings/payments/disputes/reviews/messaging.
+- **Request Body**: _Empty object_ (`{}`).
+- **Response** (Status: 200):
+  ```json
+  {
+    "success": true,
+    "message": "Verification email sent",
+    "data": null
+  }
+  ```
+- **Behavior**:
+  - If `email_verified_at` is already set, returns success with message `"Email is already verified"` and does not send a new email.
+  - Otherwise generates an `email_verification_token` and `email_verification_expires` (24h) and sends an `email_verification` email with a link like:
+    `https://frontend/verify-email?token=...`.
+- **Error responses**: `401` (missing or invalid token), `500` (server error).
+
+### `POST /api/auth/verify-email/confirm`
+- **Auth**: None required (token-based)
+- **Description**: Confirm email verification using the token from the verification email.
+- **Request Body**:
+  ```json
+  {
+    "token": "string (required, email verification token from email)"
+  }
+  ```
+- **Response** (Status: 200):
+  ```json
+  {
+    "success": true,
+    "message": "Email verified successfully",
+    "data": null
+  }
+  ```
+- **Behavior**:
+  - Finds a user with the matching `email_verification_token` and a non-expired `email_verification_expires`.
+  - Sets `email_verified_at` if not already set, and clears the verification token/expiry.
+- **Error responses**: `400` (invalid or expired verification token), `500` (server error).
+
 ### `GET /api/auth/profile`
 - **Auth**: Required
 - **Description**: Get current authenticated user's profile
@@ -242,18 +354,86 @@ Authorization: Bearer <token>
   ```
 - **Error responses**: `400` (validation failed – invalid body), `401` (missing or invalid token), `500` (server error).
 
+### `PUT /api/auth/me/role`
+- **Auth**: Required
+- **Description**: Switch your account between **student** and **coach** without deleting the account. Admins cannot use this (use admin user management). If you switch to coach and don't have a coach profile yet, create one with `POST /api/coaches/profile`. If you had a coach profile before switching to student, it is kept so switching back to coach restores your listing.
+- **Request Body**:
+  ```json
+  {
+    "role": "string (required, 'student' | 'coach')"
+  }
+  ```
+- **Response** (Status: 200):
+  ```json
+  {
+    "success": true,
+    "message": "Role updated successfully. Use the new token for subsequent requests.",
+    "data": {
+      "user": {
+        "id": 1,
+        "full_name": "Jane Doe",
+        "email": "jane@example.com",
+        "role": "coach",
+        "phone": "+1234567890",
+        "timezone": "America/New_York",
+        "avatar_url": null
+      },
+      "token": "eyJhbGciOiJIUzI1NiIs..."
+    }
+  }
+  ```
+- **Error responses**: `400` (invalid role), `403` (admin cannot use this endpoint), `401` (missing or invalid token), `500` (server error).
+
+### `DELETE /api/auth/me`
+- **Auth**: Required
+- **Description**: Delete the current user's account (**soft delete**). Sets `deleted_at` and `is_active: false` on the user; if the user has a coach profile, it is also soft-deleted. The user can no longer log in. **Not available to admins** (admins must use admin user management).
+- **Response** (Status: 200):
+  ```json
+  {
+    "success": true,
+    "message": "Account deleted successfully",
+    "data": null
+  }
+  ```
+- **Error responses**: `403` (admin cannot use this endpoint), `401` (missing or invalid token), `500` (server error).
+
+### Email verification & "serious actions"
+
+- **Token versioning**: All JWTs include a `tokenVersion` claim. The backend stores `token_version` per user and rejects tokens where the claim does not match, allowing **global session revocation** when passwords/emails are changed.
+- **Email verification**:
+  - Many endpoints only require a valid JWT.
+  - **High-impact endpoints** additionally require `email_verified_at` to be set (see notes below).
+  - Unverified users receive `403` with a message instructing them to verify their email.
+- **Endpoints requiring verified email**:
+  - `POST /api/bookings` (create booking)
+  - `POST /api/payments` (create payment)
+  - `POST /api/disputes` (create dispute)
+  - `POST /api/reviews` (create review)
+  - `POST /api/messages/conversations` and `POST /api/messages/send` (booking-scoped messaging)
+  - The frontend should:
+    - Show a non-blocking banner after signup/first login prompting verification.
+    - Automatically call `POST /api/auth/verify-email/request` when the user asks to resend.
+
 ---
 
 ## Users (`/api/users`)
 
+
+**User lifecycle (best practice):**
+- **`deleted_at`**: Soft-delete. When set, the account is treated as deleted (data kept for audit). Login and list endpoints exclude deleted users unless otherwise specified.
+- **`is_active`**: Whether the account can log in and appear in “active” lists (e.g. coach directory). When an admin or user deletes an account, the code sets both `deleted_at` and `is_active: false`, so **deleted ⇒ inactive**. The reverse is not required: an admin can set `is_active: false` without deleting (e.g. suspend). So **inactive does not imply deleted**.
+- **List behavior**: `GET /api/users` filters only by **deletion** (use `include_deleted=true` to include soft-deleted). Each user in the response includes `is_active`; filter or display active/inactive on the client if needed.
+
 ### `GET /api/users`
 - **Auth**: Required (Admin only)
-- **Description**: Get all users (admin only)
+- **Description**: Get all users (admin only). By default returns only non–soft-deleted users.
 - **Query Parameters**:
   - `page`: number (optional, default: 1)
   - `limit`: number (optional, default: 10)
   - `role`: string (optional, filter by role: 'student' | 'coach' | 'admin')
-  - `is_active`: boolean (optional, filter by active status)
+  - `include_deleted`: string `'true'` | `'false'` (optional). If `'true'`, includes soft-deleted users; default is non-deleted only.
+  - `search`: string (optional). Filters users by **full name** or **email** (case-insensitive, partial match). Use for admin "find user" without scrolling the full list.
+- **Note**: Response items include `is_active`; use client-side filtering or display by active/inactive as needed.
 - **Response** (Status: 200):
   ```json
   {
@@ -274,8 +454,8 @@ Authorization: Bearer <token>
   Note: Pagination info is included in the response structure (see pagination section)
 
 ### `GET /api/users/:id`
-- **Auth**: Required
-- **Description**: Get user by ID
+- **Auth**: Required (Admin only)
+- **Description**: Get user by ID (admin only). Non-admins should use `GET /api/auth/profile` for their own profile.
 - **Response** (Status: 200):
   ```json
   {
@@ -307,13 +487,15 @@ Authorization: Bearer <token>
 
 ### `PUT /api/users/:id`
 - **Auth**: Required (Admin only)
-- **Description**: Update user (admin only - can update role and is_active)
+- **Description**: Update user (admin only - can update role, is_active, email, avatar_url, etc.)
 - **Request Body** (all fields optional - omit fields you don't want to update):
   ```json
   {
     "full_name": "string (optional)",
+    "email": "string (optional, must be unique; 400 if already in use)",
     "phone": "string (optional, max 30 chars)",
     "timezone": "string (optional)",
+    "avatar_url": "string (optional, URI or empty string to clear)",
     "is_active": "boolean (optional, admin only)",
     "role": "string (optional, admin only, 'student' | 'coach' | 'admin')"
   }
@@ -328,14 +510,17 @@ Authorization: Bearer <token>
       "full_name": "Updated Name",
       "email": "john@example.com",
       "role": "coach",
-      "is_active": true
+      "is_active": true,
+      "phone": "+1234567890",
+      "timezone": "America/New_York",
+      "avatar_url": null
     }
   }
   ```
 
 ### `DELETE /api/users/:id`
 - **Auth**: Required (Admin only)
-- **Description**: Delete user (admin only)
+- **Description**: **Soft delete** user (admin only). Sets `deleted_at` and `is_active: false` on the user; if the user has a coach profile, it is also soft-deleted. Deleted users are excluded from list/get and cannot log in.
 - **Response** (Status: 200):
   ```json
   {
@@ -344,15 +529,23 @@ Authorization: Bearer <token>
     "data": null
   }
   ```
+- **Error responses**: `400` (user already deleted), `404` (user not found), `500` (server error).
 
 ---
 
 ## Coaches (`/api/coaches`)
 
-### `GET /api/coaches`
-- **Auth**: None required
-- **Description**: Search and get all coaches (public)
-- **Query Parameters**: Search filters (location, skill level, etc.)
+### `GET /api/coaches` (List / search coaches)
+- **Auth**: Required (student or admin only). Coaches cannot use this endpoint (403).
+- **Description**: List coaches with optional filters. Use **lat**, **lng**, and **radius** to find coaches who have courts within that distance (e.g. "coaches near me"). Other filters: skill level, minimum rating, pagination.
+- **Query Parameters**:
+  - `lat` (optional) – latitude in degrees (center point for distance filter)
+  - `lng` (optional) – longitude in degrees (center point for distance filter)
+  - `radius` (optional) – miles from (lat, lng); default 10, max 500
+  - `skill_level` (optional) – `beginner` | `intermediate` | `advanced` | `pro`
+  - `min_rating` (optional) – minimum coach rating (0–5)
+  - `page` (optional) – page number; default 1
+  - `limit` (optional) – items per page; default 10
 - **Response** (Status: 200):
   ```json
   {
@@ -515,6 +708,19 @@ Authorization: Bearer <token>
     ]
   }
   ```
+
+### `DELETE /api/coaches/availability/:id`
+- **Auth**: Required (Coach only)
+- **Description**: Delete a coach availability slot (**hard delete**). Coaches can only delete their own availability. `:id` is the availability record id (from GET coach availability or POST create response).
+- **Response** (Status: 200):
+  ```json
+  {
+    "success": true,
+    "message": "Availability deleted successfully",
+    "data": null
+  }
+  ```
+- **Error responses**: `403` (not coach or not own availability), `404` (availability not found), `500` (server error).
 
 **Coach courts workflow**
 - **Create courts** (public or private): Use **`POST /api/courts`** only. Body: `name` (required), optional `address`, `latitude`, `longitude`, `is_private` (default false), `notes`. If a **coach** creates the court, they are **automatically linked** to it. **Distance rule:** If the coach already has other courts, the new court must be within **100 miles** of one of them (prevents listing courts they can't coach at).
@@ -762,6 +968,19 @@ Authorization: Bearer <token>
   ```
 - **Error responses**: For coaches with existing courts, `400` if the new court is more than 100 miles from all of your existing courts.
 
+### `DELETE /api/courts/:id`
+- **Auth**: Required (Admin, or coach who created the court)
+- **Description**: **Soft delete** a court. Sets `deleted_at`; court no longer appears in search or GET. **Admins** can delete any court. **Coaches** can delete only courts they created (where they are `created_by_user_id`). Use when a coach stops using a court they added or an admin is closing/merging courts.
+- **Response** (Status: 200):
+  ```json
+  {
+    "success": true,
+    "message": "Court deleted successfully",
+    "data": null
+  }
+  ```
+- **Error responses**: `403` (not admin and not the creator of this court), `404` (court not found or already deleted), `500` (server error).
+
 ---
 
 ## Lessons (`/api/lessons`)
@@ -894,10 +1113,11 @@ Authorization: Bearer <token>
 
 ## Bookings (`/api/bookings`)
 
+
 ### `GET /api/bookings`
 - **Auth**: Required
-- **Description**: Get user's bookings (filtered by role - coach sees coach bookings, student sees student bookings)
-- **Query Parameters**: Filters (status, date range, etc.)
+- **Description**: List bookings. **Non-admin**: only your own (as coach or student). **Admin**: can filter by coach_id, student_id, status.
+- **Query Parameters**: status, coach_id (admin only), student_id (admin only), page, limit
 - **Response** (Status: 200):
   ```json
   {
@@ -955,7 +1175,7 @@ Authorization: Bearer <token>
   ```
 
 ### `POST /api/bookings`
-- **Auth**: Required
+- **Auth**: Required (email must be verified)
 - **Description**: Create a new booking
 - **Request Body**:
   ```json
@@ -1107,7 +1327,7 @@ Authorization: Bearer <token>
   ```
 
 ### `POST /api/payments`
-- **Auth**: Required
+- **Auth**: Required (email must be verified)
 - **Description**: Create a payment (usually created automatically with booking)
 - **Request Body**:
   ```json
@@ -1217,29 +1437,14 @@ Authorization: Bearer <token>
   }
   ```
 
-### `POST /api/reschedules/request`
-- **Auth**: Required
-- **Description**: Request a reschedule (alternative to `/api/bookings/:id/reschedule`)
-- **Request Body**:
-  ```json
-  {
-    "booking_id": "number (required, positive integer)",
-    "new_scheduled_at": "string (required, ISO 8601 date-time, must be in future)",
-    "reason": "string (required, valid reschedule reason)",
-    "reason_notes": "string (optional, max 255 chars)",
-    "paid_reschedule": "boolean (optional, defaults to false)"
-  }
-  ```
-- **Response**: Reschedule request created
-
 ---
 
 ## Reviews (`/api/reviews`)
 
 ### `GET /api/reviews`
-- **Auth**: None required
-- **Description**: Get reviews (public)
-- **Query Parameters**: Filters (coach_id, student_id, rating, etc.)
+- **Auth**: Required
+- **Description**: List reviews with optional filters (target_user_id, reviewer_id, etc.)
+- **Query Parameters**: target_user_id, reviewer_id, page, limit
 - **Response** (Status: 200):
   ```json
   {
@@ -1261,7 +1466,7 @@ Authorization: Bearer <token>
   ```
 
 ### `POST /api/reviews`
-- **Auth**: Required
+- **Auth**: Required (email must be verified)
 - **Description**: Create a review
 - **Request Body**:
   ```json
@@ -1390,7 +1595,7 @@ Authorization: Bearer <token>
   ```
 
 ### `POST /api/messages/conversations`
-- **Auth**: Required
+- **Auth**: Required (email must be verified)
 - **Description**: Create a new conversation for a booking
 - **Request Body**:
   ```json
@@ -1412,7 +1617,7 @@ Authorization: Bearer <token>
   ```
 
 ### `POST /api/messages/send`
-- **Auth**: Required
+- **Auth**: Required (email must be verified)
 - **Description**: Send a message in a conversation
 - **Request Body**:
   ```json
@@ -1503,7 +1708,7 @@ Authorization: Bearer <token>
   ```
 
 ### `POST /api/disputes`
-- **Auth**: Required
+- **Auth**: Required (email must be verified)
 - **Description**: Create a dispute
 - **Request Body**:
   ```json
@@ -1618,18 +1823,14 @@ Authorization: Bearer <token>
 
 ### `PUT /api/notifications/:id/read`
 - **Auth**: Required
-- **Description**: Mark notification as read
-- **Response** (Status: 200):
-  ```json
-  {
-    "success": true,
-    "message": "Notification marked as read",
-    "data": {
-      "id": 1,
-      "read_at": "2026-01-01T12:00:00.000Z"
-    }
-  }
-  ```
+- **Description**: Mark notification as read (own notification or admin)
+- **Response** (Status: 200): Notification object with updated status.
+
+### `DELETE /api/notifications/:id`
+- **Auth**: Required
+- **Description**: Delete/dismiss a notification (**hard delete**). Users can only delete their own notifications; admins can delete any. Use to clear read or unwanted in-app notifications.
+- **Response** (Status: 200): `{ "success": true, "message": "Notification deleted successfully", "data": null }`
+- **Error responses**: `403` (not your notification and not admin), `404` (not found), `500` (server error).
 
 ---
 
@@ -1735,6 +1936,40 @@ Authorization: Bearer <token>
   }
   ```
 
+### `GET /api/admin/audit-logs`
+- **Auth**: Required (Admin only)
+- **Description**: List audit log entries for security, support, and compliance. Each entry records who did what, to which record, and from where.
+- **Query Parameters**:
+  - `page`: number (optional, default: 1)
+  - `limit`: number (optional, default: 10, max: 100)
+  - `user_id`: number (optional) – filter by acting user id
+  - `action`: string (optional) – filter by action name (e.g. `user_registered`, `password_changed`, `email_change_completed`, `booking_created`)
+  - `table_name`: string (optional) – filter by table name (e.g. `users`, `bookings`, `payments`)
+- **Response** (Status: 200):
+  ```json
+  {
+    "success": true,
+    "message": "Audit logs retrieved successfully",
+    "data": [
+      {
+        "id": 1,
+        "user_id": 10,
+        "action": "password_changed",
+        "table_name": "users",
+        "record_id": 42,
+        "before_state": { "id": 42, "email": "old@example.com" },
+        "after_state": { "password_changed": true, "token_version": 3 },
+        "ip_address": "203.0.113.10",
+        "user_agent": "PostmanRuntime/7.36.0",
+        "created_at": "2026-02-24T12:00:00.000Z"
+      }
+    ]
+  }
+  ```
+- **Notes**:
+  - Results are paginated; see pagination section for format.
+  - Use filters to narrow down to specific users, actions, or tables when investigating issues.
+
 ### `PUT /api/admin/users/:id/reliability`
 - **Auth**: Required (Admin only)
 - **Description**: Manually adjust user reliability score
@@ -1762,6 +1997,54 @@ Authorization: Bearer <token>
     }
   }
   ```
+
+### `GET /api/admin/coaches/:coachId/courts`
+- **Auth**: Required (Admin only)
+- **Description**: List courts linked to a coach (for support/moderation). Use when an admin needs to view or fix a coach's court list. **Path**: `coachId` = coach's **user id** (users.id).
+- **Response** (Status: 200):
+  ```json
+  {
+    "success": true,
+    "message": "Coach courts retrieved successfully",
+    "data": [
+      {
+        "id": 1,
+        "court_id": 5,
+        "rate_modifier": null,
+        "preferred": false,
+        "notes": null,
+        "court": { "id": 5, "name": "City Park", "address": "...", ... }
+      }
+    ]
+  }
+  ```
+- **Error responses**: `403` (not admin), `404` (coach not found), `500` (server error).
+
+### `DELETE /api/admin/coaches/:coachId/courts/:linkId`
+- **Auth**: Required (Admin only)
+- **Description**: Unlink a court from a coach (e.g. wrong court linked). **Path**: `coachId` = coach's user id, `linkId` = coach_court_location id (from GET /api/admin/coaches/:coachId/courts `data[].id`).
+- **Response** (Status: 200):
+  ```json
+  {
+    "success": true,
+    "message": "Court unlinked from coach successfully",
+    "data": null
+  }
+  ```
+- **Error responses**: `403` (not admin), `404` (coach or link not found), `500` (server error).
+
+### `DELETE /api/admin/coaches/:coachId/availability/:id`
+- **Auth**: Required (Admin only)
+- **Description**: Delete a coach's availability slot (e.g. wrong times). **Path**: `coachId` = coach's user id, `id` = availability record id (from GET /coaches/:id/availability or coach's own availability list).
+- **Response** (Status: 200):
+  ```json
+  {
+    "success": true,
+    "message": "Availability deleted successfully",
+    "data": null
+  }
+  ```
+- **Error responses**: `403` (not admin), `404` (coach or availability not found), `500` (server error).
 
 ---
 

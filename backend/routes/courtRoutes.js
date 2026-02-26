@@ -12,6 +12,7 @@ router.get('/:id', courtController.getCourt);
 
 // Protected routes
 router.post('/', authenticate, courtController.createCourt);
+router.delete('/:id', authenticate, courtController.deleteCourt);
 
 export default router;
 

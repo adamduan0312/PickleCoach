@@ -2,7 +2,7 @@
 	"info": {
 		"_postman_id": "picklecoach-api-collection",
 		"name": "PickleCoach API",
-		"description": "Complete API collection for PickleCoach with test scripts",
+		"description": "Complete API collection for PickleCoach with test scripts. Each request description starts with **Roles:** (Admin, Coach, Student, or Any/unauthenticated) so you can see who can call it.",
 		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
 	},
 	"item": [
@@ -23,7 +23,7 @@
 								"health"
 							]
 						},
-						"description": "Check if the server and database are running"
+						"description": "Roles: Any (no auth). Check if the server and database are running."
 					},
 					"response": [],
 					"event": [
@@ -56,6 +56,7 @@
 		},
 		{
 			"name": "Authentication",
+			"description": "Auth endpoints. Roles vary: Register/Login = Any (no auth); Profile/Switch Role/Delete = authenticated (see each request).",
 			"item": [
 				{
 					"name": "Register",
@@ -81,7 +82,7 @@
 								"register"
 							]
 						},
-						"description": "Register a new user account. Optional: avatar_url (valid URL, max 255 chars). Response includes user.avatar_url (null if not set)."
+						"description": "Roles: Any (no auth). Register a new user account. Optional: avatar_url (valid URL, max 255 chars)."
 					},
 					"response": [],
 					"event": [
@@ -141,7 +142,7 @@
 								"login"
 							]
 						},
-						"description": "Login and receive JWT token"
+						"description": "Roles: Any (no auth). Login and receive JWT token."
 					},
 					"response": [],
 					"event": [
@@ -340,7 +341,7 @@
 								"profile"
 							]
 						},
-						"description": "Get current authenticated user's profile"
+						"description": "Roles: Student, Coach, Admin. Get current authenticated user's profile."
 					},
 					"response": [],
 					"event": [
@@ -392,7 +393,7 @@
 								"profile"
 							]
 						},
-						"description": "Update current authenticated user's profile"
+						"description": "Roles: Student, Coach, Admin. Update current authenticated user's profile."
 					},
 					"response": [],
 					"event": [
@@ -414,105 +415,71 @@
 							}
 						}
 					]
-				}
-			]
-		},
-		{
-			"name": "Users",
-			"item": [
+				},
 				{
-					"name": "Get All Users (Admin)",
+					"name": "Request Email Verification",
 					"request": {
-						"method": "GET",
+						"method": "POST",
 						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
 							{
 								"key": "Authorization",
 								"value": "Bearer {{auth_token}}"
 							}
 						],
+						"body": {
+							"mode": "raw",
+							"raw": "{}"
+						},
 						"url": {
-							"raw": "{{api_url}}/users",
+							"raw": "{{api_url}}/auth/verify-email/request",
 							"host": [
 								"{{api_url}}"
 							],
 							"path": [
-								"users"
+								"auth",
+								"verify-email",
+								"request"
 							]
 						},
-						"description": "Get all users (admin only)"
+						"description": "Roles: Student, Coach, Admin. Request a verification email to be sent to the current user's email address."
 					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Status code is 200\", function () {",
-									"    pm.response.to.have.status(200);",
-									"});",
-									"",
-									"pm.test(\"Returns array of users\", function () {",
-									"    var jsonData = pm.response.json();",
-									"    pm.expect(jsonData).to.have.property('data');",
-									"    pm.expect(jsonData.data).to.be.an('array');",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
+					"response": []
 				},
 				{
-					"name": "Get User By ID",
+					"name": "Confirm Email Verification",
 					"request": {
-						"method": "GET",
+						"method": "POST",
 						"header": [
 							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
+								"key": "Content-Type",
+								"value": "application/json"
 							}
 						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"token\": \"verification_token_from_email\"\n}"
+						},
 						"url": {
-							"raw": "{{api_url}}/users/:id",
+							"raw": "{{api_url}}/auth/verify-email/confirm",
 							"host": [
 								"{{api_url}}"
 							],
 							"path": [
-								"users",
-								":id"
-							],
-							"variable": [
-								{
-									"key": "id",
-									"value": "{{user_id}}"
-								}
+								"auth",
+								"verify-email",
+								"confirm"
 							]
 						},
-						"description": "Get user by ID"
+						"description": "Roles: Any (no auth). Confirm email verification using the token from the verification email."
 					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Status code is 200\", function () {",
-									"    pm.response.to.have.status(200);",
-									"});",
-									"",
-									"pm.test(\"User data returned\", function () {",
-									"    var jsonData = pm.response.json();",
-									"    pm.expect(jsonData).to.have.property('data');",
-									"    pm.expect(jsonData.data).to.have.property('id');",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
+					"response": []
 				},
 				{
-					"name": "Update User (Admin)",
+					"name": "Change Password",
 					"request": {
 						"method": "PUT",
 						"header": [
@@ -527,25 +494,114 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"full_name\": \"Updated Name\",\n  \"phone\": \"+1234567890\",\n  \"timezone\": \"America/New_York\",\n  \"is_active\": true,\n  \"role\": \"coach\"\n}"
+							"raw": "{\n  \"current_password\": \"CurrentPassword123!\",\n  \"new_password\": \"NewSecurePassword123!\"\n}"
 						},
 						"url": {
-							"raw": "{{api_url}}/users/:id",
+							"raw": "{{api_url}}/auth/change-password",
 							"host": [
 								"{{api_url}}"
 							],
 							"path": [
-								"users",
-								":id"
-							],
-							"variable": [
-								{
-									"key": "id",
-									"value": "{{user_id}}"
-								}
+								"auth",
+								"change-password"
 							]
 						},
-						"description": "Update user (admin only - can update role and is_active)"
+						"description": "Roles: Student, Coach, Admin. Change password using the current password and a new password. Revokes all existing tokens."
+					},
+					"response": []
+				},
+				{
+					"name": "Request Email Change",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"new_email\": \"new-email@example.com\",\n  \"password\": \"CurrentPassword123!\"\n}"
+						},
+						"url": {
+							"raw": "{{api_url}}/auth/change-email/request",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"auth",
+								"change-email",
+								"request"
+							]
+						},
+						"description": "Roles: Student, Coach, Admin. Start 2-step email change flow. Sends confirmation to the NEW email address."
+					},
+					"response": []
+				},
+				{
+					"name": "Confirm Email Change",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"token\": \"email_change_token_from_email\"\n}"
+						},
+						"url": {
+							"raw": "{{api_url}}/auth/change-email/confirm",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"auth",
+								"change-email",
+								"confirm"
+							]
+						},
+						"description": "Roles: Any (no auth). Confirm email change using the token from the email sent to the new address."
+					},
+					"response": []
+				},
+				{
+					"name": "Switch Role (Student ↔ Coach)",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"role\": \"coach\"\n}"
+						},
+						"url": {
+							"raw": "{{api_url}}/auth/me/role",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"auth",
+								"me",
+								"role"
+							]
+						},
+						"description": "Roles: Student, Coach (not Admin). Switch account between student and coach without deleting. Body: role = 'student' or 'coach'. Response includes new token — save it (test script sets auth_token) for subsequent requests."
 					},
 					"response": [],
 					"event": [
@@ -553,16 +609,14 @@
 							"listen": "test",
 							"script": {
 								"exec": [
-									"pm.test(\"Status code is 200\", function () {",
-									"    pm.response.to.have.status(200);",
+									"pm.test(\"Status code is 200 or 403 (admin)\", function () {",
+									"    pm.expect([200, 403]).to.include(pm.response.code);",
 									"});",
 									"",
-									"pm.test(\"User updated successfully\", function () {",
-									"    var jsonData = pm.response.json();",
-									"    pm.expect(jsonData.success).to.be.true;",
-									"    pm.expect(jsonData.data).to.have.property('role');",
-									"    pm.expect(jsonData.data).to.have.property('is_active');",
-									"});"
+									"var jsonData = pm.response.json();",
+									"if (jsonData.success && jsonData.data && jsonData.data.token) {",
+									"    pm.environment.set(\"auth_token\", jsonData.data.token);",
+									"}"
 								],
 								"type": "text/javascript"
 							}
@@ -570,7 +624,7 @@
 					]
 				},
 				{
-					"name": "Delete User (Admin)",
+					"name": "Delete My Account",
 					"request": {
 						"method": "DELETE",
 						"header": [
@@ -580,22 +634,16 @@
 							}
 						],
 						"url": {
-							"raw": "{{api_url}}/users/:id",
+							"raw": "{{api_url}}/auth/me",
 							"host": [
 								"{{api_url}}"
 							],
 							"path": [
-								"users",
-								":id"
-							],
-							"variable": [
-								{
-									"key": "id",
-									"value": "{{user_id}}"
-								}
+								"auth",
+								"me"
 							]
 						},
-						"description": "Delete user (admin only)"
+						"description": "Roles: Student, Coach (not Admin). Soft delete the current user's account. Sets deleted_at and is_active false; coach profile also soft-deleted."
 					},
 					"response": [],
 					"event": [
@@ -603,13 +651,8 @@
 							"listen": "test",
 							"script": {
 								"exec": [
-									"pm.test(\"Status code is 200\", function () {",
-									"    pm.response.to.have.status(200);",
-									"});",
-									"",
-									"pm.test(\"User deleted successfully\", function () {",
-									"    var jsonData = pm.response.json();",
-									"    pm.expect(jsonData.success).to.be.true;",
+									"pm.test(\"Status code is 200 or 403 (admin)\", function () {",
+									"    pm.expect([200, 403]).to.include(pm.response.code);",
 									"});"
 								],
 								"type": "text/javascript"
@@ -621,13 +664,18 @@
 		},
 		{
 			"name": "Coaches",
-			"description": "Coach endpoints use the coach's **user id** (users.id) to identify a coach. Set the environment variable `coach_id` to that user id for path params and body fields that reference a coach. This is not the coach_profile.id.",
+			"description": "Coach endpoints. Use coach's **user id** (users.id) for path/body; set `coach_id` env var. Roles: List/Get = Student or Admin (coaches 403); Create/Update profile, availability, me/courts = Coach; Stripe = Coach or Admin. Admin fixes: use /api/admin/coaches/:coachId/... for courts and availability.",
 			"item": [
 				{
-					"name": "Get All Coaches",
+					"name": "List Coaches (Search)",
 					"request": {
 						"method": "GET",
-						"header": [],
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
 						"url": {
 							"raw": "{{api_url}}/coaches",
 							"host": [
@@ -646,7 +694,7 @@
 								{ "key": "limit", "value": "10", "description": "Items per page", "disabled": true }
 							]
 						},
-						"description": "Search and get all coaches (public). Query params: lat, lng (optional – center for radius), radius (miles, default 10, max 500), skill_level, min_rating, page, limit. Use lat+lng+radius to find coaches with courts near that point (e.g. \"Find coaches near me\")."
+						"description": "Roles: Student, Admin (coaches get 403). List/search coaches. Query params: lat, lng (optional – center for radius), radius (miles), skill_level, min_rating, page, limit."
 					},
 					"response": [],
 					"event": [
@@ -690,7 +738,7 @@
 								}
 							]
 						},
-						"description": "Get coach details by ID (public). The path parameter :id is the coach's **user id** (users.id), not the coach_profile id. Set the environment variable `coach_id` to the user id of the coach you want to look up."
+						"description": "Roles: Any (no auth). Get coach details by ID. Path :id is the coach's **user id** (users.id). Set `coach_id` env var to that user id."
 					},
 					"response": [],
 					"event": [
@@ -741,7 +789,7 @@
 								"profile"
 							]
 						},
-						"description": "Create coach profile (for users with coach role). Response `user_id` is the coach's user id; the test script saves it to `coach_id` for use in GET /coaches/:id and PUT /coaches/profile/:id."
+						"description": "Roles: Coach. Create coach profile. Response `user_id` is the coach's user id; test script saves it to `coach_id`."
 					},
 					"response": [],
 					"event": [
@@ -803,7 +851,7 @@
 								}
 							]
 						},
-						"description": "Update coach profile. The path parameter :id is the coach's **user id** (same as GET /coaches/:id). Set `coach_id` to that user id."
+						"description": "Roles: Coach. Update coach profile. Path :id is the coach's **user id** (same as GET /coaches/:id)."
 					},
 					"response": [],
 					"event": [
@@ -853,7 +901,7 @@
 								"availability"
 							]
 						},
-						"description": "Create coach availability slot. Body `coach_id` is the coach's **user id** (set `coach_id` env var)."
+						"description": "Roles: Coach. Create coach availability slot. Body `coach_id` is the coach's **user id**."
 					},
 					"response": [],
 					"event": [
@@ -897,7 +945,7 @@
 								}
 							]
 						},
-						"description": "Get coach availability (public). Path parameter :id is the coach's **user id** (same as GET /coaches/:id). Set `coach_id` to that user id."
+						"description": "Roles: Any (no auth). Get coach availability. Path :id is the coach's **user id**."
 					},
 					"response": [],
 					"event": [
@@ -912,6 +960,50 @@
 									"pm.test(\"Returns availability data\", function () {",
 									"    var jsonData = pm.response.json();",
 									"    pm.expect(jsonData).to.have.property('data');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Delete Availability",
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{api_url}}/coaches/availability/:id",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"coaches",
+								"availability",
+								":id"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "{{availability_id}}"
+								}
+							]
+						},
+						"description": "Roles: Coach. Delete own availability slot (hard delete). Set availability_id from Create Availability (data.id) or Get Coach Availability (data[0].id). For admin fix use DELETE /api/admin/coaches/:coachId/availability/:id."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
 									"});"
 								],
 								"type": "text/javascript"
@@ -948,7 +1040,7 @@
 								"courts"
 							]
 						},
-						"description": "Link an existing court to the coach's available courts. Create courts with POST /api/courts first (coaches are auto-linked when they create). Body: court_id (required), optional rate_modifier, preferred, notes."
+						"description": "Roles: Coach. Link an existing court to my courts. Create courts with POST /api/courts first (coaches auto-linked when they create). Body: court_id (required), optional rate_modifier, preferred, notes. For admin fix use DELETE /api/admin/coaches/:coachId/courts/:linkId."
 					},
 					"response": [],
 					"event": [
@@ -991,7 +1083,7 @@
 								"courts"
 							]
 						},
-						"description": "List courts associated with the authenticated coach. Use after creating courts and adding them to your coach profile."
+						"description": "Roles: Coach. List my linked courts. For admin view use GET /api/admin/coaches/:coachId/courts."
 					},
 					"response": [],
 					"event": [
@@ -1040,7 +1132,7 @@
 								{ "key": "id", "value": "1", "description": "Coach court link id from GET /api/coaches/me/courts (data[].id)" }
 							]
 						},
-						"description": "Unlink a court from the coach. Use when moving or no longer coaching at that court. :id is the coach_court_location id from List My Courts response (data[].id), not court_id."
+						"description": "Roles: Coach. Unlink a court from my courts. :id is the coach_court_location id from List My Courts (data[].id). For admin fix use DELETE /api/admin/coaches/:coachId/courts/:linkId."
 					},
 					"response": [],
 					"event": [
@@ -1092,7 +1184,7 @@
 								"onboard"
 							]
 						},
-						"description": "Initiate Stripe Connect onboarding for coach payouts. When logged in as a coach, coach_id is ignored (uses your user id). When logged in as admin, set coach_id to the coach's **user id** to onboard that coach."
+						"description": "Roles: Coach, Admin. Initiate Stripe Connect onboarding. Coach: coach_id ignored (uses your id). Admin: set coach_id to coach's user id."
 					},
 					"response": [],
 					"event": [
@@ -1137,7 +1229,7 @@
 								"status"
 							]
 						},
-						"description": "Get Stripe Connect account status for coach"
+						"description": "Roles: Coach, Admin. Get Stripe Connect account status for coach."
 					},
 					"response": [],
 					"event": [
@@ -1163,6 +1255,7 @@
 		},
 		{
 			"name": "Courts",
+			"description": "Courts. Roles: Search/Get = Any; Create/Delete = Coach (create auto-links coach; delete only courts they created) or Admin (delete any).",
 			"item": [
 				{
 					"name": "Get All Courts",
@@ -1178,7 +1271,7 @@
 								"courts"
 							]
 						},
-						"description": "Search courts (with lazy import from OpenStreetMap if no results)"
+						"description": "Roles: Any (no auth). Search courts (with lazy import from OpenStreetMap if no results)."
 					},
 					"response": [],
 					"event": [
@@ -1227,7 +1320,7 @@
 								}
 							]
 						},
-						"description": "Get court details by ID (public)"
+						"description": "Roles: Any (no auth). Get court details by ID."
 					},
 					"response": [],
 					"event": [
@@ -1277,7 +1370,7 @@
 								"courts"
 							]
 						},
-						"description": "Create a new court location"
+						"description": "Roles: Coach. Create a new court location (coach is auto-linked)."
 					},
 					"response": [],
 					"event": [
@@ -1297,6 +1390,49 @@
 									"    if (jsonData.data && jsonData.data.id) {",
 									"        pm.environment.set(\"court_id\", jsonData.data.id);",
 									"    }",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Delete Court",
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{api_url}}/courts/:id",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"courts",
+								":id"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "{{court_id}}"
+								}
+							]
+						},
+						"description": "Roles: Admin (any court), Coach (only courts they created). Soft delete a court; no longer appears in search or GET."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200 or 403\", function () {",
+									"    pm.expect([200, 403]).to.include(pm.response.code);",
 									"});"
 								],
 								"type": "text/javascript"
@@ -1372,7 +1508,7 @@
 								}
 							]
 						},
-						"description": "Get lesson by ID (public)"
+						"description": "Roles: Any (no auth). Get lesson by ID."
 					},
 					"response": [],
 					"event": [
@@ -1483,7 +1619,7 @@
 								}
 							]
 						},
-						"description": "Update lesson"
+						"description": "Roles: Coach. Update lesson."
 					},
 					"response": [],
 					"event": [
@@ -1557,6 +1693,7 @@
 		},
 		{
 			"name": "Bookings",
+			"description": "Bookings. Roles: List/Get = Student, Coach, Admin (own or all if admin); Create = Student; Update status/Cancel = Coach or Admin.",
 			"item": [
 				{
 					"name": "Get My Bookings",
@@ -1577,7 +1714,7 @@
 								"bookings"
 							]
 						},
-						"description": "Get user's bookings (filtered by role)"
+						"description": "Roles: Student, Coach, Admin. Get bookings (own if student/coach; all if admin)."
 					},
 					"response": [],
 					"event": [
@@ -1676,7 +1813,7 @@
 								"bookings"
 							]
 						},
-						"description": "Create a new booking"
+						"description": "Roles: Student. Create a new booking."
 					},
 					"response": [],
 					"event": [
@@ -1795,7 +1932,7 @@
 								}
 							]
 						},
-						"description": "Cancel a booking (triggers refund if applicable)"
+						"description": "Roles: Student, Coach, Admin. Cancel a booking (triggers refund if applicable)."
 					},
 					"response": [],
 					"event": [
@@ -1878,6 +2015,7 @@
 		},
 		{
 			"name": "Payments",
+			"description": "List/get payments, create payment. For admin-only (Process Refund, Update Payment Status), see Admin folder.",
 			"item": [
 				{
 					"name": "Get My Payments",
@@ -1898,7 +2036,7 @@
 								"payments"
 							]
 						},
-						"description": "Get user's payments"
+						"description": "Roles: Student, Coach, Admin. Get payments (own if student/coach; all if admin)."
 					},
 					"response": [],
 					"event": [
@@ -1996,7 +2134,7 @@
 								"payments"
 							]
 						},
-						"description": "Create a payment for a booking"
+						"description": "Roles: Student. Create a payment for a booking."
 					},
 					"response": [],
 					"event": [
@@ -2009,120 +2147,6 @@
 									"});",
 									"",
 									"pm.test(\"Payment created\", function () {",
-									"    var jsonData = pm.response.json();",
-									"    pm.expect(jsonData.success).to.be.true;",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "Update Payment Status (Admin)",
-					"request": {
-						"method": "PUT",
-						"header": [
-							{
-								"key": "Content-Type",
-								"value": "application/json"
-							},
-							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
-							}
-						],
-						"body": {
-							"mode": "raw",
-							"raw": "{\n  \"payment_status\": \"captured\",\n  \"escrow_status\": \"released\",\n  \"charge_id\": null,\n  \"transfer_id\": null,\n  \"payout_id\": null\n}"
-						},
-						"url": {
-							"raw": "{{api_url}}/payments/:id/status",
-							"host": [
-								"{{api_url}}"
-							],
-							"path": [
-								"payments",
-								":id",
-								"status"
-							],
-							"variable": [
-								{
-									"key": "id",
-									"value": "1"
-								}
-							]
-						},
-						"description": "Update payment status (admin only)"
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Status code is 200\", function () {",
-									"    pm.response.to.have.status(200);",
-									"});",
-									"",
-									"pm.test(\"Payment status updated\", function () {",
-									"    var jsonData = pm.response.json();",
-									"    pm.expect(jsonData.success).to.be.true;",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "Process Refund (Admin)",
-					"request": {
-						"method": "POST",
-						"header": [
-							{
-								"key": "Content-Type",
-								"value": "application/json"
-							},
-							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
-							}
-						],
-						"body": {
-							"mode": "raw",
-							"raw": "{\n  \"refund_amount\": 50.00,\n  \"reason\": \"Customer request\"\n}"
-						},
-						"url": {
-							"raw": "{{api_url}}/payments/:id/refund",
-							"host": [
-								"{{api_url}}"
-							],
-							"path": [
-								"payments",
-								":id",
-								"refund"
-							],
-							"variable": [
-								{
-									"key": "id",
-									"value": "1"
-								}
-							]
-						},
-						"description": "Process a refund for a payment (admin only)"
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Status code is 200\", function () {",
-									"    pm.response.to.have.status(200);",
-									"});",
-									"",
-									"pm.test(\"Refund processed\", function () {",
 									"    var jsonData = pm.response.json();",
 									"    pm.expect(jsonData.success).to.be.true;",
 									"});"
@@ -2178,56 +2202,6 @@
 							}
 						}
 					]
-				},
-				{
-					"name": "Request Reschedule",
-					"request": {
-						"method": "POST",
-						"header": [
-							{
-								"key": "Content-Type",
-								"value": "application/json"
-							},
-							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
-							}
-						],
-						"body": {
-							"mode": "raw",
-							"raw": "{\n  \"booking_id\": \"{{booking_id}}\",\n  \"new_scheduled_at\": \"2026-02-02T14:00:00Z\",\n  \"reason\": \"schedule_conflict\",\n  \"reason_notes\": \"Need to reschedule due to conflict\",\n  \"paid_reschedule\": false\n}"
-						},
-						"url": {
-							"raw": "{{api_url}}/reschedules/request",
-							"host": [
-								"{{api_url}}"
-							],
-							"path": [
-								"reschedules",
-								"request"
-							]
-						},
-						"description": "Request a reschedule (alternative to booking reschedule endpoint)"
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Status code is 201\", function () {",
-									"    pm.response.to.have.status(201);",
-									"});",
-									"",
-									"pm.test(\"Reschedule requested\", function () {",
-									"    var jsonData = pm.response.json();",
-									"    pm.expect(jsonData.success).to.be.true;",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
 				}
 			]
 		},
@@ -2248,7 +2222,7 @@
 								"reviews"
 							]
 						},
-						"description": "Get reviews (public)"
+						"description": "Roles: Any (no auth). Get reviews."
 					},
 					"response": [],
 					"event": [
@@ -2355,7 +2329,7 @@
 								}
 							]
 						},
-						"description": "Update a review"
+						"description": "Roles: Student. Update own review."
 					},
 					"response": [],
 					"event": [
@@ -2450,7 +2424,7 @@
 								"conversations"
 							]
 						},
-						"description": "Get all conversations for the authenticated user"
+						"description": "Roles: Student, Coach, Admin. Get conversations (own if student/coach; all if admin)."
 					},
 					"response": [],
 					"event": [
@@ -2555,7 +2529,7 @@
 								}
 							]
 						},
-						"description": "Get conversation details by ID"
+						"description": "Roles: Student, Coach, Admin. Get conversation details by ID (own or any if admin)."
 					},
 					"response": [],
 					"event": [
@@ -2655,7 +2629,7 @@
 								}
 							]
 						},
-						"description": "Mark a message as read"
+						"description": "Roles: Student, Coach. Mark a message as read."
 					},
 					"response": [],
 					"event": [
@@ -2681,6 +2655,7 @@
 		},
 		{
 			"name": "Disputes",
+			"description": "List/get disputes, create dispute. For Resolve Dispute (admin only), see Admin folder.",
 			"item": [
 				{
 					"name": "Get All Disputes",
@@ -2701,7 +2676,7 @@
 								"disputes"
 							]
 						},
-						"description": "Get disputes (filtered by user role)"
+						"description": "Roles: Student, Coach, Admin. Get disputes (own if student/coach; all if admin)."
 					},
 					"response": [],
 					"event": [
@@ -2799,7 +2774,7 @@
 								"disputes"
 							]
 						},
-						"description": "Create a dispute for a booking"
+						"description": "Roles: Student, Coach. Create a dispute for a booking."
 					},
 					"response": [],
 					"event": [
@@ -2820,68 +2795,12 @@
 							}
 						}
 					]
-				},
-				{
-					"name": "Resolve Dispute (Admin)",
-					"request": {
-						"method": "PUT",
-						"header": [
-							{
-								"key": "Content-Type",
-								"value": "application/json"
-							},
-							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
-							}
-						],
-						"body": {
-							"mode": "raw",
-							"raw": "{\n  \"resolution_action_id\": 1,\n  \"resolution_notes\": \"Approved refund due to service issue\"\n}"
-						},
-						"url": {
-							"raw": "{{api_url}}/disputes/:id/resolve",
-							"host": [
-								"{{api_url}}"
-							],
-							"path": [
-								"disputes",
-								":id",
-								"resolve"
-							],
-							"variable": [
-								{
-									"key": "id",
-									"value": "1"
-								}
-							]
-						},
-						"description": "Resolve a dispute (admin only)"
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Status code is 200\", function () {",
-									"    pm.response.to.have.status(200);",
-									"});",
-									"",
-									"pm.test(\"Dispute resolved\", function () {",
-									"    var jsonData = pm.response.json();",
-									"    pm.expect(jsonData.success).to.be.true;",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
 				}
 			]
 		},
 		{
 			"name": "Notifications",
+			"description": "Get my notifications, mark as read. For Create Notification (admin only), see Admin folder.",
 			"item": [
 				{
 					"name": "Get My Notifications",
@@ -2918,55 +2837,6 @@
 									"    var jsonData = pm.response.json();",
 									"    pm.expect(jsonData).to.have.property('data');",
 									"    pm.expect(jsonData.data).to.be.an('array');",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "Create Notification (Admin)",
-					"request": {
-						"method": "POST",
-						"header": [
-							{
-								"key": "Content-Type",
-								"value": "application/json"
-							},
-							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
-							}
-						],
-						"body": {
-							"mode": "raw",
-							"raw": "{\n  \"user_id\": \"{{user_id}}\",\n  \"type\": \"system\",\n  \"channel\": \"in_app\",\n  \"payload\": {\n    \"title\": \"System Notification\",\n    \"message\": \"This is a system notification\"\n  }\n}"
-						},
-						"url": {
-							"raw": "{{api_url}}/notifications",
-							"host": [
-								"{{api_url}}"
-							],
-							"path": [
-								"notifications"
-							]
-						},
-						"description": "Create a notification (admin only)"
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Status code is 201\", function () {",
-									"    pm.response.to.have.status(201);",
-									"});",
-									"",
-									"pm.test(\"Notification created\", function () {",
-									"    var jsonData = pm.response.json();",
-									"    pm.expect(jsonData.success).to.be.true;",
 									"});"
 								],
 								"type": "text/javascript"
@@ -3027,6 +2897,7 @@
 		},
 		{
 			"name": "Admin",
+			"description": "All endpoints in this folder: Roles: Admin only. Dashboard, alerts, user management (list/update/delete), payments (refund, update status), disputes (resolve), notifications (create), and coach support (courts/availability).",
 			"item": [
 				{
 					"name": "Get Dashboard Stats",
@@ -3048,7 +2919,7 @@
 								"dashboard"
 							]
 						},
-						"description": "Get admin dashboard statistics (admin only)"
+						"description": "Roles: Admin. Get dashboard statistics."
 					},
 					"response": [],
 					"event": [
@@ -3072,6 +2943,60 @@
 					]
 				},
 				{
+					"name": "Get Audit Logs",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{api_url}}/admin/audit-logs",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"admin",
+								"audit-logs"
+							],
+							"query": [
+								{
+									"key": "user_id",
+									"value": "",
+									"description": "Filter by user id who performed the action",
+									"disabled": true
+								},
+								{
+									"key": "action",
+									"value": "",
+									"description": "Filter by action name (e.g. user_registered, password_changed)",
+									"disabled": true
+								},
+								{
+									"key": "table_name",
+									"value": "",
+									"description": "Filter by table name (e.g. users, bookings)",
+									"disabled": true
+								},
+								{
+									"key": "page",
+									"value": "1",
+									"disabled": true
+								},
+								{
+									"key": "limit",
+									"value": "10",
+									"disabled": true
+								}
+							]
+						},
+						"description": "Roles: Admin. List audit log entries with optional filters for user_id, action, and table_name."
+					},
+					"response": []
+				},
+				{
 					"name": "Get Alerts",
 					"request": {
 						"method": "GET",
@@ -3091,7 +3016,7 @@
 								"alerts"
 							]
 						},
-						"description": "Get admin alerts (admin only)"
+						"description": "Roles: Admin. Get admin alerts."
 					},
 					"response": [],
 					"event": [
@@ -3142,7 +3067,7 @@
 								}
 							]
 						},
-						"description": "Resolve an admin alert (admin only)"
+						"description": "Roles: Admin. Resolve an alert."
 					},
 					"response": [],
 					"event": [
@@ -3192,7 +3117,7 @@
 								"users"
 							]
 						},
-						"description": "Create a new admin user (admin only)"
+						"description": "Roles: Admin. Create a new admin user."
 					},
 					"response": [],
 					"event": [
@@ -3252,7 +3177,7 @@
 								}
 							]
 						},
-						"description": "Manually adjust a user's reliability score (admin only)"
+						"description": "Roles: Admin. Manually adjust a user's reliability score."
 					},
 					"response": [],
 					"event": [
@@ -3268,6 +3193,584 @@
 									"    var jsonData = pm.response.json();",
 									"    pm.expect(jsonData.success).to.be.true;",
 									"    pm.expect(jsonData.data).to.have.property('new_score');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Get All Users (Admin)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{api_url}}/users",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"users"
+							],
+							"query": [
+								{
+									"key": "search",
+									"value": "",
+									"description": "Filter by full name or email (case-insensitive, partial match).",
+									"disabled": true
+								},
+								{
+									"key": "include_deleted",
+									"value": "true",
+									"description": "Include soft-deleted users. Omit or disable for non-deleted only.",
+									"disabled": true
+								}
+							]
+						},
+						"description": "Roles: Admin. Get all users (non-deleted by default). Query params: include_deleted=true to include soft-deleted; search to filter by full name or email (case-insensitive)."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Returns array of users\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('data');",
+									"    pm.expect(jsonData.data).to.be.an('array');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Get User By ID (Admin)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{api_url}}/users/:id",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"users",
+								":id"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "{{user_id}}"
+								}
+							]
+						},
+						"description": "Roles: Admin. Get user by ID. Non-admins should use GET {{api_url}}/auth/profile."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"User data returned\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('data');",
+									"    pm.expect(jsonData.data).to.have.property('id');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Update User (Admin)",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"full_name\": \"Updated Name\",\n  \"email\": \"user@example.com\",\n  \"phone\": \"+1234567890\",\n  \"timezone\": \"America/New_York\",\n  \"avatar_url\": \"\",\n  \"is_active\": true,\n  \"role\": \"coach\",\n  \"deleted_at\": null\n}"
+						},
+						"url": {
+							"raw": "{{api_url}}/users/:id",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"users",
+								":id"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "{{user_id}}"
+								}
+							]
+						},
+						"description": "Roles: Admin. Update user. Optional body fields: full_name, email (must be unique), phone, timezone, avatar_url (URI or \"\" to clear), is_active, role, deleted_at (null to undelete). Cannot activate a deleted user without also setting deleted_at: null."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"User updated successfully\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"    pm.expect(jsonData.data).to.have.property('role');",
+									"    pm.expect(jsonData.data).to.have.property('is_active');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Delete User (Admin)",
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{api_url}}/users/:id",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"users",
+								":id"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "{{user_id}}"
+								}
+							]
+						},
+						"description": "Roles: Admin. Delete user (soft delete)."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"User deleted successfully\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Process Refund (Admin)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"refund_amount\": 50.00,\n  \"reason\": \"Customer request\"\n}"
+						},
+						"url": {
+							"raw": "{{api_url}}/payments/:id/refund",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"payments",
+								":id",
+								"refund"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "1"
+								}
+							]
+						},
+						"description": "Roles: Admin. Process a refund for a payment."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Refund processed\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Update Payment Status (Admin)",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"payment_status\": \"captured\",\n  \"escrow_status\": \"released\",\n  \"charge_id\": null,\n  \"transfer_id\": null,\n  \"payout_id\": null\n}"
+						},
+						"url": {
+							"raw": "{{api_url}}/payments/:id/status",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"payments",
+								":id",
+								"status"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "1"
+								}
+							]
+						},
+						"description": "Roles: Admin. Update payment status."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Payment status updated\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Resolve Dispute (Admin)",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"resolution_action_id\": 1,\n  \"resolution_notes\": \"Approved refund due to service issue\"\n}"
+						},
+						"url": {
+							"raw": "{{api_url}}/disputes/:id/resolve",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"disputes",
+								":id",
+								"resolve"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "1"
+								}
+							]
+						},
+						"description": "Roles: Admin. Resolve a dispute."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Dispute resolved\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Create Notification (Admin)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"user_id\": \"{{user_id}}\",\n  \"type\": \"system\",\n  \"channel\": \"in_app\",\n  \"payload\": {\n    \"title\": \"System Notification\",\n    \"message\": \"This is a system notification\"\n  }\n}"
+						},
+						"url": {
+							"raw": "{{api_url}}/notifications",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"notifications"
+							]
+						},
+						"description": "Roles: Admin. Create a notification."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 201\", function () {",
+									"    pm.response.to.have.status(201);",
+									"});",
+									"",
+									"pm.test(\"Notification created\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Get Coach Courts (Admin)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{api_url}}/admin/coaches/:coachId/courts",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"admin",
+								"coaches",
+								":coachId",
+								"courts"
+							],
+							"variable": [
+								{
+									"key": "coachId",
+									"value": "{{coach_id}}"
+								}
+							]
+						},
+						"description": "Roles: Admin. List courts linked to a coach (for support/moderation). Path coachId = coach's user id."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Delete Coach Court (Admin)",
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{api_url}}/admin/coaches/:coachId/courts/:linkId",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"admin",
+								"coaches",
+								":coachId",
+								"courts",
+								":linkId"
+							],
+							"variable": [
+								{
+									"key": "coachId",
+									"value": "{{coach_id}}"
+								},
+								{
+									"key": "linkId",
+									"value": "1",
+									"description": "Coach court link id from GET /admin/coaches/:coachId/courts (data[].id)"
+								}
+							]
+						},
+						"description": "Roles: Admin. Unlink a court from a coach (e.g. wrong court linked). coachId = coach user id, linkId = coach_court_location id."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Delete Coach Availability (Admin)",
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{api_url}}/admin/coaches/:coachId/availability/:id",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"admin",
+								"coaches",
+								":coachId",
+								"availability",
+								":id"
+							],
+							"variable": [
+								{
+									"key": "coachId",
+									"value": "{{coach_id}}"
+								},
+								{
+									"key": "id",
+									"value": "{{availability_id}}",
+									"description": "Availability record id from GET /coaches/:id/availability"
+								}
+							]
+						},
+						"description": "Roles: Admin. Delete a coach's availability slot (e.g. wrong times). coachId = coach user id, id = availability record id."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
 									"});"
 								],
 								"type": "text/javascript"
@@ -3308,7 +3811,7 @@
 								"stripe"
 							]
 						},
-						"description": "Stripe webhook endpoint (no auth, uses signature verification)"
+						"description": "Roles: System (Stripe webhook; no user auth; uses Stripe-Signature verification)."
 					},
 					"response": [],
 					"event": [

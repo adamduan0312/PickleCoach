@@ -9,8 +9,8 @@ import { logger } from '../config/logger.js';
 
 export const requestReschedule = async (req, res) => {
   try {
-    // booking_id can come from URL parameter (POST /api/bookings/:id/reschedule) or body
-    const booking_id = req.params.id || req.validated.booking_id;
+    // booking_id comes from URL parameter (POST /api/bookings/:id/reschedule)
+    const booking_id = req.params.id;
     const { new_scheduled_at, reason, reason_notes, paid_reschedule = false } = req.validated;
 
     // Reason is required and validated by schema
@@ -139,6 +139,26 @@ export const getRescheduleHistory = async (req, res) => {
     const { booking_id } = req.validated;
     const where = {};
     if (booking_id) where.booking_id = booking_id;
+
+    if (req.user.role !== 'admin') {
+      const userBookings = await Booking.findAll({
+        where: {
+          [Op.or]: [
+            { coach_id: req.user.id },
+            { primary_student_id: req.user.id },
+          ],
+        },
+        attributes: ['id'],
+      });
+      const bookingIds = userBookings.map(b => b.id);
+      if (booking_id) {
+        if (!bookingIds.includes(parseInt(booking_id, 10))) {
+          return successResponse(res, [], 'Reschedule history retrieved successfully');
+        }
+      } else {
+        where.booking_id = bookingIds.length ? bookingIds : [-1];
+      }
+    }
 
     const history = await RescheduleHistory.findAll({
       where,

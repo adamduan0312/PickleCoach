@@ -108,14 +108,6 @@ const startServer = async () => {
     await sequelize.authenticate();
     logger.info('✅ Database connection established successfully.');
 
-    /*
-    // Sync models (set to false in production, use migrations instead)
-    if (process.env.NODE_ENV !== 'production') {
-      await sequelize.sync({ alter: false });
-      logger.info('Database models synchronized.');
-    }
-    */
-
     const server = app.listen(port, () => {
       logger.info(`🚀 API listening on http://localhost:${port}`);
       logger.info(`📦 Environment: ${process.env.NODE_ENV || 'development'}`);

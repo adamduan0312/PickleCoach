@@ -16,8 +16,13 @@ export const getBookings = async (req, res) => {
 
     const where = {};
     if (status) where.status = status;
-    if (coach_id) where.coach_id = coach_id;
-    if (student_id) where.primary_student_id = student_id;
+
+    if (req.user.role !== 'admin') {
+      where[Op.or] = [{ coach_id: req.user.id }, { primary_student_id: req.user.id }];
+    } else {
+      if (coach_id) where.coach_id = coach_id;
+      if (student_id) where.primary_student_id = student_id;
+    }
 
     const bookings = await Booking.findAndCountAll({
       where,

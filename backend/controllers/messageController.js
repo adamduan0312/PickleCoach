@@ -1,3 +1,4 @@
+import { Op } from 'sequelize';
 import { Message, Conversation, Booking, User } from '../models/index.js';
 import { successResponse, errorResponse } from '../utils/response.js';
 import { getPagination, getPagingData } from '../utils/pagination.js';
@@ -9,12 +10,35 @@ export const getConversations = async (req, res) => {
     const where = {};
     if (booking_id) where.booking_id = booking_id;
 
+    if (req.user.role !== 'admin') {
+      const userBookings = await Booking.findAll({
+        where: {
+          [Op.or]: [
+            { coach_id: req.user.id },
+            { primary_student_id: req.user.id },
+          ],
+        },
+        attributes: ['id'],
+      });
+      const bookingIds = userBookings.map(b => b.id);
+      if (booking_id) {
+        if (!bookingIds.includes(parseInt(booking_id, 10))) {
+          return successResponse(res, [], 'Conversations retrieved successfully');
+        }
+        where.booking_id = parseInt(booking_id, 10);
+      } else {
+        where.booking_id = bookingIds.length ? bookingIds : [-1];
+      }
+    } else if (booking_id) {
+      where.booking_id = booking_id;
+    }
+
     const conversations = await Conversation.findAll({
       where,
       include: [
         { model: Booking, as: 'booking' },
-        { 
-          model: Message, 
+        {
+          model: Message,
           as: 'messages',
           limit: 1,
           order: [['created_at', 'DESC']],
@@ -57,6 +81,13 @@ export const getConversationById = async (req, res) => {
 
     if (!conversation) {
       return errorResponse(res, 'Conversation not found', 404);
+    }
+
+    if (req.user.role !== 'admin') {
+      const booking = conversation.booking;
+      if (!booking || (req.user.id !== booking.coach_id && req.user.id !== booking.primary_student_id)) {
+        return errorResponse(res, 'Unauthorized', 403);
+      }
     }
 
     return successResponse(res, conversation, 'Conversation retrieved successfully');

@@ -22,6 +22,11 @@ const calculateDistance = (lat1, lng1, lat2, lng2) => {
 
 export const getCoaches = async (req, res) => {
   try {
+    // Only students and admins can search/list coaches (e.g. to find someone to book). Coaches don't use this to find other coaches.
+    if (req.user && req.user.role === 'coach') {
+      return errorResponse(res, 'Only students and admins can search for coaches', 403);
+    }
+
     const { page, limit, lat, lng, radius, skill_level, min_rating } = req.validated;
     const { limit: queryLimit, offset } = getPagination(page, limit);
 
@@ -261,6 +266,36 @@ export const getCoachAvailability = async (req, res) => {
   } catch (error) {
     logger.error('Get availability error:', error);
     return errorResponse(res, 'Failed to retrieve availability', 500);
+  }
+};
+
+/**
+ * Delete a coach availability slot (hard delete)
+ * DELETE /api/coaches/availability/:id
+ * Coach only; can only delete their own availability.
+ */
+export const deleteAvailability = async (req, res) => {
+  try {
+    if (req.user.role !== 'coach') {
+      return errorResponse(res, 'Only coaches can delete their availability', 403);
+    }
+
+    const availabilityId = req.params.id;
+    const availability = await CoachAvailability.findByPk(availabilityId);
+
+    if (!availability) {
+      return errorResponse(res, 'Availability not found', 404);
+    }
+
+    if (availability.coach_id !== req.user.id) {
+      return errorResponse(res, 'You can only delete your own availability', 403);
+    }
+
+    await availability.destroy();
+    return successResponse(res, null, 'Availability deleted successfully');
+  } catch (error) {
+    logger.error('Delete availability error:', error);
+    return errorResponse(res, 'Failed to delete availability', 500);
   }
 };
 

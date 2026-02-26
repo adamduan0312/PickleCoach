@@ -1,16 +1,33 @@
-import { User, CoachProfile, UserReliability } from '../models/index.js';
+import { Op } from 'sequelize';
+import { User, CoachProfile, UserReliability, sequelize } from '../models/index.js';
 import { successResponse, errorResponse } from '../utils/response.js';
 import { getPagination, getPagingData } from '../utils/pagination.js';
 import { logger } from '../config/logger.js';
 
 export const getAllUsers = async (req, res) => {
   try {
-    const { page, limit, role, is_active } = req.validated;
+    const { page, limit, role, include_deleted, search } = req.validated;
     const { limit: queryLimit, offset } = getPagination(page, limit);
 
-    const where = {};
-    if (role) where.role = role;
-    if (is_active !== undefined) where.is_active = is_active === 'true';
+    const andConditions = [];
+    // By default only return non-deleted users; admin can pass include_deleted=true to see all
+    if (include_deleted !== 'true') {
+      andConditions.push({ deleted_at: null });
+    }
+    if (role) andConditions.push({ role });
+
+    if (search && search.trim()) {
+      const escaped = search.trim().replace(/[\\%_]/g, '\\$&');
+      const pattern = `%${escaped.toLowerCase()}%`;
+      andConditions.push({
+        [Op.or]: [
+          sequelize.where(sequelize.fn('LOWER', sequelize.col('full_name')), { [Op.like]: pattern }),
+          sequelize.where(sequelize.fn('LOWER', sequelize.col('email')), { [Op.like]: pattern }),
+        ],
+      });
+    }
+
+    const where = andConditions.length ? { [Op.and]: andConditions } : {};
 
     const users = await User.findAndCountAll({
       where,
@@ -31,7 +48,19 @@ export const getAllUsers = async (req, res) => {
 export const getUserById = async (req, res) => {
   try {
     const { id } = req.params;
-    const user = await User.findByPk(id, {
+    const userId = parseInt(id, 10);
+    if (Number.isNaN(userId)) {
+      return errorResponse(res, 'Invalid user ID', 400);
+    }
+
+    // Check authorization: users can view their own profile, admins can view any profile
+    if (req.user.id !== userId && req.user.role !== 'admin') {
+      logger.warn(`User ${req.user.id} attempted to access user ${userId} without permission`);
+      return errorResponse(res, 'You can only view your own profile', 403);
+    }
+
+    // Admins can view deleted users, regular users cannot
+    const user = await User.findByPk(userId, {
       attributes: { exclude: ['password_hash'] },
       include: [
         { model: CoachProfile, as: 'coachProfile' },
@@ -40,9 +69,17 @@ export const getUserById = async (req, res) => {
     });
 
     if (!user) {
+      logger.warn(`User ${userId} not found in database`);
       return errorResponse(res, 'User not found', 404);
     }
 
+    // Regular users cannot view deleted profiles, but admins can
+    if (user.deleted_at && req.user.role !== 'admin') {
+      logger.warn(`User ${req.user.id} attempted to access deleted user ${userId}`);
+      return errorResponse(res, 'User not found', 404);
+    }
+
+    logger.info(`User ${req.user.id} (role: ${req.user.role}) retrieved user ${userId}`);
     return successResponse(res, user, 'User retrieved successfully');
   } catch (error) {
     logger.error('Get user error:', error);
@@ -53,20 +90,44 @@ export const getUserById = async (req, res) => {
 export const updateUser = async (req, res) => {
   try {
     const { id } = req.params;
-    const { full_name, phone, timezone, is_active, role } = req.validated;
+    const { full_name, email, phone, timezone, avatar_url, is_active, role, deleted_at } = req.validated;
 
     const user = await User.findByPk(id);
     if (!user) {
       return errorResponse(res, 'User not found', 404);
     }
 
-    await user.update({
+    // If changing email, ensure it is not already used by another user
+    if (email !== undefined && email !== user.email) {
+      const existing = await User.findOne({ where: { email } });
+      if (existing) {
+        return errorResponse(res, 'Email is already in use by another user', 400);
+      }
+    }
+
+    // Guard: Prevent setting is_active: true on a deleted user (must undelete first)
+    if (user.deleted_at && is_active === true && deleted_at !== null) {
+      logger.warn(`Admin ${req.user.id} attempted to activate deleted user ${id} without undeleting`);
+      return errorResponse(res, 'Cannot activate a deleted user. Set deleted_at to null to undelete first, or undelete and activate in separate requests', 400);
+    }
+
+    const updateData = {
       full_name: full_name || user.full_name,
+      email: email !== undefined ? email : user.email,
       phone: phone !== undefined ? phone : user.phone,
       timezone: timezone || user.timezone,
+      avatar_url: avatar_url !== undefined ? avatar_url : user.avatar_url,
       is_active: is_active !== undefined ? is_active : user.is_active,
       role: role || user.role,
-    });
+    };
+
+    // Allow explicit undelete by setting deleted_at to null
+    if (deleted_at === null) {
+      updateData.deleted_at = null;
+      logger.info(`Admin ${req.user.id} undeleted user ${id} (cleared deleted_at)`);
+    }
+
+    await user.update(updateData);
 
     // Echo all safe request fields so response shape matches update body; optional as null.
     return successResponse(res, {
@@ -77,6 +138,7 @@ export const updateUser = async (req, res) => {
       is_active: user.is_active,
       phone: user.phone ?? null,
       timezone: user.timezone ?? null,
+      avatar_url: user.avatar_url ?? null,
     }, 'User updated successfully');
   } catch (error) {
     logger.error('Update user error:', error);
@@ -93,7 +155,15 @@ export const deleteUser = async (req, res) => {
       return errorResponse(res, 'User not found', 404);
     }
 
-    await user.destroy();
+    if (user.deleted_at) {
+      return errorResponse(res, 'User is already deleted', 400);
+    }
+
+    await user.update({ deleted_at: new Date(), is_active: false });
+    const coachProfile = await CoachProfile.findOne({ where: { user_id: user.id } });
+    if (coachProfile && !coachProfile.deleted_at) {
+      await coachProfile.update({ deleted_at: new Date() });
+    }
     return successResponse(res, null, 'User deleted successfully');
   } catch (error) {
     logger.error('Delete user error:', error);

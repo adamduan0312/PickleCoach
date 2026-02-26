@@ -18,6 +18,11 @@ class User extends Model {
           allowNull: false,
           unique: true,
         },
+      token_version: {
+        type: DataTypes.INTEGER,
+        allowNull: false,
+        defaultValue: 0,
+      },
         password_hash: {
           type: DataTypes.STRING(255),
           allowNull: false,
@@ -65,6 +70,30 @@ class User extends Model {
           type: DataTypes.DATE,
           allowNull: true,
         },
+      email_verified_at: {
+        type: DataTypes.DATE,
+        allowNull: true,
+      },
+      email_verification_token: {
+        type: DataTypes.STRING(255),
+        allowNull: true,
+      },
+      email_verification_expires: {
+        type: DataTypes.DATE,
+        allowNull: true,
+      },
+      email_change_token: {
+        type: DataTypes.STRING(255),
+        allowNull: true,
+      },
+      email_change_expires: {
+        type: DataTypes.DATE,
+        allowNull: true,
+      },
+      email_change_new_email: {
+        type: DataTypes.STRING(150),
+        allowNull: true,
+      },
       },
       {
         sequelize,
@@ -79,6 +108,8 @@ class User extends Model {
           { fields: ['deleted_at'] },
           { fields: ['email'], unique: true },
           { fields: ['password_reset_token'] },
+          { fields: ['email_verification_token'] },
+          { fields: ['email_change_token'] },
         ],
       }
     );

@@ -7,12 +7,13 @@ import { createCoachProfileSchema, updateCoachProfileSchema, createAvailabilityS
 
 const router = express.Router();
 
-router.get('/', validateQuery(getCoachesQuerySchema), coachController.getCoaches);
+router.get('/', authenticate, validateQuery(getCoachesQuerySchema), coachController.getCoaches);
 router.get('/me/courts', authenticate, courtController.getMyCoachCourts);
 router.get('/:id', coachController.getCoachById);
 router.post('/profile', authenticate, validateRequest(createCoachProfileSchema), coachController.createCoachProfile);
 router.put('/profile/:id', authenticate, validateRequest(updateCoachProfileSchema), coachController.updateCoachProfile);
 router.post('/availability', authenticate, validateRequest(createAvailabilitySchema), coachController.createAvailability);
+router.delete('/availability/:id', authenticate, coachController.deleteAvailability);
 router.get('/:id/availability', coachController.getCoachAvailability);
 
 // Coach court management

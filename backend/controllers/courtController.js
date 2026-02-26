@@ -109,7 +109,8 @@ export const getCourt = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const court = await CourtLocation.findByPk(id, {
+    const court = await CourtLocation.findOne({
+      where: { id, deleted_at: null },
       include: [
         {
           model: User,
@@ -133,6 +134,34 @@ export const getCourt = async (req, res) => {
   } catch (error) {
     logger.error('Error getting court:', error);
     return res.status(500).json(createErrorResponse('Failed to get court'));
+  }
+};
+
+/**
+ * DELETE /api/courts/:id
+ * Soft delete a court. Allowed: admin (any court), or coach (only courts they created).
+ */
+export const deleteCourt = async (req, res) => {
+  try {
+    const courtId = req.params.id;
+    const court = await CourtLocation.findOne({ where: { id: courtId, deleted_at: null } });
+
+    if (!court) {
+      return res.status(404).json(createErrorResponse('Court not found'));
+    }
+
+    const isAdmin = req.user.role === 'admin';
+    const isCreator = court.created_by_user_id === req.user.id;
+
+    if (!isAdmin && !isCreator) {
+      return res.status(403).json(createErrorResponse('Only admins or the coach who created this court can delete it'));
+    }
+
+    await court.update({ deleted_at: new Date() });
+    return res.json(createResponse(null, 'Court deleted successfully'));
+  } catch (error) {
+    logger.error('Error deleting court:', error);
+    return res.status(500).json(createErrorResponse('Failed to delete court'));
   }
 };
 

@@ -697,12 +697,13 @@ pm.test("Profile updated successfully", function () {
 
 ### 3. Coach Endpoints
 
-#### Get All Coaches
+#### List Coaches (Search)
 
 **Request:**
 - Method: `GET`
 - URL: `{{api_url}}/coaches`
 - Headers: None (public endpoint)
+- Query params (all optional): `lat`, `lng`, `radius` (miles, default 10), `skill_level`, `min_rating`, `page`, `limit` – use lat/lng/radius to find coaches near a location (e.g. "coaches near me").
 - Body: None
 
 **Test Script:**
@@ -1982,18 +1983,35 @@ Authorization: Bearer <token>
   ```
 - **Error responses**: `400` (validation failed – invalid body), `401` (missing or invalid token), `500` (server error).
 
+### `PUT /api/auth/me/role`
+- **Auth**: Required
+- **Description**: Switch your account between **student** and **coach** without deleting the account. Admins cannot use this. Response includes a new **token** (use it for subsequent requests so the app treats you as the new role). If you switch to coach and don't have a coach profile, create one with `POST /api/coaches/profile`. Existing coach profile is kept when switching to student so switching back restores your listing.
+- **Request Body**: `{ "role": "student" | "coach" }` (required).
+- **Response** (Status: 200): `{ "success": true, "message": "Role updated successfully...", "data": { "user": { id, full_name, email, role, ... }, "token": "..." } }`.
+- **Error responses**: `400` (invalid role), `403` (admin), `401` (missing or invalid token), `500` (server error).
+
+### `DELETE /api/auth/me`
+- **Auth**: Required
+- **Description**: Delete the current user's account (**soft delete**). Sets `deleted_at` and `is_active: false`; coach profile is also soft-deleted if present. User can no longer log in. **Not available to admins** (use admin user management for that).
+- **Response** (Status: 200): `{ "success": true, "message": "Account deleted successfully", "data": null }`.
+- **Error responses**: `403` (admin), `401` (missing or invalid token), `500` (server error).
+
 ---
 
 ## Users (`/api/users`)
 
+**User lifecycle:** Filtering on this list is by **deletion** only (`include_deleted`). `deleted_at` = soft-deleted; when set, `is_active` is also false. Admins can set `is_active: false` without deleting (suspend). Response items include `is_active` for client-side filtering. See API_ENDPOINTS.md for full lifecycle details.
+
 ### `GET /api/users`
 - **Auth**: Required (Admin only)
-- **Description**: Get all users (admin only)
+- **Description**: Get all users (admin only). By default returns only non–soft-deleted users.
 - **Query Parameters**:
   - `page`: number (optional, default: 1)
   - `limit`: number (optional, default: 10)
   - `role`: string (optional, filter by role: 'student' | 'coach' | 'admin')
-  - `is_active`: boolean (optional, filter by active status)
+  - `include_deleted`: string `'true'` | `'false'` (optional). If `'true'`, includes soft-deleted users; default is non-deleted only.
+  - `search`: string (optional). Filter by full name or email (case-insensitive, partial match). Use for admin “find user” without scrolling the full list.
+- **Note**: Each user in the response has `is_active`; filter or display by active/inactive on the client if needed.
 - **Response** (Status: 200):
   ```json
   {
@@ -2014,8 +2032,8 @@ Authorization: Bearer <token>
   Note: Pagination info is included in the response structure (see pagination section)
 
 ### `GET /api/users/:id`
-- **Auth**: Required
-- **Description**: Get user by ID
+- **Auth**: Required (Admin only)
+- **Description**: Get user by ID (admin only). Non-admins should use `GET /api/auth/profile` for their own profile.
 - **Response** (Status: 200):
   ```json
   {
@@ -2047,13 +2065,15 @@ Authorization: Bearer <token>
 
 ### `PUT /api/users/:id`
 - **Auth**: Required (Admin only)
-- **Description**: Update user (admin only - can update role and is_active)
+- **Description**: Update user (admin only - can update role, is_active, email, avatar_url, etc.)
 - **Request Body** (all fields optional - omit fields you don't want to update):
   ```json
   {
     "full_name": "string (optional)",
+    "email": "string (optional, must be unique; 400 if already in use)",
     "phone": "string (optional, max 30 chars)",
     "timezone": "string (optional)",
+    "avatar_url": "string (optional, URI or empty string to clear)",
     "is_active": "boolean (optional, admin only)",
     "role": "string (optional, admin only, 'student' | 'coach' | 'admin')"
   }
@@ -2068,31 +2088,28 @@ Authorization: Bearer <token>
       "full_name": "Updated Name",
       "email": "john@example.com",
       "role": "coach",
-      "is_active": true
+      "is_active": true,
+      "phone": "+1234567890",
+      "timezone": "America/New_York",
+      "avatar_url": null
     }
   }
   ```
 
 ### `DELETE /api/users/:id`
 - **Auth**: Required (Admin only)
-- **Description**: Delete user (admin only)
-- **Response** (Status: 200):
-  ```json
-  {
-    "success": true,
-    "message": "User deleted successfully",
-    "data": null
-  }
-  ```
+- **Description**: **Soft delete** user (admin only). Sets `deleted_at` and `is_active: false`; coach profile soft-deleted if present. Deleted users are excluded from list/get and cannot log in.
+- **Response** (Status: 200): `{ "success": true, "message": "User deleted successfully", "data": null }`.
+- **Error responses**: `400` (already deleted), `404` (not found), `500` (server error).
 
 ---
 
 ## Coaches (`/api/coaches`)
 
-### `GET /api/coaches`
-- **Auth**: None required
-- **Description**: Search and get all coaches (public)
-- **Query Parameters**: Search filters (location, skill level, etc.)
+### `GET /api/coaches` (List / search coaches)
+- **Auth**: Required (student or admin only). Coaches cannot use this endpoint (403).
+- **Description**: List coaches with optional filters. Use **lat**, **lng**, and **radius** to find coaches who have courts within that distance (e.g. "coaches near me"). Other filters: skill_level, min_rating, page, limit.
+- **Query Parameters**: `lat`, `lng`, `radius` (miles), `skill_level`, `min_rating`, `page`, `limit` (all optional).
 - **Response** (Status: 200):
   ```json
   {
@@ -2255,6 +2272,12 @@ Authorization: Bearer <token>
     ]
   }
   ```
+
+### `DELETE /api/coaches/availability/:id`
+- **Auth**: Required (Coach only)
+- **Description**: Delete a coach availability slot (**hard delete**). Coaches can only delete their own. `:id` is the availability record id (from GET coach availability or POST create).
+- **Response** (Status: 200): `{ "success": true, "message": "Availability deleted successfully", "data": null }`.
+- **Error responses**: `403` (not coach or not own), `404` (not found), `500` (server error).
 
 **Coach courts workflow**
 - **Create courts**: **`POST /api/courts`**. Coach is auto-linked. **Distance rule:** New court must be within **100 miles** of one of your existing courts (if any).
@@ -2431,6 +2454,12 @@ Authorization: Bearer <token>
     }
   }
   ```
+
+### `DELETE /api/courts/:id`
+- **Auth**: Required (Admin, or coach who created the court)
+- **Description**: **Soft delete** a court. Admins can delete any court; coaches can delete only courts they created. Court no longer appears in search or GET.
+- **Response** (Status: 200): `{ "success": true, "message": "Court deleted successfully", "data": null }`.
+- **Error responses**: `403` (not admin and not the creator), `404` (not found or already deleted), `500` (server error).
 
 ---
 
@@ -2886,21 +2915,6 @@ Authorization: Bearer <token>
     ]
   }
   ```
-
-### `POST /api/reschedules/request`
-- **Auth**: Required
-- **Description**: Request a reschedule (alternative to `/api/bookings/:id/reschedule`)
-- **Request Body**:
-  ```json
-  {
-    "booking_id": "number (required, positive integer)",
-    "new_scheduled_at": "string (required, ISO 8601 date-time, must be in future)",
-    "reason": "string (required, valid reschedule reason)",
-    "reason_notes": "string (optional, max 255 chars)",
-    "paid_reschedule": "boolean (optional, defaults to false)"
-  }
-  ```
-- **Response**: Reschedule request created
 
 ---
 

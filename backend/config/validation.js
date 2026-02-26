@@ -60,7 +60,7 @@ export const createPaymentSchema = Joi.object({
 });
 
 export const rescheduleSchema = Joi.object({
-  booking_id: Joi.number().integer().positive().required(),
+  // Booking ID is taken from the URL parameter (/:id/reschedule)
   new_scheduled_at: Joi.date().iso().greater('now').required(),
   reason: Joi.string().valid(...getValidReasons()).required(),
   reason_notes: Joi.string().max(255).optional(),
@@ -100,6 +100,26 @@ export const resetPasswordSchema = Joi.object({
   password: Joi.string().min(8).required(),
 });
 
+export const changePasswordSchema = Joi.object({
+  current_password: Joi.string().required(),
+  new_password: Joi.string().min(8).required(),
+});
+
+export const changeEmailRequestSchema = Joi.object({
+  new_email: Joi.string().email().max(150).required(),
+  password: Joi.string().required(),
+});
+
+export const confirmEmailChangeSchema = Joi.object({
+  token: Joi.string().required(),
+});
+
+export const verifyEmailRequestSchema = Joi.object({}).unknown(false);
+
+export const confirmEmailVerificationSchema = Joi.object({
+  token: Joi.string().required(),
+});
+
 // Update schemas
 export const updateProfileSchema = Joi.object({
   full_name: Joi.string().min(2).max(100).allow('').optional(),
@@ -108,12 +128,19 @@ export const updateProfileSchema = Joi.object({
   avatar_url: Joi.string().uri().max(255).allow('').optional(),
 });
 
+export const switchRoleSchema = Joi.object({
+  role: Joi.string().valid('student', 'coach').required(),
+});
+
 export const updateUserSchema = Joi.object({
   full_name: Joi.string().min(2).max(100).optional(),
+  email: Joi.string().email().max(150).optional(),
   phone: Joi.string().max(30).allow('').optional(),
   timezone: Joi.string().max(50).optional(),
+  avatar_url: Joi.string().uri().max(255).allow('').optional(),
   is_active: Joi.boolean().optional(),
   role: Joi.string().valid('student', 'coach', 'admin').optional(),
+  deleted_at: Joi.valid(null).optional(), // Allow setting to null to undelete; cannot set to a date (use DELETE endpoint)
 });
 
 export const updateLessonSchema = Joi.object({
@@ -220,7 +247,8 @@ const paginationQuery = {
 export const getUsersQuerySchema = Joi.object({
   ...paginationQuery,
   role: Joi.string().valid('student', 'coach', 'admin').optional(),
-  is_active: Joi.string().valid('true', 'false').optional(),
+  include_deleted: Joi.string().valid('true', 'false').optional(),
+  search: Joi.string().max(200).allow('').optional(),
 });
 
 export const getBookingsQuerySchema = Joi.object({
@@ -287,6 +315,13 @@ export const getRescheduleHistoryQuerySchema = Joi.object({
 
 export const getAlertsQuerySchema = Joi.object({
   resolved: Joi.string().valid('true', 'false').default('false'),
+});
+
+export const getAuditLogsQuerySchema = Joi.object({
+  ...paginationQuery,
+  user_id: Joi.number().integer().positive().optional(),
+  action: Joi.string().max(255).optional(),
+  table_name: Joi.string().max(255).optional(),
 });
 
 export const searchCourtsQuerySchema = Joi.object({

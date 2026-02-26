@@ -47,6 +47,27 @@ export const markNotificationAsRead = async (req, res) => {
   }
 };
 
+export const deleteNotification = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const notification = await Notification.findByPk(id);
+
+    if (!notification) {
+      return errorResponse(res, 'Notification not found', 404);
+    }
+
+    if (notification.user_id !== req.user.id && req.user.role !== 'admin') {
+      return errorResponse(res, 'Unauthorized', 403);
+    }
+
+    await notification.destroy();
+    return successResponse(res, null, 'Notification deleted successfully');
+  } catch (error) {
+    logger.error('Delete notification error:', error);
+    return errorResponse(res, 'Failed to delete notification', 500);
+  }
+};
+
 export const createNotification = async (req, res) => {
   try {
     if (req.user.role !== 'admin') {

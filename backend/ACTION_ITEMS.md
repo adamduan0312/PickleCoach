@@ -62,12 +62,14 @@ The following changes are already in the codebase; ensure migrations are run and
    
    **Important:** This is a one-time step. After this, you can use normal migration workflow for any new schema changes.
 
-3. **Run any new migrations** (e.g. password reset fields):
+3. **Run any new migrations** (e.g. password reset fields, email verification + token versioning):
    After the initial schema is marked, run new migrations normally:
    ```bash
    npm run db:migrate
    ```
-   This applies migrations such as `20260126120000-add-password-reset-fields.cjs` (adds `password_reset_token`, `password_reset_expires` to users). 
+   This applies migrations such as:
+   - `20260126120000-add-password-reset-fields.cjs` (adds `password_reset_token`, `password_reset_expires` to users).
+   - `20260224180000-add-email-and-token-version-fields.cjs` (adds `token_version`, `email_verified_at`, email verification/change tokens and fields to users).
    
 4. **Handle the fix migration** (if needed)
    
@@ -163,6 +165,11 @@ VALUES (
    - `POST /api/auth/login` - Login as admin
    - `POST /api/auth/forgot-password` - Request password reset (body: `{ "email": "..." }`)
    - `POST /api/auth/reset-password` - Reset password with token (body: `{ "token": "...", "password": "..." }`)
+   - `POST /api/auth/verify-email/request` - Send verification email for the logged-in user
+   - `POST /api/auth/verify-email/confirm` - Confirm email verification with token (body: `{ "token": \"...\" }`)
+   - `PUT /api/auth/change-password` - Change password using current_password + new_password
+   - `POST /api/auth/change-email/request` - Start 2-step email change flow (body: `{ "new_email": \"...\", "password": \"current_password\" }`)
+   - `POST /api/auth/change-email/confirm` - Confirm email change with token (body: `{ "token": \"...\" }`)
 
 3. **Save tokens as environment variables:**
    - Create Postman environment: "PickleCoach Dev"
@@ -172,7 +179,7 @@ VALUES (
      - `coach_token`: (from coach login)
      - `admin_token`: (from admin login)
 
-4. **Test Core Endpoints:**
+4. **Test Core Endpoints (after verifying email for the test account):**
    - Health check: `GET /health`
    - User profile: `GET /api/auth/profile` (with token)
    - Coach endpoints: `GET /api/coaches`, `POST /api/coaches/profile`

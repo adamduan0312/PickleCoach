@@ -1,9 +1,10 @@
 import bcrypt from 'bcryptjs';
-import { AdminAnalytics, AdminAlert, User, Booking, Payment, Dispute, UserReliability } from '../models/index.js';
+import { AdminAnalytics, AdminAlert, User, Booking, Payment, Dispute, UserReliability, CoachCourtLocation, CourtLocation, CoachAvailability, AuditLog } from '../models/index.js';
 import { successResponse, errorResponse } from '../utils/response.js';
 import { logAudit } from '../utils/audit.js';
 import { Op } from 'sequelize';
 import { logger } from '../config/logger.js';
+import { getPagination, getPagingData } from '../utils/pagination.js';
 
 export const getDashboardStats = async (req, res) => {
   try {
@@ -226,5 +227,128 @@ export const adjustUserReliability = async (req, res) => {
   } catch (error) {
     logger.error('Adjust reliability error:', error);
     return errorResponse(res, 'Failed to adjust reliability score', 500);
+  }
+};
+
+export const getAuditLogs = async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return errorResponse(res, 'Unauthorized', 403);
+    }
+
+    const { page, limit, user_id, action, table_name } = req.validated;
+    const { limit: queryLimit, offset } = getPagination(page, limit);
+
+    const where = {};
+    if (user_id) where.user_id = user_id;
+    if (action) where.action = action;
+    if (table_name) where.table_name = table_name;
+
+    const logs = await AuditLog.findAndCountAll({
+      where,
+      limit: queryLimit,
+      offset,
+      order: [['created_at', 'DESC']],
+    });
+
+    const response = getPagingData(logs, page, queryLimit);
+    return successResponse(res, response.items, 'Audit logs retrieved successfully');
+  } catch (error) {
+    logger.error('Get audit logs error:', error);
+    return errorResponse(res, 'Failed to retrieve audit logs', 500);
+  }
+};
+
+/**
+ * GET /api/admin/coaches/:coachId/courts
+ * Admin only: list courts linked to a coach (for support/moderation).
+ */
+export const getCoachCourtsForAdmin = async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return errorResponse(res, 'Unauthorized', 403);
+    }
+    const coachId = parseInt(req.params.coachId, 10);
+    if (Number.isNaN(coachId)) {
+      return errorResponse(res, 'Invalid coach ID', 400);
+    }
+    const coach = await User.findByPk(coachId);
+    if (!coach || coach.role !== 'coach') {
+      return errorResponse(res, 'Coach not found', 404);
+    }
+    const coachCourts = await CoachCourtLocation.findAll({
+      where: { coach_id: coachId },
+      include: [
+        {
+          model: CourtLocation,
+          as: 'court',
+          where: { deleted_at: null },
+          required: true,
+          include: [{ model: User, as: 'createdBy', attributes: ['id', 'full_name'] }],
+        },
+      ],
+      order: [['preferred', 'DESC'], ['created_at', 'ASC']],
+    });
+    return successResponse(res, coachCourts, 'Coach courts retrieved successfully');
+  } catch (error) {
+    logger.error('Admin get coach courts error:', error);
+    return errorResponse(res, 'Failed to retrieve coach courts', 500);
+  }
+};
+
+/**
+ * DELETE /api/admin/coaches/:coachId/courts/:linkId
+ * Admin only: unlink a court from a coach (e.g. wrong court linked).
+ */
+export const deleteCoachCourtForAdmin = async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return errorResponse(res, 'Unauthorized', 403);
+    }
+    const coachId = parseInt(req.params.coachId, 10);
+    const linkId = parseInt(req.params.linkId, 10);
+    if (Number.isNaN(coachId) || Number.isNaN(linkId)) {
+      return errorResponse(res, 'Invalid coach ID or link ID', 400);
+    }
+    const link = await CoachCourtLocation.findOne({
+      where: { id: linkId, coach_id: coachId },
+    });
+    if (!link) {
+      return errorResponse(res, 'Court link not found', 404);
+    }
+    await link.destroy();
+    return successResponse(res, null, 'Court removed from coach');
+  } catch (error) {
+    logger.error('Admin delete coach court error:', error);
+    return errorResponse(res, 'Failed to remove court from coach', 500);
+  }
+};
+
+/**
+ * DELETE /api/admin/coaches/:coachId/availability/:id
+ * Admin only: delete a coach's availability slot (e.g. wrong times).
+ */
+export const deleteCoachAvailabilityForAdmin = async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return errorResponse(res, 'Unauthorized', 403);
+    }
+    const coachId = parseInt(req.params.coachId, 10);
+    const availabilityId = parseInt(req.params.id, 10);
+    if (Number.isNaN(coachId) || Number.isNaN(availabilityId)) {
+      return errorResponse(res, 'Invalid coach ID or availability ID', 400);
+    }
+    const availability = await CoachAvailability.findByPk(availabilityId);
+    if (!availability) {
+      return errorResponse(res, 'Availability not found', 404);
+    }
+    if (availability.coach_id !== coachId) {
+      return errorResponse(res, 'Availability does not belong to this coach', 403);
+    }
+    await availability.destroy();
+    return successResponse(res, null, 'Availability deleted successfully');
+  } catch (error) {
+    logger.error('Admin delete coach availability error:', error);
+    return errorResponse(res, 'Failed to delete availability', 500);
   }
 };
