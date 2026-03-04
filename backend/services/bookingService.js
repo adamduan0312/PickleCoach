@@ -1,33 +1,67 @@
-import { Booking, Lesson, BookingPlayer, RescheduleHistory, CoachAvailability, sequelize } from '../models/index.js';
+import { Booking, Lesson, BookingPlayer, RescheduleHistory, CoachAvailability, User, sequelize } from '../models/index.js';
 import { Op } from 'sequelize';
+
+const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+/**
+ * Get weekday (0-6) for a date in a given IANA timezone (e.g. 'America/Los_Angeles').
+ * Uses coach timezone so "Monday" means Monday in the coach's locale.
+ */
+function getWeekdayInTimezone(date, timezone = 'UTC') {
+  const formatter = new Intl.DateTimeFormat('en-US', { timeZone: timezone, weekday: 'short' });
+  const dayStr = formatter.format(date); // 'Mon', 'Tue', ...
+  const shortNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const idx = shortNames.indexOf(dayStr);
+  return idx >= 0 ? idx : new Date(date).getUTCDay();
+}
 
 /**
  * Check if coach is available at the requested time slot
  * Validates against CoachAvailability records (coach-maintained availability)
+ * Weekday is evaluated in the coach's timezone so "available Mondays" matches the coach's local Monday.
  */
 export const checkCoachAvailability = async (coachId, scheduledAt, durationMinutes) => {
   const scheduledDate = new Date(scheduledAt);
   const endTime = new Date(scheduledDate.getTime() + durationMinutes * 60000);
-  
-  // Get weekday (0 = Sunday, 1 = Monday, ..., 6 = Saturday)
-  const weekday = scheduledDate.getDay();
-  
-  // Get time portion as HH:MM:SS string for comparison
-  const scheduledTimeStr = scheduledDate.toTimeString().slice(0, 8); // HH:MM:SS
-  const endTimeStr = endTime.toTimeString().slice(0, 8);
 
-  // Find all availability records for this coach that are active
+  const coach = await User.findByPk(coachId, { attributes: ['timezone'] });
+  const coachTimezone = (coach && coach.timezone) || 'UTC';
+  const weekday = getWeekdayInTimezone(scheduledDate, coachTimezone);
+
+  // Find all availability records for this coach that are active for this weekday
   const availabilities = await CoachAvailability.findAll({
     where: {
       coach_id: coachId,
       is_available: true,
-      weekday: weekday,
+      weekday,
     },
   });
 
   if (availabilities.length === 0) {
-    return { available: false, reason: 'Coach is not available on this day' };
+    const coachAvailRows = await CoachAvailability.findAll({
+      where: { coach_id: coachId, is_available: true },
+      attributes: ['weekday'],
+      raw: true,
+    });
+    const availableWeekdays = [...new Set((coachAvailRows || []).map((r) => r.weekday).filter((w) => w != null))];
+    const requestedDayName = WEEKDAY_NAMES[weekday] || 'unknown';
+    const availableDayNames = availableWeekdays.map((w) => WEEKDAY_NAMES[w]).filter(Boolean);
+    const reason = availableDayNames.length
+      ? `Coach is not available on this day (requested: ${requestedDayName} in coach timezone; coach availability: ${availableDayNames.join(', ')})`
+      : 'Coach has no availability defined';
+    return { available: false, reason };
   }
+
+  // Get time-of-day "HH:mm:ss" in coach timezone for a Date (formatToParts ensures 2-digit)
+  const toTimeStringInTz = (date) => {
+    const formatter = new Intl.DateTimeFormat('en-US', { timeZone: coachTimezone, hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+    const parts = formatter.formatToParts(date);
+    const h = parts.find((p) => p.type === 'hour')?.value?.padStart(2, '0') ?? '00';
+    const m = parts.find((p) => p.type === 'minute')?.value?.padStart(2, '0') ?? '00';
+    const s = parts.find((p) => p.type === 'second')?.value?.padStart(2, '0') ?? '00';
+    return `${h}:${m}:${s}`;
+  };
+  const normalizeTime = (t) => (t && t.length === 5 ? `${t}:00` : t || '00:00:00'); // "09:00" -> "09:00:00"
 
   // Check if any availability window covers the requested time slot
   for (const availability of availabilities) {
@@ -48,19 +82,27 @@ export const checkCoachAvailability = async (coachId, scheduledAt, durationMinut
       }
     }
 
-    // Check datetime window if specified
+    // Prefer time-of-day window (start_time/end_time) for recurring weekly slots
+    if (availability.start_time && availability.end_time) {
+      const startBound = normalizeTime(availability.start_time);
+      const endBound = normalizeTime(availability.end_time);
+      const scheduledStartStr = toTimeStringInTz(scheduledDate);
+      const scheduledEndStr = toTimeStringInTz(endTime);
+      if (scheduledStartStr >= startBound && scheduledEndStr <= endBound) {
+        return { available: true };
+      }
+      continue;
+    }
+
+    // Legacy: full datetime window
     if (availability.start_datetime && availability.end_datetime) {
       const availabilityStart = new Date(availability.start_datetime);
       const availabilityEnd = new Date(availability.end_datetime);
-      
-      // Check if the entire booking slot (start to end) falls within availability window
-      // Booking starts at or after availability start datetime
-      // Booking ends at or before availability end datetime
       if (scheduledDate >= availabilityStart && endTime <= availabilityEnd) {
         return { available: true };
       }
     } else if (!availability.start_datetime && !availability.end_datetime) {
-      // No datetime restrictions, available all day (if weekday matches)
+      // No time restrictions, available all day (if weekday and date range matched)
       return { available: true };
     }
   }

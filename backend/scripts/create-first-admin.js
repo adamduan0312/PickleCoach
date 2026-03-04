@@ -24,14 +24,28 @@ async function createFirstAdmin() {
 
     console.log(`📧 Checking if user with email ${email} already exists...`);
     const existingAdmin = await User.findOne({ where: { email } });
+
     if (existingAdmin) {
-      console.error(`❌ User with email ${email} already exists`);
-      process.exit(1);
+      console.log('⚠️  User already exists. Updating password and ensuring admin/active...');
+      const password_hash = await bcrypt.hash(password, 10);
+      await existingAdmin.update({
+        password_hash,
+        full_name: fullName,
+        role: 'admin',
+        is_active: true,
+      });
+      console.log('✅ Password updated! You can now login with this email and password.');
+      console.log(`   ID: ${existingAdmin.id}`);
+      console.log(`   Name: ${existingAdmin.full_name}`);
+      console.log(`   Email: ${existingAdmin.email}`);
+      await sequelize.close();
+      process.exit(0);
+      return;
     }
 
     console.log('🔐 Hashing password...');
     const password_hash = await bcrypt.hash(password, 10);
-    
+
     console.log('👤 Creating admin user...');
     const admin = await User.create({
       full_name: fullName,

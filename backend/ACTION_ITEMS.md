@@ -14,7 +14,7 @@ The following changes are already in the codebase; ensure migrations are run and
 - **Error responses:** Consistent format (e.g. 404, validation errors). See the "Error Responses" section in `API_ENDPOINTS.md`.
 - **Graceful shutdown:** Server closes HTTP connections before closing the database.
 
-**Docs:** Full API details (including error responses) → `API_ENDPOINTS.md`. Postman and full setup → `PICKLECOACH_API_AND_SETUP_GUIDE.md` (project root).
+**Docs:** Full API details (including error responses) → `API_ENDPOINTS.md`. Postman and full setup → `PICKLECOACH_API_AND_SETUP_GUIDE.md` (project root). **Flow-based Postman testing** (user flows, checklist, 5 tests per endpoint, Stripe/Twilio/SendGrid) → `POSTMAN_TESTING_GUIDE.md`.
 
 ## Phase 1: Initial Setup & Testing (Development)
 
@@ -153,9 +153,11 @@ VALUES (
 
 ### ✅ Step 6: Postman Testing Setup
 
+See **`POSTMAN_TESTING_GUIDE.md`** for flow-based testing order, checklist, and what to test per endpoint (including Stripe, SendGrid, Twilio).
+
 1. **Create a Postman Collection**
    - Import or create a new collection called "PickleCoach API"
-   - Set collection variable: `base_url` = `http://localhost:4000`
+   - Set collection variable: `base_url` = `http://localhost:4000` and `api_url` = `{{base_url}}/api`
 
 2. **Test Authentication Endpoints First:**
    - `POST /api/auth/register` - Register a test student

@@ -62,13 +62,14 @@ Authorization: Bearer <token>
         "role": "student",
         "phone": null,
         "timezone": "UTC",
-        "avatar_url": null
+        "avatar_url": null,
+        "email_verified_at": null
       },
       "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
     }
   }
   ```
-- **Note**: All safe request fields (full_name, email, role, phone, timezone, avatar_url) are echoed in the response; optional ones are `null` when not sent. Avatar can also be set or changed later via `PUT /api/auth/profile`.
+- **Note**: All safe request fields (full_name, email, role, phone, timezone, avatar_url) are echoed in the response; optional ones are `null` when not sent. `email_verified_at` is included so the client can show verification status. Avatar can also be set or changed later via `PUT /api/auth/profile`.
 - **Error responses**: `400` (validation failed – invalid body), `409` (email already registered), `500` (server error).
 
 ### `POST /api/auth/login`
@@ -92,12 +93,14 @@ Authorization: Bearer <token>
         "full_name": "John Doe",
         "email": "john@example.com",
         "role": "student",
-        "avatar_url": null
+        "avatar_url": null,
+        "email_verified_at": "2026-01-15T10:00:00.000Z"
       },
       "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
     }
   }
   ```
+- **Note**: The `user` object includes `email_verified_at` (ISO date or `null`) so the client can show verification status and avoid unnecessary verify-email calls.
 - **Error responses**: `400` (validation failed – invalid body), `401` (invalid credentials), `403` (account inactive), `500` (server error).
 
 ### `POST /api/auth/refresh`
@@ -121,7 +124,8 @@ Authorization: Bearer <token>
         "full_name": "John Doe",
         "email": "john@example.com",
         "role": "student",
-        "avatar_url": null
+        "avatar_url": null,
+        "email_verified_at": null
       }
     }
   }
@@ -319,10 +323,12 @@ Authorization: Bearer <token>
       "timezone": "America/New_York",
       "avatar_url": "https://example.com/avatar.jpg",
       "is_active": true,
+      "email_verified_at": "2026-01-15T10:00:00.000Z",
       "created_at": "2026-01-01T00:00:00.000Z"
     }
   }
   ```
+- **Note**: The profile includes `email_verified_at` (ISO date or `null`) so the client can show verification status.
 - **Error responses**: `401` (missing or invalid token), `500` (server error).
 
 ### `PUT /api/auth/profile`
@@ -396,6 +402,20 @@ Authorization: Bearer <token>
   }
   ```
 - **Error responses**: `403` (admin cannot use this endpoint), `401` (missing or invalid token), `500` (server error).
+
+### `POST /api/auth/logout`
+- **Auth**: Required
+- **Description**: Log out the current session. The backend increments the user's **token_version**, so the current token and all other existing tokens for this user are invalidated. The client should discard the token after calling; subsequent requests with the old token will receive `401` (e.g. "Token has been revoked. Please log in again.").
+- **Request Body**: None.
+- **Response** (Status: 200):
+  ```json
+  {
+    "success": true,
+    "message": "Logged out successfully",
+    "data": null
+  }
+  ```
+- **Error responses**: `401` (missing or invalid token), `500` (server error).
 
 ### Email verification & "serious actions"
 
@@ -655,14 +675,26 @@ Authorization: Bearer <token>
   }
   ```
 
+### Availability vs lessons
+- **Lessons** = *what* the coach offers (e.g. "1hr private", "90min clinic"). Created via `POST /api/lessons`.
+- **Availability** = *when* the coach is free (e.g. "Mondays 9am–5pm"). Created via `POST /api/coaches/availability`.
+- Both are required for booking: the student picks a lesson and a time; the time must fall within the coach's availability and the lesson's constraints.
+
 ### `POST /api/coaches/availability`
 - **Auth**: Required
-- **Description**: Create coach availability slot
+- **Description**: Create coach availability slot. Defines *when* the coach can be booked (by weekday and optional date/time window).
 - **Request Body**:
+  - **Recommended for recurring weekly slots** (e.g. "Mondays 9am–5pm"): use `weekday` + `start_date` / `end_date` + **`start_time`** / **`end_time`** (time-of-day only, e.g. `"09:00"`, `"17:00"`). No need to send full `start_datetime`/`end_datetime`. Times are interpreted in the **coach's timezone**.
+  - `start_date` / `end_date`: Optional **date range** when this slot is valid (e.g. "2026-01-31" to "2026-12-30").
+  - `start_time` / `end_time`: Optional **time-of-day only** (e.g. `"09:00"` or `"17:00:00"`). Use for recurring weekly windows; interpreted in coach timezone.
+  - `start_datetime` / `end_datetime`: Optional **full timestamps** for one continuous window (legacy). If you use `start_time`/`end_time`, you do not need these.
+  - `weekday`: 0–6 (Sunday–Saturday) or name (e.g. `"monday"`). Evaluated in the **coach's timezone** when checking bookings.
   ```json
   {
-    "coach_id": "number (optional, admin only - defaults to authenticated user's ID)",
-    "weekday": "string (optional)",
+    "coach_id": "number (required for coach; optional for admin - defaults to authenticated user's ID)",
+    "weekday": "number 0-6 or string (e.g. 'monday')",
+    "start_time": "string (optional, e.g. '09:00' or '09:00:00')",
+    "end_time": "string (optional, e.g. '17:00' or '17:00:00')",
     "start_datetime": "string (optional, ISO 8601 date-time)",
     "end_datetime": "string (optional, ISO 8601 date-time)",
     "start_date": "string (optional, ISO 8601 date)",
@@ -671,6 +703,7 @@ Authorization: Bearer <token>
     "is_available": "boolean (optional, defaults to true)"
   }
   ```
+- **Example – Mondays 9am–5pm from Feb 1 to Dec 1**: `{ "coach_id": 2, "weekday": "monday", "start_date": "2026-02-01", "end_date": "2026-12-01", "start_time": "09:00", "end_time": "17:00" }`
 - **Response** (Status: 201):
   ```json
   {
@@ -679,9 +712,11 @@ Authorization: Bearer <token>
     "data": {
       "id": 1,
       "coach_id": 1,
-      "weekday": "monday",
-      "start_datetime": "2026-02-01T09:00:00.000Z",
-      "end_datetime": "2026-02-01T17:00:00.000Z",
+      "weekday": 1,
+      "start_time": "09:00:00",
+      "end_time": "17:00:00",
+      "start_date": "2026-02-01",
+      "end_date": "2026-12-01",
       "is_available": true,
       "created_at": "2026-01-01T00:00:00.000Z"
     }
@@ -690,7 +725,7 @@ Authorization: Bearer <token>
 
 ### `GET /api/coaches/:id/availability`
 - **Auth**: None required
-- **Description**: Get coach availability (public)
+- **Description**: Get coach availability (public). Each item may include `start_time`/`end_time` (time-of-day), and/or `start_datetime`/`end_datetime`, and/or `start_date`/`end_date`.
 - **Response** (Status: 200):
   ```json
   {
@@ -700,9 +735,11 @@ Authorization: Bearer <token>
       {
         "id": 1,
         "coach_id": 1,
-        "weekday": "monday",
-        "start_datetime": "2026-02-01T09:00:00.000Z",
-        "end_datetime": "2026-02-01T17:00:00.000Z",
+        "weekday": 1,
+        "start_time": "09:00:00",
+        "end_time": "17:00:00",
+        "start_date": "2026-02-01",
+        "end_date": "2026-12-01",
         "is_available": true
       }
     ]

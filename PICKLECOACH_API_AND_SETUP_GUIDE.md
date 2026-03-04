@@ -42,7 +42,7 @@ One comprehensive guide: Postman setup, coach courts workflow, action items (set
 
 ### Step 3: Import Collection
 1. Click "Import" button
-2. Select `PickleCoach_API.postman_collection.json`
+2. Select `PickleCoach_API_ByType.postman_collection.json` or `PickleCoach_API_ByFlow.postman_collection.json` (or both)
 3. Click "Import"
 
 ### Step 4: Start Your Server
@@ -282,7 +282,7 @@ A **collection** is a group of API requests organized by category.
 ### Option 1: Import from JSON File
 1. In Postman, click "Import" button (top left)
 2. Click "Upload Files"
-3. Select the `PickleCoach_API.postman_collection.json` file
+3. Select the `PickleCoach_API_ByType` or `PickleCoach_API_ByFlow` collection file
 4. Click "Import"
 
 ### Option 2: Manual Setup

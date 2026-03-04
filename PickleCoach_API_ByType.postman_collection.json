@@ -1,8 +1,8 @@
 {
 	"info": {
 		"_postman_id": "picklecoach-api-collection",
-		"name": "PickleCoach API",
-		"description": "Complete API collection for PickleCoach with test scripts. Each request description starts with **Roles:** (Admin, Coach, Student, or Any/unauthenticated) so you can see who can call it.",
+		"name": "PickleCoach API (By Type)",
+		"description": "Endpoints grouped by resource/type. Use for finding a specific endpoint, debugging, and sharing with frontend. For flow-based testing use PickleCoach API (By Flow).",
 		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
 	},
 	"item": [
@@ -56,68 +56,8 @@
 		},
 		{
 			"name": "Authentication",
-			"description": "Auth endpoints. Roles vary: Register/Login = Any (no auth); Profile/Switch Role/Delete = authenticated (see each request).",
+			"description": "Auth endpoints. Register/Login = no auth; Profile/Switch Role/Delete = authenticated.",
 			"item": [
-				{
-					"name": "Register",
-					"request": {
-						"method": "POST",
-						"header": [
-							{
-								"key": "Content-Type",
-								"value": "application/json"
-							}
-						],
-						"body": {
-							"mode": "raw",
-							"raw": "{\n  \"full_name\": \"John Doe\",\n  \"email\": \"john@example.com\",\n  \"password\": \"SecurePassword123!\",\n  \"role\": \"student\",\n  \"phone\": \"+1234567890\",\n  \"timezone\": \"America/New_York\",\n  \"avatar_url\": \"\"\n}"
-						},
-						"url": {
-							"raw": "{{api_url}}/auth/register",
-							"host": [
-								"{{api_url}}"
-							],
-							"path": [
-								"auth",
-								"register"
-							]
-						},
-						"description": "Roles: Any (no auth). Register a new user account. Optional: avatar_url (valid URL, max 255 chars)."
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Status code is 201\", function () {",
-									"    pm.response.to.have.status(201);",
-									"});",
-									"",
-									"pm.test(\"Response has token\", function () {",
-									"    var jsonData = pm.response.json();",
-									"    pm.expect(jsonData).to.have.property('data');",
-									"    pm.expect(jsonData.data).to.have.property('token');",
-									"    ",
-									"    // Save token and user ID",
-									"    pm.environment.set(\"auth_token\", jsonData.data.token);",
-									"    if (jsonData.data.user && jsonData.data.user.id) {",
-									"        pm.environment.set(\"user_id\", jsonData.data.user.id);",
-									"    }",
-									"});",
-									"",
-									"pm.test(\"User is created successfully\", function () {",
-									"    var jsonData = pm.response.json();",
-									"    pm.expect(jsonData.success).to.be.true;",
-									"    pm.expect(jsonData.data.user).to.have.property('email');",
-									"    pm.expect(jsonData.data.user).to.have.property('avatar_url');",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
 				{
 					"name": "Login",
 					"request": {
@@ -177,6 +117,50 @@
 					]
 				},
 				{
+					"name": "Get Profile",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{api_url}}/auth/profile",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"auth",
+								"profile"
+							]
+						},
+						"description": "Roles: Student, Coach, Admin. Get current authenticated user's profile."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Profile data is returned\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('data');",
+									"    pm.expect(jsonData.data).to.have.property('id');",
+									"    pm.expect(jsonData.data).to.have.property('email');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
 					"name": "Refresh Token",
 					"request": {
 						"method": "POST",
@@ -222,6 +206,66 @@
 									"        pm.environment.set(\"auth_token\", jsonData.data.token);",
 									"    }",
 									"    pm.expect(jsonData).to.have.property('data');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Register",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"full_name\": \"John Doe\",\n  \"email\": \"john@example.com\",\n  \"password\": \"SecurePassword123!\",\n  \"role\": \"student\",\n  \"phone\": \"+1234567890\",\n  \"timezone\": \"America/New_York\",\n  \"avatar_url\": \"\"\n}"
+						},
+						"url": {
+							"raw": "{{api_url}}/auth/register",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"auth",
+								"register"
+							]
+						},
+						"description": "Roles: Any (no auth). Register a new user account. Optional: avatar_url (valid URL, max 255 chars)."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 201\", function () {",
+									"    pm.response.to.have.status(201);",
+									"});",
+									"",
+									"pm.test(\"Response has token\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('data');",
+									"    pm.expect(jsonData.data).to.have.property('token');",
+									"    ",
+									"    // Save token and user ID",
+									"    pm.environment.set(\"auth_token\", jsonData.data.token);",
+									"    if (jsonData.data.user && jsonData.data.user.id) {",
+									"        pm.environment.set(\"user_id\", jsonData.data.user.id);",
+									"    }",
+									"});",
+									"",
+									"pm.test(\"User is created successfully\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"    pm.expect(jsonData.data.user).to.have.property('email');",
+									"    pm.expect(jsonData.data.user).to.have.property('avatar_url');",
 									"});"
 								],
 								"type": "text/javascript"
@@ -322,50 +366,6 @@
 					]
 				},
 				{
-					"name": "Get Profile",
-					"request": {
-						"method": "GET",
-						"header": [
-							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
-							}
-						],
-						"url": {
-							"raw": "{{api_url}}/auth/profile",
-							"host": [
-								"{{api_url}}"
-							],
-							"path": [
-								"auth",
-								"profile"
-							]
-						},
-						"description": "Roles: Student, Coach, Admin. Get current authenticated user's profile."
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Status code is 200\", function () {",
-									"    pm.response.to.have.status(200);",
-									"});",
-									"",
-									"pm.test(\"Profile data is returned\", function () {",
-									"    var jsonData = pm.response.json();",
-									"    pm.expect(jsonData).to.have.property('data');",
-									"    pm.expect(jsonData.data).to.have.property('id');",
-									"    pm.expect(jsonData.data).to.have.property('email');",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
 					"name": "Update Profile",
 					"request": {
 						"method": "PUT",
@@ -415,6 +415,38 @@
 							}
 						}
 					]
+				},
+				{
+					"name": "Change Password",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"current_password\": \"CurrentPassword123!\",\n  \"new_password\": \"NewSecurePassword123!\"\n}"
+						},
+						"url": {
+							"raw": "{{api_url}}/auth/change-password",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"auth",
+								"change-password"
+							]
+						},
+						"description": "Roles: Student, Coach, Admin. Change password using the current password and a new password. Revokes all existing tokens."
+					},
+					"response": []
 				},
 				{
 					"name": "Request Email Verification",
@@ -475,38 +507,6 @@
 							]
 						},
 						"description": "Roles: Any (no auth). Confirm email verification using the token from the verification email."
-					},
-					"response": []
-				},
-				{
-					"name": "Change Password",
-					"request": {
-						"method": "PUT",
-						"header": [
-							{
-								"key": "Content-Type",
-								"value": "application/json"
-							},
-							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
-							}
-						],
-						"body": {
-							"mode": "raw",
-							"raw": "{\n  \"current_password\": \"CurrentPassword123!\",\n  \"new_password\": \"NewSecurePassword123!\"\n}"
-						},
-						"url": {
-							"raw": "{{api_url}}/auth/change-password",
-							"host": [
-								"{{api_url}}"
-							],
-							"path": [
-								"auth",
-								"change-password"
-							]
-						},
-						"description": "Roles: Student, Coach, Admin. Change password using the current password and a new password. Revokes all existing tokens."
 					},
 					"response": []
 				},
@@ -624,6 +624,46 @@
 					]
 				},
 				{
+					"name": "Logout",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{api_url}}/auth/logout",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"auth",
+								"logout"
+							]
+						},
+						"description": "Invalidate current and all other tokens for this user (increments token_version). Client should discard the token after calling."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"if (pm.response.code === 200) {",
+									"    pm.environment.unset(\"auth_token\");",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
 					"name": "Delete My Account",
 					"request": {
 						"method": "DELETE",
@@ -664,103 +704,7 @@
 		},
 		{
 			"name": "Coaches",
-			"description": "Coach endpoints. Use coach's **user id** (users.id) for path/body; set `coach_id` env var. Roles: List/Get = Student or Admin (coaches 403); Create/Update profile, availability, me/courts = Coach; Stripe = Coach or Admin. Admin fixes: use /api/admin/coaches/:coachId/... for courts and availability.",
 			"item": [
-				{
-					"name": "List Coaches (Search)",
-					"request": {
-						"method": "GET",
-						"header": [
-							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
-							}
-						],
-						"url": {
-							"raw": "{{api_url}}/coaches",
-							"host": [
-								"{{api_url}}"
-							],
-							"path": [
-								"coaches"
-							],
-							"query": [
-								{ "key": "lat", "value": "37.78", "description": "Latitude (center for radius search, optional)", "disabled": true },
-								{ "key": "lng", "value": "-122.41", "description": "Longitude (center for radius search, optional)", "disabled": true },
-								{ "key": "radius", "value": "10", "description": "Miles from lat/lng (default 10, max 500)", "disabled": true },
-								{ "key": "skill_level", "value": "advanced", "description": "beginner | intermediate | advanced | professional", "disabled": true },
-								{ "key": "min_rating", "value": "4", "description": "Minimum rating 0-5", "disabled": true },
-								{ "key": "page", "value": "1", "description": "Page number", "disabled": true },
-								{ "key": "limit", "value": "10", "description": "Items per page", "disabled": true }
-							]
-						},
-						"description": "Roles: Student, Admin (coaches get 403). List/search coaches. Query params: lat, lng (optional – center for radius), radius (miles), skill_level, min_rating, page, limit."
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Status code is 200\", function () {",
-									"    pm.response.to.have.status(200);",
-									"});",
-									"",
-									"pm.test(\"Returns array of coaches\", function () {",
-									"    var jsonData = pm.response.json();",
-									"    pm.expect(jsonData).to.have.property('data');",
-									"    pm.expect(jsonData.data).to.be.an('array');",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "Get Coach By ID",
-					"request": {
-						"method": "GET",
-						"header": [],
-						"url": {
-							"raw": "{{api_url}}/coaches/:id",
-							"host": [
-								"{{api_url}}"
-							],
-							"path": [
-								"coaches",
-								":id"
-							],
-							"variable": [
-								{
-									"key": "id",
-									"value": "{{coach_id}}"
-								}
-							]
-						},
-						"description": "Roles: Any (no auth). Get coach details by ID. Path :id is the coach's **user id** (users.id). Set `coach_id` env var to that user id."
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Status code is 200\", function () {",
-									"    pm.response.to.have.status(200);",
-									"});",
-									"",
-									"pm.test(\"Coach data returned\", function () {",
-									"    var jsonData = pm.response.json();",
-									"    pm.expect(jsonData).to.have.property('data');",
-									"    pm.expect(jsonData.data).to.have.property('id');",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
 				{
 					"name": "Create Coach Profile",
 					"request": {
@@ -874,6 +818,50 @@
 					]
 				},
 				{
+					"name": "Get Coach Availability",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{api_url}}/coaches/:id/availability",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"coaches",
+								":id",
+								"availability"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "{{coach_id}}"
+								}
+							]
+						},
+						"description": "Roles: Any (no auth). Get coach availability. Path :id is the coach's **user id**."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Returns availability data\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('data');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
 					"name": "Create Availability",
 					"request": {
 						"method": "POST",
@@ -916,50 +904,6 @@
 									"pm.test(\"Availability created\", function () {",
 									"    var jsonData = pm.response.json();",
 									"    pm.expect(jsonData.success).to.be.true;",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "Get Coach Availability",
-					"request": {
-						"method": "GET",
-						"header": [],
-						"url": {
-							"raw": "{{api_url}}/coaches/:id/availability",
-							"host": [
-								"{{api_url}}"
-							],
-							"path": [
-								"coaches",
-								":id",
-								"availability"
-							],
-							"variable": [
-								{
-									"key": "id",
-									"value": "{{coach_id}}"
-								}
-							]
-						},
-						"description": "Roles: Any (no auth). Get coach availability. Path :id is the coach's **user id**."
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Status code is 200\", function () {",
-									"    pm.response.to.have.status(200);",
-									"});",
-									"",
-									"pm.test(\"Returns availability data\", function () {",
-									"    var jsonData = pm.response.json();",
-									"    pm.expect(jsonData).to.have.property('data');",
 									"});"
 								],
 								"type": "text/javascript"
@@ -1129,7 +1073,11 @@
 								":id"
 							],
 							"variable": [
-								{ "key": "id", "value": "1", "description": "Coach court link id from GET /api/coaches/me/courts (data[].id)" }
+								{
+									"key": "id",
+									"value": "1",
+									"description": "Coach court link id from GET /api/coaches/me/courts (data[].id)"
+								}
 							]
 						},
 						"description": "Roles: Coach. Unlink a court from my courts. :id is the coach_court_location id from List My Courts (data[].id). For admin fix use DELETE /api/admin/coaches/:coachId/courts/:linkId."
@@ -1250,12 +1198,141 @@
 							}
 						}
 					]
+				},
+				{
+					"name": "List Coaches (Search)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{api_url}}/coaches",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"coaches"
+							],
+							"query": [
+								{
+									"key": "lat",
+									"value": "37.78",
+									"description": "Latitude (center for radius search, optional)",
+									"disabled": true
+								},
+								{
+									"key": "lng",
+									"value": "-122.41",
+									"description": "Longitude (center for radius search, optional)",
+									"disabled": true
+								},
+								{
+									"key": "radius",
+									"value": "10",
+									"description": "Miles from lat/lng (default 10, max 500)",
+									"disabled": true
+								},
+								{
+									"key": "skill_level",
+									"value": "advanced",
+									"description": "beginner | intermediate | advanced | professional",
+									"disabled": true
+								},
+								{
+									"key": "min_rating",
+									"value": "4",
+									"description": "Minimum rating 0-5",
+									"disabled": true
+								},
+								{
+									"key": "page",
+									"value": "1",
+									"description": "Page number",
+									"disabled": true
+								},
+								{
+									"key": "limit",
+									"value": "10",
+									"description": "Items per page",
+									"disabled": true
+								}
+							]
+						},
+						"description": "Roles: Student, Admin (coaches get 403). List/search coaches. Query params: lat, lng (optional – center for radius), radius (miles), skill_level, min_rating, page, limit."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Returns array of coaches\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('data');",
+									"    pm.expect(jsonData.data).to.be.an('array');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Get Coach By ID",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{api_url}}/coaches/:id",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"coaches",
+								":id"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "{{coach_id}}"
+								}
+							]
+						},
+						"description": "Roles: Any (no auth). Get coach details by ID. Path :id is the coach's **user id** (users.id). Set `coach_id` env var to that user id."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Coach data returned\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('data');",
+									"    pm.expect(jsonData.data).to.have.property('id');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
 				}
 			]
 		},
 		{
 			"name": "Courts",
-			"description": "Courts. Roles: Search/Get = Any; Create/Delete = Coach (create auto-links coach; delete only courts they created) or Admin (delete any).",
 			"item": [
 				{
 					"name": "Get All Courts",
@@ -1693,7 +1770,6 @@
 		},
 		{
 			"name": "Bookings",
-			"description": "Bookings. Roles: List/Get = Student, Coach, Admin (own or all if admin); Create = Student; Update status/Cancel = Coach or Admin.",
 			"item": [
 				{
 					"name": "Get My Bookings",
@@ -1779,60 +1855,6 @@
 									"    var jsonData = pm.response.json();",
 									"    pm.expect(jsonData).to.have.property('data');",
 									"    pm.expect(jsonData.data).to.have.property('id');",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "Create Booking",
-					"request": {
-						"method": "POST",
-						"header": [
-							{
-								"key": "Content-Type",
-								"value": "application/json"
-							},
-							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
-							}
-						],
-						"body": {
-							"mode": "raw",
-							"raw": "{\n  \"lesson_id\": \"{{lesson_id}}\",\n  \"scheduled_at\": \"2026-02-01T10:00:00Z\",\n  \"duration_minutes\": 60,\n  \"player_ids\": [],\n  \"court_location_id\": \"{{court_id}}\",\n  \"payment_method\": \"stripe\"\n}"
-						},
-						"url": {
-							"raw": "{{api_url}}/bookings",
-							"host": [
-								"{{api_url}}"
-							],
-							"path": [
-								"bookings"
-							]
-						},
-						"description": "Roles: Student. Create a new booking."
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Status code is 201\", function () {",
-									"    pm.response.to.have.status(201);",
-									"});",
-									"",
-									"pm.test(\"Booking created\", function () {",
-									"    var jsonData = pm.response.json();",
-									"    pm.expect(jsonData.success).to.be.true;",
-									"    ",
-									"    // Save booking ID",
-									"    if (jsonData.data && jsonData.data.id) {",
-									"        pm.environment.set(\"booking_id\", jsonData.data.id);",
-									"    }",
 									"});"
 								],
 								"type": "text/javascript"
@@ -2010,13 +2032,229 @@
 							}
 						}
 					]
+				},
+				{
+					"name": "Create Booking",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"lesson_id\": \"{{lesson_id}}\",\n  \"scheduled_at\": \"2026-02-01T10:00:00Z\",\n  \"duration_minutes\": 60,\n  \"player_ids\": [],\n  \"court_location_id\": \"{{court_id}}\",\n  \"payment_method\": \"stripe\"\n}"
+						},
+						"url": {
+							"raw": "{{api_url}}/bookings",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"bookings"
+							]
+						},
+						"description": "Roles: Student. Create a new booking."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 201\", function () {",
+									"    pm.response.to.have.status(201);",
+									"});",
+									"",
+									"pm.test(\"Booking created\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"    ",
+									"    // Save booking ID",
+									"    if (jsonData.data && jsonData.data.id) {",
+									"        pm.environment.set(\"booking_id\", jsonData.data.id);",
+									"    }",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
 				}
 			]
 		},
 		{
 			"name": "Payments",
-			"description": "List/get payments, create payment. For admin-only (Process Refund, Update Payment Status), see Admin folder.",
 			"item": [
+				{
+					"name": "Create Payment (Admin)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"booking_id\": {{booking_id}},\n  \"payment_method\": \"stripe\",\n  \"payment_intent_id\": null,\n  \"charge_id\": null\n}"
+						},
+						"url": {
+							"raw": "{{api_url}}/payments",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"payments"
+							]
+						},
+						"description": "Roles: Admin (in practice). Create a payment record for a booking — for reconciliation when a booking exists without a payment (e.g. legacy data, manual DB insert). Does not create a Stripe PaymentIntent; optional payment_intent_id/charge_id to link existing Stripe payment."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 201\", function () {",
+									"    pm.response.to.have.status(201);",
+									"});",
+									"",
+									"pm.test(\"Payment created\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Process Refund (Admin)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"refund_amount\": 50.00,\n  \"reason\": \"Customer request\"\n}"
+						},
+						"url": {
+							"raw": "{{api_url}}/payments/:id/refund",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"payments",
+								":id",
+								"refund"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "1"
+								}
+							]
+						},
+						"description": "Roles: Admin. Process a refund for a payment."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Refund processed\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Update Payment Status (Admin)",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"payment_status\": \"captured\",\n  \"escrow_status\": \"released\",\n  \"charge_id\": null,\n  \"transfer_id\": null,\n  \"payout_id\": null\n}"
+						},
+						"url": {
+							"raw": "{{api_url}}/payments/:id/status",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"payments",
+								":id",
+								"status"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "1"
+								}
+							]
+						},
+						"description": "Roles: Admin. Update payment status."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Payment status updated\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
 				{
 					"name": "Get My Payments",
 					"request": {
@@ -2100,55 +2338,6 @@
 									"pm.test(\"Payment data returned\", function () {",
 									"    var jsonData = pm.response.json();",
 									"    pm.expect(jsonData).to.have.property('data');",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "Create Payment",
-					"request": {
-						"method": "POST",
-						"header": [
-							{
-								"key": "Content-Type",
-								"value": "application/json"
-							},
-							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
-							}
-						],
-						"body": {
-							"mode": "raw",
-							"raw": "{\n  \"booking_id\": \"{{booking_id}}\",\n  \"payment_method\": \"stripe\",\n  \"payment_intent_id\": null,\n  \"charge_id\": null\n}"
-						},
-						"url": {
-							"raw": "{{api_url}}/payments",
-							"host": [
-								"{{api_url}}"
-							],
-							"path": [
-								"payments"
-							]
-						},
-						"description": "Roles: Student. Create a payment for a booking."
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Status code is 201\", function () {",
-									"    pm.response.to.have.status(201);",
-									"});",
-									"",
-									"pm.test(\"Payment created\", function () {",
-									"    var jsonData = pm.response.json();",
-									"    pm.expect(jsonData.success).to.be.true;",
 									"});"
 								],
 								"type": "text/javascript"
@@ -2655,8 +2844,64 @@
 		},
 		{
 			"name": "Disputes",
-			"description": "List/get disputes, create dispute. For Resolve Dispute (admin only), see Admin folder.",
 			"item": [
+				{
+					"name": "Resolve Dispute (Admin)",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"resolution_action_id\": 1,\n  \"resolution_notes\": \"Approved refund due to service issue\"\n}"
+						},
+						"url": {
+							"raw": "{{api_url}}/disputes/:id/resolve",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"disputes",
+								":id",
+								"resolve"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "1"
+								}
+							]
+						},
+						"description": "Roles: Admin. Resolve a dispute."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Dispute resolved\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
 				{
 					"name": "Get All Disputes",
 					"request": {
@@ -2800,8 +3045,56 @@
 		},
 		{
 			"name": "Notifications",
-			"description": "Get my notifications, mark as read. For Create Notification (admin only), see Admin folder.",
 			"item": [
+				{
+					"name": "Create Notification (Admin)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"user_id\": \"{{user_id}}\",\n  \"type\": \"system\",\n  \"channel\": \"in_app\",\n  \"payload\": {\n    \"title\": \"System Notification\",\n    \"message\": \"This is a system notification\"\n  }\n}"
+						},
+						"url": {
+							"raw": "{{api_url}}/notifications",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"notifications"
+							]
+						},
+						"description": "Roles: Admin. Create a notification."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 201\", function () {",
+									"    pm.response.to.have.status(201);",
+									"});",
+									"",
+									"pm.test(\"Notification created\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
 				{
 					"name": "Get My Notifications",
 					"request": {
@@ -2897,7 +3190,6 @@
 		},
 		{
 			"name": "Admin",
-			"description": "All endpoints in this folder: Roles: Admin only. Dashboard, alerts, user management (list/update/delete), payments (refund, update status), disputes (resolve), notifications (create), and coach support (courts/availability).",
 			"item": [
 				{
 					"name": "Get Dashboard Stats",
@@ -3142,65 +3434,6 @@
 					]
 				},
 				{
-					"name": "Adjust User Reliability",
-					"request": {
-						"method": "PUT",
-						"header": [
-							{
-								"key": "Content-Type",
-								"value": "application/json"
-							},
-							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
-							}
-						],
-						"body": {
-							"mode": "raw",
-							"raw": "{\n  \"new_score\": 85.5,\n  \"reason\": \"Manual adjustment\",\n  \"explanation\": \"Adjusted due to dispute resolution\"\n}"
-						},
-						"url": {
-							"raw": "{{api_url}}/admin/users/:id/reliability",
-							"host": [
-								"{{api_url}}"
-							],
-							"path": [
-								"admin",
-								"users",
-								":id",
-								"reliability"
-							],
-							"variable": [
-								{
-									"key": "id",
-									"value": "{{user_id}}"
-								}
-							]
-						},
-						"description": "Roles: Admin. Manually adjust a user's reliability score."
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Status code is 200\", function () {",
-									"    pm.response.to.have.status(200);",
-									"});",
-									"",
-									"pm.test(\"Reliability adjusted\", function () {",
-									"    var jsonData = pm.response.json();",
-									"    pm.expect(jsonData.success).to.be.true;",
-									"    pm.expect(jsonData.data).to.have.property('new_score');",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
 					"name": "Get All Users (Admin)",
 					"request": {
 						"method": "GET",
@@ -3364,23 +3597,33 @@
 					]
 				},
 				{
-					"name": "Delete User (Admin)",
+					"name": "Adjust User Reliability",
 					"request": {
-						"method": "DELETE",
+						"method": "PUT",
 						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
 							{
 								"key": "Authorization",
 								"value": "Bearer {{auth_token}}"
 							}
 						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"new_score\": 85.5,\n  \"reason\": \"Manual adjustment\",\n  \"explanation\": \"Adjusted due to dispute resolution\"\n}"
+						},
 						"url": {
-							"raw": "{{api_url}}/users/:id",
+							"raw": "{{api_url}}/admin/users/:id/reliability",
 							"host": [
 								"{{api_url}}"
 							],
 							"path": [
+								"admin",
 								"users",
-								":id"
+								":id",
+								"reliability"
 							],
 							"variable": [
 								{
@@ -3389,7 +3632,7 @@
 								}
 							]
 						},
-						"description": "Roles: Admin. Delete user (soft delete)."
+						"description": "Roles: Admin. Manually adjust a user's reliability score."
 					},
 					"response": [],
 					"event": [
@@ -3401,229 +3644,10 @@
 									"    pm.response.to.have.status(200);",
 									"});",
 									"",
-									"pm.test(\"User deleted successfully\", function () {",
+									"pm.test(\"Reliability adjusted\", function () {",
 									"    var jsonData = pm.response.json();",
 									"    pm.expect(jsonData.success).to.be.true;",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "Process Refund (Admin)",
-					"request": {
-						"method": "POST",
-						"header": [
-							{
-								"key": "Content-Type",
-								"value": "application/json"
-							},
-							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
-							}
-						],
-						"body": {
-							"mode": "raw",
-							"raw": "{\n  \"refund_amount\": 50.00,\n  \"reason\": \"Customer request\"\n}"
-						},
-						"url": {
-							"raw": "{{api_url}}/payments/:id/refund",
-							"host": [
-								"{{api_url}}"
-							],
-							"path": [
-								"payments",
-								":id",
-								"refund"
-							],
-							"variable": [
-								{
-									"key": "id",
-									"value": "1"
-								}
-							]
-						},
-						"description": "Roles: Admin. Process a refund for a payment."
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Status code is 200\", function () {",
-									"    pm.response.to.have.status(200);",
-									"});",
-									"",
-									"pm.test(\"Refund processed\", function () {",
-									"    var jsonData = pm.response.json();",
-									"    pm.expect(jsonData.success).to.be.true;",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "Update Payment Status (Admin)",
-					"request": {
-						"method": "PUT",
-						"header": [
-							{
-								"key": "Content-Type",
-								"value": "application/json"
-							},
-							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
-							}
-						],
-						"body": {
-							"mode": "raw",
-							"raw": "{\n  \"payment_status\": \"captured\",\n  \"escrow_status\": \"released\",\n  \"charge_id\": null,\n  \"transfer_id\": null,\n  \"payout_id\": null\n}"
-						},
-						"url": {
-							"raw": "{{api_url}}/payments/:id/status",
-							"host": [
-								"{{api_url}}"
-							],
-							"path": [
-								"payments",
-								":id",
-								"status"
-							],
-							"variable": [
-								{
-									"key": "id",
-									"value": "1"
-								}
-							]
-						},
-						"description": "Roles: Admin. Update payment status."
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Status code is 200\", function () {",
-									"    pm.response.to.have.status(200);",
-									"});",
-									"",
-									"pm.test(\"Payment status updated\", function () {",
-									"    var jsonData = pm.response.json();",
-									"    pm.expect(jsonData.success).to.be.true;",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "Resolve Dispute (Admin)",
-					"request": {
-						"method": "PUT",
-						"header": [
-							{
-								"key": "Content-Type",
-								"value": "application/json"
-							},
-							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
-							}
-						],
-						"body": {
-							"mode": "raw",
-							"raw": "{\n  \"resolution_action_id\": 1,\n  \"resolution_notes\": \"Approved refund due to service issue\"\n}"
-						},
-						"url": {
-							"raw": "{{api_url}}/disputes/:id/resolve",
-							"host": [
-								"{{api_url}}"
-							],
-							"path": [
-								"disputes",
-								":id",
-								"resolve"
-							],
-							"variable": [
-								{
-									"key": "id",
-									"value": "1"
-								}
-							]
-						},
-						"description": "Roles: Admin. Resolve a dispute."
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Status code is 200\", function () {",
-									"    pm.response.to.have.status(200);",
-									"});",
-									"",
-									"pm.test(\"Dispute resolved\", function () {",
-									"    var jsonData = pm.response.json();",
-									"    pm.expect(jsonData.success).to.be.true;",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "Create Notification (Admin)",
-					"request": {
-						"method": "POST",
-						"header": [
-							{
-								"key": "Content-Type",
-								"value": "application/json"
-							},
-							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
-							}
-						],
-						"body": {
-							"mode": "raw",
-							"raw": "{\n  \"user_id\": \"{{user_id}}\",\n  \"type\": \"system\",\n  \"channel\": \"in_app\",\n  \"payload\": {\n    \"title\": \"System Notification\",\n    \"message\": \"This is a system notification\"\n  }\n}"
-						},
-						"url": {
-							"raw": "{{api_url}}/notifications",
-							"host": [
-								"{{api_url}}"
-							],
-							"path": [
-								"notifications"
-							]
-						},
-						"description": "Roles: Admin. Create a notification."
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Status code is 201\", function () {",
-									"    pm.response.to.have.status(201);",
-									"});",
-									"",
-									"pm.test(\"Notification created\", function () {",
-									"    var jsonData = pm.response.json();",
-									"    pm.expect(jsonData.success).to.be.true;",
+									"    pm.expect(jsonData.data).to.have.property('new_score');",
 									"});"
 								],
 								"type": "text/javascript"
@@ -3771,6 +3795,54 @@
 								"exec": [
 									"pm.test(\"Status code is 200\", function () {",
 									"    pm.response.to.have.status(200);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Delete User (Admin)",
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{api_url}}/users/:id",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"users",
+								":id"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "{{user_id}}"
+								}
+							]
+						},
+						"description": "Roles: Admin. Delete user (soft delete)."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"User deleted successfully\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
 									"});"
 								],
 								"type": "text/javascript"

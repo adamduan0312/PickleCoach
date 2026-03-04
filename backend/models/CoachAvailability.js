@@ -31,6 +31,16 @@ const CoachAvailability = sequelize.define('coach_availabilities', {
     type: DataTypes.DATEONLY,
     allowNull: true,
   },
+  /** Time-of-day only (e.g. "09:00:00", "17:00:00") for recurring weekly slots. Interpreted in coach timezone. */
+  start_time: {
+    type: DataTypes.STRING(8),
+    allowNull: true,
+  },
+  /** Time-of-day only (e.g. "17:00:00") for recurring weekly slots. Interpreted in coach timezone. */
+  end_time: {
+    type: DataTypes.STRING(8),
+    allowNull: true,
+  },
   recurrence_rule: {
     type: DataTypes.STRING(255),
     allowNull: true,

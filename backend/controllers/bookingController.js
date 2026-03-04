@@ -1,4 +1,4 @@
-import { Booking, Lesson, User, BookingPlayer, Payment, RescheduleHistory, CancellationHistory, CourtLocation } from '../models/index.js';
+import { sequelize, Booking, Lesson, User, BookingPlayer, Payment, RescheduleHistory, CancellationHistory, CourtLocation } from '../models/index.js';
 import { successResponse, errorResponse } from '../utils/response.js';
 import { getPagination, getPagingData } from '../utils/pagination.js';
 import { Op } from 'sequelize';
@@ -8,6 +8,20 @@ import { updateUserReliability } from '../services/reliabilityService.js';
 import * as paymentService from '../services/paymentService.js';
 import { checkBookingAvailability } from '../services/bookingService.js';
 import { logger } from '../config/logger.js';
+
+/** In dev, return clear error detail; if Stripe API key error, clarify it's server-side STRIPE_SECRET_KEY. */
+function getCreateBookingErrorDetail(error, isDev) {
+  if (!isDev) return null;
+  const raw = error?.message || String(error);
+  const isStripeKeyError = /api key|Authorization header|STRIPE|Bearer YOUR_SECRET_KEY/i.test(raw);
+  if (isStripeKeyError) {
+    return {
+      detail: raw,
+      hint: 'This is Stripe\'s error. The "Authorization header" refers to the request this server makes to Stripe, not your request to this API. Set STRIPE_SECRET_KEY in .env.development (or your env file) so the server can authenticate to Stripe. Do not put the Stripe key in your own Authorization header.',
+    };
+  }
+  return { detail: raw };
+}
 
 export const getBookings = async (req, res) => {
   try {
@@ -123,43 +137,77 @@ export const createBooking = async (req, res) => {
     // Calculate reschedule deadline (default: 24 hours before scheduled time)
     const rescheduleDeadline = new Date(scheduledDate.getTime() - 24 * 60 * 60 * 1000);
 
-    const booking = await Booking.create({
-      lesson_id,
-      coach_id: lesson.coach_id,
-      primary_student_id: req.user.id,
-      scheduled_at: scheduledDate,
-      duration_minutes: duration_minutes || lesson.duration_minutes,
-      price: lesson.price,
-      court_location_id: court_location_id || null,
-      status: 'pending',
-      reschedule_deadline: rescheduleDeadline,
-    });
+    const transaction = await sequelize.transaction();
+    let booking;
+    let paymentIntent;
+    try {
+      booking = await Booking.create({
+        lesson_id,
+        coach_id: lesson.coach_id,
+        primary_student_id: req.user.id,
+        scheduled_at: scheduledDate,
+        duration_minutes: duration_minutes || lesson.duration_minutes,
+        price: lesson.price,
+        court_location_id: court_location_id || null,
+        status: 'pending',
+        reschedule_deadline: rescheduleDeadline,
+      }, { transaction });
 
-    if (player_ids && Array.isArray(player_ids)) {
-      const players = player_ids.map(player_id => ({
-        booking_id: booking.id,
-        player_id,
-      }));
-      await BookingPlayer.bulkCreate(players);
+      if (player_ids && Array.isArray(player_ids)) {
+        const players = player_ids.map(player_id => ({
+          booking_id: booking.id,
+          player_id,
+        }));
+        await BookingPlayer.bulkCreate(players, { transaction });
+      }
+
+      // Create payment and PaymentIntent (payment creation uses same transaction; if Stripe fails we roll back)
+      const result = await paymentService.createPaymentForBooking(
+        booking,
+        req.user.id,
+        payment_method,
+        { transaction }
+      );
+      paymentIntent = result.paymentIntent;
+
+      await transaction.commit();
+    } catch (txError) {
+      await transaction.rollback();
+      const errMsg = (txError?.message || String(txError)) + (txError?.stack ? '\n' + txError.stack : '');
+      logger.error('Create booking error: ' + errMsg);
+      if (!res.headersSent) {
+        const isDev = process.env.NODE_ENV !== 'production';
+        return errorResponse(res, 'Failed to create booking', 500, isDev ? getCreateBookingErrorDetail(txError, true) : null);
+      }
+      return;
     }
 
-    // Create payment and PaymentIntent
-    const { payment, paymentIntent } = await paymentService.createPaymentForBooking(
-      booking,
-      req.user.id,
-      payment_method
-    );
+    await logAudit(req.user.id, 'booking_created', 'bookings', booking.id, null, booking.get({ plain: true }), req);
 
-    await logAudit(req.user.id, 'booking_created', 'bookings', booking.id, null, booking.toJSON(), req);
-
-    return successResponse(res, {
-      booking,
-      payment_intent_client_secret: paymentIntent.client_secret,
-      payment_intent_id: paymentIntent.id,
-    }, 'Booking created successfully', 201);
+    // Use plain object so res.json() never fails on Sequelize model serialization
+    const bookingData = booking.get({ plain: true });
+    const payload = {
+      booking: bookingData,
+      payment_intent_client_secret: paymentIntent?.client_secret ?? null,
+      payment_intent_id: paymentIntent?.id ?? null,
+    };
+    try {
+      return successResponse(res, payload, 'Booking created successfully', 201);
+    } catch (responseError) {
+      const errMsg = (responseError?.message || String(responseError)) + (responseError?.stack ? '\n' + responseError.stack : '');
+      logger.error('Create booking response send error: ' + errMsg);
+      if (!res.headersSent) {
+        const isDev = process.env.NODE_ENV !== 'production';
+        return errorResponse(res, 'Failed to create booking', 500, isDev ? getCreateBookingErrorDetail(responseError, true) : null);
+      }
+    }
   } catch (error) {
-    logger.error('Create booking error:', error);
-    return errorResponse(res, 'Failed to create booking', 500);
+    const errMsg = (error?.message || String(error)) + (error?.stack ? '\n' + error.stack : '');
+    logger.error('Create booking error: ' + errMsg);
+    if (!res.headersSent) {
+      const isDev = process.env.NODE_ENV !== 'production';
+      return errorResponse(res, 'Failed to create booking', 500, isDev ? getCreateBookingErrorDetail(error, true) : null);
+    }
   }
 };
 

@@ -32,8 +32,8 @@ export const sendReminderNotifications = async () => {
         },
       },
       include: [
-        { model: User, as: 'coach' },
-        { model: User, as: 'primaryStudent' },
+        { model: User, as: 'coach', attributes: ['id', 'full_name', 'email'] },
+        { model: User, as: 'primaryStudent', attributes: ['id', 'full_name', 'email'] },
       ],
     });
 
@@ -50,8 +50,8 @@ export const sendReminderNotifications = async () => {
         },
       },
       include: [
-        { model: User, as: 'coach' },
-        { model: User, as: 'primaryStudent' },
+        { model: User, as: 'coach', attributes: ['id', 'full_name', 'email'] },
+        { model: User, as: 'primaryStudent', attributes: ['id', 'full_name', 'email'] },
       ],
     });
 
@@ -68,8 +68,8 @@ export const sendReminderNotifications = async () => {
         },
       },
       include: [
-        { model: User, as: 'coach' },
-        { model: User, as: 'primaryStudent' },
+        { model: User, as: 'coach', attributes: ['id', 'full_name', 'email'] },
+        { model: User, as: 'primaryStudent', attributes: ['id', 'full_name', 'email'] },
       ],
     });
 

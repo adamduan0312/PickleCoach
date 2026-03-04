@@ -260,7 +260,7 @@ export const getMyCoachCourts = async (req, res) => {
     const userId = req.user.id;
 
     if (req.user.role !== 'coach') {
-      return res.status(403).json(createErrorResponse('Only coaches can view their courts'));
+      return res.status(403).json(createErrorResponse(`Only coaches can view their courts. Your role is '${req.user.role}'. Switch via PUT /api/auth/me/role with body { "role": "coach" } if needed.`));
     }
 
     const coachCourts = await CoachCourtLocation.findAll({
@@ -301,7 +301,7 @@ export const addCoachCourt = async (req, res) => {
     const { court_id, rate_modifier, preferred, notes } = req.body;
 
     if (req.user.role !== 'coach') {
-      return res.status(403).json(createErrorResponse('Only coaches can add courts to their profile'));
+      return res.status(403).json(createErrorResponse(`Only coaches can add courts to their profile. Your role is '${req.user.role}'.`));
     }
 
     const courtId = court_id != null ? parseInt(court_id, 10) : null;
@@ -398,7 +398,7 @@ export const deleteCoachCourt = async (req, res) => {
     const linkId = req.params.id != null ? parseInt(req.params.id, 10) : null;
 
     if (req.user.role !== 'coach') {
-      return res.status(403).json(createErrorResponse('Only coaches can remove courts from their profile'));
+      return res.status(403).json(createErrorResponse(`Only coaches can remove courts from their profile. Your role is '${req.user.role}'.`));
     }
     if (!linkId || Number.isNaN(linkId)) {
       return res.status(400).json(createErrorResponse('Valid link ID is required'));

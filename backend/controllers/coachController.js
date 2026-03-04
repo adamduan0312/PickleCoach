@@ -158,7 +158,7 @@ export const createCoachProfile = async (req, res) => {
     // Verify the target user has coach role (unless admin is creating it)
     if (req.user.role !== 'admin') {
       if (req.user.role !== 'coach') {
-        return errorResponse(res, 'Only users with coach role can create coach profiles', 403);
+        return errorResponse(res, `Your account role is '${req.user.role}'. Only users with coach role can create coach profiles. Switch to coach via PUT /api/auth/me/role with body { "role": "coach" } and use the new token.`, 403);
       }
     } else if (user_id) {
       // Admin creating profile for another user - verify that user is a coach
@@ -228,12 +228,23 @@ export const updateCoachProfile = async (req, res) => {
   }
 };
 
+/** Normalize "9:00" or "09:00" to "09:00:00" for storage. */
+function normalizeTimeOfDay(str) {
+  if (!str || typeof str !== 'string') return null;
+  const trimmed = str.trim();
+  if (!trimmed) return null;
+  const parts = trimmed.split(':');
+  if (parts.length === 2) return `${parts[0].padStart(2, '0')}:${parts[1].padStart(2, '0')}:00`;
+  if (parts.length === 3) return `${parts[0].padStart(2, '0')}:${parts[1].padStart(2, '0')}:${parts[2].padStart(2, '0')}`;
+  return null;
+}
+
 export const createAvailability = async (req, res) => {
   try {
-    const { coach_id, weekday, start_datetime, end_datetime, start_date, end_date, recurrence_rule, is_available } = req.validated;
+    const { coach_id, weekday, start_datetime, end_datetime, start_date, end_date, start_time, end_time, recurrence_rule, is_available } = req.validated;
 
     if (req.user.id !== parseInt(coach_id) && req.user.role !== 'admin') {
-      return errorResponse(res, 'Unauthorized', 403);
+      return errorResponse(res, `Unauthorized: coach_id must be your user id (${req.user.id}) when not admin. Your role is '${req.user.role}'.`, 403);
     }
 
     const availability = await CoachAvailability.create({
@@ -243,6 +254,8 @@ export const createAvailability = async (req, res) => {
       end_datetime: end_datetime ? new Date(end_datetime) : null,
       start_date,
       end_date,
+      start_time: normalizeTimeOfDay(start_time),
+      end_time: normalizeTimeOfDay(end_time),
       recurrence_rule,
       is_available: is_available !== undefined ? is_available : true,
     });
@@ -277,7 +290,7 @@ export const getCoachAvailability = async (req, res) => {
 export const deleteAvailability = async (req, res) => {
   try {
     if (req.user.role !== 'coach') {
-      return errorResponse(res, 'Only coaches can delete their availability', 403);
+      return errorResponse(res, `Only coaches can delete their availability. Your role is '${req.user.role}'. Switch via PUT /api/auth/me/role with body { "role": "coach" } if needed.`, 403);
     }
 
     const availabilityId = req.params.id;
@@ -306,7 +319,7 @@ export const deleteAvailability = async (req, res) => {
 export const initiateStripeConnectOnboarding = async (req, res) => {
   try {
     if (req.user.role !== 'coach' && req.user.role !== 'admin') {
-      return errorResponse(res, 'Only coaches can onboard with Stripe Connect', 403);
+      return errorResponse(res, `Only coaches can onboard with Stripe Connect. Your role is '${req.user.role}'.`, 403);
     }
 
     const coachId = req.user.role === 'admin' ? req.body.coach_id : req.user.id;

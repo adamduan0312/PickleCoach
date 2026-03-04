@@ -48,6 +48,7 @@ export const register = async (req, res) => {
         phone: user.phone ?? null,
         timezone: user.timezone ?? null,
         avatar_url: user.avatar_url ?? null,
+        email_verified_at: user.email_verified_at ?? null,
       },
       token,
     }, 'User registered successfully', 201);
@@ -93,6 +94,7 @@ export const login = async (req, res) => {
         phone: user.phone ?? null,
         timezone: user.timezone ?? null,
         avatar_url: user.avatar_url ?? null,
+        email_verified_at: user.email_verified_at ?? null,
       },
       token,
     }, 'Login successful');
@@ -197,6 +199,7 @@ export const refreshToken = async (req, res) => {
         phone: user.phone ?? null,
         timezone: user.timezone ?? null,
         avatar_url: user.avatar_url ?? null,
+        email_verified_at: user.email_verified_at ?? null,
       },
     }, 'Token refreshed successfully');
   } catch (error) {
@@ -342,6 +345,30 @@ export const deleteMyAccount = async (req, res) => {
 };
 
 /**
+ * Logout – invalidate current and all other tokens for this user
+ * POST /api/auth/logout
+ * Auth required. Increments token_version so all existing JWTs are rejected. Client should discard the token after calling.
+ */
+export const logout = async (req, res) => {
+  try {
+    const user = await User.findByPk(req.user.id);
+    if (!user) {
+      return errorResponse(res, 'User not found', 404);
+    }
+
+    const newVersion = (user.token_version ?? 0) + 1;
+    await user.update({ token_version: newVersion });
+
+    await logAudit(req.user.id, 'user_logout', 'users', user.id, null, { token_version: newVersion }, req);
+
+    return successResponse(res, null, 'Logged out successfully');
+  } catch (error) {
+    logger.error('Logout error:', error);
+    return errorResponse(res, 'Failed to log out', 500);
+  }
+};
+
+/**
  * Switch between student and coach (self-service)
  * PUT /api/auth/me/role
  * Body: { role: 'student' | 'coach' }
@@ -369,6 +396,7 @@ export const switchRole = async (req, res) => {
           phone: user.phone ?? null,
           timezone: user.timezone ?? null,
           avatar_url: user.avatar_url ?? null,
+          email_verified_at: user.email_verified_at ?? null,
         },
         token: req.headers.authorization?.split(' ')[1],
       }, 'Role unchanged (already ' + user.role + ')');
@@ -392,6 +420,7 @@ export const switchRole = async (req, res) => {
         phone: user.phone ?? null,
         timezone: user.timezone ?? null,
         avatar_url: user.avatar_url ?? null,
+        email_verified_at: user.email_verified_at ?? null,
       },
       token: newToken,
     }, 'Role updated successfully. Use the new token for subsequent requests.');

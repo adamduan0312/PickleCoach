@@ -25,6 +25,7 @@ router.post('/forgot-password', validateRequest(forgotPasswordSchema), authContr
 router.post('/reset-password', validateRequest(resetPasswordSchema), authController.resetPassword);
 router.get('/profile', authenticate, authController.getProfile);
 router.put('/profile', authenticate, validateRequest(updateProfileSchema), authController.updateProfile);
+router.post('/logout', authenticate, authController.logout);
 router.put('/me/role', authenticate, validateRequest(switchRoleSchema), authController.switchRole);
 router.delete('/me', authenticate, authController.deleteMyAccount);
 

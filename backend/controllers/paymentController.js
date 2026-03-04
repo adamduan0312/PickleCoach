@@ -77,7 +77,7 @@ export const createPayment = async (req, res) => {
     const { booking_id, payment_method = 'stripe', payment_intent_id, charge_id } = req.validated;
 
     const booking = await Booking.findByPk(booking_id, {
-      include: [{ model: User, as: 'coach' }],
+      include: [{ model: User, as: 'coach', attributes: ['id', 'full_name', 'email'] }],
     });
 
     if (!booking) {

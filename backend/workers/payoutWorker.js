@@ -36,6 +36,7 @@ export const processPayouts = async () => {
         {
           model: User,
           as: 'coach',
+          attributes: ['id', 'full_name', 'email'],
           include: [
             {
               model: CoachProfile,

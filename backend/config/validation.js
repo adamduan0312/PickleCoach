@@ -211,6 +211,9 @@ export const createAvailabilitySchema = Joi.object({
   end_datetime: Joi.date().iso().optional(),
   start_date: Joi.date().iso().optional(),
   end_date: Joi.date().iso().optional(),
+  /** Time-of-day only, e.g. "09:00" or "17:00:00". Interpreted in coach timezone for recurring slots. */
+  start_time: Joi.string().pattern(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9](:[0-5][0-9])?$/).optional().allow(''),
+  end_time: Joi.string().pattern(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9](:[0-5][0-9])?$/).optional().allow(''),
   recurrence_rule: Joi.string().optional().allow(null),
   is_available: Joi.boolean().optional(),
 });

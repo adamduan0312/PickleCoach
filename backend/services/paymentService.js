@@ -27,11 +27,20 @@ export const calculatePaymentAmounts = (lessonPrice) => {
   };
 };
 
+// Stripe minimum charge (USD): $0.50. Below this we treat as free and skip PaymentIntent.
+const STRIPE_MIN_AMOUNT_USD = 0.5;
+
 /**
  * Create payment and PaymentIntent for a booking
+ * @param {Object} options.transaction - Optional Sequelize transaction (if provided, booking is rolled back on Stripe failure)
  */
-export const createPaymentForBooking = async (booking, studentId, paymentMethod = 'stripe') => {
+export const createPaymentForBooking = async (booking, studentId, paymentMethod = 'stripe', options = {}) => {
+  const { transaction = null } = options;
   const amounts = calculatePaymentAmounts(booking.price);
+  const totalCharge = Number(amounts.total_charge_to_student) || 0;
+  const isFreeLesson = totalCharge < STRIPE_MIN_AMOUNT_USD;
+
+  const createOptions = transaction ? { transaction } : {};
 
   // Create payment record
   const payment = await Payment.create({
@@ -44,40 +53,51 @@ export const createPaymentForBooking = async (booking, studentId, paymentMethod 
     total_charge_to_student: amounts.total_charge_to_student,
     coach_payout_expected: amounts.coach_payout_expected,
     escrow_status: 'held',
-    payment_status: 'pending',
+    payment_status: isFreeLesson ? 'captured' : 'pending',
     payment_method: paymentMethod,
     currency: 'USD',
     metadata: {
       booking_id: booking.id,
       lesson_id: booking.lesson_id,
     },
-  });
+  }, createOptions);
 
-  // Create Stripe PaymentIntent
-  const paymentIntent = await stripeService.createPaymentIntent(
-    amounts.total_charge_to_student,
-    'usd',
-    null,
-    {
-      booking_id: booking.id.toString(),
-      payment_id: payment.id.toString(),
-      coach_id: booking.coach_id.toString(),
-      student_id: studentId.toString(),
-    }
-  );
+  let paymentIntent;
+  if (isFreeLesson) {
+    paymentIntent = { id: null, client_secret: null, amount: 0, currency: 'usd', status: 'succeeded' };
+    await createAuditLog({
+      user_id: studentId,
+      action: 'payment_created',
+      table_name: 'payments',
+      record_id: payment.id,
+      after_state: { amount: 0, free_lesson: true },
+    });
+  } else {
+    paymentIntent = await stripeService.createPaymentIntent(
+      totalCharge,
+      'usd',
+      null,
+      {
+        booking_id: booking.id.toString(),
+        payment_id: payment.id.toString(),
+        coach_id: booking.coach_id.toString(),
+        student_id: studentId.toString(),
+      }
+    );
 
-  // Update payment with PaymentIntent ID
-  await payment.update({
-    payment_intent_id: paymentIntent.id,
-  });
+    await payment.update(
+      { payment_intent_id: paymentIntent.id },
+      transaction ? { transaction } : {}
+    );
 
-  await createAuditLog({
-    user_id: studentId,
-    action: 'payment_created',
-    table_name: 'payments',
-    record_id: payment.id,
-    after_state: { payment_intent_id: paymentIntent.id, amount: amounts.total_charge_to_student },
-  });
+    await createAuditLog({
+      user_id: studentId,
+      action: 'payment_created',
+      table_name: 'payments',
+      record_id: payment.id,
+      after_state: { payment_intent_id: paymentIntent.id, amount: amounts.total_charge_to_student },
+    });
+  }
 
   return {
     payment,
@@ -206,7 +226,7 @@ export const releaseEscrow = async (paymentId, coachStripeAccountId = null) => {
   const payment = await Payment.findByPk(paymentId, {
     include: [
       { model: Booking, as: 'booking' },
-      { model: User, as: 'coach', include: [{ model: CoachProfile, as: 'coachProfile' }] },
+      { model: User, as: 'coach', attributes: ['id', 'full_name', 'email'], include: [{ model: CoachProfile, as: 'coachProfile' }] },
     ],
   });
 

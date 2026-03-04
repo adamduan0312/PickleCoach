@@ -190,7 +190,7 @@ curl http://localhost:4000/health
   - [ ] `base_url` = `http://localhost:4000`
   - [ ] `api_url` = `http://localhost:4000/api`
 - [ ] Environment selected from dropdown (top right)
-- [ ] Collection imported (`PickleCoach_API.postman_collection.json`)
+- [ ] Collection imported (`PickleCoach_API_ByType` or `PickleCoach_API_ByFlow`)
 - [ ] Server running (`npm start` in backend folder)
 - [ ] Health check works (`GET {{base_url}}/health`)
 
