@@ -1,4 +1,4 @@
-import { UserReliability, Booking, RescheduleHistory, CancellationHistory, User, Dispute, DisputeType } from '../models/index.js';
+import { UserReliability, Booking, RescheduleHistory, CancellationHistory, User, UserRole, Dispute, DisputeType } from '../models/index.js';
 import { Op } from 'sequelize';
 
 /**
@@ -9,10 +9,14 @@ import { Op } from 'sequelize';
 const calculateCoachReliabilityScore = (metrics) => {
   const {
     total_bookings,
-    reschedules,
+    // Stored as `reschedules` in user_reliability, but this is penalized-only
+    // (affects_reliability = true) for coach-requested reschedules.
+    reschedules: penalized_reschedules,
     late_cancels,
     no_shows,
-    coach_cancels,
+    // Stored as `coach_cancels` in user_reliability, but this bucket excludes
+    // late_cancels to avoid double counting.
+    coach_cancels: coach_cancels_non_late,
   } = metrics;
 
   if (total_bookings === 0) return 100.00;
@@ -21,15 +25,17 @@ const calculateCoachReliabilityScore = (metrics) => {
 
   // Deduct points for negative behaviors specific to coaches
   // Only count penalized events (affects_reliability = true)
-  const reschedulePenalty = (reschedules / total_bookings) * 10;
-  const lateCancelPenalty = (late_cancels / total_bookings) * 15;
+  // Severity scale (max points per full booking ratio):
+  // no_show 35 > late_cancel 20 > coach_cancel_non_late 10 > penalized_reschedule 5
+  const penalizedReschedulePenalty = (penalized_reschedules / total_bookings) * 5;
+  const lateCancelPenalty = (late_cancels / total_bookings) * 20;
   const noShowPenalty = (no_shows / total_bookings) * 35;
-  const coachCancelPenalty = (coach_cancels / total_bookings) * 20;
+  const coachCancelNonLatePenalty = (coach_cancels_non_late / total_bookings) * 10;
 
-  score -= reschedulePenalty;
+  score -= penalizedReschedulePenalty;
   score -= lateCancelPenalty;
   score -= noShowPenalty;
-  score -= coachCancelPenalty;
+  score -= coachCancelNonLatePenalty;
 
   // Ensure score is between 0 and 100
   return Math.max(0, Math.min(100, score));
@@ -92,8 +98,8 @@ const calculateCoachMetrics = async (userId) => {
     };
   }
 
-  // Count reschedules requested by the coach where affects_reliability = true
-  const reschedules = await RescheduleHistory.count({
+  // Count coach-requested reschedules that are penalized (affects_reliability = true).
+  const penalized_reschedules = await RescheduleHistory.count({
     where: {
       booking_id: { [Op.in]: coachBookingIds },
       requested_by: 'coach',
@@ -119,8 +125,9 @@ const calculateCoachMetrics = async (userId) => {
     return hoursBefore >= 0 && hoursBefore < 24;
   }).length;
 
-  // Count coach cancellations where affects_reliability = true, excluding late cancellations to avoid double-penalization
-  const coach_cancels = cancellations.filter(c => {
+  // Count penalized coach cancellations outside the late window
+  // (this is the non-late coach cancel bucket used by scoring).
+  const coach_cancels_non_late = cancellations.filter(c => {
     if (c.cancelled_by !== 'coach' || !c.affects_reliability) return false;
     const hoursBefore = (new Date(c.booking.scheduled_at) - new Date(c.cancelled_at)) / (1000 * 60 * 60);
     // Exclude late cancellations (within 24 hours) - they are penalized separately
@@ -185,11 +192,13 @@ const calculateCoachMetrics = async (userId) => {
 
   return {
     total_bookings: coachBookings.length,
-    reschedules,
+    // Persist under existing schema key; semantic meaning is penalized-only.
+    reschedules: penalized_reschedules,
     paid_reschedules: paidReschedules,
     late_cancels,
     no_shows,
-    coach_cancels,
+    // Persist under existing schema key; semantic meaning is non-late only.
+    coach_cancels: coach_cancels_non_late,
   };
 };
 
@@ -308,41 +317,35 @@ const calculateStudentMetrics = async (userId) => {
  * Admins are excluded from reliability calculations
  */
 export const updateUserReliability = async (userId) => {
-  // Get user to determine their role
-  const user = await User.findByPk(userId);
+  const user = await User.findByPk(userId, {
+    include: [{ model: UserRole, as: 'userRoles', attributes: ['role'] }],
+  });
   if (!user) {
     throw new Error(`User ${userId} not found`);
   }
 
-  // Admins do NOT participate in marketplace reliability
-  // They are observers and intervenors, not participants
-  if (user.role === 'admin') {
+  const roles = user.userRoles?.map((r) => r.role) ?? [];
+  if (roles.includes('admin')) {
     return null;
   }
 
   let metrics = { total_bookings: 0, reschedules: 0, paid_reschedules: 0, late_cancels: 0, no_shows: 0, coach_cancels: 0, student_cancels: 0 };
   let score = 100.00;
 
-  // Only process coaches and students
-  // Note: Reliability is role-specific - coaches track coach reschedules, students track student reschedules
-  // The 'reschedules' field in user_reliability stores reschedules for the user's specific role
-  if (user.role === 'coach') {
+  if (roles.includes('coach')) {
     const coachMetrics = await calculateCoachMetrics(userId);
-    // For coaches: reschedules = coach reschedules only
     metrics = { ...coachMetrics, student_cancels: 0 };
     if (coachMetrics.total_bookings > 0) {
       score = calculateCoachReliabilityScore(coachMetrics);
     }
-  } else if (user.role === 'student') {
+  } else if (roles.includes('student')) {
     const studentMetrics = await calculateStudentMetrics(userId);
-    // For students: reschedules = student reschedules only
     metrics = { ...studentMetrics, coach_cancels: 0, paid_reschedules: 0 };
     if (studentMetrics.total_bookings > 0) {
       score = calculateStudentReliabilityScore(studentMetrics);
     }
   } else {
-    // Unexpected role - should not happen
-    throw new Error(`Cannot calculate reliability for role: ${user.role}`);
+    throw new Error(`Cannot calculate reliability: user has no coach or student role (roles: ${roles.join(',') || 'none'})`);
   }
 
   // Update or create reliability record

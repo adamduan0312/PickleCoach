@@ -308,7 +308,7 @@ Authorization: Bearer <token>
 
 ### `GET /api/auth/profile`
 - **Auth**: Required
-- **Description**: Get current authenticated user's profile
+- **Description**: Get current authenticated user's profile.
 - **Response** (Status: 200):
   ```json
   {
@@ -318,17 +318,15 @@ Authorization: Bearer <token>
       "id": 1,
       "full_name": "John Doe",
       "email": "john@example.com",
-      "role": "student",
+      "roles": ["coach"],
       "phone": "+1234567890",
       "timezone": "America/New_York",
       "avatar_url": "https://example.com/avatar.jpg",
-      "is_active": true,
-      "email_verified_at": "2026-01-15T10:00:00.000Z",
-      "created_at": "2026-01-01T00:00:00.000Z"
+      "coachProfile": { ... }
     }
   }
   ```
-- **Note**: The profile includes `email_verified_at` (ISO date or `null`) so the client can show verification status.
+- **Notes**: The profile includes `email_verified_at` (ISO date or `null`) for verification status.
 - **Error responses**: `401` (missing or invalid token), `500` (server error).
 
 ### `PUT /api/auth/profile`
@@ -464,14 +462,14 @@ Authorization: Bearer <token>
         "id": 1,
         "full_name": "John Doe",
         "email": "john@example.com",
-        "role": "student",
+        "roles": ["student"],
         "is_active": true,
         "created_at": "2026-01-01T00:00:00.000Z"
       }
     ]
   }
   ```
-  Note: Pagination info is included in the response structure (see pagination section)
+  Each user includes a `roles` array (from the `user_roles` table); a user may have multiple roles (e.g. `["coach", "admin"]`). Note: Pagination info is included in the response structure (see pagination section).
 
 ### `GET /api/users/:id`
 - **Auth**: Required (Admin only)
@@ -485,7 +483,7 @@ Authorization: Bearer <token>
       "id": 1,
       "full_name": "John Doe",
       "email": "john@example.com",
-      "role": "coach",
+      "roles": ["coach"],
       "phone": "+1234567890",
       "timezone": "America/New_York",
       "avatar_url": null,
@@ -586,8 +584,8 @@ Authorization: Bearer <token>
   ```
 
 ### `GET /api/coaches/:id`
-- **Auth**: None required
-- **Description**: Get coach details by ID (public)
+- **Auth**: Required. **Roles**: Student, Admin only (coaches get 403).
+- **Description**: Get coach details by ID (for students viewing a coach profile, or admins).
 - **Response** (Status: 200):
   ```json
   {
@@ -608,13 +606,55 @@ Authorization: Bearer <token>
   }
   ```
 
+### `GET /api/coaches/:id/reliability`
+- **Auth**: Required. **Roles**: Student, Admin only.
+- **Description**: Get a coach's reliability score only (no breakdown fields).
+- **Response** (Status: 200):
+  ```json
+  {
+    "success": true,
+    "message": "Coach reliability retrieved successfully",
+    "data": {
+      "reliability": {
+        "user_id": 2,
+        "reliability_score": 85.5,
+        "last_updated": "2026-03-16T18:42:26.000Z"
+      }
+    }
+  }
+  ```
+
+### `GET /api/coaches/me/reliability`
+- **Auth**: Required (coach role only)
+- **Description**: Get the authenticated coach's reliability breakdown + score. Includes penalized-impact metrics only (no non-penalized breakdown).
+- **Response** (Status: 200):
+  ```json
+  {
+    "success": true,
+    "message": "Coach reliability retrieved successfully",
+    "data": {
+      "reliability": {
+        "user_id": 2,
+        "total_bookings": 10,
+        "reschedules": 2,
+        "paid_reschedules": 1,
+        "late_cancels": 0,
+        "no_shows": 0,
+        "coach_cancels": 1,
+        "reliability_score": 85.5,
+        "badges": null,
+        "last_updated": "2026-03-16T18:42:26.000Z"
+      }
+    }
+  }
+  ```
+
 ### `POST /api/coaches/profile`
-- **Auth**: Required
-- **Description**: Create coach profile (for users with coach role)
+- **Auth**: Required (coach role only)
+- **Description**: Create your own coach profile. Coach-only: only the authenticated coach can create a profile; profile is always for the logged-in user. Admins cannot use this endpoint.
 - **Request Body**:
   ```json
   {
-    "user_id": "number (optional, admin only - defaults to authenticated user's ID)",
     "headline": "string (optional)",
     "bio": "string (optional)",
     "hourly_rate": "number (optional, defaults to 0)",
@@ -764,6 +804,29 @@ Authorization: Bearer <token>
 - **Add an existing court to your list**: Use **`POST /api/coaches/me/courts`** when the court already exists. Body: `court_id` (required), optional `rate_modifier`, `preferred`, `notes`. **Distance rule:** If the coach already has other courts, the new court must be within **100 miles** of one of them.
 - **Remove a court** (e.g. when moving): Use **`DELETE /api/coaches/me/courts/:id`** where `:id` is the coach_court_location id (from GET /api/coaches/me/courts). After removing old courts, add courts in the new city and update profile **location**.
 - **List your courts**: **`GET /api/coaches/me/courts`** returns all courts linked to the authenticated coach (each item has `id` for use with DELETE).
+- **List a coach's courts (for students)**: **`GET /api/coaches/:id/courts`** returns courts where a coach teaches. Public; no auth required. Use when a student views a coach's profile to show locations. In the By Flow Postman collection this is **3 – Flow: Student** → **Get Coach Courts**.
+
+### `GET /api/coaches/:id/courts`
+- **Auth**: None required
+- **Description**: List courts where the given coach teaches. For students viewing a coach's profile before booking. Available in Postman under **3 – Flow: Student** (Get Coach Courts).
+- **Response** (Status: 200):
+  ```json
+  {
+    "success": true,
+    "message": "Courts retrieved successfully",
+    "data": [
+      {
+        "court_id": 4,
+        "name": "Central Park Pickleball",
+        "address": "123 Park Ave",
+        "city": null,
+        "lat": 25.78,
+        "lng": -80.19
+      }
+    ]
+  }
+  ```
+- **Error responses**: `400` (invalid coach id), `404` (coach not found).
 
 ### `GET /api/coaches/me/courts`
 - **Auth**: Required (coach only)
@@ -2009,7 +2072,7 @@ Authorization: Bearer <token>
 
 ### `PUT /api/admin/users/:id/reliability`
 - **Auth**: Required (Admin only)
-- **Description**: Manually adjust user reliability score
+- **Description**: Manually adjust a coach's reliability score. Only coaches have reliability scores; students cannot be adjusted via this endpoint.
 - **Request Body**:
   ```json
   {
@@ -2031,6 +2094,51 @@ Authorization: Bearer <token>
       "adjusted_by": 10,
       "reason": "Manual adjustment",
       "explanation": "Adjusted due to dispute resolution"
+    }
+  }
+  ```
+
+### `GET /api/admin/users/:id/reliability`
+- **Auth**: Required (Admin only)
+- **Description**: Coach reliability in one structured object. `reliability_score`, `total_bookings`, and `penalties.*` come from the `user_reliability` row (last recompute). `reschedules.*` counts are live from `RescheduleHistory` (coach-requested only).
+- **`penalties`**: `late_cancels` = coach cancellations in the late window (within 24 hours before `scheduled_at`, with `affects_reliability`). `coach_cancels_non_late` = remaining penalized coach cancellations (same rules as `reliabilityService`: excludes the late-window bucket so each cancel is counted once). `no_shows` = no-show count used in scoring.
+- **`reschedules`**: `total` = all coach reschedules; `penalized` / `non_penalized` split by `affects_reliability`. Reliability score uses the **penalized** bucket only. **`reschedules.paid`**: `count` = rows with `paid_reschedule` set; `with_captured_payment` restricts to payments with `payment_status: captured` (includes per-type counts and dollar amounts).
+- **Response** (Status: 200):
+  ```json
+  {
+    "success": true,
+    "message": "Coach reliability retrieved successfully",
+    "data": {
+      "reliability": {
+        "user_id": 2,
+        "reliability_score": "85.50",
+        "last_updated": "2026-03-16T18:42:26.000Z",
+        "total_bookings": 10,
+        "reschedules": {
+          "total": 5,
+          "penalized": 2,
+          "non_penalized": 3,
+          "paid": {
+            "count": 4,
+            "with_captured_payment": {
+              "total": 2,
+              "penalized": 1,
+              "non_penalized": 1,
+              "amounts": {
+                "penalized": 3.0,
+                "non_penalized": 3.0,
+                "total": 6.0
+              }
+            }
+          }
+        },
+        "penalties": {
+          "late_cancels": 0,
+          "no_shows": 0,
+          "coach_cancels_non_late": 1
+        },
+        "badges": null
+      }
     }
   }
   ```

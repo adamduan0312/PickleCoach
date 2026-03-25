@@ -1,4 +1,4 @@
-import { CourtLocation, CoachCourtLocation, User } from '../models/index.js';
+import { CourtLocation, CoachCourtLocation, User, CoachProfile } from '../models/index.js';
 import { Op } from 'sequelize';
 import { successResponse, errorResponse, createErrorResponse, createResponse } from '../utils/response.js';
 import { logger } from '../config/logger.js';
@@ -150,7 +150,7 @@ export const deleteCourt = async (req, res) => {
       return res.status(404).json(createErrorResponse('Court not found'));
     }
 
-    const isAdmin = req.user.role === 'admin';
+    const isAdmin = (req.user.roles || []).includes('admin');
     const isCreator = court.created_by_user_id === req.user.id;
 
     if (!isAdmin && !isCreator) {
@@ -173,9 +173,9 @@ export const createCourt = async (req, res) => {
   try {
     const { name, address, latitude, longitude, is_private, notes } = req.body;
     const userId = req.user.id;
-    const userRole = req.user.role;
+    const userRoles = req.user.roles || [];
 
-    if (userRole !== 'coach' && userRole !== 'admin') {
+    if (!userRoles.includes('coach') && !userRoles.includes('admin')) {
       return res.status(403).json(createErrorResponse('Only coaches and admins can create courts'));
     }
 
@@ -184,7 +184,7 @@ export const createCourt = async (req, res) => {
     }
 
     // If coach is creating: new court must be within MAX_COURT_DISTANCE_MILES of one of their existing courts (if any)
-    if (userRole === 'coach') {
+    if (userRoles.includes('coach')) {
       const existingLinks = await CoachCourtLocation.findAll({
         where: { coach_id: userId },
         include: [{ model: CourtLocation, as: 'court', attributes: ['id', 'latitude', 'longitude'] }],
@@ -235,7 +235,7 @@ export const createCourt = async (req, res) => {
     });
 
     // If coach created it, automatically link them to it
-    if (userRole === 'coach') {
+    if (userRoles.includes('coach')) {
       await CoachCourtLocation.create({
         coach_id: userId,
         court_id: court.id,
@@ -252,6 +252,56 @@ export const createCourt = async (req, res) => {
 };
 
 /**
+ * GET /api/coaches/:id/courts
+ * List courts where a coach teaches (for students viewing a coach's profile).
+ * Public endpoint; no auth required.
+ */
+export const getCoachCourtsById = async (req, res) => {
+  try {
+    const coachId = req.params.id != null ? parseInt(req.params.id, 10) : null;
+    if (!coachId || Number.isNaN(coachId)) {
+      return res.status(400).json(createErrorResponse('Valid coach ID is required'));
+    }
+
+    const coachProfile = await CoachProfile.findOne({ where: { user_id: coachId } });
+    if (!coachProfile) {
+      return res.status(404).json(createErrorResponse('Coach not found'));
+    }
+
+    const coachCourts = await CoachCourtLocation.findAll({
+      where: { coach_id: coachId },
+      include: [
+        {
+          model: CourtLocation,
+          as: 'court',
+          where: { deleted_at: null },
+          required: true,
+          attributes: ['id', 'name', 'address', 'latitude', 'longitude'],
+        },
+      ],
+      order: [['preferred', 'DESC'], ['created_at', 'ASC']],
+    });
+
+    const data = coachCourts.map((link) => {
+      const court = link.court;
+      return {
+        court_id: court.id,
+        name: court.name,
+        address: court.address ?? null,
+        city: court.city ?? null,
+        lat: court.latitude != null ? parseFloat(court.latitude) : null,
+        lng: court.longitude != null ? parseFloat(court.longitude) : null,
+      };
+    });
+
+    return res.status(200).json(createResponse(data, 'Courts retrieved successfully'));
+  } catch (error) {
+    logger.error('Error listing coach courts by id:', error);
+    return res.status(500).json(createErrorResponse('Failed to retrieve courts'));
+  }
+};
+
+/**
  * GET /api/coaches/me/courts
  * List courts associated with the authenticated coach
  */
@@ -259,8 +309,8 @@ export const getMyCoachCourts = async (req, res) => {
   try {
     const userId = req.user.id;
 
-    if (req.user.role !== 'coach') {
-      return res.status(403).json(createErrorResponse(`Only coaches can view their courts. Your role is '${req.user.role}'. Switch via PUT /api/auth/me/role with body { "role": "coach" } if needed.`));
+    if (!(req.user.roles || []).includes('coach')) {
+      return res.status(403).json(createErrorResponse(`Only coaches can view their courts. Your roles: ${(req.user.roles || []).join(', ') || 'none'}. Switch via PUT /api/auth/me/role with body { "role": "coach" } if needed.`));
     }
 
     const coachCourts = await CoachCourtLocation.findAll({
@@ -300,8 +350,8 @@ export const addCoachCourt = async (req, res) => {
     const userId = req.user.id;
     const { court_id, rate_modifier, preferred, notes } = req.body;
 
-    if (req.user.role !== 'coach') {
-      return res.status(403).json(createErrorResponse(`Only coaches can add courts to their profile. Your role is '${req.user.role}'.`));
+    if (!(req.user.roles || []).includes('coach')) {
+      return res.status(403).json(createErrorResponse(`Only coaches can add courts to their profile. Your roles: ${(req.user.roles || []).join(', ') || 'none'}.`));
     }
 
     const courtId = court_id != null ? parseInt(court_id, 10) : null;
@@ -397,8 +447,8 @@ export const deleteCoachCourt = async (req, res) => {
     const userId = req.user.id;
     const linkId = req.params.id != null ? parseInt(req.params.id, 10) : null;
 
-    if (req.user.role !== 'coach') {
-      return res.status(403).json(createErrorResponse(`Only coaches can remove courts from their profile. Your role is '${req.user.role}'.`));
+    if (!(req.user.roles || []).includes('coach')) {
+      return res.status(403).json(createErrorResponse(`Only coaches can remove courts from their profile. Your roles: ${(req.user.roles || []).join(', ') || 'none'}.`));
     }
     if (!linkId || Number.isNaN(linkId)) {
       return res.status(400).json(createErrorResponse('Valid link ID is required'));

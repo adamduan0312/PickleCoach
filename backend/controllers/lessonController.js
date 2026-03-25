@@ -58,7 +58,7 @@ export const createLesson = async (req, res) => {
   try {
     const { title, description, duration_minutes, price, max_students } = req.validated;
 
-    if (req.user.role !== 'coach' && req.user.role !== 'admin') {
+    if (!(req.user.roles || []).includes('coach') && !(req.user.roles || []).includes('admin')) {
       return errorResponse(res, 'Only coaches can create lessons', 403);
     }
 
@@ -87,7 +87,7 @@ export const updateLesson = async (req, res) => {
       return errorResponse(res, 'Lesson not found', 404);
     }
 
-    if (req.user.id !== lesson.coach_id && req.user.role !== 'admin') {
+    if (req.user.id !== lesson.coach_id && !(req.user.roles || []).includes('admin')) {
       return errorResponse(res, 'Unauthorized', 403);
     }
 
@@ -118,7 +118,7 @@ export const deleteLesson = async (req, res) => {
       return errorResponse(res, 'Lesson not found', 404);
     }
 
-    if (req.user.id !== lesson.coach_id && req.user.role !== 'admin') {
+    if (req.user.id !== lesson.coach_id && !(req.user.roles || []).includes('admin')) {
       return errorResponse(res, 'Unauthorized', 403);
     }
 

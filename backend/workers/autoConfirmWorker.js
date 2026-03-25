@@ -1,27 +1,70 @@
 import { Booking, Payment } from '../models/index.js';
 import { Op } from 'sequelize';
+import { sequelize } from '../models/sequelize.js';
 import { logger } from '../config/logger.js';
 import { createAuditLog } from '../utils/audit.js';
 
 /**
- * Auto-confirm lessons that are past scheduled time and haven't been confirmed
- * Runs every 5 minutes
+ * Move confirmed → awaiting_verification when lesson end time has passed.
+ * Runs every 5 minutes (before the awaiting_verification → completed step).
+ */
+const moveConfirmedToAwaitingVerification = async () => {
+  const dialect = sequelize.getDialect();
+  const lessonEndPastLiteral =
+    dialect === 'mysql'
+      ? sequelize.literal('DATE_ADD(scheduled_at, INTERVAL duration_minutes MINUTE) <= NOW()')
+      : dialect === 'postgres'
+        ? sequelize.literal("(scheduled_at + duration_minutes * interval '1 minute') <= NOW()")
+        : sequelize.literal("datetime(scheduled_at, '+' || duration_minutes || ' minutes') <= datetime('now')");
+
+  const updated = await Booking.update(
+    { status: 'awaiting_verification' },
+    {
+      where: {
+        status: 'confirmed',
+        [Op.and]: [lessonEndPastLiteral],
+      },
+    }
+  );
+
+  if (updated[0] > 0) {
+    logger.info(`Moved ${updated[0]} booking(s) from confirmed to awaiting_verification (lesson time passed)`);
+  }
+};
+
+/**
+ * Auto-confirm lessons that are past scheduled time and haven't been confirmed.
+ * 1. confirmed → awaiting_verification when lesson end time has passed.
+ * 2. awaiting_verification → completed when 24h past lesson END time (no coach confirmation).
+ *    Uses end time so the dispute window is exactly 24 hours after the lesson ends.
+ * Runs every 5 minutes.
  */
 export const autoConfirmLessons = async () => {
   const now = new Date();
   const twentyFourHoursAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
 
   try {
-    // Find bookings that:
+    // Phase 1: confirmed → awaiting_verification when lesson time has passed
+    await moveConfirmedToAwaitingVerification();
+
+    // Phase 2: Find bookings that:
     // 1. Are in 'awaiting_verification' status
-    // 2. Scheduled time has passed
-    // 3. No coach confirmation within 24 hours
+    // 2. Lesson END time was at least 24 hours ago (not start time — gives full 24h dispute window)
+    // 3. No coach confirmation within 24h of lesson end → auto-complete
+    const dialect = sequelize.getDialect();
+    const lessonEndColumn =
+      dialect === 'mysql'
+        ? sequelize.literal('DATE_ADD(scheduled_at, INTERVAL duration_minutes MINUTE)')
+        : dialect === 'postgres'
+          ? sequelize.literal("(scheduled_at + duration_minutes * interval '1 minute')")
+          : sequelize.literal("datetime(scheduled_at, '+' || duration_minutes || ' minutes')");
+
     const bookings = await Booking.findAll({
       where: {
         status: 'awaiting_verification',
-        scheduled_at: {
-          [Op.lte]: twentyFourHoursAgo, // Scheduled at least 24 hours ago
-        },
+        [Op.and]: [
+          sequelize.where(lessonEndColumn, Op.lte, twentyFourHoursAgo),
+        ],
       },
       include: [
         {

@@ -11,9 +11,10 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || '', {
  * @param {string} currency - Currency code (default: 'usd')
  * @param {string} customerId - Stripe customer ID (optional)
  * @param {Object} metadata - Additional metadata
+ * @param {Object} options - { captureMethod: 'manual' | 'automatic' } - use 'manual' for coach-must-confirm (authorize only; capture on accept)
  * @returns {Promise<Object>} PaymentIntent object
  */
-export const createPaymentIntent = async (amount, currency = 'usd', customerId = null, metadata = {}) => {
+export const createPaymentIntent = async (amount, currency = 'usd', customerId = null, metadata = {}, options = {}) => {
   try {
     const params = {
       amount: Math.round(amount * 100), // Convert to cents
@@ -22,6 +23,7 @@ export const createPaymentIntent = async (amount, currency = 'usd', customerId =
       automatic_payment_methods: {
         enabled: true,
       },
+      capture_method: options.captureMethod || 'automatic',
     };
 
     if (customerId) {
@@ -49,6 +51,22 @@ export const capturePaymentIntent = async (paymentIntentId) => {
     return paymentIntent;
   } catch (error) {
     logger.error('Error capturing PaymentIntent:', error);
+    throw error;
+  }
+};
+
+/**
+ * Cancel a PaymentIntent (releases authorization when capture_method was 'manual')
+ * @param {string} paymentIntentId - Stripe PaymentIntent ID
+ * @returns {Promise<Object>} PaymentIntent object
+ */
+export const cancelPaymentIntent = async (paymentIntentId) => {
+  try {
+    const paymentIntent = await stripe.paymentIntents.cancel(paymentIntentId);
+    logger.info('PaymentIntent cancelled', { paymentIntentId });
+    return paymentIntent;
+  } catch (error) {
+    logger.error('Error cancelling PaymentIntent:', error);
     throw error;
   }
 };

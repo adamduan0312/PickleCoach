@@ -1,6 +1,6 @@
 import bcrypt from 'bcryptjs';
-import { AdminAnalytics, AdminAlert, User, Booking, Payment, Dispute, UserReliability, CoachCourtLocation, CourtLocation, CoachAvailability, AuditLog } from '../models/index.js';
-import { successResponse, errorResponse } from '../utils/response.js';
+import { AdminAnalytics, AdminAlert, User, UserRole, Booking, Payment, Dispute, UserReliability, CoachCourtLocation, CourtLocation, CoachAvailability, AuditLog } from '../models/index.js';
+import { successResponse, errorResponse, paginatedResponse } from '../utils/response.js';
 import { logAudit } from '../utils/audit.js';
 import { Op } from 'sequelize';
 import { logger } from '../config/logger.js';
@@ -8,12 +8,12 @@ import { getPagination, getPagingData } from '../utils/pagination.js';
 
 export const getDashboardStats = async (req, res) => {
   try {
-    if (req.user.role !== 'admin') {
+    if (!(req.user.roles || []).includes('admin')) {
       return errorResponse(res, 'Unauthorized', 403);
     }
 
-    const totalStudents = await User.count({ where: { role: 'student' } });
-    const totalCoaches = await User.count({ where: { role: 'coach' } });
+    const totalStudents = await UserRole.count({ where: { role: 'student' } });
+    const totalCoaches = await UserRole.count({ where: { role: 'coach' } });
     const totalBookings = await Booking.count();
     const activeBookings = await Booking.count({ where: { status: { [Op.in]: ['pending', 'confirmed'] } } });
     
@@ -56,7 +56,7 @@ export const getDashboardStats = async (req, res) => {
 
 export const getAlerts = async (req, res) => {
   try {
-    if (req.user.role !== 'admin') {
+    if (!(req.user.roles || []).includes('admin')) {
       return errorResponse(res, 'Unauthorized', 403);
     }
 
@@ -80,7 +80,7 @@ export const getAlerts = async (req, res) => {
 
 export const resolveAlert = async (req, res) => {
   try {
-    if (req.user.role !== 'admin') {
+    if (!(req.user.roles || []).includes('admin')) {
       return errorResponse(res, 'Unauthorized', 403);
     }
 
@@ -106,7 +106,7 @@ export const resolveAlert = async (req, res) => {
  */
 export const createAdmin = async (req, res) => {
   try {
-    if (req.user.role !== 'admin') {
+    if (!(req.user.roles || []).includes('admin')) {
       return errorResponse(res, 'Unauthorized: Only admins can create admin accounts', 403);
     }
 
@@ -125,24 +125,24 @@ export const createAdmin = async (req, res) => {
     // Hash password
     const password_hash = await bcrypt.hash(password, 10);
 
-    // Create admin user
     const adminUser = await User.create({
       full_name,
       email,
       password_hash,
-      role: 'admin',
       phone,
       timezone: timezone || 'UTC',
       is_active: true,
     });
 
-    await logAudit(req.user.id, 'admin_created', 'users', adminUser.id, null, { email: adminUser.email, role: adminUser.role }, req);
+    await UserRole.create({ user_id: adminUser.id, role: 'admin' });
+
+    await logAudit(req.user.id, 'admin_created', 'users', adminUser.id, null, { email: adminUser.email, role: 'admin' }, req);
 
     return successResponse(res, {
       id: adminUser.id,
       full_name: adminUser.full_name,
       email: adminUser.email,
-      role: adminUser.role,
+      roles: ['admin'],
       created_at: adminUser.created_at,
     }, 'Admin account created successfully', 201);
   } catch (error) {
@@ -158,7 +158,7 @@ export const createAdmin = async (req, res) => {
  */
 export const adjustUserReliability = async (req, res) => {
   try {
-    if (req.user.role !== 'admin') {
+    if (!(req.user.roles || []).includes('admin')) {
       return errorResponse(res, 'Unauthorized: Only admins can adjust reliability scores', 403);
     }
 
@@ -175,19 +175,19 @@ export const adjustUserReliability = async (req, res) => {
       return errorResponse(res, 'Reliability score must be a number between 0 and 100', 400);
     }
 
-    const targetUser = await User.findByPk(id);
+    const targetUser = await User.findByPk(id, {
+      include: [{ model: UserRole, as: 'userRoles', attributes: ['role'] }],
+    });
     if (!targetUser) {
       return errorResponse(res, 'User not found', 404);
     }
 
-    // Admins cannot have reliability scores
-    if (targetUser.role === 'admin') {
+    const targetRoles = targetUser.userRoles?.map((r) => r.role) ?? [];
+    if (targetRoles.includes('admin')) {
       return errorResponse(res, 'Cannot adjust reliability for admin users', 400);
     }
-
-    // Only allow for students and coaches
-    if (targetUser.role !== 'student' && targetUser.role !== 'coach') {
-      return errorResponse(res, 'Can only adjust reliability for students or coaches', 400);
+    if (!targetRoles.includes('coach')) {
+      return errorResponse(res, 'Can only adjust reliability for coaches', 400);
     }
 
     const [reliability, created] = await UserReliability.findOrCreate({
@@ -217,7 +217,7 @@ export const adjustUserReliability = async (req, res) => {
 
     return successResponse(res, {
       user_id: parseInt(id),
-      user_role: targetUser.role,
+      user_roles: targetRoles,
       previous_score: beforeState.reliability_score,
       new_score: scoreValue,
       adjusted_by: req.user.id,
@@ -232,17 +232,26 @@ export const adjustUserReliability = async (req, res) => {
 
 export const getAuditLogs = async (req, res) => {
   try {
-    if (req.user.role !== 'admin') {
+    if (!(req.user.roles || []).includes('admin')) {
       return errorResponse(res, 'Unauthorized', 403);
     }
 
-    const { page, limit, user_id, action, table_name } = req.validated;
+    let { page, limit, user_id, action, table_name, record_id } = req.validated;
+    // Only use "show all" (10000) when client sent no page and no limit in the URL
+    const hasPage = Object.prototype.hasOwnProperty.call(req.query, 'page');
+    const hasLimit = Object.prototype.hasOwnProperty.call(req.query, 'limit');
+    if (!hasPage && !hasLimit) {
+      limit = 10000;
+    } else if (hasPage && !hasLimit) {
+      limit = 10;
+    }
     const { limit: queryLimit, offset } = getPagination(page, limit);
 
     const where = {};
-    if (user_id) where.user_id = user_id;
-    if (action) where.action = action;
-    if (table_name) where.table_name = table_name;
+    if (user_id != null) where.user_id = Number(user_id);
+    if (action != null && action !== '') where.action = action;
+    if (table_name != null && table_name !== '') where.table_name = table_name;
+    if (record_id != null) where.record_id = Number(record_id);
 
     const logs = await AuditLog.findAndCountAll({
       where,
@@ -252,7 +261,7 @@ export const getAuditLogs = async (req, res) => {
     });
 
     const response = getPagingData(logs, page, queryLimit);
-    return successResponse(res, response.items, 'Audit logs retrieved successfully');
+    return paginatedResponse(res, response.items, response.pagination, 'Audit logs retrieved successfully');
   } catch (error) {
     logger.error('Get audit logs error:', error);
     return errorResponse(res, 'Failed to retrieve audit logs', 500);
@@ -265,15 +274,18 @@ export const getAuditLogs = async (req, res) => {
  */
 export const getCoachCourtsForAdmin = async (req, res) => {
   try {
-    if (req.user.role !== 'admin') {
+    if (!(req.user.roles || []).includes('admin')) {
       return errorResponse(res, 'Unauthorized', 403);
     }
     const coachId = parseInt(req.params.coachId, 10);
     if (Number.isNaN(coachId)) {
       return errorResponse(res, 'Invalid coach ID', 400);
     }
-    const coach = await User.findByPk(coachId);
-    if (!coach || coach.role !== 'coach') {
+    const coach = await User.findByPk(coachId, {
+      include: [{ model: UserRole, as: 'userRoles', attributes: ['role'] }],
+    });
+    const coachRoles = coach?.userRoles?.map((r) => r.role) ?? [];
+    if (!coach || !coachRoles.includes('coach')) {
       return errorResponse(res, 'Coach not found', 404);
     }
     const coachCourts = await CoachCourtLocation.findAll({
@@ -302,7 +314,7 @@ export const getCoachCourtsForAdmin = async (req, res) => {
  */
 export const deleteCoachCourtForAdmin = async (req, res) => {
   try {
-    if (req.user.role !== 'admin') {
+    if (!(req.user.roles || []).includes('admin')) {
       return errorResponse(res, 'Unauthorized', 403);
     }
     const coachId = parseInt(req.params.coachId, 10);
@@ -330,7 +342,7 @@ export const deleteCoachCourtForAdmin = async (req, res) => {
  */
 export const deleteCoachAvailabilityForAdmin = async (req, res) => {
   try {
-    if (req.user.role !== 'admin') {
+    if (!(req.user.roles || []).includes('admin')) {
       return errorResponse(res, 'Unauthorized', 403);
     }
     const coachId = parseInt(req.params.coachId, 10);

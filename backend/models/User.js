@@ -27,11 +27,6 @@ class User extends Model {
           type: DataTypes.STRING(255),
           allowNull: false,
         },
-        role: {
-          type: DataTypes.ENUM('student', 'coach', 'admin'),
-          allowNull: false,
-          defaultValue: 'student',
-        },
         avatar_url: {
           type: DataTypes.STRING(255),
           allowNull: true,
@@ -103,7 +98,6 @@ class User extends Model {
         createdAt: 'created_at',
         updatedAt: false,
         indexes: [
-          { fields: ['role'] },
           { fields: ['is_active'] },
           { fields: ['deleted_at'] },
           { fields: ['email'], unique: true },

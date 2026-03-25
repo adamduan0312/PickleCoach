@@ -1,4 +1,4 @@
-import { RescheduleHistory, Booking, Payment, User } from '../models/index.js';
+import { RescheduleHistory, Booking, Payment, User, UserRole } from '../models/index.js';
 import { successResponse, errorResponse } from '../utils/response.js';
 import { logAudit } from '../utils/audit.js';
 import { affectsReliability, sanitizeResponse } from '../services/reliabilityPenaltyService.js';
@@ -11,7 +11,7 @@ export const requestReschedule = async (req, res) => {
   try {
     // booking_id comes from URL parameter (POST /api/bookings/:id/reschedule)
     const booking_id = req.params.id;
-    const { new_scheduled_at, reason, reason_notes, paid_reschedule = false } = req.validated;
+    const { new_scheduled_at, reason, reason_notes, paid_reschedule: paidRescheduleRequested = false } = req.validated;
 
     // Reason is required and validated by schema
     if (!reason) {
@@ -23,7 +23,7 @@ export const requestReschedule = async (req, res) => {
       return errorResponse(res, 'Booking not found', 404);
     }
 
-    if (req.user.id !== booking.coach_id && req.user.id !== booking.primary_student_id && req.user.role !== 'admin') {
+    if (req.user.id !== booking.coach_id && req.user.id !== booking.primary_student_id && !(req.user.roles || []).includes('admin')) {
       return errorResponse(res, 'Unauthorized', 403);
     }
 
@@ -36,20 +36,41 @@ export const requestReschedule = async (req, res) => {
       return errorResponse(res, 'Cannot reschedule to the past', 400);
     }
 
-    if (!paid_reschedule && booking.reschedule_count >= booking.reschedule_limit) {
-      return errorResponse(res, 'Free reschedule limit reached. Please purchase a paid reschedule.', 400);
-    }
-
-    const requestedBy = req.user.role === 'admin' ? 'admin' :
+    const requestedBy = (req.user.roles || []).includes('admin') ? 'admin' :
                        req.user.id === booking.coach_id ? 'coach' : 'student';
 
     // Admin actions NEVER affect reliability
     // Only marketplace participant actions (student/coach) can affect reliability
     const willAffectReliability = requestedBy === 'admin' ? false : affectsReliability(reason);
 
+    // Enforce business rules server-side (never trust `paid_reschedule` from the client blindly):
+    // - Non-penalized reasons are ALWAYS free (no payment).
+    // - Penalized reasons are free until `reschedule_count >= reschedule_limit`.
+    // - Paid reschedules are only allowed when:
+    //   (a) reason is penalized (willAffectReliability === true)
+    //   (b) free penalized slot is used up (limit reached)
+    //   (c) client explicitly requested paid_reschedule === true
+    let paidRescheduleEffective = false;
+    if (willAffectReliability) {
+      const limitReached = booking.reschedule_count >= booking.reschedule_limit;
+      if (limitReached) {
+        // If the free slot is used up, allow paid only if the client requested it.
+        paidRescheduleEffective = !!paidRescheduleRequested;
+        if (!paidRescheduleEffective) {
+          return errorResponse(res, 'Free reschedule limit reached. Please purchase a paid reschedule.', 400);
+        }
+      } else {
+        // Free penalized slots remain; treat as free even if the client asked for paid.
+        paidRescheduleEffective = false;
+      }
+    } else {
+      // Non-penalized reasons are always free (ignore any client paid_reschedule request).
+      paidRescheduleEffective = false;
+    }
+
     // For paid reschedules, set approval_status to 'pending' until payment is confirmed
     // For free reschedules, auto-approve immediately
-    const approvalStatus = paid_reschedule ? 'pending' : 'auto_approved';
+    const approvalStatus = paidRescheduleEffective ? 'pending' : 'auto_approved';
 
     const rescheduleHistory = await RescheduleHistory.create({
       booking_id,
@@ -59,14 +80,14 @@ export const requestReschedule = async (req, res) => {
       reason,
       reason_notes: reason_notes || null,
       affects_reliability: willAffectReliability, // Always false for admin
-      paid_reschedule,
+      paid_reschedule: paidRescheduleEffective,
       approval_status: approvalStatus,
     });
 
     let paymentIntent = null;
 
     // If paid reschedule, create PaymentIntent and DO NOT apply reschedule yet
-    if (paid_reschedule) {
+    if (paidRescheduleEffective) {
       try {
         const { payment, paymentIntent: intent } = await paymentService.createPaymentForPaidReschedule(
           booking,
@@ -91,11 +112,11 @@ export const requestReschedule = async (req, res) => {
         return errorResponse(res, 'Failed to create payment for reschedule. Please try again.', 500);
       }
     } else {
-      // Free reschedule - apply immediately
-      booking.reschedule_count += 1;
+      // Free reschedule - apply immediately. Only penalized reasons consume the free reschedule.
+      const newRescheduleCount = willAffectReliability ? booking.reschedule_count + 1 : booking.reschedule_count;
       await booking.update({
         scheduled_at: newScheduledDate,
-        reschedule_count: booking.reschedule_count,
+        reschedule_count: newRescheduleCount,
       });
     }
 
@@ -105,12 +126,15 @@ export const requestReschedule = async (req, res) => {
     // (Non-penalized reasons like weather/emergency don't affect reliability, so no update needed)
     // Paid reschedules will update reliability after payment is confirmed (when the reschedule is actually applied)
     // Note: Reliability impact is determined by the reason (via affectsReliability()), not by whether it's free or paid
-    if (!paid_reschedule && willAffectReliability && requestedBy !== 'admin') {
+    if (!paidRescheduleEffective && willAffectReliability && requestedBy !== 'admin') {
       const userIdToUpdate = requestedBy === 'coach' ? booking.coach_id : booking.primary_student_id;
       if (userIdToUpdate) {
         // Double-check: ensure we're not updating an admin user
-        const userToUpdate = await User.findByPk(userIdToUpdate);
-        if (userToUpdate && userToUpdate.role !== 'admin') {
+        const userToUpdate = await User.findByPk(userIdToUpdate, {
+          include: [{ model: UserRole, as: 'userRoles', attributes: ['role'] }],
+        });
+        const updateRoles = userToUpdate?.userRoles?.map((r) => r.role) ?? [];
+        if (userToUpdate && !updateRoles.includes('admin')) {
           await updateUserReliability(userIdToUpdate).catch(err => {
             logger.error('Failed to update reliability after reschedule:', err);
           });
@@ -140,7 +164,7 @@ export const getRescheduleHistory = async (req, res) => {
     const where = {};
     if (booking_id) where.booking_id = booking_id;
 
-    if (req.user.role !== 'admin') {
+    if (!(req.user.roles || []).includes('admin')) {
       const userBookings = await Booking.findAll({
         where: {
           [Op.or]: [

@@ -35,7 +35,7 @@ export const markNotificationAsRead = async (req, res) => {
       return errorResponse(res, 'Notification not found', 404);
     }
 
-    if (notification.user_id !== req.user.id && req.user.role !== 'admin') {
+    if (notification.user_id !== req.user.id && !(req.user.roles || []).includes('admin')) {
       return errorResponse(res, 'Unauthorized', 403);
     }
 
@@ -56,7 +56,7 @@ export const deleteNotification = async (req, res) => {
       return errorResponse(res, 'Notification not found', 404);
     }
 
-    if (notification.user_id !== req.user.id && req.user.role !== 'admin') {
+    if (notification.user_id !== req.user.id && !(req.user.roles || []).includes('admin')) {
       return errorResponse(res, 'Unauthorized', 403);
     }
 
@@ -70,7 +70,7 @@ export const deleteNotification = async (req, res) => {
 
 export const createNotification = async (req, res) => {
   try {
-    if (req.user.role !== 'admin') {
+    if (!(req.user.roles || []).includes('admin')) {
       return errorResponse(res, 'Only admins can create notifications', 403);
     }
 

@@ -14,7 +14,7 @@ export const getDisputes = async (req, res) => {
     if (status) where.status = status;
     if (booking_id) where.booking_id = booking_id;
 
-    if (req.user.role !== 'admin') {
+    if (!(req.user.roles || []).includes('admin')) {
       // Users can only see disputes related to their bookings
       const userBookings = await Booking.findAll({
         where: {
@@ -66,7 +66,7 @@ export const getDisputeById = async (req, res) => {
       return errorResponse(res, 'Dispute not found', 404);
     }
 
-    if (req.user.role !== 'admin') {
+    if (!(req.user.roles || []).includes('admin')) {
       const booking = await Booking.findByPk(dispute.booking_id);
       if (req.user.id !== booking.coach_id && req.user.id !== booking.primary_student_id) {
         return errorResponse(res, 'Unauthorized', 403);
@@ -89,7 +89,7 @@ export const createDispute = async (req, res) => {
       return errorResponse(res, 'Booking not found', 404);
     }
 
-    if (req.user.id !== booking.coach_id && req.user.id !== booking.primary_student_id && req.user.role !== 'admin') {
+    if (req.user.id !== booking.coach_id && req.user.id !== booking.primary_student_id && !(req.user.roles || []).includes('admin')) {
       return errorResponse(res, 'Unauthorized', 403);
     }
 
@@ -101,7 +101,7 @@ export const createDispute = async (req, res) => {
       return errorResponse(res, 'Active dispute already exists for this booking', 409);
     }
 
-    const openedBy = req.user.role === 'admin' ? 'admin' :
+    const openedBy = (req.user.roles || []).includes('admin') ? 'admin' :
                      req.user.id === booking.coach_id ? 'coach' : 'student';
 
     const dispute = await Dispute.create({
@@ -125,7 +125,7 @@ export const resolveDispute = async (req, res) => {
     const { id } = req.params;
     const { resolution_action_id, resolution_notes } = req.validated;
 
-    if (req.user.role !== 'admin') {
+    if (!(req.user.roles || []).includes('admin')) {
       return errorResponse(res, 'Only admins can resolve disputes', 403);
     }
 

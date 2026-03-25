@@ -7,7 +7,7 @@
  */
 import dotenv from 'dotenv';
 import { sequelize } from '../models/sequelize.js';
-import { User } from '../models/index.js';
+import { User, UserRole } from '../models/index.js';
 
 const env = process.env.NODE_ENV || 'development';
 dotenv.config({ path: `.env.${env}` });
@@ -30,25 +30,29 @@ async function main() {
   try {
     await sequelize.authenticate();
 
-    const user = await User.findOne({ where: { email } });
+    const user = await User.findOne({
+      where: { email },
+      include: [{ model: UserRole, as: 'userRoles', attributes: ['role'] }],
+    });
     if (!user) {
       console.error('❌ No user found with email:', email);
       process.exit(1);
     }
 
-    console.log('User: id=%s, email=%s, role=%s, is_active=%s', user.id, user.email, user.role, user.is_active);
+    const roles = user.userRoles?.map((r) => r.role) ?? [];
+    console.log('User: id=%s, email=%s, roles=%s, is_active=%s', user.id, user.email, roles.join(','), user.is_active);
 
     if (newRole) {
-      if (user.role === 'admin') {
+      if (roles.includes('admin')) {
         console.error('❌ Cannot change an admin’s role with this script. Use admin user management.');
         process.exit(1);
       }
-      if (user.role === newRole) {
+      if (roles.includes(newRole)) {
         console.log('Role already "%s". No change.', newRole);
         process.exit(0);
       }
-      await user.update({ role: newRole });
-      console.log('✅ Role updated to "%s". User should log in again or use PUT /api/auth/me/role to get a new token.', newRole);
+      await UserRole.create({ user_id: user.id, role: newRole });
+      console.log('✅ Role "%s" added. User roles: %s. User should log in again or use PUT /api/auth/me/role to get a new token.', newRole, [...roles, newRole].join(', '));
     }
     process.exit(0);
   } catch (err) {

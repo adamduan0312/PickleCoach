@@ -1,5 +1,6 @@
 import express from 'express';
 import * as adminController from '../controllers/adminController.js';
+import * as reliabilityController from '../controllers/reliabilityController.js';
 import { authenticate, authorize } from '../middleware/auth.js';
 import { validateQuery } from '../middleware/validator.js';
 import { getAlertsQuerySchema, getAuditLogsQuerySchema } from '../config/validation.js';
@@ -11,6 +12,7 @@ router.get('/alerts', authenticate, authorize('admin'), validateQuery(getAlertsQ
 router.put('/alerts/:id/resolve', authenticate, authorize('admin'), adminController.resolveAlert);
 router.post('/users', authenticate, authorize('admin'), adminController.createAdmin);
 router.put('/users/:id/reliability', authenticate, authorize('admin'), adminController.adjustUserReliability);
+router.get('/users/:id/reliability', authenticate, authorize('admin'), reliabilityController.getCoachReliabilityForAdmin);
 
 // Audit logs
 router.get('/audit-logs', authenticate, authorize('admin'), validateQuery(getAuditLogsQuerySchema), adminController.getAuditLogs);

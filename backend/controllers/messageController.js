@@ -10,7 +10,7 @@ export const getConversations = async (req, res) => {
     const where = {};
     if (booking_id) where.booking_id = booking_id;
 
-    if (req.user.role !== 'admin') {
+    if (!(req.user.roles || []).includes('admin')) {
       const userBookings = await Booking.findAll({
         where: {
           [Op.or]: [
@@ -83,7 +83,7 @@ export const getConversationById = async (req, res) => {
       return errorResponse(res, 'Conversation not found', 404);
     }
 
-    if (req.user.role !== 'admin') {
+    if (!(req.user.roles || []).includes('admin')) {
       const booking = conversation.booking;
       if (!booking || (req.user.id !== booking.coach_id && req.user.id !== booking.primary_student_id)) {
         return errorResponse(res, 'Unauthorized', 403);
@@ -111,13 +111,13 @@ export const createConversation = async (req, res) => {
       return errorResponse(res, 'Booking not found', 404);
     }
 
-    if (req.user.id !== booking.coach_id && req.user.id !== booking.primary_student_id && req.user.role !== 'admin') {
+    if (req.user.id !== booking.coach_id && req.user.id !== booking.primary_student_id && !(req.user.roles || []).includes('admin')) {
       return errorResponse(res, 'Unauthorized', 403);
     }
 
     // Check if messaging is locked (unlocks only after payment capture)
     // This prevents pre-booking messaging as per architecture spec
-    if (booking.messaging_locked && req.user.role !== 'admin') {
+    if (booking.messaging_locked && !(req.user.roles || []).includes('admin')) {
       return errorResponse(res, 'Messaging is locked for this booking. Payment must be captured first.', 403);
     }
 
@@ -153,14 +153,14 @@ export const sendMessage = async (req, res) => {
     }
 
     // Check if messaging is locked (unlocks only after payment capture)
-    if (conversation.booking.messaging_locked && req.user.role !== 'admin') {
+    if (conversation.booking.messaging_locked && !(req.user.roles || []).includes('admin')) {
       return errorResponse(res, 'Messaging is locked for this booking. Payment must be captured first.', 403);
     }
 
     // Verify user is authorized (must be coach or student on the booking)
     if (req.user.id !== conversation.booking.coach_id && 
         req.user.id !== conversation.booking.primary_student_id && 
-        req.user.role !== 'admin') {
+        !(req.user.roles || []).includes('admin')) {
       return errorResponse(res, 'Unauthorized', 403);
     }
 
@@ -202,7 +202,7 @@ export const markMessageAsRead = async (req, res) => {
       ? booking.primary_student_id 
       : booking.coach_id;
 
-    if (req.user.id !== receiverId && req.user.role !== 'admin') {
+    if (req.user.id !== receiverId && !(req.user.roles || []).includes('admin')) {
       return errorResponse(res, 'Unauthorized', 403);
     }
 

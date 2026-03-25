@@ -1,4 +1,4 @@
-import { User, CoachProfile, CoachAvailability, Lesson, Booking, Review, CoachCourtLocation, CourtLocation } from '../models/index.js';
+import { User, UserRole, CoachProfile, CoachAvailability, Lesson, Booking, Review, CoachCourtLocation, CourtLocation } from '../models/index.js';
 import { successResponse, errorResponse } from '../utils/response.js';
 import { getPagination, getPagingData } from '../utils/pagination.js';
 import { Op } from 'sequelize';
@@ -23,26 +23,28 @@ const calculateDistance = (lat1, lng1, lat2, lng2) => {
 export const getCoaches = async (req, res) => {
   try {
     // Only students and admins can search/list coaches (e.g. to find someone to book). Coaches don't use this to find other coaches.
-    if (req.user && req.user.role === 'coach') {
+    if (req.user && (req.user.roles || []).includes('coach')) {
       return errorResponse(res, 'Only students and admins can search for coaches', 403);
     }
 
     const { page, limit, lat, lng, radius, skill_level, min_rating } = req.validated;
     const { limit: queryLimit, offset } = getPagination(page, limit);
 
-    const where = { role: 'coach', is_active: true };
+    const where = { is_active: true };
     const profileWhere = {};
 
     if (skill_level) profileWhere.skill_level = skill_level;
     if (min_rating) profileWhere.rating_average = { [Op.gte]: parseFloat(min_rating) };
 
-    // Build includes array
-    const includes = [{
+    const includes = [
+      { model: UserRole, as: 'userRoles', where: { role: 'coach' }, required: true, attributes: [] },
+      {
         model: CoachProfile,
         as: 'coachProfile',
         where: Object.keys(profileWhere).length > 0 ? profileWhere : undefined,
-      required: true,
-    }];
+        required: true,
+      },
+    ];
 
     // If GPS coordinates provided, filter by courts within radius
     if (lat != null && lng != null) {
@@ -145,31 +147,8 @@ export const getCoachById = async (req, res) => {
 
 export const createCoachProfile = async (req, res) => {
   try {
-    const { user_id, headline, bio, hourly_rate, experience_years, skill_level, certifications, location } = req.body;
-
-    // Use provided user_id or default to authenticated user's ID
-    // Allow admins to create profiles for other users
-    const targetUserId = user_id ? parseInt(user_id) : req.user.id;
-    
-    if (req.user.id !== targetUserId && req.user.role !== 'admin') {
-      return errorResponse(res, 'Unauthorized', 403);
-    }
-
-    // Verify the target user has coach role (unless admin is creating it)
-    if (req.user.role !== 'admin') {
-      if (req.user.role !== 'coach') {
-        return errorResponse(res, `Your account role is '${req.user.role}'. Only users with coach role can create coach profiles. Switch to coach via PUT /api/auth/me/role with body { "role": "coach" } and use the new token.`, 403);
-      }
-    } else if (user_id) {
-      // Admin creating profile for another user - verify that user is a coach
-      const targetUser = await User.findByPk(targetUserId);
-      if (!targetUser) {
-        return errorResponse(res, 'User not found', 404);
-      }
-      if (targetUser.role !== 'coach') {
-        return errorResponse(res, 'Can only create coach profiles for users with coach role', 400);
-      }
-    }
+    const { headline, bio, hourly_rate, experience_years, skill_level, certifications, location } = req.body;
+    const targetUserId = req.user.id;
 
     const existingProfile = await CoachProfile.findOne({ where: { user_id: targetUserId } });
     if (existingProfile) {
@@ -205,7 +184,7 @@ export const updateCoachProfile = async (req, res) => {
       return errorResponse(res, 'Coach profile not found', 404);
     }
 
-    if (req.user.id !== profile.user_id && req.user.role !== 'admin') {
+    if (req.user.id !== profile.user_id && !(req.user.roles || []).includes('admin')) {
       return errorResponse(res, 'Unauthorized', 403);
     }
 
@@ -239,25 +218,105 @@ function normalizeTimeOfDay(str) {
   return null;
 }
 
+/** From a Date, return YYYY-MM-DD for DATEONLY. */
+function toDateOnly(d) {
+  if (!d) return null;
+  const date = d instanceof Date ? d : new Date(d);
+  return date.toISOString().slice(0, 10);
+}
+
+/** From a Date, return HH:mm:ss for time-of-day. */
+function toTimeOnly(d) {
+  if (!d) return null;
+  const date = d instanceof Date ? d : new Date(d);
+  return date.toTimeString().slice(0, 8);
+}
+
+
+/** Normalize time string to "HH:mm:ss" for comparison. */
+function toComparableTime(t) {
+  if (!t || typeof t !== 'string') return null;
+  const n = normalizeTimeOfDay(t.trim());
+  return n && n.length === 5 ? `${n.slice(0, 5)}:00` : n;
+}
+
+/** True if two time-of-day ranges (HH:mm or HH:mm:ss) intersect. */
+function timeRangesOverlap(aStart, aEnd, bStart, bEnd) {
+  const as = toComparableTime(aStart);
+  const ae = toComparableTime(aEnd);
+  const bs = toComparableTime(bStart);
+  const be = toComparableTime(bEnd);
+  if (!as || !ae || !bs || !be) return false;
+  return as < be && bs < ae;
+}
+
+/** True if two date-only ranges (YYYY-MM-DD or null for unbounded) overlap. */
+function dateRangesOverlap(aStart, aEnd, bStart, bEnd) {
+  const aS = aStart || '0000-01-01';
+  const aE = aEnd || '9999-12-31';
+  const bS = bStart || '0000-01-01';
+  const bE = bEnd || '9999-12-31';
+  return aS <= bE && bS <= aE;
+}
+
 export const createAvailability = async (req, res) => {
   try {
-    const { coach_id, weekday, start_datetime, end_datetime, start_date, end_date, start_time, end_time, recurrence_rule, is_available } = req.validated;
+    if (!(req.user.roles || []).includes('coach')) {
+      return errorResponse(res, `Only coaches can create availability. Your roles: ${(req.user.roles || []).join(', ') || 'none'}.`, 403);
+    }
 
-    if (req.user.id !== parseInt(coach_id) && req.user.role !== 'admin') {
-      return errorResponse(res, `Unauthorized: coach_id must be your user id (${req.user.id}) when not admin. Your role is '${req.user.role}'.`, 403);
+    const coach_id = req.user.id;
+    const { weekday, start_datetime, end_datetime, start_date, end_date, start_time, end_time } = req.validated;
+
+    // Avoid redundancy: client can send either (start_date, end_date, start_time, end_time) OR (start_datetime, end_datetime).
+    // Derive date/time from datetimes when only datetimes are provided.
+    const startDt = start_datetime ? new Date(start_datetime) : null;
+    const endDt = end_datetime ? new Date(end_datetime) : null;
+    const resolvedStartDate = start_date ?? (startDt ? toDateOnly(startDt) : null);
+    const resolvedEndDate = end_date ?? (endDt ? toDateOnly(endDt) : null);
+    const resolvedStartTime = normalizeTimeOfDay(start_time) ?? (startDt ? toTimeOnly(startDt) : null);
+    const resolvedEndTime = normalizeTimeOfDay(end_time) ?? (endDt ? toTimeOnly(endDt) : null);
+
+    // Prevent overlapping availability: same coach, same weekday, overlapping date range and overlapping time range.
+    const existing = await CoachAvailability.findAll({
+      where: { coach_id, weekday },
+      attributes: ['start_date', 'end_date', 'start_time', 'end_time', 'start_datetime', 'end_datetime'],
+    });
+    for (const row of existing) {
+      const dateOverlap = dateRangesOverlap(
+        resolvedStartDate,
+        resolvedEndDate,
+        row.start_date,
+        row.end_date
+      );
+      if (!dateOverlap) continue;
+
+      const rowStartTime = row.start_time ?? (row.start_datetime ? toTimeOnly(row.start_datetime) : null);
+      const rowEndTime = row.end_time ?? (row.end_datetime ? toTimeOnly(row.end_datetime) : null);
+      const timeOverlap = timeRangesOverlap(
+        resolvedStartTime,
+        resolvedEndTime,
+        rowStartTime,
+        rowEndTime
+      );
+      if (timeOverlap) {
+        return errorResponse(
+          res,
+          'This availability overlaps an existing slot for the same day and date range. Use a non-overlapping time window (e.g. 09:00–12:00 and 13:00–17:00).',
+          400
+        );
+      }
     }
 
     const availability = await CoachAvailability.create({
       coach_id,
       weekday,
-      start_datetime: start_datetime ? new Date(start_datetime) : null,
-      end_datetime: end_datetime ? new Date(end_datetime) : null,
-      start_date,
-      end_date,
-      start_time: normalizeTimeOfDay(start_time),
-      end_time: normalizeTimeOfDay(end_time),
-      recurrence_rule,
-      is_available: is_available !== undefined ? is_available : true,
+      start_datetime: startDt,
+      end_datetime: endDt,
+      start_date: resolvedStartDate,
+      end_date: resolvedEndDate,
+      start_time: resolvedStartTime,
+      end_time: resolvedEndTime,
     });
 
     return successResponse(res, availability, 'Availability created successfully', 201);
@@ -271,7 +330,7 @@ export const getCoachAvailability = async (req, res) => {
   try {
     const { id } = req.params;
     const availabilities = await CoachAvailability.findAll({
-      where: { coach_id: id, is_available: true },
+      where: { coach_id: id },
       order: [['weekday', 'ASC'], ['start_datetime', 'ASC']],
     });
 
@@ -289,8 +348,8 @@ export const getCoachAvailability = async (req, res) => {
  */
 export const deleteAvailability = async (req, res) => {
   try {
-    if (req.user.role !== 'coach') {
-      return errorResponse(res, `Only coaches can delete their availability. Your role is '${req.user.role}'. Switch via PUT /api/auth/me/role with body { "role": "coach" } if needed.`, 403);
+    if (!(req.user.roles || []).includes('coach')) {
+      return errorResponse(res, `Only coaches can delete their availability. Your roles: ${(req.user.roles || []).join(', ') || 'none'}. Switch via PUT /api/auth/me/role with body { "role": "coach" } if needed.`, 403);
     }
 
     const availabilityId = req.params.id;
@@ -318,17 +377,20 @@ export const deleteAvailability = async (req, res) => {
  */
 export const initiateStripeConnectOnboarding = async (req, res) => {
   try {
-    if (req.user.role !== 'coach' && req.user.role !== 'admin') {
-      return errorResponse(res, `Only coaches can onboard with Stripe Connect. Your role is '${req.user.role}'.`, 403);
+    if (!(req.user.roles || []).includes('coach') && !(req.user.roles || []).includes('admin')) {
+      return errorResponse(res, `Only coaches can onboard with Stripe Connect. Your roles: ${(req.user.roles || []).join(', ') || 'none'}.`, 403);
     }
 
-    const coachId = req.user.role === 'admin' ? req.body.coach_id : req.user.id;
+    const coachId = (req.user.roles || []).includes('admin') ? req.body.coach_id : req.user.id;
     if (!coachId) {
       return errorResponse(res, 'Coach ID is required', 400);
     }
 
-    const coach = await User.findByPk(coachId);
-    if (!coach || coach.role !== 'coach') {
+    const coach = await User.findByPk(coachId, {
+      include: [{ model: UserRole, as: 'userRoles', attributes: ['role'] }],
+    });
+    const coachRoles = coach?.userRoles?.map((r) => r.role) ?? [];
+    if (!coach || !coachRoles.includes('coach')) {
       return errorResponse(res, 'Coach not found', 404);
     }
 
@@ -383,11 +445,11 @@ export const initiateStripeConnectOnboarding = async (req, res) => {
  */
 export const getStripeConnectStatus = async (req, res) => {
   try {
-    if (req.user.role !== 'coach' && req.user.role !== 'admin') {
+    if (!(req.user.roles || []).includes('coach') && !(req.user.roles || []).includes('admin')) {
       return errorResponse(res, 'Only coaches can check Stripe Connect status', 403);
     }
 
-    const coachId = req.user.role === 'admin' ? req.query.coach_id : req.user.id;
+    const coachId = (req.user.roles || []).includes('admin') ? req.query.coach_id : req.user.id;
     if (!coachId) {
       return errorResponse(res, 'Coach ID is required', 400);
     }

@@ -1,9 +1,15 @@
 #!/usr/bin/env node
 /**
- * Reorganizes PickleCoach_API.postman_collection.json so that ALL endpoints
+ * Reorganizes PickleCoach_API_ByType.postman_collection.json so that ALL endpoints
  * live inside one of the three flow folders (Admin, Coach, Student) in the
  * correct user-flow order. Removes standalone folders (Health Check, Auth, etc.).
  * Does not delete any endpoint — moves/copies each into the appropriate flow.
+ *
+ * Rule: Each endpoint appears only in flow folder(s) where that role is ALLOWED
+ * to use it (no 403). E.g. Admin cannot use Switch Role or Delete My Account, so
+ * those are only in Coach and Student flows. Coach cannot use List Coaches (Search)
+ * or Create Booking, so those are only in Admin and Student flows. Student cannot
+ * use Update Booking Status (coach/admin only), so it is only in Admin and Coach flows.
  */
 
 import fs from 'fs';
@@ -83,15 +89,17 @@ const ADMIN_ORDER = [
   ['Authentication', 'Confirm Email Verification'],
   ['Authentication', 'Request Email Change'],
   ['Authentication', 'Confirm Email Change'],
-  ['Authentication', 'Switch Role (Student ↔ Coach)'],
+  // Admin cannot use Switch Role or Delete My Account (403)
   ['Authentication', 'Logout'],
-  ['Authentication', 'Delete My Account'],
   ['Courts', 'Get All Courts'],
   ['Courts', 'Get Court By ID'],
   ['Lessons', 'Get All Lessons'],
   ['Lessons', 'Get Lesson By ID'],
   ['Disputes', 'Get All Disputes'],
   ['Disputes', 'Get Dispute By ID'],
+  ['Bookings', 'Accept Booking'],
+  ['Bookings', 'Decline Booking'],
+  ['Bookings', 'Update Booking Status'],
   ['Payments', 'Get My Payments'],
   ['Payments', 'Get Payment By ID'],
   ['Webhooks', 'Stripe Webhook'],
@@ -130,6 +138,8 @@ const COACH_ORDER = [
   ['Lessons', 'Delete Lesson'],
   ['Bookings', 'Get My Bookings'],
   ['Bookings', 'Get Booking By ID'],
+  ['Bookings', 'Accept Booking'],
+  ['Bookings', 'Decline Booking'],
   ['Bookings', 'Update Booking Status'],
   ['Bookings', 'Cancel Booking'],
   ['Bookings', 'Request Reschedule'],
@@ -170,12 +180,16 @@ const STUDENT_ORDER = [
   ['Authentication', 'Switch Role (Student ↔ Coach)'],
   ['Coaches', 'List Coaches (Search)'],
   ['Coaches', 'Get Coach By ID'],
+  ['Coaches', 'Get Coach Courts'],
+  ['Coaches', 'Get Coach Availability'],
+  ['Courts', 'Get All Courts'],
+  ['Courts', 'Get Court By ID'],
   ['Lessons', 'Get All Lessons'],
   ['Lessons', 'Get Lesson By ID'],
   ['Bookings', 'Create Booking'],
   ['Bookings', 'Get My Bookings'],
   ['Bookings', 'Get Booking By ID'],
-  ['Bookings', 'Update Booking Status'],
+  // Update Booking Status is coach/admin only; student gets 403
   ['Bookings', 'Cancel Booking'],
   ['Bookings', 'Request Reschedule'],
   ['Reschedules', 'Get Reschedule History'],
@@ -215,7 +229,7 @@ const coachFolder = buildFlowFolder(
 
 const studentFolder = buildFlowFolder(
   '3 – Flow: Student',
-  'All student endpoints in user-flow order. Run in sequence: Health → Register/Login → Profile → Search coaches → Lessons → Create Booking → Bookings → Payments → Reviews → Messages → Disputes → Notifications → Auth extras. See backend/POSTMAN_TESTING_GUIDE.md.',
+  'All student endpoints in user-flow order. Run in sequence: Health → Register/Login → Profile → Search coaches → Open coach (GET /coaches/:id) → Get coach courts (GET /coaches/:id/courts) → Check availability (GET /coaches/:id/availability) → Create Booking → Bookings → Payments → Reviews → Messages → Disputes → Notifications → Auth extras. See backend/POSTMAN_TESTING_GUIDE.md.',
   STUDENT_ORDER
 );
 

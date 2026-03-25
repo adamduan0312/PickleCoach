@@ -16,7 +16,7 @@ module.exports = {
     }
 
     const { sequelize } = await import('../models/sequelize.js');
-    const { User, CoachProfile, CourtLocation, CoachCourtLocation, Lesson, Booking, Payment, Review, CoachAvailability, Payout, RescheduleHistory, CancellationHistory } = await import('../models/index.js');
+    const { User, UserRole, CoachProfile, CourtLocation, CoachCourtLocation, Lesson, Booking, Payment, Review, CoachAvailability, Payout, RescheduleHistory, CancellationHistory } = await import('../models/index.js');
 
     // Clean up existing seed data first (idempotent seeding)
     // Delete in order to respect foreign key constraints (child tables first)
@@ -78,11 +78,11 @@ module.exports = {
           full_name: coachNames[i],
           email: `coach${i + 1}@example.com`,
           password_hash: passwordHash,
-          role: 'coach',
           phone: `555-${1000 + i}`,
           timezone: 'America/New_York',
           is_active: true,
         });
+        await UserRole.create({ user_id: user.id, role: 'coach' });
 
         const profile = await CoachProfile.create({
           user_id: user.id,
@@ -161,7 +161,6 @@ module.exports = {
           weekday: day,
           start_datetime: startDatetime,
           end_datetime: endDatetime,
-          is_available: true,
         });
       }
     }
@@ -199,11 +198,11 @@ module.exports = {
         full_name: studentNames[i],
         email: `student${i + 1}@example.com`,
         password_hash: passwordHash,
-        role: 'student',
         phone: `555-${2000 + i}`,
         timezone: 'America/New_York',
         is_active: true,
       });
+      await UserRole.create({ user_id: user.id, role: 'student' });
       students.push(user);
     }
 
@@ -293,15 +292,15 @@ module.exports = {
 
     // Create 1 admin user
     const adminPasswordHash = await bcrypt.hash('admin123', 10);
-    await User.create({
+    const adminUser = await User.create({
       full_name: 'Admin User',
       email: 'admin@picklecoach.com',
       password_hash: adminPasswordHash,
-      role: 'admin',
       phone: '555-0000',
       timezone: 'America/New_York',
       is_active: true,
     });
+    await UserRole.create({ user_id: adminUser.id, role: 'admin' });
 
     console.log('✅ Seed data created successfully!');
     console.log(`   - ${coaches.length} coaches`);
@@ -317,9 +316,9 @@ module.exports = {
   },
 
   async down(queryInterface, Sequelize) {
-    // Clean up seed data
     const { User, Booking, Payment, Review, Lesson, CoachProfile, CourtLocation, CoachCourtLocation, CoachAvailability } = await import('../models/index.js');
-    
+    const { Op } = Sequelize;
+
     await Review.destroy({ where: {}, truncate: true });
     await Payment.destroy({ where: {}, truncate: true });
     await Booking.destroy({ where: {}, truncate: true });
@@ -328,8 +327,15 @@ module.exports = {
     await CoachCourtLocation.destroy({ where: {}, truncate: true });
     await CourtLocation.destroy({ where: {}, truncate: true });
     await CoachProfile.destroy({ where: {}, truncate: true });
-    await User.destroy({ where: { role: { [Sequelize.Op.in]: ['coach', 'student', 'admin'] } } });
-    
+    await User.destroy({
+      where: {
+        [Op.or]: [
+          { email: { [Op.like]: '%@example.com' } },
+          { email: 'admin@picklecoach.com' },
+        ],
+      },
+    });
+
     console.log('✅ Seed data removed');
   }
 };

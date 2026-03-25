@@ -144,7 +144,7 @@ Test endpoints in this order because some depend on others:
 1. ✅ **Health Check** – Verify server is running
 2. 🔐 **Register/Login** – Get auth token (auto-saved)
 3. 👤 **Get Profile** – Verify authentication works
-4. 🏃 **Coaches** – Browse/create coach profiles
+4. 🏃 **Coaches** – Browse/create coach profiles. For the **student** flow (Postman **3 – Flow: Student**), after List Coaches and Get Coach By ID use **Get Coach Courts** and **Get Coach Availability** before creating a booking.
 5. 🏟️ **Courts** – Find/create courts (**create courts before adding to coach**)
 6. **Coach courts** – **List My Courts**, **Add Court to Coach** (see [Coach Courts Workflow](#2-coach-courts-workflow-sequence) above)
 7. 📚 **Lessons** – Browse/create lessons

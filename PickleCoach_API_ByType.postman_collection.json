@@ -721,7 +721,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"user_id\": null,\n  \"headline\": \"Professional Pickleball Coach\",\n  \"bio\": \"Experienced pickleball coach with 10 years of teaching\",\n  \"hourly_rate\": 50.00,\n  \"experience_years\": 10,\n  \"skill_level\": \"advanced\",\n  \"certifications\": \"USAPA Certified\",\n  \"location\": \"New York, NY\"\n}"
+							"raw": "{\n  \"headline\": \"Professional Pickleball Coach\",\n  \"bio\": \"Experienced pickleball coach with 10 years of teaching\",\n  \"hourly_rate\": 50.00,\n  \"experience_years\": 10,\n  \"skill_level\": \"advanced\",\n  \"certifications\": \"USAPA Certified\",\n  \"location\": \"New York, NY\"\n}"
 						},
 						"url": {
 							"raw": "{{api_url}}/coaches/profile",
@@ -733,7 +733,7 @@
 								"profile"
 							]
 						},
-						"description": "Roles: Coach. Create coach profile. Response `user_id` is the coach's user id; test script saves it to `coach_id`."
+						"description": "Coach-only. Create your own coach profile (authenticated coach only). Profile is always created for the logged-in user; no user_id in body. Admins cannot use this endpoint. Response `user_id` is the coach's user id; test script saves it to `coach_id`."
 					},
 					"response": [],
 					"event": [
@@ -795,7 +795,7 @@
 								}
 							]
 						},
-						"description": "Roles: Coach. Update coach profile. Path :id is the coach's **user id** (same as GET /coaches/:id)."
+						"description": "Coach: own profile only (use your user id as :id). Admin: any coach profile. Path :id is the coach's user id (same as GET /coaches/:id)."
 					},
 					"response": [],
 					"event": [
@@ -877,7 +877,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"coach_id\": {{coach_id}},\n  \"weekday\": \"monday\",\n  \"start_datetime\": \"2026-02-01T09:00:00Z\",\n  \"end_datetime\": \"2026-02-01T17:00:00Z\",\n  \"start_date\": \"2026-02-01\",\n  \"end_date\": \"2026-12-31\",\n  \"recurrence_rule\": null,\n  \"is_available\": true\n}"
+							"raw": "{\n  \"weekday\": \"monday\",\n  \"start_date\": \"2026-02-01\",\n  \"end_date\": \"2026-12-31\",\n  \"start_time\": \"09:00\",\n  \"end_time\": \"17:00\"\n}"
 						},
 						"url": {
 							"raw": "{{api_url}}/coaches/availability",
@@ -1289,7 +1289,12 @@
 					"name": "Get Coach By ID",
 					"request": {
 						"method": "GET",
-						"header": [],
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
 						"url": {
 							"raw": "{{api_url}}/coaches/:id",
 							"host": [
@@ -1306,7 +1311,7 @@
 								}
 							]
 						},
-						"description": "Roles: Any (no auth). Get coach details by ID. Path :id is the coach's **user id** (users.id). Set `coach_id` env var to that user id."
+						"description": "Roles: Student or Admin. Get coach details by ID. Path :id is the coach's **user id** (users.id). Set `coach_id` env var to that user id. Requires auth token."
 					},
 					"response": [],
 					"event": [
@@ -1322,6 +1327,147 @@
 									"    var jsonData = pm.response.json();",
 									"    pm.expect(jsonData).to.have.property('data');",
 									"    pm.expect(jsonData.data).to.have.property('id');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Get Coach Reliability (Score Only)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{api_url}}/coaches/:id/reliability",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"coaches",
+								":id",
+								"reliability"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "{{coach_id}}"
+								}
+							]
+						},
+						"description": "Roles: Student or Admin. Get a coach's reliability score only (no breakdown fields). Path :id is the coach's **user id**."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Reliability returned\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"    pm.expect(jsonData.data).to.have.property('reliability');",
+									"    pm.expect(jsonData.data.reliability).to.have.property('reliability_score');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Get Coach Reliability (Me - Full Breakdown)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{api_url}}/coaches/me/reliability",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"coaches",
+								"me",
+								"reliability"
+							]
+						},
+						"description": "Roles: Coach. Get authenticated coach's reliability breakdown + score (penalized-impact only)."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Reliability returned\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"    pm.expect(jsonData.data).to.have.property('reliability');",
+									"    pm.expect(jsonData.data.reliability).to.have.property('reliability_score');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Get Coach Courts",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{api_url}}/coaches/:id/courts",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"coaches",
+								":id",
+								"courts"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "{{coach_id}}"
+								}
+							]
+						},
+						"description": "Roles: Any (no auth). List courts where this coach teaches. For students viewing a coach's profile. Path :id is the coach's **user id**. Response: data[] with court_id, name, address, city, lat, lng."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Returns array of courts\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('data');",
+									"    pm.expect(jsonData.data).to.be.an('array');",
 									"});"
 								],
 								"type": "text/javascript"
@@ -1863,6 +2009,120 @@
 					]
 				},
 				{
+					"name": "Accept Booking",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": ""
+						},
+						"url": {
+							"raw": "{{api_url}}/bookings/:id/accept",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"bookings",
+								":id",
+								"accept"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "{{booking_id}}"
+								}
+							]
+						},
+						"description": "Roles: Coach, Admin. Confirm a pending booking. Use this (not PUT status) to confirm. Captures payment and sets status to confirmed. Only for bookings in pending state."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Booking accepted\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Decline Booking",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"message_to_student\": \"This time no longer works for me—please choose another slot.\",\n  \"decline_reason_code\": \"availability_wrong\"\n}"
+						},
+						"url": {
+							"raw": "{{api_url}}/bookings/:id/decline",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"bookings",
+								":id",
+								"decline"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "{{booking_id}}"
+								}
+							]
+						},
+						"description": "Roles: Coach, Admin. Decline a pending booking. Cancels the PaymentIntent (student not charged). Body: message_to_student (required, 10–500 chars), decline_reason_code (optional, e.g. availability_wrong, sick, other). Student sees the message."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Booking declined\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
 					"name": "Update Booking Status",
 					"request": {
 						"method": "PUT",
@@ -1878,7 +2138,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"status\": \"confirmed\"\n}"
+							"raw": "{\n  \"status\": \"completed\"\n}"
 						},
 						"url": {
 							"raw": "{{api_url}}/bookings/:id/status",
@@ -1897,7 +2157,7 @@
 								}
 							]
 						},
-						"description": "Update booking status (e.g., confirm, complete)"
+						"description": "Roles: Coach, Admin. Change booking status only for allowed transitions. Do not use this to confirm or decline a pending booking — use POST .../accept and POST .../decline for that.\n\nAllowed transitions:\n- confirmed → completed | cancelled | no_show\n- awaiting_verification → completed | cancelled\n- pending has no transitions here (use accept/decline).\n\nCompleted is only allowed after the lesson end time has passed (400 if you try before). Both confirmed→completed and awaiting_verification→completed mean “lesson is done”; the booking may be in either state depending on whether the background worker has already moved it to awaiting_verification.\n\nExamples: Mark as completed {\"status\": \"completed\"}; mark as no-show {\"status\": \"no_show\"}; cancel {\"status\": \"cancelled\"}."
 					},
 					"response": [],
 					"event": [
@@ -2011,7 +2271,7 @@
 								}
 							]
 						},
-						"description": "Request a reschedule for a booking"
+						"description": "Roles: Student, Coach, Admin. Request a reschedule for a booking. Both student and coach can call this. Body: new_scheduled_at, reason (required), reason_notes (optional), paid_reschedule (optional)."
 					},
 					"response": [],
 					"event": [
@@ -3554,7 +3814,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"full_name\": \"Updated Name\",\n  \"email\": \"user@example.com\",\n  \"phone\": \"+1234567890\",\n  \"timezone\": \"America/New_York\",\n  \"avatar_url\": \"\",\n  \"is_active\": true,\n  \"role\": \"coach\",\n  \"deleted_at\": null\n}"
+							"raw": "{\n  \"full_name\": \"John Doe\",\n  \"email\": \"user@example.com\",\n  \"phone\": \"+1234567890\",\n  \"timezone\": \"America/New_York\",\n  \"avatar_url\": \"\",\n  \"is_active\": true,\n  \"role\": \"coach\",\n  \"deleted_at\": null\n}"
 						},
 						"url": {
 							"raw": "{{api_url}}/users/:id",
@@ -3589,6 +3849,63 @@
 									"    pm.expect(jsonData.success).to.be.true;",
 									"    pm.expect(jsonData.data).to.have.property('role');",
 									"    pm.expect(jsonData.data).to.have.property('is_active');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Update Coach Profile (Admin)",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"headline\": \"Updated Headline\",\n  \"bio\": \"Updated bio with more experience\",\n  \"hourly_rate\": 60.00,\n  \"experience_years\": 12,\n  \"skill_level\": \"advanced\",\n  \"certifications\": \"USAPA Certified, PPR Certified\",\n  \"location\": \"Los Angeles, CA\"\n}"
+						},
+						"url": {
+							"raw": "{{api_url}}/coaches/profile/:id",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"coaches",
+								"profile",
+								":id"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "{{coach_id}}"
+								}
+							]
+						},
+						"description": "Same as PUT /coaches/profile/:id. Admin: set :id to any coach's user id to update that coach's profile. Coach: use the request in the Coaches folder to update your own."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Profile updated\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
 									"});"
 								],
 								"type": "text/javascript"
@@ -3632,7 +3949,7 @@
 								}
 							]
 						},
-						"description": "Roles: Admin. Manually adjust a user's reliability score."
+						"description": "Roles: Admin. Manually adjust a coach's reliability score (coaches only)."
 					},
 					"response": [],
 					"event": [
@@ -3648,6 +3965,59 @@
 									"    var jsonData = pm.response.json();",
 									"    pm.expect(jsonData.success).to.be.true;",
 									"    pm.expect(jsonData.data).to.have.property('new_score');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Get Coach Reliability (Admin Full Breakdown)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{api_url}}/admin/users/:id/reliability",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"admin",
+								"users",
+								":id",
+								"reliability"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "{{user_id}}"
+								}
+							]
+						},
+						"description": "Roles: Admin. Get a coach's full reliability breakdown + score. Path :id is the coach's user id."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Reliability returned\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"    pm.expect(jsonData.data).to.have.property('reliability');",
+									"    pm.expect(jsonData.data.reliability).to.have.property('reliability_score');",
+									"    pm.expect(jsonData.data.reliability).to.have.property('reschedules');",
 									"});"
 								],
 								"type": "text/javascript"

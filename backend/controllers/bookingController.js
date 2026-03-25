@@ -1,4 +1,4 @@
-import { sequelize, Booking, Lesson, User, BookingPlayer, Payment, RescheduleHistory, CancellationHistory, CourtLocation } from '../models/index.js';
+import { sequelize, Booking, Lesson, User, UserRole, BookingPlayer, Payment, RescheduleHistory, CancellationHistory, CourtLocation } from '../models/index.js';
 import { successResponse, errorResponse } from '../utils/response.js';
 import { getPagination, getPagingData } from '../utils/pagination.js';
 import { Op } from 'sequelize';
@@ -31,7 +31,7 @@ export const getBookings = async (req, res) => {
     const where = {};
     if (status) where.status = status;
 
-    if (req.user.role !== 'admin') {
+    if (!(req.user.roles || []).includes('admin')) {
       where[Op.or] = [{ coach_id: req.user.id }, { primary_student_id: req.user.id }];
     } else {
       if (coach_id) where.coach_id = coach_id;
@@ -79,7 +79,8 @@ export const getBookingById = async (req, res) => {
       return errorResponse(res, 'Booking not found', 404);
     }
 
-    if (req.user.role !== 'admin' && req.user.id !== booking.coach_id && req.user.id !== booking.primary_student_id) {
+    const isParticipant = req.user.id === booking.coach_id || req.user.id === booking.primary_student_id;
+    if (!isParticipant && !(req.user.roles || []).includes('admin')) {
       return errorResponse(res, 'Unauthorized', 403);
     }
 
@@ -108,8 +109,14 @@ export const createBooking = async (req, res) => {
       return errorResponse(res, 'Lesson not found or inactive', 404);
     }
 
-    if (req.user.role !== 'student' && req.user.role !== 'admin') {
+    const roles = req.user.roles || [];
+    if (!roles.includes('student') && !roles.includes('admin')) {
       return errorResponse(res, 'Only students can create bookings', 403);
+    }
+
+    // Coach and student must be different users (no self-booking)
+    if (lesson.coach_id === req.user.id) {
+      return errorResponse(res, 'You cannot book your own lesson. Coach and student must be different users.', 400);
     }
 
     const scheduledDate = new Date(scheduled_at);
@@ -125,13 +132,14 @@ export const createBooking = async (req, res) => {
       }
     }
 
-    // Check availability before creating booking (instant booking validation)
-    // This checks: 1) Coach availability (coach-maintained schedule)
-    //              2) No overlapping bookings (double-booking prevention)
+    // Check availability before creating booking. Prevents double-booking so the coach never has to fix it.
+    // 1) Coach availability (coach-maintained schedule)
+    // 2) Existing bookings for this lesson in this time range (pending, confirmed, awaiting_verification)
+    // If another student already has that slot, we reject with 400 and a clear message—no second booking is created.
     const finalDuration = duration_minutes || lesson.duration_minutes;
     const availabilityCheck = await checkBookingAvailability(lesson_id, scheduled_at, finalDuration);
     if (!availabilityCheck.available) {
-      return errorResponse(res, availabilityCheck.reason || 'Time slot is not available', 400);
+      return errorResponse(res, availabilityCheck.reason || 'This time slot is no longer available.', 400);
     }
 
     // Calculate reschedule deadline (default: 24 hours before scheduled time)
@@ -211,6 +219,17 @@ export const createBooking = async (req, res) => {
   }
 };
 
+// Valid status transitions for Update Booking Status (coach/admin). pending → confirmed/cancelled only via accept/decline endpoints.
+const BOOKING_STATUS_TRANSITIONS = {
+  pending: [], // Use POST /bookings/:id/accept or POST /bookings/:id/decline
+  confirmed: ['completed', 'cancelled', 'no_show'],
+  completed: [],
+  cancelled: [],
+  no_show: [],
+  awaiting_verification: ['completed', 'cancelled'],
+  disputed: [],
+};
+
 export const updateBookingStatus = async (req, res) => {
   try {
     const { id } = req.params;
@@ -221,12 +240,38 @@ export const updateBookingStatus = async (req, res) => {
       return errorResponse(res, 'Booking not found', 404);
     }
 
-    if (req.user.role !== 'admin' && req.user.id !== booking.coach_id) {
+    if (!(req.user.roles || []).includes('admin') && req.user.id !== booking.coach_id) {
       return errorResponse(res, 'Unauthorized', 403);
     }
 
+    const currentStatus = booking.status;
+    const allowed = BOOKING_STATUS_TRANSITIONS[currentStatus];
+    if (allowed == null || !allowed.includes(status)) {
+      return errorResponse(
+        res,
+        `Invalid transition: cannot change status from '${currentStatus}' to '${status}'. Allowed: ${allowed?.length ? allowed.join(', ') : 'none'}.`,
+        400
+      );
+    }
+
+    // Coach can only mark completed after the lesson end time has passed (prevents marking done before lesson)
+    if (status === 'completed') {
+      const lessonEndMs = new Date(booking.scheduled_at).getTime() + (booking.duration_minutes || 0) * 60 * 1000;
+      if (Date.now() < lessonEndMs) {
+        return errorResponse(
+          res,
+          'Cannot mark booking as completed before the lesson end time. Wait until the lesson has finished.',
+          400
+        );
+      }
+    }
+
     const beforeState = booking.toJSON();
-    await booking.update({ status });
+    const updatePayload = { status };
+    if (status === 'completed') {
+      updatePayload.payout_status = 'pending';
+    }
+    await booking.update(updatePayload);
 
     await logAudit(req.user.id, 'booking_status_updated', 'bookings', booking.id, beforeState, booking.toJSON(), req);
 
@@ -234,6 +279,115 @@ export const updateBookingStatus = async (req, res) => {
   } catch (error) {
     logger.error('Update booking status error:', error);
     return errorResponse(res, 'Failed to update booking status', 500);
+  }
+};
+
+/**
+ * Coach (or admin) accepts a pending booking. Captures payment and sets status to confirmed.
+ * Enterprise flow: coach must confirm before the booking is final.
+ */
+export const acceptBooking = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const booking = await Booking.findByPk(id);
+    if (!booking) return errorResponse(res, 'Booking not found', 404);
+    if (booking.status !== 'pending') {
+      return errorResponse(res, `Booking is not pending (status: ${booking.status}). Only pending bookings can be accepted.`, 400);
+    }
+    if (!(req.user.roles || []).includes('admin') && req.user.id !== booking.coach_id) {
+      return errorResponse(res, 'Only the coach or an admin can accept this booking', 403);
+    }
+
+    const payment = await Payment.findOne({ where: { booking_id: booking.id }, order: [['id', 'DESC']] });
+    if (payment) {
+      await paymentService.capturePaymentOnCoachAccept(payment.id);
+    } else {
+      await booking.update({ status: 'confirmed', messaging_locked: false });
+      await logAudit(req.user.id, 'booking_confirmed_by_coach', 'bookings', booking.id, null, { status: 'confirmed' }, req);
+    }
+
+    const updated = await Booking.findByPk(id, {
+      include: [
+        { model: Lesson, as: 'lesson' },
+        { model: User, as: 'coach', attributes: ['id', 'full_name', 'avatar_url'] },
+        { model: User, as: 'primaryStudent', attributes: ['id', 'full_name', 'avatar_url'] },
+      ],
+    });
+    return successResponse(res, updated, 'Booking accepted and confirmed');
+  } catch (error) {
+    logger.error('Accept booking error:', error);
+    const message = error.message || 'Failed to accept booking';
+    const code = message.includes('not pending') ? 400 : 500;
+    return errorResponse(res, message, code);
+  }
+};
+
+/**
+ * Coach (or admin) declines a pending booking. Cancels PaymentIntent (no charge) and sets booking to cancelled.
+ * Optional message_to_student is shown to the student (e.g. "Something came up—please book another slot").
+ * Optional decline_reason_code for analytics (e.g. availability_wrong, sick, other).
+ */
+export const declineBooking = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { message_to_student, decline_reason_code } = req.validated || {};
+    const booking = await Booking.findByPk(id);
+    if (!booking) return errorResponse(res, 'Booking not found', 404);
+    if (booking.status !== 'pending') {
+      return errorResponse(res, `Booking is not pending (status: ${booking.status}). Only pending bookings can be declined.`, 400);
+    }
+    if (!(req.user.roles || []).includes('admin') && req.user.id !== booking.coach_id) {
+      return errorResponse(res, 'Only the coach or an admin can decline this booking', 403);
+    }
+
+    const payment = await Payment.findOne({ where: { booking_id: booking.id }, order: [['id', 'DESC']] });
+    if (payment) {
+      await paymentService.cancelPaymentOnCoachDecline(payment.id);
+    } else {
+      await booking.update({
+        status: 'cancelled',
+        cancelled_by: 'coach',
+        cancelled_at: new Date(),
+      });
+      await logAudit(req.user.id, 'booking_declined_by_coach', 'bookings', booking.id, null, { status: 'cancelled' }, req);
+    }
+
+    const now = new Date();
+    const noteToStore = (message_to_student && message_to_student.trim()) ? message_to_student.trim() : null;
+    const codeToStore = (decline_reason_code && decline_reason_code.trim()) ? decline_reason_code.trim() : null;
+    await booking.update({
+      declined_at: now,
+      decline_message_to_student: noteToStore,
+      decline_reason_code: codeToStore,
+    });
+
+    await CancellationHistory.create({
+      booking_id: booking.id,
+      cancelled_by: 'coach',
+      reason: 'other',
+      reason_notes: (noteToStore || 'Coach declined').substring(0, 255),
+      affects_reliability: false,
+      refund_amount: 0,
+      penalty_amount: 0,
+    });
+
+    const updated = await Booking.findByPk(id, {
+      include: [
+        { model: Lesson, as: 'lesson' },
+        { model: User, as: 'coach', attributes: ['id', 'full_name', 'avatar_url'] },
+        { model: User, as: 'primaryStudent', attributes: ['id', 'full_name', 'avatar_url'] },
+      ],
+    });
+    return successResponse(res, {
+      booking: updated,
+      message_to_student: noteToStore,
+      system_note: 'You weren\'t charged. You can pick another time.',
+    }, 'Booking declined');
+  } catch (error) {
+    logger.error('Decline booking error:', error);
+    const message = error.message || 'Failed to decline booking';
+    const code = message.includes('not pending') ? 400 : 500;
+    return errorResponse(res, message, code);
   }
 };
 
@@ -257,7 +411,7 @@ export const cancelBooking = async (req, res) => {
     }
 
     // Determine who is cancelling
-    const cancelledBy = req.user.role === 'admin' ? 'admin' : 
+    const cancelledBy = (req.user.roles || []).includes('admin') ? 'admin' :
                        req.user.id === booking.coach_id ? 'coach' : 'student';
 
     // Admin cancellations NEVER affect reliability
@@ -317,8 +471,11 @@ export const cancelBooking = async (req, res) => {
       const userIdToUpdate = cancelledBy === 'coach' ? booking.coach_id : booking.primary_student_id;
       if (userIdToUpdate) {
         // Double-check: ensure we're not updating an admin user
-        const userToUpdate = await User.findByPk(userIdToUpdate);
-        if (userToUpdate && userToUpdate.role !== 'admin') {
+        const userToUpdate = await User.findByPk(userIdToUpdate, {
+          include: [{ model: UserRole, as: 'userRoles', attributes: ['role'] }],
+        });
+        const updateRoles = userToUpdate?.userRoles?.map((r) => r.role) ?? [];
+        if (userToUpdate && !updateRoles.includes('admin')) {
           await updateUserReliability(userIdToUpdate).catch(err => {
             logger.error('Failed to update reliability after cancellation:', err);
           });

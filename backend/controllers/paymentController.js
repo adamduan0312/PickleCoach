@@ -18,10 +18,10 @@ export const getPayments = async (req, res) => {
     if (student_id) where.student_id = student_id;
     if (coach_id) where.coach_id = coach_id;
 
-    if (req.user.role !== 'admin') {
-      if (req.user.role === 'coach') {
+    if (!(req.user.roles || []).includes('admin')) {
+      if ((req.user.roles || []).includes('coach')) {
         where.coach_id = req.user.id;
-      } else if (req.user.role === 'student') {
+      } else if ((req.user.roles || []).includes('student')) {
         where.student_id = req.user.id;
       }
     }
@@ -61,7 +61,7 @@ export const getPaymentById = async (req, res) => {
       return errorResponse(res, 'Payment not found', 404);
     }
 
-    if (req.user.role !== 'admin' && req.user.id !== payment.coach_id && req.user.id !== payment.student_id) {
+    if (!(req.user.roles || []).includes('admin') && req.user.id !== payment.coach_id && req.user.id !== payment.student_id) {
       return errorResponse(res, 'Unauthorized', 403);
     }
 
@@ -84,7 +84,7 @@ export const createPayment = async (req, res) => {
       return errorResponse(res, 'Booking not found', 404);
     }
 
-    if (req.user.id !== booking.primary_student_id && req.user.role !== 'admin') {
+    if (req.user.id !== booking.primary_student_id && !(req.user.roles || []).includes('admin')) {
       return errorResponse(res, 'Unauthorized', 403);
     }
 
@@ -127,7 +127,7 @@ export const updatePaymentStatus = async (req, res) => {
       return errorResponse(res, 'Payment not found', 404);
     }
 
-    if (req.user.role !== 'admin') {
+    if (!(req.user.roles || []).includes('admin')) {
       return errorResponse(res, 'Unauthorized', 403);
     }
 
@@ -159,7 +159,7 @@ export const processRefund = async (req, res) => {
       return errorResponse(res, 'Payment not found', 404);
     }
 
-    if (req.user.role !== 'admin') {
+    if (!(req.user.roles || []).includes('admin')) {
       return errorResponse(res, 'Unauthorized', 403);
     }
 

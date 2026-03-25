@@ -1,16 +1,18 @@
 import jwt from 'jsonwebtoken';
-import { User } from '../models/index.js';
+import { User, UserRole } from '../models/index.js';
 
 export const authenticate = async (req, res, next) => {
   try {
     const token = req.headers.authorization?.split(' ')[1];
-    
+
     if (!token) {
       return res.status(401).json({ error: 'Authentication required' });
     }
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
-    const user = await User.findByPk(decoded.userId);
+    const user = await User.findByPk(decoded.userId, {
+      include: [{ model: UserRole, as: 'userRoles', attributes: ['role'] }],
+    });
 
     if (!user || !user.is_active || user.deleted_at) {
       return res.status(401).json({ error: 'Invalid or inactive user' });
@@ -24,19 +26,24 @@ export const authenticate = async (req, res, next) => {
     }
 
     req.user = user;
+    req.user.roles = user.userRoles && user.userRoles.length
+      ? user.userRoles.map((r) => r.role)
+      : [];
     next();
   } catch (error) {
     return res.status(401).json({ error: 'Invalid token' });
   }
 };
 
-export const authorize = (...roles) => {
+/** Check if the authenticated user has at least one of the given roles (from user_roles table). */
+export const authorize = (...allowedRoles) => {
   return (req, res, next) => {
     if (!req.user) {
       return res.status(401).json({ error: 'Authentication required' });
     }
 
-    if (!roles.includes(req.user.role)) {
+    const roles = req.user.roles || [];
+    if (!allowedRoles.some((r) => roles.includes(r))) {
       return res.status(403).json({ error: 'Insufficient permissions' });
     }
 

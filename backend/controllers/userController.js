@@ -1,5 +1,5 @@
 import { Op } from 'sequelize';
-import { User, CoachProfile, UserReliability, sequelize } from '../models/index.js';
+import { User, UserRole, CoachProfile, UserReliability, sequelize } from '../models/index.js';
 import { successResponse, errorResponse } from '../utils/response.js';
 import { getPagination, getPagingData } from '../utils/pagination.js';
 import { logger } from '../config/logger.js';
@@ -10,11 +10,14 @@ export const getAllUsers = async (req, res) => {
     const { limit: queryLimit, offset } = getPagination(page, limit);
 
     const andConditions = [];
-    // By default only return non-deleted users; admin can pass include_deleted=true to see all
+    // By default only return active, non-deleted users; admin can pass include_deleted=true to see all (including soft-deleted/inactive)
     if (include_deleted !== 'true') {
-      andConditions.push({ deleted_at: null });
+      andConditions.push({ deleted_at: null, is_active: true });
     }
-    if (role) andConditions.push({ role });
+    // Always include user_roles so we can return roles for each user; filter by role when requested
+    const includeForRole = role
+      ? [{ model: UserRole, as: 'userRoles', attributes: ['role'], where: { role }, required: true }]
+      : [{ model: UserRole, as: 'userRoles', attributes: ['role'] }];
 
     if (search && search.trim()) {
       const escaped = search.trim().replace(/[\\%_]/g, '\\$&');
@@ -34,11 +37,19 @@ export const getAllUsers = async (req, res) => {
       limit: queryLimit,
       offset,
       attributes: { exclude: ['password_hash'] },
+      include: includeForRole,
       order: [['created_at', 'DESC']],
+      distinct: true,
     });
 
     const response = getPagingData(users, page, queryLimit);
-    return successResponse(res, response.items, 'Users retrieved successfully', 200);
+    const itemsWithRoles = response.items.map((u) => {
+      const json = u.toJSON();
+      json.roles = (u.userRoles || []).map((r) => r.role);
+      delete json.userRoles;
+      return json;
+    });
+    return successResponse(res, itemsWithRoles, 'Users retrieved successfully', 200);
   } catch (error) {
     logger.error('Get users error:', error);
     return errorResponse(res, 'Failed to retrieve users', 500);
@@ -54,7 +65,7 @@ export const getUserById = async (req, res) => {
     }
 
     // Check authorization: users can view their own profile, admins can view any profile
-    if (req.user.id !== userId && req.user.role !== 'admin') {
+    if (req.user.id !== userId && !(req.user.roles || []).includes('admin')) {
       logger.warn(`User ${req.user.id} attempted to access user ${userId} without permission`);
       return errorResponse(res, 'You can only view your own profile', 403);
     }
@@ -63,6 +74,7 @@ export const getUserById = async (req, res) => {
     const user = await User.findByPk(userId, {
       attributes: { exclude: ['password_hash'] },
       include: [
+        { model: UserRole, as: 'userRoles', attributes: ['role'] },
         { model: CoachProfile, as: 'coachProfile' },
         { model: UserReliability, as: 'reliability' },
       ],
@@ -74,13 +86,23 @@ export const getUserById = async (req, res) => {
     }
 
     // Regular users cannot view deleted profiles, but admins can
-    if (user.deleted_at && req.user.role !== 'admin') {
+    if (user.deleted_at && !(req.user.roles || []).includes('admin')) {
       logger.warn(`User ${req.user.id} attempted to access deleted user ${userId}`);
       return errorResponse(res, 'User not found', 404);
     }
 
-    logger.info(`User ${req.user.id} (role: ${req.user.role}) retrieved user ${userId}`);
-    return successResponse(res, user, 'User retrieved successfully');
+    const roles = user.userRoles?.map((r) => r.role) ?? [];
+    const payload = user.toJSON();
+    payload.roles = roles;
+    delete payload.userRoles;
+
+    // Only include reliability for coaches (only coaches have a reliability score)
+    if (!roles.includes('coach')) {
+      delete payload.reliability;
+    }
+
+    logger.info(`User ${req.user.id} (roles: ${(req.user.roles || []).join(',')}) retrieved user ${userId}`);
+    return successResponse(res, payload, 'User retrieved successfully');
   } catch (error) {
     logger.error('Get user error:', error);
     return errorResponse(res, 'Failed to retrieve user', 500);
@@ -118,7 +140,6 @@ export const updateUser = async (req, res) => {
       timezone: timezone || user.timezone,
       avatar_url: avatar_url !== undefined ? avatar_url : user.avatar_url,
       is_active: is_active !== undefined ? is_active : user.is_active,
-      role: role || user.role,
     };
 
     // Allow explicit undelete by setting deleted_at to null
@@ -129,12 +150,18 @@ export const updateUser = async (req, res) => {
 
     await user.update(updateData);
 
-    // Echo all safe request fields so response shape matches update body; optional as null.
+    if (role !== undefined) {
+      await UserRole.destroy({ where: { user_id: user.id } });
+      await UserRole.create({ user_id: user.id, role });
+    }
+
+    const currentRoles = await UserRole.findAll({ where: { user_id: user.id }, attributes: ['role'] }).then((rows) => rows.map((r) => r.role));
+
     return successResponse(res, {
       id: user.id,
       full_name: user.full_name,
       email: user.email,
-      role: user.role,
+      roles: currentRoles,
       is_active: user.is_active,
       phone: user.phone ?? null,
       timezone: user.timezone ?? null,

@@ -43,7 +43,7 @@ export const createReview = async (req, res) => {
       return errorResponse(res, 'Booking not found', 404);
     }
 
-    if (req.user.id !== booking.primary_student_id && req.user.role !== 'admin') {
+    if (req.user.id !== booking.primary_student_id && !(req.user.roles || []).includes('admin')) {
       return errorResponse(res, 'Only the student who booked can leave a review', 403);
     }
 
@@ -101,7 +101,7 @@ export const updateReview = async (req, res) => {
       return errorResponse(res, 'Review not found', 404);
     }
 
-    if (req.user.id !== review.reviewer_id && req.user.role !== 'admin') {
+    if (req.user.id !== review.reviewer_id && !(req.user.roles || []).includes('admin')) {
       return errorResponse(res, 'Unauthorized', 403);
     }
 
@@ -133,7 +133,7 @@ export const deleteReview = async (req, res) => {
       return errorResponse(res, 'Review not found', 404);
     }
 
-    if (req.user.id !== review.reviewer_id && req.user.role !== 'admin') {
+    if (req.user.id !== review.reviewer_id && !(req.user.roles || []).includes('admin')) {
       return errorResponse(res, 'Unauthorized', 403);
     }
 

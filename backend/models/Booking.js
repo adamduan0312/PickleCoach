@@ -32,7 +32,7 @@ const Booking = sequelize.define('bookings', {
     allowNull: false,
   },
   status: {
-    type: DataTypes.ENUM('pending', 'confirmed', 'awaiting_verification', 'completed', 'cancelled', 'disputed'),
+    type: DataTypes.ENUM('pending', 'confirmed', 'awaiting_verification', 'completed', 'cancelled', 'disputed', 'no_show'),
     defaultValue: 'pending',
   },
   payout_status: {
@@ -79,11 +79,30 @@ const Booking = sequelize.define('bookings', {
     type: DataTypes.INTEGER,
     allowNull: true,
   },
+  declined_at: {
+    type: DataTypes.DATE,
+    allowNull: true,
+  },
+  decline_message_to_student: {
+    type: DataTypes.STRING(500),
+    allowNull: true,
+  },
+  decline_reason_code: {
+    type: DataTypes.STRING(50),
+    allowNull: true,
+  },
 }, {
   tableName: 'bookings',
   timestamps: true,
   createdAt: 'created_at',
   updatedAt: 'updated_at',
+  validate: {
+    coachNotSameAsStudent() {
+      if (this.primary_student_id != null && this.coach_id === this.primary_student_id) {
+        throw new Error('Coach and student must be different users.');
+      }
+    },
+  },
   indexes: [
     { fields: ['coach_id'] },
     { fields: ['primary_student_id'] },

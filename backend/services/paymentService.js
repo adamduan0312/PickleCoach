@@ -1,4 +1,4 @@
-import { Payment, Booking, Payout, User, CoachProfile } from '../models/index.js';
+import { Payment, Booking, Payout, User, UserRole, CoachProfile } from '../models/index.js';
 import { Op } from 'sequelize';
 import * as stripeService from './stripeService.js';
 import { logger } from '../config/logger.js';
@@ -27,22 +27,34 @@ export const calculatePaymentAmounts = (lessonPrice) => {
   };
 };
 
-// Stripe minimum charge (USD): $0.50. Below this we treat as free and skip PaymentIntent.
-const STRIPE_MIN_AMOUNT_USD = 0.5;
+// Stripe minimum charge (USD): $0.50. All bookings require payment; lessons below this are rejected.
+const MIN_CHARGE_USD = 0.5;
+
+/** Minimum lesson price (USD) so that total charge to student (price + platform fee) meets MIN_CHARGE_USD. Use for lesson create/update validation. */
+export const MIN_LESSON_PRICE_USD = MIN_CHARGE_USD / (1 + PLATFORM_FEE_PERCENT / 100);
 
 /**
- * Create payment and PaymentIntent for a booking
+ * Create payment and PaymentIntent for a booking.
+ * Every booking requires a valid Stripe payment; free lessons are not supported.
  * @param {Object} options.transaction - Optional Sequelize transaction (if provided, booking is rolled back on Stripe failure)
  */
 export const createPaymentForBooking = async (booking, studentId, paymentMethod = 'stripe', options = {}) => {
   const { transaction = null } = options;
   const amounts = calculatePaymentAmounts(booking.price);
   const totalCharge = Number(amounts.total_charge_to_student) || 0;
-  const isFreeLesson = totalCharge < STRIPE_MIN_AMOUNT_USD;
+
+  if (totalCharge < MIN_CHARGE_USD) {
+    throw new Error(
+      `Lesson price is too low to book. Payment is required for all bookings (minimum charge $${MIN_CHARGE_USD} USD).`
+    );
+  }
 
   const createOptions = transaction ? { transaction } : {};
 
-  // Create payment record
+  // Coach-must-confirm: use manual capture so we only charge when coach accepts
+  const captureOnAccept = true;
+
+  // Create payment record (always pending until coach accepts and we capture)
   const payment = await Payment.create({
     booking_id: booking.id,
     coach_id: booking.coach_id,
@@ -53,51 +65,41 @@ export const createPaymentForBooking = async (booking, studentId, paymentMethod 
     total_charge_to_student: amounts.total_charge_to_student,
     coach_payout_expected: amounts.coach_payout_expected,
     escrow_status: 'held',
-    payment_status: isFreeLesson ? 'captured' : 'pending',
+    payment_status: 'pending',
     payment_method: paymentMethod,
     currency: 'USD',
     metadata: {
       booking_id: booking.id,
       lesson_id: booking.lesson_id,
+      capture_on_accept: captureOnAccept,
     },
   }, createOptions);
 
-  let paymentIntent;
-  if (isFreeLesson) {
-    paymentIntent = { id: null, client_secret: null, amount: 0, currency: 'usd', status: 'succeeded' };
-    await createAuditLog({
-      user_id: studentId,
-      action: 'payment_created',
-      table_name: 'payments',
-      record_id: payment.id,
-      after_state: { amount: 0, free_lesson: true },
-    });
-  } else {
-    paymentIntent = await stripeService.createPaymentIntent(
-      totalCharge,
-      'usd',
-      null,
-      {
-        booking_id: booking.id.toString(),
-        payment_id: payment.id.toString(),
-        coach_id: booking.coach_id.toString(),
-        student_id: studentId.toString(),
-      }
-    );
+  const paymentIntent = await stripeService.createPaymentIntent(
+    totalCharge,
+    'usd',
+    null,
+    {
+      booking_id: booking.id.toString(),
+      payment_id: payment.id.toString(),
+      coach_id: booking.coach_id.toString(),
+      student_id: studentId.toString(),
+    },
+    { captureMethod: captureOnAccept ? 'manual' : 'automatic' }
+  );
 
-    await payment.update(
-      { payment_intent_id: paymentIntent.id },
-      transaction ? { transaction } : {}
-    );
+  await payment.update(
+    { payment_intent_id: paymentIntent.id },
+    transaction ? { transaction } : {}
+  );
 
-    await createAuditLog({
-      user_id: studentId,
-      action: 'payment_created',
-      table_name: 'payments',
-      record_id: payment.id,
-      after_state: { payment_intent_id: paymentIntent.id, amount: amounts.total_charge_to_student },
-    });
-  }
+  await createAuditLog({
+    user_id: studentId,
+    action: 'payment_created',
+    table_name: 'payments',
+    record_id: payment.id,
+    after_state: { payment_intent_id: paymentIntent.id, amount: amounts.total_charge_to_student },
+  });
 
   return {
     payment,
@@ -128,7 +130,31 @@ export const handlePaymentCapture = async (paymentIntentId, chargeId) => {
     throw new Error('Payment not found');
   }
 
-  // Update payment status
+  // Coach-must-confirm: student has authorized; we don't capture until coach accepts
+  const captureOnAccept = payment.metadata?.capture_on_accept === true;
+  if (captureOnAccept) {
+    await payment.update({
+      charge_id: chargeId,
+      escrow_status: 'held',
+      // Keep payment_status 'pending' (authorized, not captured) until coach accepts
+    });
+    if (payment.booking) {
+      await payment.booking.update({
+        messaging_locked: false,
+        // Do NOT set status to 'confirmed' — coach must accept first
+      });
+    }
+    await createAuditLog({
+      user_id: payment.student_id,
+      action: 'payment_captured',
+      table_name: 'payments',
+      record_id: payment.id,
+      after_state: { charge_id: chargeId, status: 'authorized', booking_stays_pending_until_coach_accepts: true },
+    });
+    return payment;
+  }
+
+  // Standard capture (paid reschedule or legacy automatic capture)
   await payment.update({
     payment_status: 'captured',
     charge_id: chargeId,
@@ -177,8 +203,11 @@ export const handlePaymentCapture = async (paymentIntentId, chargeId) => {
           : booking.primary_student_id;
         
         if (userIdToUpdate) {
-          const userToUpdate = await User.findByPk(userIdToUpdate);
-          if (userToUpdate && userToUpdate.role !== 'admin') {
+          const userToUpdate = await User.findByPk(userIdToUpdate, {
+            include: [{ model: UserRole, as: 'userRoles', attributes: ['role'] }],
+          });
+          const updateRoles = userToUpdate?.userRoles?.map((r) => r.role) ?? [];
+          if (userToUpdate && !updateRoles.includes('admin')) {
             await updateUserReliability(userIdToUpdate).catch(err => {
               logger.error('Failed to update reliability after paid reschedule:', err);
             });
@@ -217,6 +246,94 @@ export const handlePaymentCapture = async (paymentIntentId, chargeId) => {
   });
 
   return payment;
+};
+
+/**
+ * Capture payment and confirm booking when coach accepts (coach-must-confirm flow).
+ * Call this from the accept-booking endpoint.
+ * @param {number} paymentId - Payment ID for the booking
+ * @returns {Promise<{ payment: Object, booking: Object }>}
+ */
+export const capturePaymentOnCoachAccept = async (paymentId) => {
+  const payment = await Payment.findByPk(paymentId, {
+    include: [{ model: Booking, as: 'booking' }],
+  });
+  if (!payment) throw new Error('Payment not found');
+  if (!payment.booking) throw new Error('Booking not found');
+  if (payment.booking.status !== 'pending') {
+    throw new Error(`Booking is not pending (status: ${payment.booking.status})`);
+  }
+
+  if (payment.payment_intent_id && payment.payment_status === 'pending') {
+    const paymentIntent = await stripeService.capturePaymentIntent(payment.payment_intent_id);
+    const chargeId = paymentIntent.charges?.data?.[0]?.id || payment.charge_id;
+    await payment.update({
+      payment_status: 'captured',
+      charge_id: chargeId,
+      escrow_status: 'held',
+    });
+    await createAuditLog({
+      user_id: payment.coach_id,
+      action: 'payment_captured_on_coach_accept',
+      table_name: 'payments',
+      record_id: payment.id,
+      after_state: { charge_id: chargeId, status: 'captured' },
+    });
+  }
+
+  await payment.booking.update({
+    status: 'confirmed',
+    messaging_locked: false,
+  });
+  await createAuditLog({
+    user_id: payment.coach_id,
+    action: 'booking_confirmed_by_coach',
+    table_name: 'bookings',
+    record_id: payment.booking.id,
+    after_state: { status: 'confirmed' },
+  });
+  logger.info(`Coach accepted booking ${payment.booking.id}, payment ${payment.id} captured`);
+  return { payment, booking: payment.booking };
+};
+
+/**
+ * Cancel PaymentIntent and booking when coach declines (coach-must-confirm flow).
+ * Call this from the decline-booking endpoint.
+ * @param {number} paymentId - Payment ID for the booking
+ */
+export const cancelPaymentOnCoachDecline = async (paymentId) => {
+  const payment = await Payment.findByPk(paymentId, {
+    include: [{ model: Booking, as: 'booking' }],
+  });
+  if (!payment) throw new Error('Payment not found');
+  if (!payment.booking) throw new Error('Booking not found');
+  if (payment.booking.status !== 'pending') {
+    throw new Error(`Booking is not pending (status: ${payment.booking.status})`);
+  }
+  if (payment.payment_intent_id && payment.payment_status === 'pending') {
+    await stripeService.cancelPaymentIntent(payment.payment_intent_id);
+    await payment.update({ payment_status: 'failed' });
+    await createAuditLog({
+      user_id: payment.coach_id,
+      action: 'payment_cancelled_on_coach_decline',
+      table_name: 'payments',
+      record_id: payment.id,
+      after_state: { payment_status: 'failed' },
+    });
+  }
+  await payment.booking.update({
+    status: 'cancelled',
+    cancelled_by: 'coach',
+    cancelled_at: new Date(),
+  });
+  await createAuditLog({
+    user_id: payment.coach_id,
+    action: 'booking_declined_by_coach',
+    table_name: 'bookings',
+    record_id: payment.booking.id,
+    after_state: { status: 'cancelled', cancelled_by: 'coach' },
+  });
+  logger.info(`Coach declined booking ${payment.booking.id}, payment intent cancelled`);
 };
 
 /**

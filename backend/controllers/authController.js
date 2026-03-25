@@ -2,7 +2,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import { Op } from 'sequelize';
-import { User, CoachProfile } from '../models/index.js';
+import { User, UserRole, CoachProfile } from '../models/index.js';
 import { successResponse, errorResponse } from '../utils/response.js';
 import { logAudit } from '../utils/audit.js';
 import { logger } from '../config/logger.js';
@@ -25,26 +25,26 @@ export const register = async (req, res) => {
       full_name,
       email,
       password_hash,
-      role,
       phone,
       timezone: timezone || 'UTC',
       ...(avatar_url !== undefined && avatar_url !== '' && { avatar_url }),
     });
 
-    const token = jwt.sign({ userId: user.id, role: user.role, tokenVersion: user.token_version ?? 0 }, JWT_SECRET, {
+    await UserRole.create({ user_id: user.id, role });
+
+    const token = jwt.sign({ userId: user.id, tokenVersion: user.token_version ?? 0 }, JWT_SECRET, {
       expiresIn: JWT_EXPIRES_IN,
     });
 
     await logAudit(user.id, 'user_registered', 'users', user.id, null, user.toJSON(), req);
 
-    // Return user data - role is only 'student' or 'coach' from registration.
-    // Echo safe request fields (phone, timezone, avatar_url) so response shape is predictable; use null when optional and unset.
+    // Return user data with roles array (user can have multiple roles: student, coach).
     return successResponse(res, {
       user: {
         id: user.id,
         full_name: user.full_name,
         email: user.email,
-        role: user.role,
+        roles: [role],
         phone: user.phone ?? null,
         timezone: user.timezone ?? null,
         avatar_url: user.avatar_url ?? null,
@@ -62,7 +62,10 @@ export const login = async (req, res) => {
   try {
     const { email, password } = req.validated;
 
-    const user = await User.findOne({ where: { email } });
+    const user = await User.findOne({
+      where: { email },
+      include: [{ model: UserRole, as: 'userRoles', attributes: ['role'] }],
+    });
     if (!user) {
       return errorResponse(res, 'Invalid credentials', 401);
     }
@@ -78,19 +81,19 @@ export const login = async (req, res) => {
 
     await user.update({ last_login: new Date() });
 
-    const token = jwt.sign({ userId: user.id, role: user.role, tokenVersion: user.token_version ?? 0 }, JWT_SECRET, {
+    const roles = user.userRoles && user.userRoles.length ? user.userRoles.map((r) => r.role) : [];
+    const token = jwt.sign({ userId: user.id, tokenVersion: user.token_version ?? 0 }, JWT_SECRET, {
       expiresIn: JWT_EXPIRES_IN,
     });
 
     await logAudit(user.id, 'user_login', 'users', user.id, null, user.toJSON(), req);
 
-    // Echo safe user fields so response shape matches register; optional fields as null.
     return successResponse(res, {
       user: {
         id: user.id,
         full_name: user.full_name,
         email: user.email,
-        role: user.role,
+        roles,
         phone: user.phone ?? null,
         timezone: user.timezone ?? null,
         avatar_url: user.avatar_url ?? null,
@@ -108,9 +111,22 @@ export const getProfile = async (req, res) => {
   try {
     const user = await User.findByPk(req.user.id, {
       attributes: { exclude: ['password_hash'] },
+      include: [
+        { model: UserRole, as: 'userRoles', attributes: ['role'] },
+        { model: CoachProfile, as: 'coachProfile' },
+      ],
     });
 
-    return successResponse(res, user, 'Profile retrieved successfully');
+    if (!user) {
+      return errorResponse(res, 'User not found', 404);
+    }
+
+    const roles = user.userRoles && user.userRoles.length ? user.userRoles.map((r) => r.role) : [];
+    const profile = user.toJSON();
+    profile.roles = roles;
+    delete profile.userRoles;
+
+    return successResponse(res, profile, 'Profile retrieved successfully');
   } catch (error) {
     logger.error('Get profile error:', error);
     return errorResponse(res, 'Failed to retrieve profile', 500);
@@ -176,14 +192,15 @@ export const refreshToken = async (req, res) => {
       }
     }
 
-    // Find the user
-    const user = await User.findByPk(decoded.userId);
+    const user = await User.findByPk(decoded.userId, {
+      include: [{ model: UserRole, as: 'userRoles', attributes: ['role'] }],
+    });
     if (!user || !user.is_active) {
       return errorResponse(res, 'User not found or inactive', 401);
     }
 
-    // Generate new token
-    const newToken = jwt.sign({ userId: user.id, role: user.role, tokenVersion: user.token_version ?? 0 }, JWT_SECRET, {
+    const roles = user.userRoles && user.userRoles.length ? user.userRoles.map((r) => r.role) : [];
+    const newToken = jwt.sign({ userId: user.id, tokenVersion: user.token_version ?? 0 }, JWT_SECRET, {
       expiresIn: JWT_EXPIRES_IN,
     });
 
@@ -195,7 +212,7 @@ export const refreshToken = async (req, res) => {
         id: user.id,
         full_name: user.full_name,
         email: user.email,
-        role: user.role,
+        roles,
         phone: user.phone ?? null,
         timezone: user.timezone ?? null,
         avatar_url: user.avatar_url ?? null,
@@ -320,7 +337,7 @@ export const deleteMyAccount = async (req, res) => {
       return errorResponse(res, 'User not found', 404);
     }
 
-    if (user.role === 'admin') {
+    if ((req.user.roles || []).includes('admin')) {
       return errorResponse(res, 'Admins cannot delete their account via this endpoint', 403);
     }
 
@@ -369,61 +386,68 @@ export const logout = async (req, res) => {
 };
 
 /**
- * Switch between student and coach (self-service)
+ * Add student or coach role (self-service). User can have both roles.
  * PUT /api/auth/me/role
  * Body: { role: 'student' | 'coach' }
- * Admins cannot use this (they must use admin user management to change role).
+ * Admins cannot use this. If user already has the role, returns current user and token unchanged.
  */
 export const switchRole = async (req, res) => {
   try {
-    const user = await User.findByPk(req.user.id);
+    const user = await User.findByPk(req.user.id, {
+      include: [{ model: UserRole, as: 'userRoles', attributes: ['role'] }],
+    });
     if (!user) {
       return errorResponse(res, 'User not found', 404);
     }
 
-    if (user.role === 'admin') {
+    if ((req.user.roles || []).includes('admin')) {
       return errorResponse(res, 'Admins cannot switch role via this endpoint', 403);
     }
 
     const { role } = req.validated;
-    if (role === user.role) {
+    const currentRoles = user.userRoles && user.userRoles.length ? user.userRoles.map((r) => r.role) : [];
+
+    if (currentRoles.includes(role)) {
       return successResponse(res, {
         user: {
           id: user.id,
           full_name: user.full_name,
           email: user.email,
-          role: user.role,
+          roles: currentRoles,
           phone: user.phone ?? null,
           timezone: user.timezone ?? null,
           avatar_url: user.avatar_url ?? null,
           email_verified_at: user.email_verified_at ?? null,
         },
         token: req.headers.authorization?.split(' ')[1],
-      }, 'Role unchanged (already ' + user.role + ')');
+      }, 'Role unchanged (already have ' + role + ')');
     }
 
-    const beforeState = user.toJSON();
-    await user.update({ role });
-
-    const newToken = jwt.sign({ userId: user.id, role: user.role, tokenVersion: user.token_version ?? 0 }, JWT_SECRET, {
-      expiresIn: JWT_EXPIRES_IN,
+    await UserRole.findOrCreate({
+      where: { user_id: user.id, role },
+      defaults: { user_id: user.id, role },
     });
 
-    await logAudit(req.user.id, 'user_switched_role', 'users', user.id, beforeState, { role: user.role }, req);
+    const updatedRoles = [...currentRoles, role].sort();
+    await logAudit(req.user.id, 'user_switched_role', 'users', user.id, { roles: currentRoles }, { roles: updatedRoles }, req);
+
+    const newToken = jwt.sign({ userId: user.id, tokenVersion: user.token_version ?? 0 }, JWT_SECRET, {
+      expiresIn: JWT_EXPIRES_IN,
+    });
 
     return successResponse(res, {
       user: {
         id: user.id,
         full_name: user.full_name,
         email: user.email,
-        role: user.role,
+        roles: updatedRoles,
         phone: user.phone ?? null,
         timezone: user.timezone ?? null,
         avatar_url: user.avatar_url ?? null,
         email_verified_at: user.email_verified_at ?? null,
       },
       token: newToken,
-    }, 'Role updated successfully. Use the new token for subsequent requests.');
+    }, 'Role added successfully. Use the new token for subsequent requests.');
   } catch (error) {
     logger.error('Switch role error:', error);
     return errorResponse(res, 'Failed to switch role', 500);

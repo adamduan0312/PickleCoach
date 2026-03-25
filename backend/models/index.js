@@ -5,6 +5,7 @@ export { sequelize };
 // Import all models using dynamic imports to avoid circular dependency
 // Models are imported after sequelize is created and exported
 const UserModule = await import('./User.js');
+const UserRoleModule = await import('./UserRole.js');
 const CoachProfileModule = await import('./CoachProfile.js');
 const CoachAvailabilityModule = await import('./CoachAvailability.js');
 const CourtLocationModule = await import('./CourtLocation.js');
@@ -38,6 +39,7 @@ const NotificationModule = await import('./Notification.js');
 
 // Extract default exports
 const User = UserModule.default;
+const UserRole = UserRoleModule.default;
 const CoachProfile = CoachProfileModule.default;
 const CoachAvailability = CoachAvailabilityModule.default;
 const CourtLocation = CourtLocationModule.default;
@@ -74,6 +76,8 @@ User.initModel(sequelize);
 
 // Define associations
 // User associations
+User.hasMany(UserRole, { foreignKey: 'user_id', as: 'userRoles' });
+UserRole.belongsTo(User, { foreignKey: 'user_id', as: 'user' });
 User.hasOne(CoachProfile, { foreignKey: 'user_id', as: 'coachProfile' });
 User.hasMany(CoachAvailability, { foreignKey: 'coach_id', as: 'availabilities' });
 User.hasMany(CoachCourtLocation, { foreignKey: 'coach_id', as: 'coachCourts' });
@@ -213,6 +217,7 @@ Notification.belongsTo(User, { foreignKey: 'user_id', as: 'user' });
 
 export {
   User,
+  UserRole,
   CoachProfile,
   CoachAvailability,
   CourtLocation,

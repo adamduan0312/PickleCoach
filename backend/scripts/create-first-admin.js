@@ -1,7 +1,7 @@
 import bcrypt from 'bcryptjs';
 import dotenv from 'dotenv';
 import { sequelize } from '../models/sequelize.js';
-import { User } from '../models/index.js';
+import { User, UserRole } from '../models/index.js';
 
 // Load environment variables
 const env = process.env.NODE_ENV || 'development';
@@ -31,8 +31,11 @@ async function createFirstAdmin() {
       await existingAdmin.update({
         password_hash,
         full_name: fullName,
-        role: 'admin',
         is_active: true,
+      });
+      await UserRole.findOrCreate({
+        where: { user_id: existingAdmin.id, role: 'admin' },
+        defaults: { user_id: existingAdmin.id, role: 'admin' },
       });
       console.log('✅ Password updated! You can now login with this email and password.');
       console.log(`   ID: ${existingAdmin.id}`);
@@ -51,15 +54,15 @@ async function createFirstAdmin() {
       full_name: fullName,
       email,
       password_hash,
-      role: 'admin',
       is_active: true,
     });
+    await UserRole.create({ user_id: admin.id, role: 'admin' });
 
     console.log('✅ Admin created successfully!');
     console.log(`   ID: ${admin.id}`);
     console.log(`   Name: ${admin.full_name}`);
     console.log(`   Email: ${admin.email}`);
-    console.log(`   Role: ${admin.role}`);
+    console.log('   Roles: admin');
     console.log(`   Created: ${admin.created_at}`);
     
     await sequelize.close();

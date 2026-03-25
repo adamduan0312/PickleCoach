@@ -121,7 +121,7 @@ export const processPaidReschedulePayments = async () => {
           // SAFEGUARD: Check approval_status to prevent double-application
           if (reschedule.approval_status === 'pending' && reschedule.booking) {
             const booking = reschedule.booking;
-            const { User } = await import('../models/index.js');
+            const { User, UserRole } = await import('../models/index.js');
             const { updateUserReliability } = await import('../services/reliabilityService.js');
             const { logAudit } = await import('../utils/audit.js');
 
@@ -148,8 +148,11 @@ export const processPaidReschedulePayments = async () => {
                 : booking.primary_student_id;
               
               if (userIdToUpdate) {
-                const userToUpdate = await User.findByPk(userIdToUpdate);
-                if (userToUpdate && userToUpdate.role !== 'admin') {
+                const userToUpdate = await User.findByPk(userIdToUpdate, {
+                  include: [{ model: UserRole, as: 'userRoles', attributes: ['role'] }],
+                });
+                const updateRoles = userToUpdate?.userRoles?.map((r) => r.role) ?? [];
+                if (userToUpdate && !updateRoles.includes('admin')) {
                   await updateUserReliability(userIdToUpdate).catch(err => {
                     logger.error('Failed to update reliability after paid reschedule:', err);
                   });

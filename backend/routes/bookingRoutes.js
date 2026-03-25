@@ -3,7 +3,7 @@ import * as bookingController from '../controllers/bookingController.js';
 import * as rescheduleController from '../controllers/rescheduleController.js';
 import { authenticate, requireVerifiedEmail } from '../middleware/auth.js';
 import { validateRequest, validateQuery } from '../middleware/validator.js';
-import { cancellationSchema, rescheduleSchema, createBookingSchema, updateBookingStatusSchema, getBookingsQuerySchema } from '../config/validation.js';
+import { cancellationSchema, rescheduleSchema, createBookingSchema, updateBookingStatusSchema, getBookingsQuerySchema, declineBookingSchema } from '../config/validation.js';
 
 const router = express.Router();
 
@@ -11,6 +11,8 @@ router.get('/', authenticate, validateQuery(getBookingsQuerySchema), bookingCont
 router.get('/:id', authenticate, bookingController.getBookingById);
 router.post('/', authenticate, requireVerifiedEmail, validateRequest(createBookingSchema), bookingController.createBooking);
 router.put('/:id/status', authenticate, validateRequest(updateBookingStatusSchema), bookingController.updateBookingStatus);
+router.post('/:id/accept', authenticate, bookingController.acceptBooking);
+router.post('/:id/decline', authenticate, validateRequest(declineBookingSchema), bookingController.declineBooking);
 router.post('/:id/cancel', authenticate, validateRequest(cancellationSchema), bookingController.cancelBooking);
 // Reschedule endpoint matching architecture spec: POST /api/bookings/:id/reschedule
 router.post('/:id/reschedule', authenticate, validateRequest(rescheduleSchema), rescheduleController.requestReschedule);

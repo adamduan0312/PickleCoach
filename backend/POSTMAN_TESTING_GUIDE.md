@@ -90,22 +90,24 @@ Import one or both into Postman. Select your environment so `base_url` and `api_
 
 The **PickleCoach API (By Flow)** collection has **only three top-level folders**. Every endpoint lives inside one of them, in the correct user-flow order. There are no separate “Authentication”, “Coaches”, “Bookings”, etc. folders — everything is in **1 – Flow: Admin**, **2 – Flow: Coach**, or **3 – Flow: Student**.
 
-- **1 – Flow: Admin** — 43 requests. Health → Login (admin) → Profile → Dashboard → Users → Payments → Disputes → Notifications → Coach support → Auth extras → Webhook.
-- **2 – Flow: Coach** — 56 requests. Health → Register/Login → Profile → Coach profile → Courts → Availability → Stripe Connect → Lessons → Bookings → Payments → Reviews → Messages → Disputes → Notifications → Auth extras.
-- **3 – Flow: Student** — 42 requests. Health → Register/Login → Profile → Search coaches → Lessons → Create Booking → Bookings → Payments → Reviews → Messages → Disputes → Notifications → Auth extras.
+**Rule:** Each folder contains only endpoints that role is **allowed** to use (no 403). Admin cannot use Switch Role or Delete My Account; Coach cannot use List Coaches (Search) or Create Booking; Student cannot use Update Booking Status (coach/admin only). Those endpoints appear only in the flows where the role has access.
+
+- **1 – Flow: Admin** — 43 requests. Health → Login (admin) → Profile → Dashboard → Users → Payments → Disputes → Notifications → Coach support (incl. Get Coach By ID) → Auth extras (no Switch Role / Delete My Account) → Courts/Lessons/Disputes → Update Booking Status → Payments → Webhook.
+- **2 – Flow: Coach** — 59 requests. Health → Register/Login → Profile → Coach profile → Get Coach By ID → Courts → Availability → Stripe Connect → Lessons → Bookings (Accept, Decline, Update Status, Cancel, Reschedule) → Payments → Reviews → Messages → Disputes → Notifications → Auth extras.
+- **3 – Flow: Student** — 45 requests. Health → Register/Login → Profile → Search coaches → Get Coach By ID → Get Coach Courts → Get Coach Availability → Courts → Lessons → Create Booking → Bookings (no Update Booking Status) → Payments → Reviews → Messages → Disputes → Notifications → Auth extras.
 
 Run the requests in each folder in order (1, 2, 3, …). After editing the **ByType** collection, regenerate ByFlow with: `node backend/scripts/reorganize-postman-flows.js`.
 
 **Full order — 1 – Flow: Admin (43 steps):**  
-Health Check → Login → Get Profile → Refresh Token → Get Dashboard Stats → Get Audit Logs → Get Alerts → Resolve Alert → Create Admin User → Get All Users (Admin) → Get User By ID (Admin) → Update User (Admin) → Adjust User Reliability → Create Payment (Admin) → Process Refund (Admin) → Update Payment Status (Admin) → Resolve Dispute (Admin) → Create Notification (Admin) → Get Coach Courts (Admin) → Delete Coach Court (Admin) → Delete Coach Availability (Admin) → Delete User (Admin) → Register → Forgot Password → Reset Password → Update Profile → Change Password → Request Email Verification → Confirm Email Verification → Request Email Change → Confirm Email Change → Switch Role (Student ↔ Coach) → Logout → Delete My Account → Get All Courts → Get Court By ID → Get All Lessons → Get Lesson By ID → Get All Disputes → Get Dispute By ID → Get My Payments → Get Payment By ID → Stripe Webhook.
+Health Check → Login → Get Profile → Refresh Token → Get Dashboard Stats → Get Audit Logs → Get Alerts → Resolve Alert → Create Admin User → Get All Users (Admin) → Get User By ID (Admin) → Update User (Admin) → Update Coach Profile (Admin) → **Get Coach By ID** → Adjust User Reliability → Create Payment (Admin) → Process Refund (Admin) → Update Payment Status (Admin) → Resolve Dispute (Admin) → Create Notification (Admin) → Get Coach Courts (Admin) → Delete Coach Court (Admin) → Delete Coach Availability (Admin) → Delete User (Admin) → Register → Forgot Password → Reset Password → Update Profile → Change Password → Request Email Verification → Confirm Email Verification → Request Email Change → Confirm Email Change → Logout → Get All Courts → Get Court By ID → Get All Lessons → Get Lesson By ID → Get All Disputes → Get Dispute By ID → Update Booking Status → Get My Payments → Get Payment By ID → Stripe Webhook.
 
-**Full order — 2 – Flow: Coach (56 steps):**  
-Health Check → Register → Login → Get Profile → Update Profile → Request Email Verification → Confirm Email Verification → Change Password → Request Email Change → Confirm Email Change → Switch Role → Create Coach Profile → Update Coach Profile → Get Coach Availability → Create Availability → Delete Availability → Get All Courts → Get Court By ID → Create Court → Delete Court → Add Court to Coach → List My Courts → Remove Court from Coach → Initiate Stripe Connect Onboarding → Get Stripe Connect Status → Get All Lessons → Get Lesson By ID → Create Lesson → Update Lesson → Delete Lesson → Get My Bookings → Get Booking By ID → Update Booking Status → Cancel Booking → Request Reschedule → Get Reschedule History → Get My Payments → Get Payment By ID → Get All Reviews → Create Review → Update Review → Delete Review → Get Conversations → Create Conversation → Get Conversation By ID → Send Message → Mark Message As Read → Get All Disputes → Get Dispute By ID → Create Dispute → Get My Notifications → Mark Notification As Read → Forgot Password → Reset Password → Logout → Delete My Account.
+**Full order — 2 – Flow: Coach (59 steps):**  
+Health Check → Register → Login → Get Profile → Update Profile → Request Email Verification → Confirm Email Verification → Change Password → Request Email Change → Confirm Email Change → Switch Role → Create Coach Profile → Update Coach Profile → **Get Coach By ID** → Get Coach Availability → Create Availability → Delete Availability → Get All Courts → Get Court By ID → Create Court → Delete Court → Add Court to Coach → List My Courts → Remove Court from Coach → Initiate Stripe Connect Onboarding → Get Stripe Connect Status → Get All Lessons → Get Lesson By ID → Create Lesson → Update Lesson → Delete Lesson → Get My Bookings → Get Booking By ID → **Accept Booking** → **Decline Booking** → Update Booking Status → Cancel Booking → Request Reschedule → Get Reschedule History → Get My Payments → Get Payment By ID → Get All Reviews → Create Review → Update Review → Delete Review → Get Conversations → Create Conversation → Get Conversation By ID → Send Message → Mark Message As Read → Get All Disputes → Get Dispute By ID → Create Dispute → Get My Notifications → Mark Notification As Read → Forgot Password → Reset Password → Logout → Delete My Account.
 
-**Full order — 3 – Flow: Student (42 steps):**  
-Health Check → Register → Login → Get Profile → Update Profile → Request Email Verification → Confirm Email Verification → Change Password → Request Email Change → Confirm Email Change → Switch Role → List Coaches (Search) → Get Coach By ID → Get All Lessons → Get Lesson By ID → **Create Booking** (requires Stripe) → Get My Bookings → Get Booking By ID → Update Booking Status → Cancel Booking → Request Reschedule → Get Reschedule History → Get My Payments → Get Payment By ID → Get All Reviews → Create Review → Update Review → Delete Review → Get Conversations → Create Conversation → Get Conversation By ID → Send Message → Mark Message As Read → Get All Disputes → Get Dispute By ID → Create Dispute → Get My Notifications → Mark Notification As Read → Forgot Password → Reset Password → Logout → Delete My Account.
+**Full order — 3 – Flow: Student (45 steps):**  
+Health Check → Register → Login → Get Profile → Update Profile → Request Email Verification → Confirm Email Verification → Change Password → Request Email Change → Confirm Email Change → Switch Role → List Coaches (Search) → Get Coach By ID → **Get Coach Courts** → **Get Coach Availability** → Get All Courts → Get Court By ID → Get All Lessons → Get Lesson By ID → **Create Booking** (requires Stripe) → Get My Bookings → Get Booking By ID → Cancel Booking → Request Reschedule → Get Reschedule History → Get My Payments → Get Payment By ID → Get All Reviews → Create Review → Update Review → Delete Review → Get Conversations → Create Conversation → Get Conversation By ID → Send Message → Mark Message As Read → Get All Disputes → Get Dispute By ID → Create Dispute → Get My Notifications → Mark Notification As Read → Forgot Password → Reset Password → Logout → Delete My Account.
 
-**Tip:** **Create Booking** (Student step 16) needs Stripe. For Phase 1, run Student steps 1–15 and 17+ if you have existing bookings; after setting up Stripe, run the full flow including Create Booking.
+**Tip:** **Create Booking** (Student step 20) needs Stripe. For Phase 1, run Student steps 1–19 and 21+ if you have existing bookings; after setting up Stripe, run the full flow including Create Booking.
 
 ---
 
@@ -141,10 +143,11 @@ Use this as a living checklist. Check off each line as you verify it (happy path
 
 ### COACH
 
-- [ ] Create Coach Profile — 201; 403 if not coach role
+- [ ] Create Coach Profile — 201; 403 if not coach role (coach-only; admins cannot use)
 - [ ] Update Coach Profile — 200
-- [ ] Create Availability — 201
+- [ ] Get Coach Courts (by coach id, no auth) — 200; lists courts where coach teaches (student flow: **3 – Flow: Student** → Get Coach Courts)
 - [ ] Get Coach Availability — 200
+- [ ] Create Availability — 201
 - [ ] Delete Availability — 200
 - [ ] Add Court to Coach — 201
 - [ ] List My Courts — 200
@@ -173,10 +176,12 @@ Use this as a living checklist. Check off each line as you verify it (happy path
 - [ ] Double booking blocked — same slot → 409 or 400
 - [ ] Get My Bookings — 200
 - [ ] Get Booking By ID — 200
-- [ ] Update Booking Status — 200 (if applicable)
-- [ ] Cancel Booking — 200
+- [ ] **Accept Booking** (Coach/Admin only) — 200; confirms pending booking, captures payment; use this (not PUT status) to confirm
+- [ ] **Decline Booking** (Coach/Admin only) — 200; body: message_to_student (required), decline_reason_code (optional); cancels PaymentIntent
+- [ ] Update Booking Status (Coach/Admin only) — 200; allowed transitions: confirmed→completed|cancelled|no_show, awaiting_verification→completed|cancelled. Completed is only allowed after lesson end time has passed. Both confirmed→completed and awaiting_verification→completed mean “lesson is done” (booking may be in either state depending on whether the worker has run).
+- [ ] Cancel Booking — 200 (Student, Coach, Admin)
 - [ ] Past booking blocked — start time in past → 400
-- [ ] Request Reschedule — 200
+- [ ] Request Reschedule — 201 (Student, Coach, Admin)
 
 ### PAYMENTS
 
@@ -256,7 +261,7 @@ For every endpoint that changes state or returns sensitive data, run:
 - **GET /api/auth/profile**  
   Happy: valid token → 200. Unauthorized: no token or expired → 401. Wrong role: N/A.
 - **POST /api/coaches/profile**  
-  Happy: coach role + valid body → 201. Wrong role: student → 403. Unauthorized: no token → 401.
+  Happy: coach role + valid body → 201. Wrong role: student or admin → 403. Unauthorized: no token → 401. Coach-only; no `user_id` in body.
 - **POST /api/bookings**  
   Happy: student, verified email, valid body → 201. Unverified email → 403. Missing `lesson_id` → 400. No token → 401.
 - **GET /api/users** (admin)  

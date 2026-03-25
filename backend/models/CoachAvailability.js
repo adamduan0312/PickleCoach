@@ -41,14 +41,6 @@ const CoachAvailability = sequelize.define('coach_availabilities', {
     type: DataTypes.STRING(8),
     allowNull: true,
   },
-  recurrence_rule: {
-    type: DataTypes.STRING(255),
-    allowNull: true,
-  },
-  is_available: {
-    type: DataTypes.BOOLEAN,
-    defaultValue: true,
-  },
 }, {
   tableName: 'coach_availabilities',
   timestamps: true,

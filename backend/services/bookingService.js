@@ -32,14 +32,13 @@ export const checkCoachAvailability = async (coachId, scheduledAt, durationMinut
   const availabilities = await CoachAvailability.findAll({
     where: {
       coach_id: coachId,
-      is_available: true,
       weekday,
     },
   });
 
   if (availabilities.length === 0) {
     const coachAvailRows = await CoachAvailability.findAll({
-      where: { coach_id: coachId, is_available: true },
+      where: { coach_id: coachId },
       attributes: ['weekday'],
       raw: true,
     });
@@ -125,7 +124,7 @@ export const checkBookingAvailability = async (lessonId, scheduledAt, durationMi
   const scheduledDate = new Date(scheduledAt);
   const endTime = new Date(scheduledDate.getTime() + durationMinutes * 60000);
 
-  // Check for overlapping bookings (prevent double-booking)
+  // Check for overlapping bookings (prevent double-booking). Block the second booking, not the coach.
   const overlappingBookings = await Booking.findAll({
     where: {
       lesson_id: lessonId,
@@ -140,7 +139,7 @@ export const checkBookingAvailability = async (lessonId, scheduledAt, durationMi
   });
 
   if (overlappingBookings.length > 0) {
-    return { available: false, reason: 'Time slot already booked' };
+    return { available: false, reason: 'This time slot is no longer available.' };
   }
 
   return { available: true };

@@ -1,5 +1,6 @@
 import Joi from 'joi';
 import { getValidReasons } from '../services/reliabilityPenaltyService.js';
+import { MIN_LESSON_PRICE_USD } from '../services/paymentService.js';
 
 // Environment variable validation
 export const envSchema = Joi.object({
@@ -39,7 +40,8 @@ export const createLessonSchema = Joi.object({
   title: Joi.string().min(3).max(255).required(),
   description: Joi.string().optional(),
   duration_minutes: Joi.number().integer().min(15).max(480).required(),
-  price: Joi.number().positive().required(),
+  price: Joi.number().positive().min(MIN_LESSON_PRICE_USD).required()
+    .messages({ 'number.min': `Price must be at least $${MIN_LESSON_PRICE_USD.toFixed(2)} USD (all bookings require payment).` }),
   max_students: Joi.number().integer().min(1).max(20).default(1),
 });
 
@@ -70,6 +72,12 @@ export const rescheduleSchema = Joi.object({
 export const cancellationSchema = Joi.object({
   reason: Joi.string().valid(...getValidReasons()).required(),
   reason_notes: Joi.string().max(255).optional(),
+});
+
+/** Coach decline (pending booking): required message to student; optional reason code for analytics */
+export const declineBookingSchema = Joi.object({
+  message_to_student: Joi.string().trim().min(10).max(500).required(),
+  decline_reason_code: Joi.string().max(50).allow('').optional(),
 });
 
 export const reviewSchema = Joi.object({
@@ -138,7 +146,7 @@ export const updateUserSchema = Joi.object({
   phone: Joi.string().max(30).allow('').optional(),
   timezone: Joi.string().max(50).optional(),
   avatar_url: Joi.string().uri().max(255).allow('').optional(),
-  is_active: Joi.boolean().optional(),
+  is_active: Joi.boolean().valid(true).optional(), // Only allow true (reactivation); use DELETE /api/users/:id to soft-delete
   role: Joi.string().valid('student', 'coach', 'admin').optional(),
   deleted_at: Joi.valid(null).optional(), // Allow setting to null to undelete; cannot set to a date (use DELETE endpoint)
 });
@@ -147,7 +155,8 @@ export const updateLessonSchema = Joi.object({
   title: Joi.string().min(3).max(255).optional(),
   description: Joi.string().allow('').optional(),
   duration_minutes: Joi.number().integer().min(15).max(480).optional(),
-  price: Joi.number().positive().optional(),
+  price: Joi.number().positive().min(MIN_LESSON_PRICE_USD).optional()
+    .messages({ 'number.min': `Price must be at least $${MIN_LESSON_PRICE_USD.toFixed(2)} USD (all bookings require payment).` }),
   max_students: Joi.number().integer().min(1).max(20).optional(),
   is_active: Joi.boolean().optional(),
 });
@@ -172,7 +181,6 @@ export const updatePaymentStatusSchema = Joi.object({
 });
 
 export const createCoachProfileSchema = Joi.object({
-  user_id: Joi.number().integer().positive().optional(),
   headline: Joi.string().max(255).allow('').optional(),
   bio: Joi.string().allow('').optional(),
   hourly_rate: Joi.number().positive().optional(),
@@ -195,13 +203,12 @@ export const updateCoachProfileSchema = Joi.object({
 const WEEKDAY_NAMES = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
 
 export const createAvailabilitySchema = Joi.object({
-  coach_id: Joi.number().integer().positive().required(),
   weekday: Joi.alternatives()
     .try(
       Joi.number().integer().min(0).max(6),
       Joi.string().valid(...WEEKDAY_NAMES).insensitive()
     )
-    .optional()
+    .required()
     .custom((value) => {
       if (value === undefined) return value;
       if (typeof value === 'number') return value;
@@ -214,9 +221,32 @@ export const createAvailabilitySchema = Joi.object({
   /** Time-of-day only, e.g. "09:00" or "17:00:00". Interpreted in coach timezone for recurring slots. */
   start_time: Joi.string().pattern(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9](:[0-5][0-9])?$/).optional().allow(''),
   end_time: Joi.string().pattern(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9](:[0-5][0-9])?$/).optional().allow(''),
-  recurrence_rule: Joi.string().optional().allow(null),
-  is_available: Joi.boolean().optional(),
-});
+})
+  .or('start_time', 'start_datetime')
+  .and('start_time', 'end_time')
+  .messages({
+    'object.missing': 'Must provide either start_time and end_time, or start_datetime (and optionally end_datetime).',
+    'object.and': 'When using time-of-day, both start_time and end_time are required.',
+  })
+  .custom((value, helpers) => {
+    const { start_time: st, end_time: et, start_datetime: sdt, end_datetime: edt } = value;
+    if (st && et) {
+      const normalize = (t) => {
+        const s = String(t).trim();
+        const parts = s.split(':');
+        if (parts.length === 2) return `${parts[0].padStart(2, '0')}:${parts[1].padStart(2, '0')}:00`;
+        return `${parts[0].padStart(2, '0')}:${parts[1].padStart(2, '0')}:${(parts[2] || '00').padStart(2, '0')}`;
+      };
+      const a = normalize(st);
+      const b = normalize(et);
+      if (a >= b) return helpers.error('any.invalid');
+    }
+    if (sdt && edt && new Date(sdt) >= new Date(edt)) return helpers.error('any.invalid');
+    return value;
+  }, 'start before end')
+  .messages({
+    'any.invalid': 'start_time must be before end_time; start_datetime must be before end_datetime when both provided.',
+  });
 
 export const createDisputeSchema = Joi.object({
   booking_id: Joi.number().integer().positive().required(),
@@ -322,9 +352,12 @@ export const getAlertsQuerySchema = Joi.object({
 
 export const getAuditLogsQuerySchema = Joi.object({
   ...paginationQuery,
+  page: Joi.number().integer().min(1).default(1),
+  limit: Joi.number().integer().min(1).max(10000).default(10000), // plain request = all logs
   user_id: Joi.number().integer().positive().optional(),
-  action: Joi.string().max(255).optional(),
-  table_name: Joi.string().max(255).optional(),
+  action: Joi.string().max(255).trim().allow('').optional(),
+  table_name: Joi.string().max(255).trim().allow('').optional(),
+  record_id: Joi.number().integer().min(0).optional(),
 });
 
 export const searchCourtsQuerySchema = Joi.object({

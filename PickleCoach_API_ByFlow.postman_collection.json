@@ -571,7 +571,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"full_name\": \"Updated Name\",\n  \"email\": \"user@example.com\",\n  \"phone\": \"+1234567890\",\n  \"timezone\": \"America/New_York\",\n  \"avatar_url\": \"\",\n  \"is_active\": true,\n  \"role\": \"coach\",\n  \"deleted_at\": null\n}"
+							"raw": "{\n  \"full_name\": \"John Doe\",\n  \"email\": \"user@example.com\",\n  \"phone\": \"+1234567890\",\n  \"timezone\": \"America/New_York\",\n  \"avatar_url\": \"\",\n  \"is_active\": true,\n  \"role\": \"coach\",\n  \"deleted_at\": null\n}"
 						},
 						"url": {
 							"raw": "{{api_url}}/users/:id",
@@ -649,7 +649,7 @@
 								}
 							]
 						},
-						"description": "Roles: Admin. Manually adjust a user's reliability score."
+						"description": "Roles: Admin. Manually adjust a coach's reliability score (coaches only)."
 					},
 					"response": [],
 					"event": [
@@ -665,6 +665,59 @@
 									"    var jsonData = pm.response.json();",
 									"    pm.expect(jsonData.success).to.be.true;",
 									"    pm.expect(jsonData.data).to.have.property('new_score');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "13.5. Get Coach Reliability (Admin Full Breakdown)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{api_url}}/admin/users/:id/reliability",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"admin",
+								"users",
+								":id",
+								"reliability"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "{{user_id}}"
+								}
+							]
+						},
+						"description": "Roles: Admin. Get a coach's full reliability breakdown + score. Path :id is the coach's user id."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Reliability returned\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"    pm.expect(jsonData.data).to.have.property('reliability');",
+									"    pm.expect(jsonData.data.reliability).to.have.property('reliability_score');",
+									"    pm.expect(jsonData.data.reliability).to.have.property('reschedules');",
 									"});"
 								],
 								"type": "text/javascript"
@@ -1496,58 +1549,7 @@
 					"response": []
 				},
 				{
-					"name": "32. Switch Role (Student ↔ Coach)",
-					"request": {
-						"method": "PUT",
-						"header": [
-							{
-								"key": "Content-Type",
-								"value": "application/json"
-							},
-							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
-							}
-						],
-						"body": {
-							"mode": "raw",
-							"raw": "{\n  \"role\": \"coach\"\n}"
-						},
-						"url": {
-							"raw": "{{api_url}}/auth/me/role",
-							"host": [
-								"{{api_url}}"
-							],
-							"path": [
-								"auth",
-								"me",
-								"role"
-							]
-						},
-						"description": "Roles: Student, Coach (not Admin). Switch account between student and coach without deleting. Body: role = 'student' or 'coach'. Response includes new token — save it (test script sets auth_token) for subsequent requests."
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Status code is 200 or 403 (admin)\", function () {",
-									"    pm.expect([200, 403]).to.include(pm.response.code);",
-									"});",
-									"",
-									"var jsonData = pm.response.json();",
-									"if (jsonData.success && jsonData.data && jsonData.data.token) {",
-									"    pm.environment.set(\"auth_token\", jsonData.data.token);",
-									"}"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "33. Logout",
+					"name": "32. Logout",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -1587,44 +1589,7 @@
 					]
 				},
 				{
-					"name": "34. Delete My Account",
-					"request": {
-						"method": "DELETE",
-						"header": [
-							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
-							}
-						],
-						"url": {
-							"raw": "{{api_url}}/auth/me",
-							"host": [
-								"{{api_url}}"
-							],
-							"path": [
-								"auth",
-								"me"
-							]
-						},
-						"description": "Roles: Student, Coach (not Admin). Soft delete the current user's account. Sets deleted_at and is_active false; coach profile also soft-deleted."
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Status code is 200 or 403 (admin)\", function () {",
-									"    pm.expect([200, 403]).to.include(pm.response.code);",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "35. Get All Courts",
+					"name": "33. Get All Courts",
 					"request": {
 						"method": "GET",
 						"header": [],
@@ -1666,7 +1631,7 @@
 					]
 				},
 				{
-					"name": "36. Get Court By ID",
+					"name": "34. Get Court By ID",
 					"request": {
 						"method": "GET",
 						"header": [],
@@ -1710,7 +1675,7 @@
 					]
 				},
 				{
-					"name": "37. Get All Lessons",
+					"name": "35. Get All Lessons",
 					"request": {
 						"method": "GET",
 						"header": [],
@@ -1752,7 +1717,7 @@
 					]
 				},
 				{
-					"name": "38. Get Lesson By ID",
+					"name": "36. Get Lesson By ID",
 					"request": {
 						"method": "GET",
 						"header": [],
@@ -1796,7 +1761,7 @@
 					]
 				},
 				{
-					"name": "39. Get All Disputes",
+					"name": "37. Get All Disputes",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -1838,7 +1803,7 @@
 					]
 				},
 				{
-					"name": "40. Get Dispute By ID",
+					"name": "38. Get Dispute By ID",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -1886,7 +1851,178 @@
 					]
 				},
 				{
-					"name": "41. Get My Payments",
+					"name": "39. Accept Booking",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": ""
+						},
+						"url": {
+							"raw": "{{api_url}}/bookings/:id/accept",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"bookings",
+								":id",
+								"accept"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "{{booking_id}}"
+								}
+							]
+						},
+						"description": "Roles: Coach, Admin. Confirm a pending booking. Use this (not PUT status) to confirm. Captures payment and sets status to confirmed. Only for bookings in pending state."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Booking accepted\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "40. Decline Booking",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"message_to_student\": \"This time no longer works for me—please choose another slot.\",\n  \"decline_reason_code\": \"availability_wrong\"\n}"
+						},
+						"url": {
+							"raw": "{{api_url}}/bookings/:id/decline",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"bookings",
+								":id",
+								"decline"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "{{booking_id}}"
+								}
+							]
+						},
+						"description": "Roles: Coach, Admin. Decline a pending booking. Cancels the PaymentIntent (student not charged). Body: message_to_student (required, 10–500 chars), decline_reason_code (optional, e.g. availability_wrong, sick, other). Student sees the message."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Booking declined\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "41. Update Booking Status",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"status\": \"completed\"\n}"
+						},
+						"url": {
+							"raw": "{{api_url}}/bookings/:id/status",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"bookings",
+								":id",
+								"status"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "{{booking_id}}"
+								}
+							]
+						},
+						"description": "Roles: Coach, Admin. Change booking status only for allowed transitions. Do not use this to confirm or decline a pending booking — use POST .../accept and POST .../decline for that.\n\nAllowed transitions:\n- confirmed → completed | cancelled | no_show\n- awaiting_verification → completed | cancelled\n- pending has no transitions here (use accept/decline).\n\nCompleted is only allowed after the lesson end time has passed (400 if you try before). Both confirmed→completed and awaiting_verification→completed mean “lesson is done”; the booking may be in either state depending on whether the background worker has already moved it to awaiting_verification.\n\nExamples: Mark as completed {\"status\": \"completed\"}; mark as no-show {\"status\": \"no_show\"}; cancel {\"status\": \"cancelled\"}."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Booking status updated\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "42. Get My Payments",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -1928,7 +2064,7 @@
 					]
 				},
 				{
-					"name": "42. Get Payment By ID",
+					"name": "43. Get Payment By ID",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -1976,7 +2112,7 @@
 					]
 				},
 				{
-					"name": "43. Stripe Webhook",
+					"name": "44. Stripe Webhook",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -2224,6 +2360,51 @@
 									"    pm.expect(jsonData).to.have.property('data');",
 									"    pm.expect(jsonData.data).to.have.property('id');",
 									"    pm.expect(jsonData.data).to.have.property('email');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "4.5 Get Coach Reliability (Me)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{api_url}}/coaches/me/reliability",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"coaches",
+								"me",
+								"reliability"
+							]
+						},
+						"description": "Roles: Coach. Get authenticated coach's reliability breakdown + score (penalized-impact only)."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Reliability returned\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"    pm.expect(jsonData.data).to.have.property('reliability');",
+									"    pm.expect(jsonData.data.reliability).to.have.property('reliability_score');",
 									"});"
 								],
 								"type": "text/javascript"
@@ -2505,7 +2686,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"user_id\": null,\n  \"headline\": \"Professional Pickleball Coach\",\n  \"bio\": \"Experienced pickleball coach with 10 years of teaching\",\n  \"hourly_rate\": 50.00,\n  \"experience_years\": 10,\n  \"skill_level\": \"advanced\",\n  \"certifications\": \"USAPA Certified\",\n  \"location\": \"New York, NY\"\n}"
+							"raw": "{\n  \"headline\": \"Professional Pickleball Coach\",\n  \"bio\": \"Experienced pickleball coach with 10 years of teaching\",\n  \"hourly_rate\": 50.00,\n  \"experience_years\": 10,\n  \"skill_level\": \"advanced\",\n  \"certifications\": \"USAPA Certified\",\n  \"location\": \"New York, NY\"\n}"
 						},
 						"url": {
 							"raw": "{{api_url}}/coaches/profile",
@@ -2517,7 +2698,7 @@
 								"profile"
 							]
 						},
-						"description": "Roles: Coach. Create coach profile. Response `user_id` is the coach's user id; test script saves it to `coach_id`."
+						"description": "Coach-only. Create your own coach profile (authenticated coach only). Profile is always created for the logged-in user; no user_id in body. Admins cannot use this endpoint. Response `user_id` is the coach's user id; test script saves it to `coach_id`."
 					},
 					"response": [],
 					"event": [
@@ -2579,7 +2760,7 @@
 								}
 							]
 						},
-						"description": "Roles: Coach. Update coach profile. Path :id is the coach's **user id** (same as GET /coaches/:id)."
+						"description": "Coach: own profile only (use your user id as :id). Admin: any coach profile. Path :id is the coach's user id (same as GET /coaches/:id)."
 					},
 					"response": [],
 					"event": [
@@ -2661,7 +2842,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"coach_id\": {{coach_id}},\n  \"weekday\": \"monday\",\n  \"start_datetime\": \"2026-02-01T09:00:00Z\",\n  \"end_datetime\": \"2026-02-01T17:00:00Z\",\n  \"start_date\": \"2026-02-01\",\n  \"end_date\": \"2026-12-31\",\n  \"recurrence_rule\": null,\n  \"is_available\": true\n}"
+							"raw": "{\n  \"weekday\": \"monday\",\n  \"start_date\": \"2026-02-01\",\n  \"end_date\": \"2026-12-31\",\n  \"start_time\": \"09:00\",\n  \"end_time\": \"17:00\"\n}"
 						},
 						"url": {
 							"raw": "{{api_url}}/coaches/availability",
@@ -3502,7 +3683,121 @@
 					]
 				},
 				{
-					"name": "33. Update Booking Status",
+					"name": "33. Accept Booking",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": ""
+						},
+						"url": {
+							"raw": "{{api_url}}/bookings/:id/accept",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"bookings",
+								":id",
+								"accept"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "{{booking_id}}"
+								}
+							]
+						},
+						"description": "Roles: Coach, Admin. Confirm a pending booking. Use this (not PUT status) to confirm. Captures payment and sets status to confirmed. Only for bookings in pending state."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Booking accepted\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "34. Decline Booking",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"message_to_student\": \"This time no longer works for me—please choose another slot.\",\n  \"decline_reason_code\": \"availability_wrong\"\n}"
+						},
+						"url": {
+							"raw": "{{api_url}}/bookings/:id/decline",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"bookings",
+								":id",
+								"decline"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "{{booking_id}}"
+								}
+							]
+						},
+						"description": "Roles: Coach, Admin. Decline a pending booking. Cancels the PaymentIntent (student not charged). Body: message_to_student (required, 10–500 chars), decline_reason_code (optional, e.g. availability_wrong, sick, other). Student sees the message."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Booking declined\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "35. Update Booking Status",
 					"request": {
 						"method": "PUT",
 						"header": [
@@ -3517,7 +3812,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"status\": \"confirmed\"\n}"
+							"raw": "{\n  \"status\": \"completed\"\n}"
 						},
 						"url": {
 							"raw": "{{api_url}}/bookings/:id/status",
@@ -3536,7 +3831,7 @@
 								}
 							]
 						},
-						"description": "Update booking status (e.g., confirm, complete)"
+						"description": "Roles: Coach, Admin. Change booking status only for allowed transitions. Do not use this to confirm or decline a pending booking — use POST .../accept and POST .../decline for that.\n\nAllowed transitions:\n- confirmed → completed | cancelled | no_show\n- awaiting_verification → completed | cancelled\n- pending has no transitions here (use accept/decline).\n\nCompleted is only allowed after the lesson end time has passed (400 if you try before). Both confirmed→completed and awaiting_verification→completed mean “lesson is done”; the booking may be in either state depending on whether the background worker has already moved it to awaiting_verification.\n\nExamples: Mark as completed {\"status\": \"completed\"}; mark as no-show {\"status\": \"no_show\"}; cancel {\"status\": \"cancelled\"}."
 					},
 					"response": [],
 					"event": [
@@ -3559,7 +3854,7 @@
 					]
 				},
 				{
-					"name": "34. Cancel Booking",
+					"name": "36. Cancel Booking",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -3616,7 +3911,7 @@
 					]
 				},
 				{
-					"name": "35. Request Reschedule",
+					"name": "37. Request Reschedule",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -3650,7 +3945,7 @@
 								}
 							]
 						},
-						"description": "Request a reschedule for a booking"
+						"description": "Roles: Student, Coach, Admin. Request a reschedule for a booking. Both student and coach can call this. Body: new_scheduled_at, reason (required), reason_notes (optional), paid_reschedule (optional)."
 					},
 					"response": [],
 					"event": [
@@ -3673,7 +3968,7 @@
 					]
 				},
 				{
-					"name": "36. Get Reschedule History",
+					"name": "38. Get Reschedule History",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -3715,7 +4010,7 @@
 					]
 				},
 				{
-					"name": "37. Get My Payments",
+					"name": "39. Get My Payments",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -3757,7 +4052,7 @@
 					]
 				},
 				{
-					"name": "38. Get Payment By ID",
+					"name": "40. Get Payment By ID",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -3805,7 +4100,7 @@
 					]
 				},
 				{
-					"name": "39. Get All Reviews",
+					"name": "41. Get All Reviews",
 					"request": {
 						"method": "GET",
 						"header": [],
@@ -3842,7 +4137,7 @@
 					]
 				},
 				{
-					"name": "40. Create Review",
+					"name": "42. Create Review",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -3892,7 +4187,7 @@
 					]
 				},
 				{
-					"name": "41. Update Review",
+					"name": "43. Update Review",
 					"request": {
 						"method": "PUT",
 						"header": [
@@ -3948,7 +4243,7 @@
 					]
 				},
 				{
-					"name": "42. Delete Review",
+					"name": "44. Delete Review",
 					"request": {
 						"method": "DELETE",
 						"header": [
@@ -3996,7 +4291,7 @@
 					]
 				},
 				{
-					"name": "43. Get Conversations",
+					"name": "45. Get Conversations",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -4039,7 +4334,7 @@
 					]
 				},
 				{
-					"name": "44. Create Conversation",
+					"name": "46. Create Conversation",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -4094,7 +4389,7 @@
 					]
 				},
 				{
-					"name": "45. Get Conversation By ID",
+					"name": "47. Get Conversation By ID",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -4143,7 +4438,7 @@
 					]
 				},
 				{
-					"name": "46. Send Message",
+					"name": "48. Send Message",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -4194,7 +4489,7 @@
 					]
 				},
 				{
-					"name": "47. Mark Message As Read",
+					"name": "49. Mark Message As Read",
 					"request": {
 						"method": "PUT",
 						"header": [
@@ -4243,7 +4538,7 @@
 					]
 				},
 				{
-					"name": "48. Get All Disputes",
+					"name": "50. Get All Disputes",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -4285,7 +4580,7 @@
 					]
 				},
 				{
-					"name": "49. Get Dispute By ID",
+					"name": "51. Get Dispute By ID",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -4333,7 +4628,7 @@
 					]
 				},
 				{
-					"name": "50. Create Dispute",
+					"name": "52. Create Dispute",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -4382,7 +4677,7 @@
 					]
 				},
 				{
-					"name": "51. Get My Notifications",
+					"name": "53. Get My Notifications",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -4424,7 +4719,7 @@
 					]
 				},
 				{
-					"name": "52. Mark Notification As Read",
+					"name": "54. Mark Notification As Read",
 					"request": {
 						"method": "PUT",
 						"header": [
@@ -4473,7 +4768,7 @@
 					]
 				},
 				{
-					"name": "53. Forgot Password",
+					"name": "55. Forgot Password",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -4519,7 +4814,7 @@
 					]
 				},
 				{
-					"name": "54. Reset Password",
+					"name": "56. Reset Password",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -4565,7 +4860,7 @@
 					]
 				},
 				{
-					"name": "55. Logout",
+					"name": "57. Logout",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -4605,7 +4900,7 @@
 					]
 				},
 				{
-					"name": "56. Delete My Account",
+					"name": "58. Delete My Account",
 					"request": {
 						"method": "DELETE",
 						"header": [
@@ -4645,7 +4940,7 @@
 		},
 		{
 			"name": "3 – Flow: Student",
-			"description": "All student endpoints in user-flow order. Run in sequence: Health → Register/Login → Profile → Search coaches → Lessons → Create Booking → Bookings → Payments → Reviews → Messages → Disputes → Notifications → Auth extras. See backend/POSTMAN_TESTING_GUIDE.md.",
+			"description": "All student endpoints in user-flow order. Run in sequence: Health → Register/Login → Profile → Search coaches → Open coach (GET /coaches/:id) → Get coach courts (GET /coaches/:id/courts) → Check availability (GET /coaches/:id/availability) → Create Booking → Bookings → Payments → Reviews → Messages → Disputes → Notifications → Auth extras. See backend/POSTMAN_TESTING_GUIDE.md.",
 			"item": [
 				{
 					"name": "1. Health Check",
@@ -5200,7 +5495,12 @@
 					"name": "13. Get Coach By ID",
 					"request": {
 						"method": "GET",
-						"header": [],
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
 						"url": {
 							"raw": "{{api_url}}/coaches/:id",
 							"host": [
@@ -5217,7 +5517,7 @@
 								}
 							]
 						},
-						"description": "Roles: Any (no auth). Get coach details by ID. Path :id is the coach's **user id** (users.id). Set `coach_id` env var to that user id."
+						"description": "Roles: Student or Admin. Get coach details by ID. Path :id is the coach's **user id** (users.id). Set `coach_id` env var to that user id. Requires auth token."
 					},
 					"response": [],
 					"event": [
@@ -5241,7 +5541,233 @@
 					]
 				},
 				{
-					"name": "14. Get All Lessons",
+					"name": "13.5. Get Coach Reliability (Score Only)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{api_url}}/coaches/:id/reliability",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"coaches",
+								":id",
+								"reliability"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "{{coach_id}}"
+								}
+							]
+						},
+						"description": "Roles: Student or Admin. Get a coach's reliability score only (no breakdown fields). Path :id is the coach's **user id**."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Reliability returned\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"    pm.expect(jsonData.data).to.have.property('reliability');",
+									"    pm.expect(jsonData.data.reliability).to.have.property('reliability_score');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "14. Get Coach Courts",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{api_url}}/coaches/:id/courts",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"coaches",
+								":id",
+								"courts"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "{{coach_id}}"
+								}
+							]
+						},
+						"description": "Roles: Any (no auth). List courts where this coach teaches. For students viewing a coach's profile. Path :id is the coach's **user id**. Response: data[] with court_id, name, address, city, lat, lng."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Returns array of courts\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('data');",
+									"    pm.expect(jsonData.data).to.be.an('array');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "15. Get Coach Availability",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{api_url}}/coaches/:id/availability",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"coaches",
+								":id",
+								"availability"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "{{coach_id}}"
+								}
+							]
+						},
+						"description": "Roles: Any (no auth). Get coach availability. Path :id is the coach's **user id**."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Returns availability data\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('data');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "16. Get All Courts",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{api_url}}/courts",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"courts"
+							]
+						},
+						"description": "Roles: Any (no auth). Search courts (with lazy import from OpenStreetMap if no results)."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Returns array of courts\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('data');",
+									"    pm.expect(jsonData.data).to.be.an('array');",
+									"    ",
+									"    // Save first court ID if available",
+									"    if (jsonData.data.length > 0 && jsonData.data[0].id) {",
+									"        pm.environment.set(\"court_id\", jsonData.data[0].id);",
+									"    }",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "17. Get Court By ID",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{api_url}}/courts/:id",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"courts",
+								":id"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "{{court_id}}"
+								}
+							]
+						},
+						"description": "Roles: Any (no auth). Get court details by ID."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Court data returned\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('data');",
+									"    pm.expect(jsonData.data).to.have.property('id');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "18. Get All Lessons",
 					"request": {
 						"method": "GET",
 						"header": [],
@@ -5283,7 +5809,7 @@
 					]
 				},
 				{
-					"name": "15. Get Lesson By ID",
+					"name": "19. Get Lesson By ID",
 					"request": {
 						"method": "GET",
 						"header": [],
@@ -5327,7 +5853,7 @@
 					]
 				},
 				{
-					"name": "16. Create Booking",
+					"name": "20. Create Booking",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -5381,7 +5907,7 @@
 					]
 				},
 				{
-					"name": "17. Get My Bookings",
+					"name": "21. Get My Bookings",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -5423,7 +5949,7 @@
 					]
 				},
 				{
-					"name": "18. Get Booking By ID",
+					"name": "22. Get Booking By ID",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -5472,64 +5998,7 @@
 					]
 				},
 				{
-					"name": "19. Update Booking Status",
-					"request": {
-						"method": "PUT",
-						"header": [
-							{
-								"key": "Content-Type",
-								"value": "application/json"
-							},
-							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
-							}
-						],
-						"body": {
-							"mode": "raw",
-							"raw": "{\n  \"status\": \"confirmed\"\n}"
-						},
-						"url": {
-							"raw": "{{api_url}}/bookings/:id/status",
-							"host": [
-								"{{api_url}}"
-							],
-							"path": [
-								"bookings",
-								":id",
-								"status"
-							],
-							"variable": [
-								{
-									"key": "id",
-									"value": "{{booking_id}}"
-								}
-							]
-						},
-						"description": "Update booking status (e.g., confirm, complete)"
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Status code is 200\", function () {",
-									"    pm.response.to.have.status(200);",
-									"});",
-									"",
-									"pm.test(\"Booking status updated\", function () {",
-									"    var jsonData = pm.response.json();",
-									"    pm.expect(jsonData.success).to.be.true;",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "20. Cancel Booking",
+					"name": "23. Cancel Booking",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -5586,7 +6055,7 @@
 					]
 				},
 				{
-					"name": "21. Request Reschedule",
+					"name": "24. Request Reschedule",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -5620,7 +6089,7 @@
 								}
 							]
 						},
-						"description": "Request a reschedule for a booking"
+						"description": "Roles: Student, Coach, Admin. Request a reschedule for a booking. Both student and coach can call this. Body: new_scheduled_at, reason (required), reason_notes (optional), paid_reschedule (optional)."
 					},
 					"response": [],
 					"event": [
@@ -5643,7 +6112,7 @@
 					]
 				},
 				{
-					"name": "22. Get Reschedule History",
+					"name": "25. Get Reschedule History",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -5685,7 +6154,7 @@
 					]
 				},
 				{
-					"name": "23. Get My Payments",
+					"name": "26. Get My Payments",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -5727,7 +6196,7 @@
 					]
 				},
 				{
-					"name": "24. Get Payment By ID",
+					"name": "27. Get Payment By ID",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -5775,7 +6244,7 @@
 					]
 				},
 				{
-					"name": "25. Get All Reviews",
+					"name": "28. Get All Reviews",
 					"request": {
 						"method": "GET",
 						"header": [],
@@ -5812,7 +6281,7 @@
 					]
 				},
 				{
-					"name": "26. Create Review",
+					"name": "29. Create Review",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -5862,7 +6331,7 @@
 					]
 				},
 				{
-					"name": "27. Update Review",
+					"name": "30. Update Review",
 					"request": {
 						"method": "PUT",
 						"header": [
@@ -5918,7 +6387,7 @@
 					]
 				},
 				{
-					"name": "28. Delete Review",
+					"name": "31. Delete Review",
 					"request": {
 						"method": "DELETE",
 						"header": [
@@ -5966,7 +6435,7 @@
 					]
 				},
 				{
-					"name": "29. Get Conversations",
+					"name": "32. Get Conversations",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -6009,7 +6478,7 @@
 					]
 				},
 				{
-					"name": "30. Create Conversation",
+					"name": "33. Create Conversation",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -6064,7 +6533,7 @@
 					]
 				},
 				{
-					"name": "31. Get Conversation By ID",
+					"name": "34. Get Conversation By ID",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -6113,7 +6582,7 @@
 					]
 				},
 				{
-					"name": "32. Send Message",
+					"name": "35. Send Message",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -6164,7 +6633,7 @@
 					]
 				},
 				{
-					"name": "33. Mark Message As Read",
+					"name": "36. Mark Message As Read",
 					"request": {
 						"method": "PUT",
 						"header": [
@@ -6213,7 +6682,7 @@
 					]
 				},
 				{
-					"name": "34. Get All Disputes",
+					"name": "37. Get All Disputes",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -6255,7 +6724,7 @@
 					]
 				},
 				{
-					"name": "35. Get Dispute By ID",
+					"name": "38. Get Dispute By ID",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -6303,7 +6772,7 @@
 					]
 				},
 				{
-					"name": "36. Create Dispute",
+					"name": "39. Create Dispute",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -6352,7 +6821,7 @@
 					]
 				},
 				{
-					"name": "37. Get My Notifications",
+					"name": "40. Get My Notifications",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -6394,7 +6863,7 @@
 					]
 				},
 				{
-					"name": "38. Mark Notification As Read",
+					"name": "41. Mark Notification As Read",
 					"request": {
 						"method": "PUT",
 						"header": [
@@ -6443,7 +6912,7 @@
 					]
 				},
 				{
-					"name": "39. Forgot Password",
+					"name": "42. Forgot Password",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -6489,7 +6958,7 @@
 					]
 				},
 				{
-					"name": "40. Reset Password",
+					"name": "43. Reset Password",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -6535,7 +7004,7 @@
 					]
 				},
 				{
-					"name": "41. Logout",
+					"name": "44. Logout",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -6575,7 +7044,7 @@
 					]
 				},
 				{
-					"name": "42. Delete My Account",
+					"name": "45. Delete My Account",
 					"request": {
 						"method": "DELETE",
 						"header": [

@@ -5,7 +5,7 @@
 import bcrypt from 'bcryptjs';
 import dotenv from 'dotenv';
 import { sequelize } from '../models/sequelize.js';
-import { User } from '../models/index.js';
+import { User, UserRole } from '../models/index.js';
 
 const env = process.env.NODE_ENV || 'development';
 dotenv.config({ path: `.env.${env}` });
@@ -22,14 +22,18 @@ async function testLogin() {
   try {
     await sequelize.authenticate();
 
-    const user = await User.findOne({ where: { email } });
+    const user = await User.findOne({
+      where: { email },
+      include: [{ model: UserRole, as: 'userRoles', attributes: ['role'] }],
+    });
     if (!user) {
       console.error('❌ No user found with email:', email);
       console.error('   Create one with: node scripts/create-first-admin.js', email, '"<password>"', '"Your Name"');
       process.exit(1);
     }
 
-    console.log('✅ User found: id=%s, email=%s, role=%s, is_active=%s', user.id, user.email, user.role, user.is_active);
+    const roles = user.userRoles?.map((r) => r.role) ?? [];
+    console.log('✅ User found: id=%s, email=%s, roles=%s, is_active=%s', user.id, user.email, roles.join(','), user.is_active);
 
     if (!user.is_active) {
       console.error('❌ Account is inactive');
