@@ -64,3 +64,20 @@ export const requireVerifiedEmail = (req, res, next) => {
 
   return next();
 };
+
+/** For routes where students/coaches must verify email but admins may act without (e.g. support-created disputes). */
+export const requireVerifiedEmailUnlessAdmin = (req, res, next) => {
+  if (!req.user) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+  const roles = req.user.roles || [];
+  if (roles.includes('admin')) {
+    return next();
+  }
+  if (!req.user.email_verified_at) {
+    return res.status(403).json({
+      error: 'Email verification required to perform this action. Please verify your email.',
+    });
+  }
+  return next();
+};

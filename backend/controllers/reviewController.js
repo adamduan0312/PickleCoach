@@ -1,18 +1,35 @@
 import { Review, Booking, User, CoachProfile } from '../models/index.js';
-import { successResponse, errorResponse } from '../utils/response.js';
+import { successResponse, errorResponse, paginatedResponse } from '../utils/response.js';
 import { getPagination, getPagingData } from '../utils/pagination.js';
 import { logAudit } from '../utils/audit.js';
 import { Op } from 'sequelize';
 import { logger } from '../config/logger.js';
 
+const MAX_LIST_ALL_REVIEWS = 10000;
+
 export const getReviews = async (req, res) => {
   try {
     const { page, limit, target_user_id, reviewer_id } = req.validated;
-    const { limit: queryLimit, offset } = getPagination(page, limit);
 
     const where = {};
     if (target_user_id) where.target_user_id = target_user_id;
     if (reviewer_id) where.reviewer_id = reviewer_id;
+
+    if (page == null && limit == null) {
+      const reviews = await Review.findAll({
+        where,
+        include: [
+          { model: Booking, as: 'booking' },
+          { model: User, as: 'reviewer', attributes: ['id', 'full_name', 'avatar_url'] },
+          { model: User, as: 'targetUser', attributes: ['id', 'full_name', 'avatar_url'] },
+        ],
+        limit: MAX_LIST_ALL_REVIEWS,
+        order: [['created_at', 'DESC']],
+      });
+      return successResponse(res, reviews, 'Reviews retrieved successfully');
+    }
+
+    const { limit: queryLimit, offset } = getPagination(page, limit);
 
     const reviews = await Review.findAndCountAll({
       where,
@@ -27,7 +44,7 @@ export const getReviews = async (req, res) => {
     });
 
     const response = getPagingData(reviews, page, queryLimit);
-    return successResponse(res, response.items, 'Reviews retrieved successfully');
+    return paginatedResponse(res, response.items, response.pagination, 'Reviews retrieved successfully');
   } catch (error) {
     logger.error('Get reviews error:', error);
     return errorResponse(res, 'Failed to retrieve reviews', 500);

@@ -82,15 +82,12 @@ Authorization: Bearer <admin_jwt_token>
 
 All admin routes are protected with `authenticate` and `authorize('admin')` middleware:
 - `/api/admin/dashboard` - Dashboard statistics
-- `/api/admin/alerts` - System alerts
-- `/api/admin/alerts/:id/resolve` - Resolve alerts
 - `/api/admin/users` - Create admin accounts
 
 ### Admin Capabilities
 
 Admins can:
 - View dashboard statistics
-- Manage system alerts
 - Create additional admin accounts
 - Access all admin-protected endpoints
 - See all user data (via admin routes)

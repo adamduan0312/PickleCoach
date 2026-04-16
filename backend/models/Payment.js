@@ -44,12 +44,12 @@ const Payment = sequelize.define('payments', {
     defaultValue: 0,
   },
   escrow_status: {
-    type: DataTypes.ENUM('held', 'released', 'refunded', 'disputed'),
+    type: DataTypes.ENUM('held', 'released', 'refunded', 'disputed', 'manual_payout_required', 'pending_release'),
     allowNull: false,
     defaultValue: 'held',
   },
   payment_status: {
-    type: DataTypes.ENUM('pending', 'captured', 'failed', 'refunded'),
+    type: DataTypes.ENUM('pending', 'captured', 'failed', 'refunded', 'partially_refunded', 'pending_capture', 'pending_void'),
     defaultValue: 'pending',
   },
   payment_method: {
@@ -79,6 +79,24 @@ const Payment = sequelize.define('payments', {
   refunded_amount: {
     type: DataTypes.DECIMAL(12, 2),
     defaultValue: 0,
+  },
+  /** Mirrors refund lifecycle; final state should match Stripe charge/refund objects */
+  refund_status: {
+    type: DataTypes.STRING(20),
+    allowNull: false,
+    defaultValue: 'none',
+  },
+  stripe_refund_id: {
+    type: DataTypes.STRING(255),
+    allowNull: true,
+  },
+  stripe_dispute_id: {
+    type: DataTypes.STRING(255),
+    allowNull: true,
+  },
+  stripe_dispute_status: {
+    type: DataTypes.STRING(64),
+    allowNull: true,
   },
   dispute_id: {
     type: DataTypes.INTEGER,

@@ -27,8 +27,8 @@ export const requestReschedule = async (req, res) => {
       return errorResponse(res, 'Unauthorized', 403);
     }
 
-    if (['completed', 'cancelled'].includes(booking.status)) {
-      return errorResponse(res, 'Cannot reschedule completed or cancelled booking', 400);
+    if (['completed', 'cancelled', 'no_show', 'coach_no_show'].includes(booking.status)) {
+      return errorResponse(res, 'Cannot reschedule completed, cancelled, or no-show booking', 400);
     }
 
     const newScheduledDate = new Date(new_scheduled_at);
@@ -135,7 +135,8 @@ export const requestReschedule = async (req, res) => {
         });
         const updateRoles = userToUpdate?.userRoles?.map((r) => r.role) ?? [];
         if (userToUpdate && !updateRoles.includes('admin')) {
-          await updateUserReliability(userIdToUpdate).catch(err => {
+          const reliabilityRole = requestedBy === 'coach' ? 'coach' : 'student';
+          await updateUserReliability(userIdToUpdate, reliabilityRole).catch((err) => {
             logger.error('Failed to update reliability after reschedule:', err);
           });
         }

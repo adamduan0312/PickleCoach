@@ -7,9 +7,33 @@ import { successResponse, errorResponse } from '../utils/response.js';
 import { logAudit } from '../utils/audit.js';
 import { logger } from '../config/logger.js';
 import * as notificationService from '../services/notificationService.js';
+import * as stripeService from '../services/stripeService.js';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
+
+/** Login-shaped `{ token, user }` for responses after sensitive self-service actions. */
+function buildAuthSessionPayload(user) {
+  const roles = user.userRoles && user.userRoles.length ? user.userRoles.map((r) => r.role) : [];
+  const token = jwt.sign(
+    { userId: user.id, tokenVersion: user.token_version ?? 0 },
+    JWT_SECRET,
+    { expiresIn: JWT_EXPIRES_IN }
+  );
+  return {
+    token,
+    user: {
+      id: user.id,
+      full_name: user.full_name,
+      email: user.email,
+      roles,
+      phone: user.phone ?? null,
+      timezone: user.timezone ?? null,
+      avatar_url: user.avatar_url ?? null,
+      email_verified_at: user.email_verified_at ?? null,
+    },
+  };
+}
 
 export const register = async (req, res) => {
   try {
@@ -29,6 +53,21 @@ export const register = async (req, res) => {
       timezone: timezone || 'UTC',
       ...(avatar_url !== undefined && avatar_url !== '' && { avatar_url }),
     });
+
+    // Best effort: create Stripe Customer at signup; first booking also backfills if needed.
+    try {
+      const customer = await stripeService.createCustomer({
+        email: user.email,
+        name: user.full_name,
+        metadata: { user_id: String(user.id) },
+      });
+      await user.update({ stripe_customer_id: customer.id });
+    } catch (stripeError) {
+      logger.warn('Stripe customer creation skipped during signup', {
+        userId: user.id,
+        error: stripeError?.message || String(stripeError),
+      });
+    }
 
     await UserRole.create({ user_id: user.id, role });
 
@@ -485,7 +524,11 @@ export const changePassword = async (req, res) => {
 
     await logAudit(req.user.id, 'password_changed', 'users', user.id, beforeState, { password_changed: true, token_version: newTokenVersion }, req);
 
-    return successResponse(res, null, 'Password changed successfully');
+    await user.reload({
+      include: [{ model: UserRole, as: 'userRoles', attributes: ['role'] }],
+    });
+
+    return successResponse(res, buildAuthSessionPayload(user), 'Password changed successfully');
   } catch (error) {
     logger.error('Change password error:', error);
     return errorResponse(res, 'Failed to change password', 500);
@@ -622,7 +665,11 @@ export const confirmEmailChange = async (req, res) => {
       logger.error('Failed to send old-email notification after email change:', emailError);
     }
 
-    return successResponse(res, null, 'Email updated successfully');
+    const refreshed = await User.findByPk(user.id, {
+      include: [{ model: UserRole, as: 'userRoles', attributes: ['role'] }],
+    });
+
+    return successResponse(res, buildAuthSessionPayload(refreshed), 'Email updated successfully');
   } catch (error) {
     logger.error('Confirm email change error:', error);
     return errorResponse(res, 'Failed to confirm email change', 500);

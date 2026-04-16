@@ -1,5 +1,5 @@
 import bcrypt from 'bcryptjs';
-import { AdminAnalytics, AdminAlert, User, UserRole, Booking, Payment, Dispute, UserReliability, CoachCourtLocation, CourtLocation, CoachAvailability, AuditLog } from '../models/index.js';
+import { User, UserRole, Booking, Payment, Dispute, UserReliability, CoachCourtLocation, CourtLocation, CoachAvailability, AuditLog } from '../models/index.js';
 import { successResponse, errorResponse, paginatedResponse } from '../utils/response.js';
 import { logAudit } from '../utils/audit.js';
 import { Op } from 'sequelize';
@@ -26,7 +26,6 @@ export const getDashboardStats = async (req, res) => {
     }) || 0;
 
     const pendingDisputes = await Dispute.count({ where: { status: { [Op.in]: ['open', 'under_review'] } } });
-    const unresolvedAlerts = await AdminAlert.count({ where: { resolved: false } });
 
     return successResponse(res, {
       users: {
@@ -44,58 +43,10 @@ export const getDashboardStats = async (req, res) => {
       disputes: {
         pending: pendingDisputes,
       },
-      alerts: {
-        unresolved: unresolvedAlerts,
-      },
     }, 'Dashboard stats retrieved successfully');
   } catch (error) {
     logger.error('Get dashboard stats error:', error);
     return errorResponse(res, 'Failed to retrieve dashboard stats', 500);
-  }
-};
-
-export const getAlerts = async (req, res) => {
-  try {
-    if (!(req.user.roles || []).includes('admin')) {
-      return errorResponse(res, 'Unauthorized', 403);
-    }
-
-    const { resolved } = req.validated;
-    const alerts = await AdminAlert.findAll({
-      where: { resolved: resolved === 'true' },
-      include: [
-        { model: User, as: 'relatedUser', attributes: ['id', 'full_name'] },
-        { model: Booking, as: 'relatedBooking' },
-        { model: Payment, as: 'relatedPayment' },
-      ],
-      order: [['created_at', 'DESC']],
-    });
-
-    return successResponse(res, alerts, 'Alerts retrieved successfully');
-  } catch (error) {
-    logger.error('Get alerts error:', error);
-    return errorResponse(res, 'Failed to retrieve alerts', 500);
-  }
-};
-
-export const resolveAlert = async (req, res) => {
-  try {
-    if (!(req.user.roles || []).includes('admin')) {
-      return errorResponse(res, 'Unauthorized', 403);
-    }
-
-    const { id } = req.params;
-    const alert = await AdminAlert.findByPk(id);
-
-    if (!alert) {
-      return errorResponse(res, 'Alert not found', 404);
-    }
-
-    await alert.update({ resolved: true, resolved_at: new Date() });
-    return successResponse(res, alert, 'Alert resolved successfully');
-  } catch (error) {
-    logger.error('Resolve alert error:', error);
-    return errorResponse(res, 'Failed to resolve alert', 500);
   }
 };
 
@@ -155,6 +106,10 @@ export const createAdmin = async (req, res) => {
  * Manually adjust a user's reliability score
  * This is a SEPARATE action from dispute resolution
  * Allows admins to make explicit reliability adjustments with justification
+ *
+ * Reliability is stored per role (`user_reliability`: one row per user_id + role).
+ * Request body `role` defaults to **coach** — send `"role": "student"` to adjust the student row.
+ * Users with both coach and student roles: call once per row you want to change (same path, different `role`).
  */
 export const adjustUserReliability = async (req, res) => {
   try {
@@ -162,20 +117,15 @@ export const adjustUserReliability = async (req, res) => {
       return errorResponse(res, 'Unauthorized: Only admins can adjust reliability scores', 403);
     }
 
-    const { id } = req.params; // user_id from route
-    const { new_score, reason, explanation } = req.body;
-
-    if (new_score === undefined) {
-      return errorResponse(res, 'new_score is required', 400);
+    const userId = parseInt(req.params.id, 10);
+    if (Number.isNaN(userId)) {
+      return errorResponse(res, 'Invalid user ID', 400);
     }
 
-    // Validate score range
+    const { new_score, role: reliabilityRole, reason, explanation } = req.validated;
     const scoreValue = parseFloat(new_score);
-    if (isNaN(scoreValue) || scoreValue < 0 || scoreValue > 100) {
-      return errorResponse(res, 'Reliability score must be a number between 0 and 100', 400);
-    }
 
-    const targetUser = await User.findByPk(id, {
+    const targetUser = await User.findByPk(userId, {
       include: [{ model: UserRole, as: 'userRoles', attributes: ['role'] }],
     });
     if (!targetUser) {
@@ -186,15 +136,28 @@ export const adjustUserReliability = async (req, res) => {
     if (targetRoles.includes('admin')) {
       return errorResponse(res, 'Cannot adjust reliability for admin users', 400);
     }
-    if (!targetRoles.includes('coach')) {
-      return errorResponse(res, 'Can only adjust reliability for coaches', 400);
+
+    if (reliabilityRole === 'coach' && !targetRoles.includes('coach')) {
+      const hint =
+        targetRoles.includes('student')
+          ? ' Omitting role defaults to coach; send "role": "student" to adjust student reliability.'
+          : '';
+      return errorResponse(res, `Target user does not have coach role.${hint}`, 400);
+    }
+    if (reliabilityRole === 'student' && !targetRoles.includes('student')) {
+      const hint =
+        targetRoles.includes('coach')
+          ? ' Send "role": "coach" (or omit role) to adjust coach reliability.'
+          : '';
+      return errorResponse(res, `Target user does not have student role.${hint}`, 400);
     }
 
     const [reliability, created] = await UserReliability.findOrCreate({
-      where: { user_id: id },
+      where: { user_id: userId, role: reliabilityRole },
       defaults: {
-        user_id: id,
-        reliability_score: 100.00,
+        user_id: userId,
+        role: reliabilityRole,
+        reliability_score: 100.0,
       },
     });
 
@@ -206,17 +169,20 @@ export const adjustUserReliability = async (req, res) => {
     // Log this as a manual admin adjustment with full audit trail
     await logAudit(req.user.id, 'admin_reliability_adjustment', 'user_reliability', reliability.user_id, {
       before_score: beforeState.reliability_score,
+      role: reliabilityRole,
       reason,
       explanation,
     }, {
       after_score: scoreValue,
       adjusted_by_admin: req.user.id,
+      role: reliabilityRole,
       reason,
       explanation,
     }, req);
 
     return successResponse(res, {
-      user_id: parseInt(id),
+      user_id: userId,
+      role: reliabilityRole,
       user_roles: targetRoles,
       previous_score: beforeState.reliability_score,
       new_score: scoreValue,
@@ -309,8 +275,9 @@ export const getCoachCourtsForAdmin = async (req, res) => {
 };
 
 /**
- * DELETE /api/admin/coaches/:coachId/courts/:linkId
+ * DELETE /api/admin/coaches/:coachId/courts/:courtId
  * Admin only: unlink a court from a coach (e.g. wrong court linked).
+ * `courtId` is the court_locations.id (same as `court_id` on the link row from GET .../courts).
  */
 export const deleteCoachCourtForAdmin = async (req, res) => {
   try {
@@ -318,15 +285,19 @@ export const deleteCoachCourtForAdmin = async (req, res) => {
       return errorResponse(res, 'Unauthorized', 403);
     }
     const coachId = parseInt(req.params.coachId, 10);
-    const linkId = parseInt(req.params.linkId, 10);
-    if (Number.isNaN(coachId) || Number.isNaN(linkId)) {
-      return errorResponse(res, 'Invalid coach ID or link ID', 400);
+    const courtId = parseInt(req.params.courtId, 10);
+    if (Number.isNaN(coachId) || Number.isNaN(courtId)) {
+      return errorResponse(res, 'Invalid coach ID or court ID', 400);
     }
     const link = await CoachCourtLocation.findOne({
-      where: { id: linkId, coach_id: coachId },
+      where: { court_id: courtId, coach_id: coachId },
     });
     if (!link) {
-      return errorResponse(res, 'Court link not found', 404);
+      return errorResponse(
+        res,
+        'This coach is not linked to that court (check court id from GET /api/admin/coaches/:coachId/courts)',
+        404,
+      );
     }
     await link.destroy();
     return successResponse(res, null, 'Court removed from coach');

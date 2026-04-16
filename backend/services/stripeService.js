@@ -5,6 +5,19 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || '', {
   apiVersion: '2024-11-20.acacia',
 });
 
+const logStripeApiError = (operation, error, extra = {}) => {
+  logger.error({
+    component: 'stripe',
+    event: 'stripe_api_error',
+    operation,
+    message: error?.message || String(error),
+    code: error?.code,
+    type: error?.type,
+    decline_code: error?.decline_code,
+    ...extra,
+  });
+};
+
 /**
  * Create a PaymentIntent for a booking
  * @param {number} amount - Amount in cents
@@ -29,12 +42,21 @@ export const createPaymentIntent = async (amount, currency = 'usd', customerId =
     if (customerId) {
       params.customer = customerId;
     }
+    if (options.paymentMethodId) {
+      params.payment_method = options.paymentMethodId;
+    }
+    if (options.confirm === true) {
+      params.confirm = true;
+    }
 
-    const paymentIntent = await stripe.paymentIntents.create(params);
+    const requestOptions = options.idempotencyKey
+      ? { idempotencyKey: options.idempotencyKey }
+      : {};
+    const paymentIntent = await stripe.paymentIntents.create(params, requestOptions);
     logger.info('PaymentIntent created', { paymentIntentId: paymentIntent.id, amount });
     return paymentIntent;
   } catch (error) {
-    logger.error('Error creating PaymentIntent:', error);
+    logStripeApiError('createPaymentIntent', error);
     throw error;
   }
 };
@@ -66,34 +88,48 @@ export const cancelPaymentIntent = async (paymentIntentId) => {
     logger.info('PaymentIntent cancelled', { paymentIntentId });
     return paymentIntent;
   } catch (error) {
-    logger.error('Error cancelling PaymentIntent:', error);
+    logStripeApiError('cancelPaymentIntent', error, { paymentIntentId });
     throw error;
   }
 };
 
 /**
- * Create a refund
- * @param {string} chargeId - Stripe charge ID
- * @param {number} amount - Amount to refund in dollars (optional, full refund if not provided)
- * @param {string} reason - Refund reason
- * @returns {Promise<Object>} Refund object
+ * Create a refund (amount in integer cents; omit amountCents for full remaining balance).
  */
-export const createRefund = async (chargeId, amount = null, reason = 'requested_by_customer') => {
+const STRIPE_REFUND_REASONS = new Set(['duplicate', 'fraudulent', 'requested_by_customer']);
+
+export const createRefund = async (
+  chargeId,
+  {
+    amountCents = null,
+    reason = 'requested_by_customer',
+    idempotencyKey = null,
+  } = {}
+) => {
   try {
+    const stripeReason = STRIPE_REFUND_REASONS.has(reason) ? reason : 'requested_by_customer';
     const params = {
       charge: chargeId,
-      reason,
+      reason: stripeReason,
     };
 
-    if (amount) {
-      params.amount = Math.round(amount * 100); // Convert to cents
+    if (amountCents != null) {
+      params.amount = Math.round(amountCents);
     }
 
-    const refund = await stripe.refunds.create(params);
-    logger.info('Refund created', { refundId: refund.id, chargeId, amount });
+    const requestOptions = idempotencyKey ? { idempotencyKey } : {};
+    const refund = await stripe.refunds.create(params, requestOptions);
+    logger.info({
+      component: 'stripe',
+      event: 'refund_created',
+      refundId: refund.id,
+      chargeId,
+      amountCents: amountCents ?? 'full_remaining',
+      idempotencyKey: idempotencyKey || null,
+    });
     return refund;
   } catch (error) {
-    logger.error('Error creating refund:', error);
+    logStripeApiError('createRefund', error, { chargeId });
     throw error;
   }
 };
@@ -117,7 +153,7 @@ export const transferToConnectedAccount = async (connectedAccountId, amount, cur
     logger.info('Transfer created', { transferId: transfer.id, connectedAccountId, amount });
     return transfer;
   } catch (error) {
-    logger.error('Error creating transfer:', error);
+    logStripeApiError('transferToConnectedAccount', error, { connectedAccountId });
     throw error;
   }
 };
@@ -143,7 +179,7 @@ export const createConnectAccount = async (email, metadata = {}) => {
     logger.info('Connect account created', { accountId: account.id, email });
     return account;
   } catch (error) {
-    logger.error('Error creating Connect account:', error);
+    logStripeApiError('createConnectAccount', error);
     throw error;
   }
 };
@@ -186,7 +222,7 @@ export const verifyWebhookSignature = (payload, signature) => {
     );
     return event;
   } catch (error) {
-    logger.error('Webhook signature verification failed:', error);
+    logStripeApiError('verifyWebhookSignature', error);
     throw error;
   }
 };
@@ -202,6 +238,98 @@ export const getPaymentIntent = async (paymentIntentId) => {
     return paymentIntent;
   } catch (error) {
     logger.error('Error retrieving PaymentIntent:', error);
+    throw error;
+  }
+};
+
+/**
+ * Create a Stripe Customer
+ */
+export const createCustomer = async ({ email, name, metadata = {} } = {}) => {
+  try {
+    return await stripe.customers.create({
+      email,
+      name,
+      metadata,
+    });
+  } catch (error) {
+    logStripeApiError('createCustomer', error);
+    throw error;
+  }
+};
+
+/**
+ * Attach an existing PaymentMethod to a customer
+ */
+export const attachPaymentMethodToCustomer = async (paymentMethodId, customerId) => {
+  try {
+    return await stripe.paymentMethods.attach(paymentMethodId, { customer: customerId });
+  } catch (error) {
+    logStripeApiError('attachPaymentMethodToCustomer', error, { paymentMethodId, customerId });
+    throw error;
+  }
+};
+
+/**
+ * List card payment methods for a customer
+ */
+export const listCustomerPaymentMethods = async (customerId) => {
+  try {
+    return await stripe.paymentMethods.list({
+      customer: customerId,
+      type: 'card',
+    });
+  } catch (error) {
+    logStripeApiError('listCustomerPaymentMethods', error, { customerId });
+    throw error;
+  }
+};
+
+/**
+ * Set default payment method for invoice/subscription flows
+ */
+export const setCustomerDefaultPaymentMethod = async (customerId, paymentMethodId) => {
+  try {
+    return await stripe.customers.update(customerId, {
+      invoice_settings: {
+        default_payment_method: paymentMethodId,
+      },
+    });
+  } catch (error) {
+    logStripeApiError('setCustomerDefaultPaymentMethod', error, { customerId, paymentMethodId });
+    throw error;
+  }
+};
+
+export const getCustomer = async (customerId) => {
+  try {
+    return await stripe.customers.retrieve(customerId);
+  } catch (error) {
+    logStripeApiError('getCustomer', error, { customerId });
+    throw error;
+  }
+};
+
+/**
+ * Detach PaymentMethod from customer
+ */
+export const detachPaymentMethod = async (paymentMethodId) => {
+  try {
+    return await stripe.paymentMethods.detach(paymentMethodId);
+  } catch (error) {
+    logStripeApiError('detachPaymentMethod', error, { paymentMethodId });
+    throw error;
+  }
+};
+
+/**
+ * Retrieve Charge (source of truth for amount captured vs refunded)
+ */
+export const retrieveCharge = async (chargeId) => {
+  try {
+    return await stripe.charges.retrieve(chargeId, { expand: ['refunds'] });
+  } catch (error) {
+    logStripeApiError('retrieveCharge', error, { chargeId });
     throw error;
   }
 };

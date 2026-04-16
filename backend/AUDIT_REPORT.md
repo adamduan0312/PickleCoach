@@ -68,10 +68,10 @@ Generated: 2026-01-26
 - `POST /api/disputes` - uses `req.body` directly
 - `PUT /api/disputes/:id/resolve` - uses `req.body` directly
 - `POST /api/notifications` - uses `req.body` directly
-- `PUT /api/payments/:id/status` - uses `req.body` directly
-- `POST /api/payments/:id/refund` - uses `req.body` directly
 
 **Solution**: Add validation schemas for all update/create endpoints
+
+_Note: `PUT /api/payments/:id/status` and `POST /api/payments/:id/refund` were removed for MVP (see `paymentRoutes.js`)._
 
 ---
 

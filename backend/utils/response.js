@@ -6,11 +6,14 @@ export const successResponse = (res, data, message = 'Success', statusCode = 200
   });
 };
 
-export const errorResponse = (res, message = 'Error', statusCode = 500, errors = null) => {
+export const errorResponse = (res, message = 'Error', statusCode = 500, errors = null, details = null) => {
+  const extra =
+    details && typeof details === 'object' && !Array.isArray(details) ? details : null;
   return res.status(statusCode).json({
     success: false,
     message,
     ...(errors && { errors }),
+    ...(extra && extra),
   });
 };
 

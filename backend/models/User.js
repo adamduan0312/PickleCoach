@@ -89,6 +89,10 @@ class User extends Model {
         type: DataTypes.STRING(150),
         allowNull: true,
       },
+      stripe_customer_id: {
+        type: DataTypes.STRING(255),
+        allowNull: true,
+      },
       },
       {
         sequelize,
@@ -104,6 +108,7 @@ class User extends Model {
           { fields: ['password_reset_token'] },
           { fields: ['email_verification_token'] },
           { fields: ['email_change_token'] },
+          { fields: ['stripe_customer_id'], unique: true },
         ],
       }
     );

@@ -6,6 +6,9 @@ import * as paymentService from '../services/paymentService.js';
 /**
  * Process payouts for completed bookings
  * Runs every 10 minutes
+ *
+ * Selection: only payments with booking.status in completed / awaiting_verification (and payout gating).
+ * Cancelled, no-show, and other statuses never appear here — coach payout cannot run before lesson completion path.
  */
 export const processPayouts = async () => {
   try {

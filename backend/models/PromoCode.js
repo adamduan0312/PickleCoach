@@ -1,6 +1,7 @@
 import { DataTypes } from 'sequelize';
 import { sequelize } from './sequelize.js';
 
+/** Promo codes for marketing / launch discounts. Wire into payment/checkout when ready. */
 const PromoCode = sequelize.define('promo_codes', {
   id: {
     type: DataTypes.INTEGER,

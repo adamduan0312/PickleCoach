@@ -1,10 +1,15 @@
 import { CourtLocation, CoachCourtLocation, User, CoachProfile } from '../models/index.js';
 import { Op } from 'sequelize';
-import { successResponse, errorResponse, createErrorResponse, createResponse } from '../utils/response.js';
+import { successResponse, errorResponse, createErrorResponse, createResponse, paginatedResponse } from '../utils/response.js';
+import { getPagination, getPagingData } from '../utils/pagination.js';
 import { logger } from '../config/logger.js';
 
 /** Max miles a new court can be from a coach's existing courts (prevents linking/creating courts far away) */
 const MAX_COURT_DISTANCE_MILES = 100;
+
+/** Safety cap when listing all courts with no pagination (DoS prevention). */
+const MAX_LIST_ALL_COURTS = 10000;
+const MAX_LIST_ALL_COACH_COURTS = 10000;
 
 /**
  * Distance between two points in miles (Haversine)
@@ -24,13 +29,74 @@ const distanceMiles = (lat1, lng1, lat2, lng2) => {
   return R * c;
 };
 
+/** Closest first for geo search; courts missing coords sort last. */
+const sortCourtsByDistanceFrom = (courts, originLat, originLng) =>
+  [...courts].sort((a, b) => {
+    const da = distanceMiles(originLat, originLng, a.latitude, a.longitude);
+    const db = distanceMiles(originLat, originLng, b.latitude, b.longitude);
+    const na = da == null ? Number.POSITIVE_INFINITY : da;
+    const nb = db == null ? Number.POSITIVE_INFINITY : db;
+    return na - nb;
+  });
+
 /**
  * GET /api/courts
- * Search courts by location (lazy import if needed)
+ * - No lat/lng: all courts (capped) when page & limit omitted; else paginated.
+ * - With lat/lng (+ radius): bounding box; results ordered by distance; lazy import if empty.
  */
 export const searchCourts = async (req, res) => {
   try {
-    const { lat, lng, radius } = req.validated; // radius in miles
+    const { lat, lng, radius, page, limit } = req.validated;
+
+    if (lat == null || lng == null) {
+      if (page == null && limit == null) {
+        const rows = await CourtLocation.findAll({
+          where: { deleted_at: null },
+          include: [
+            {
+              model: User,
+              as: 'createdBy',
+              attributes: ['id', 'full_name'],
+            },
+          ],
+          order: [['id', 'ASC']],
+          limit: MAX_LIST_ALL_COURTS,
+        });
+
+        return res.json(createResponse(rows, 'Courts retrieved successfully'));
+      }
+
+      const pageNum = page ?? 1;
+      const limitNum = Math.min(limit ?? 10, 100);
+      const offset = (pageNum - 1) * limitNum;
+
+      const { count, rows } = await CourtLocation.findAndCountAll({
+        where: { deleted_at: null },
+        include: [
+          {
+            model: User,
+            as: 'createdBy',
+            attributes: ['id', 'full_name'],
+          },
+        ],
+        limit: limitNum,
+        offset,
+        order: [['id', 'ASC']],
+      });
+
+      return paginatedResponse(
+        res,
+        rows,
+        {
+          page: pageNum,
+          limit: limitNum,
+          total: count,
+          totalPages: Math.max(1, Math.ceil(count / limitNum)),
+        },
+        'Courts retrieved successfully'
+      );
+    }
+
     const latitude = lat;
     const longitude = lng;
     const radiusMiles = radius;
@@ -59,8 +125,10 @@ export const searchCourts = async (req, res) => {
       limit: 100,
     });
 
+    const ordered = sortCourtsByDistanceFrom(courts, latitude, longitude);
+
     // Lazy import: If no courts found, import from external APIs
-    if (courts.length === 0) {
+    if (ordered.length === 0) {
       try {
         const { lazyImportCourts } = await import('../services/courtImportService.js');
         const importedCourts = await lazyImportCourts(latitude, longitude, radiusMiles);
@@ -86,7 +154,8 @@ export const searchCourts = async (req, res) => {
           limit: 100,
         });
         
-        return res.json(createResponse(allCourts, `Courts retrieved successfully (${importedCourts.length} imported)`));
+        const sorted = sortCourtsByDistanceFrom(allCourts, latitude, longitude);
+        return res.json(createResponse(sorted, `Courts retrieved successfully (${importedCourts.length} imported)`));
       } catch (importError) {
         logger.error('Court lazy import failed:', importError);
         // Return empty array if import fails
@@ -94,7 +163,7 @@ export const searchCourts = async (req, res) => {
       }
     }
 
-    return res.json(createResponse(courts, 'Courts retrieved successfully'));
+    return res.json(createResponse(ordered, 'Courts retrieved successfully'));
   } catch (error) {
     logger.error('Error searching courts:', error);
     return res.status(500).json(createErrorResponse('Failed to search courts'));
@@ -158,6 +227,9 @@ export const deleteCourt = async (req, res) => {
     }
 
     await court.update({ deleted_at: new Date() });
+    await CoachCourtLocation.destroy({
+      where: { court_id: court.id },
+    });
     return res.json(createResponse(null, 'Court deleted successfully'));
   } catch (error) {
     logger.error('Error deleting court:', error);
@@ -226,10 +298,10 @@ export const createCourt = async (req, res) => {
     const court = await CourtLocation.create({
       name,
       address,
-      latitude: latitude ? parseFloat(latitude) : null,
-      longitude: longitude ? parseFloat(longitude) : null,
+      latitude: latitude != null ? parseFloat(latitude) : null,
+      longitude: longitude != null ? parseFloat(longitude) : null,
       is_private: is_private || false,
-      is_verified: userRole === 'admin', // Auto-verify if admin creates
+      is_verified: userRoles.includes('admin'), // Auto-verify if admin creates
       created_by_user_id: userId,
       source: 'manual',
     });
@@ -259,6 +331,11 @@ export const createCourt = async (req, res) => {
 export const getCoachCourtsById = async (req, res) => {
   try {
     const coachId = req.params.id != null ? parseInt(req.params.id, 10) : null;
+    const { page, limit } = req.validated || {};
+    const isPaginated = page != null || limit != null;
+    const { limit: queryLimit, offset } = isPaginated
+      ? getPagination(page, limit)
+      : { limit: MAX_LIST_ALL_COACH_COURTS, offset: 0 };
     if (!coachId || Number.isNaN(coachId)) {
       return res.status(400).json(createErrorResponse('Valid coach ID is required'));
     }
@@ -268,7 +345,7 @@ export const getCoachCourtsById = async (req, res) => {
       return res.status(404).json(createErrorResponse('Coach not found'));
     }
 
-    const coachCourts = await CoachCourtLocation.findAll({
+    const coachCourts = await CoachCourtLocation.findAndCountAll({
       where: { coach_id: coachId },
       include: [
         {
@@ -279,10 +356,12 @@ export const getCoachCourtsById = async (req, res) => {
           attributes: ['id', 'name', 'address', 'latitude', 'longitude'],
         },
       ],
+      limit: queryLimit,
+      offset,
       order: [['preferred', 'DESC'], ['created_at', 'ASC']],
     });
 
-    const data = coachCourts.map((link) => {
+    const data = coachCourts.rows.map((link) => {
       const court = link.court;
       return {
         court_id: court.id,
@@ -294,7 +373,12 @@ export const getCoachCourtsById = async (req, res) => {
       };
     });
 
-    return res.status(200).json(createResponse(data, 'Courts retrieved successfully'));
+    if (!isPaginated) {
+      return res.status(200).json(createResponse(data, 'Courts retrieved successfully'));
+    }
+
+    const response = getPagingData(coachCourts, page, queryLimit);
+    return paginatedResponse(res, data, response.pagination, 'Courts retrieved successfully');
   } catch (error) {
     logger.error('Error listing coach courts by id:', error);
     return res.status(500).json(createErrorResponse('Failed to retrieve courts'));
@@ -308,12 +392,17 @@ export const getCoachCourtsById = async (req, res) => {
 export const getMyCoachCourts = async (req, res) => {
   try {
     const userId = req.user.id;
+    const { page, limit } = req.validated || {};
+    const isPaginated = page != null || limit != null;
+    const { limit: queryLimit, offset } = isPaginated
+      ? getPagination(page, limit)
+      : { limit: MAX_LIST_ALL_COACH_COURTS, offset: 0 };
 
     if (!(req.user.roles || []).includes('coach')) {
       return res.status(403).json(createErrorResponse(`Only coaches can view their courts. Your roles: ${(req.user.roles || []).join(', ') || 'none'}. Switch via PUT /api/auth/me/role with body { "role": "coach" } if needed.`));
     }
 
-    const coachCourts = await CoachCourtLocation.findAll({
+    const coachCourts = await CoachCourtLocation.findAndCountAll({
       where: { coach_id: userId },
       include: [
         {
@@ -330,10 +419,16 @@ export const getMyCoachCourts = async (req, res) => {
           ],
         },
       ],
+      limit: queryLimit,
+      offset,
       order: [['preferred', 'DESC'], ['created_at', 'ASC']],
     });
 
-    return res.status(200).json(createResponse(coachCourts, 'Courts retrieved successfully'));
+    if (!isPaginated) {
+      return res.status(200).json(createResponse(coachCourts.rows, 'Courts retrieved successfully'));
+    }
+    const response = getPagingData(coachCourts, page, queryLimit);
+    return paginatedResponse(res, coachCourts.rows, response.pagination, 'Courts retrieved successfully');
   } catch (error) {
     logger.error('Error listing coach courts:', error);
     return res.status(500).json(createErrorResponse('Failed to retrieve courts'));

@@ -1,13 +1,14 @@
 import { Lesson, User, Booking } from '../models/index.js';
-import { successResponse, errorResponse } from '../utils/response.js';
+import { successResponse, errorResponse, paginatedResponse } from '../utils/response.js';
 import { getPagination, getPagingData } from '../utils/pagination.js';
 import { Op } from 'sequelize';
 import { logger } from '../config/logger.js';
 
+const MAX_LIST_ALL_LESSONS = 10000;
+
 export const getLessons = async (req, res) => {
   try {
     const { page, limit, coach_id, min_price, max_price } = req.validated;
-    const { limit: queryLimit, offset } = getPagination(page, limit);
 
     const where = { is_active: true, deleted_at: null };
     if (coach_id) where.coach_id = coach_id;
@@ -16,6 +17,18 @@ export const getLessons = async (req, res) => {
       if (min_price) where.price[Op.gte] = parseFloat(min_price);
       if (max_price) where.price[Op.lte] = parseFloat(max_price);
     }
+
+    if (page == null && limit == null) {
+      const lessons = await Lesson.findAll({
+        where,
+        include: [{ model: User, as: 'coach', attributes: ['id', 'full_name', 'avatar_url'] }],
+        limit: MAX_LIST_ALL_LESSONS,
+        order: [['created_at', 'DESC']],
+      });
+      return successResponse(res, lessons, 'Lessons retrieved successfully');
+    }
+
+    const { limit: queryLimit, offset } = getPagination(page, limit);
 
     const lessons = await Lesson.findAndCountAll({
       where,
@@ -26,10 +39,45 @@ export const getLessons = async (req, res) => {
     });
 
     const response = getPagingData(lessons, page, queryLimit);
-    return successResponse(res, response.items, 'Lessons retrieved successfully');
+    return paginatedResponse(res, response.items, response.pagination, 'Lessons retrieved successfully');
   } catch (error) {
     logger.error('Get lessons error:', error);
     return errorResponse(res, 'Failed to retrieve lessons', 500);
+  }
+};
+
+export const getMyLessons = async (req, res) => {
+  try {
+    if (!(req.user.roles || []).includes('coach')) {
+      return errorResponse(res, 'Only coaches can view their lessons', 403);
+    }
+
+    const { page, limit } = req.validated || {};
+    const isPaginated = page != null || limit != null;
+    const { limit: queryLimit, offset } = isPaginated
+      ? getPagination(page, limit)
+      : { limit: MAX_LIST_ALL_LESSONS, offset: 0 };
+
+    const lessons = await Lesson.findAndCountAll({
+      where: {
+        coach_id: req.user.id,
+        deleted_at: null,
+      },
+      include: [{ model: User, as: 'coach', attributes: ['id', 'full_name', 'avatar_url'] }],
+      limit: queryLimit,
+      offset,
+      order: [['created_at', 'DESC']],
+    });
+
+    if (!isPaginated) {
+      return successResponse(res, lessons.rows, 'My lessons retrieved successfully');
+    }
+
+    const response = getPagingData(lessons, page, queryLimit);
+    return paginatedResponse(res, response.items, response.pagination, 'My lessons retrieved successfully');
+  } catch (error) {
+    logger.error('Get my lessons error:', error);
+    return errorResponse(res, 'Failed to retrieve my lessons', 500);
   }
 };
 

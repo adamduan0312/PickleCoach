@@ -9,7 +9,7 @@
  * to use it (no 403). E.g. Admin cannot use Switch Role or Delete My Account, so
  * those are only in Coach and Student flows. Coach cannot use List Coaches (Search)
  * or Create Booking, so those are only in Admin and Student flows. Student cannot
- * use Update Booking Status (coach/admin only), so it is only in Admin and Coach flows.
+ * use explicit booking action endpoints (accept/decline/complete/student-no-show/cancel).
  */
 
 import fs from 'fs';
@@ -64,18 +64,13 @@ const ADMIN_ORDER = [
   ['Authentication', 'Refresh Token'],
   ['Admin', 'Get Dashboard Stats'],
   ['Admin', 'Get Audit Logs'],
-  ['Admin', 'Get Alerts'],
-  ['Admin', 'Resolve Alert'],
   ['Admin', 'Create Admin User'],
   ['Admin', 'Get All Users (Admin)'],
   ['Admin', 'Get User By ID (Admin)'],
   ['Admin', 'Update User (Admin)'],
   ['Admin', 'Adjust User Reliability'],
-  ['Payments', 'Create Payment (Admin)'],
-  ['Payments', 'Process Refund (Admin)'],
-  ['Payments', 'Update Payment Status (Admin)'],
-  ['Disputes', 'Resolve Dispute (Admin)'],
   ['Notifications', 'Create Notification (Admin)'],
+  ['Admin', 'Get My Notifications'],
   ['Admin', 'Get Coach Courts (Admin)'],
   ['Admin', 'Delete Coach Court (Admin)'],
   ['Admin', 'Delete Coach Availability (Admin)'],
@@ -91,15 +86,19 @@ const ADMIN_ORDER = [
   ['Authentication', 'Confirm Email Change'],
   // Admin cannot use Switch Role or Delete My Account (403)
   ['Authentication', 'Logout'],
-  ['Courts', 'Get All Courts'],
+  ['Courts', 'List/Search Courts'],
   ['Courts', 'Get Court By ID'],
-  ['Lessons', 'Get All Lessons'],
+  ['Lessons', 'Get All Lessons (Filter by coach_id)'],
   ['Lessons', 'Get Lesson By ID'],
   ['Disputes', 'Get All Disputes'],
   ['Disputes', 'Get Dispute By ID'],
-  ['Bookings', 'Accept Booking'],
-  ['Bookings', 'Decline Booking'],
-  ['Bookings', 'Update Booking Status'],
+  ['Admin', 'Get Bookings (Admin)'],
+  ['Admin', 'Get Booking By ID (Admin)'],
+  ['Admin', 'Cancel Booking (Admin)'],
+  ['Admin', 'Mark Student No-Show (Admin)'],
+  ['Admin', 'Mark Coach No-Show (Admin)'],
+  ['Admin', 'Refund Booking (Admin)'],
+  ['Disputes', 'Resolve Dispute (Admin)'],
   ['Payments', 'Get My Payments'],
   ['Payments', 'Get Payment By ID'],
   ['Webhooks', 'Stripe Webhook'],
@@ -122,26 +121,28 @@ const COACH_ORDER = [
   ['Coaches', 'Get Coach Availability'],
   ['Coaches', 'Create Availability'],
   ['Coaches', 'Delete Availability'],
-  ['Courts', 'Get All Courts'],
+  ['Courts', 'List/Search Courts'],
   ['Courts', 'Get Court By ID'],
   ['Courts', 'Create Court'],
   ['Courts', 'Delete Court'],
   ['Coaches', 'Add Court to Coach'],
   ['Coaches', 'List My Courts'],
+  ['Coaches', 'Get My Lessons'],
   ['Coaches', 'Remove Court from Coach'],
   ['Coaches', 'Initiate Stripe Connect Onboarding'],
   ['Coaches', 'Get Stripe Connect Status'],
-  ['Lessons', 'Get All Lessons'],
+  ['Lessons', 'Get All Lessons (Filter by coach_id)'],
   ['Lessons', 'Get Lesson By ID'],
   ['Lessons', 'Create Lesson'],
   ['Lessons', 'Update Lesson'],
   ['Lessons', 'Delete Lesson'],
-  ['Bookings', 'Get My Bookings'],
+  ['Coaches', 'Get Coach Bookings'],
   ['Bookings', 'Get Booking By ID'],
   ['Bookings', 'Accept Booking'],
   ['Bookings', 'Decline Booking'],
-  ['Bookings', 'Update Booking Status'],
   ['Bookings', 'Cancel Booking'],
+  ['Bookings', 'Complete Booking'],
+  ['Bookings', 'Mark Student No-Show'],
   ['Bookings', 'Request Reschedule'],
   ['Reschedules', 'Get Reschedule History'],
   ['Payments', 'Get My Payments'],
@@ -182,14 +183,14 @@ const STUDENT_ORDER = [
   ['Coaches', 'Get Coach By ID'],
   ['Coaches', 'Get Coach Courts'],
   ['Coaches', 'Get Coach Availability'],
-  ['Courts', 'Get All Courts'],
+  ['Courts', 'List/Search Courts'],
   ['Courts', 'Get Court By ID'],
-  ['Lessons', 'Get All Lessons'],
+  ['Lessons', 'Get All Lessons (Filter by coach_id)'],
   ['Lessons', 'Get Lesson By ID'],
   ['Bookings', 'Create Booking'],
   ['Bookings', 'Get My Bookings'],
   ['Bookings', 'Get Booking By ID'],
-  // Update Booking Status is coach/admin only; student gets 403
+  // Students do not get coach/admin booking override endpoints in flow ordering
   ['Bookings', 'Cancel Booking'],
   ['Bookings', 'Request Reschedule'],
   ['Reschedules', 'Get Reschedule History'],
@@ -223,15 +224,64 @@ const adminFolder = buildFlowFolder(
 
 const coachFolder = buildFlowFolder(
   '2 – Flow: Coach',
-  'All coach endpoints in user-flow order. Run in sequence: Health → Register/Login → Profile → Coach profile → Courts → Availability → Stripe Connect → Lessons → Bookings → Payments → Reviews → Messages → Disputes → Notifications → Auth extras. See backend/POSTMAN_TESTING_GUIDE.md.',
+  'All coach endpoints in user-flow order. Run in sequence: Health → Register/Login → Profile → Coach profile → Courts → Availability → Stripe Connect → Lessons → Bookings → Payments → Reviews → Messages → Disputes → Notifications → Auth extras. See backend/POSTMAN_TESTING_GUIDE.md.\n\nBooking MVP: student uses POST /bookings; coach uses PUT .../accept or PUT .../decline only for pending requests (coach on that booking only).',
   COACH_ORDER
 );
 
 const studentFolder = buildFlowFolder(
   '3 – Flow: Student',
-  'All student endpoints in user-flow order. Run in sequence: Health → Register/Login → Profile → Search coaches → Open coach (GET /coaches/:id) → Get coach courts (GET /coaches/:id/courts) → Check availability (GET /coaches/:id/availability) → Create Booking → Bookings → Payments → Reviews → Messages → Disputes → Notifications → Auth extras. See backend/POSTMAN_TESTING_GUIDE.md.',
+  'All student endpoints in user-flow order. Run in sequence: Health → Register/Login → Profile → Search coaches → Open coach (GET /coaches/:id) → Get coach courts (GET /coaches/:id/courts) → Check availability (GET /coaches/:id/availability) → Create Booking → Bookings → Payments → Reviews → Messages → Disputes → Notifications → Auth extras. See backend/POSTMAN_TESTING_GUIDE.md.\n\nBooking MVP: POST /bookings creates a pending request; the coach accepts or declines with PUT .../accept | PUT .../decline.',
   STUDENT_ORDER
 );
+
+function applySeededLoginExample(flowFolder, email, password) {
+  const loginReq = flowFolder.item.find((it) => /\. Login$/.test(it.name));
+  if (!loginReq?.request) return;
+  loginReq.request.body = {
+    mode: 'raw',
+    raw: JSON.stringify({ email, password }, null, 2),
+  };
+}
+
+function applySeededRegisterExample(flowFolder, payload) {
+  const registerReq = flowFolder.item.find((it) => /\. Register$/.test(it.name));
+  if (!registerReq?.request) return;
+  registerReq.request.body = {
+    mode: 'raw',
+    raw: JSON.stringify(payload, null, 2),
+  };
+}
+
+applySeededLoginExample(adminFolder, 'admin@picklecoach.com', 'admin123');
+applySeededLoginExample(coachFolder, 'coach1@example.com', 'password123');
+applySeededLoginExample(studentFolder, 'student1@example.com', 'password123');
+applySeededRegisterExample(adminFolder, {
+  full_name: 'Adam Duan',
+  email: 'adamduan0312@gmail.com',
+  password: '03122003',
+  role: 'admin',
+  phone: '+1234567890',
+  timezone: 'UTC',
+  avatar_url: '',
+});
+applySeededRegisterExample(coachFolder, {
+  full_name: 'Coach One',
+  email: 'coach1@example.com',
+  password: 'password123',
+  role: 'coach',
+  phone: '+1234567890',
+  timezone: 'UTC',
+  avatar_url: '',
+});
+applySeededRegisterExample(studentFolder, {
+  full_name: 'Student One',
+  email: 'student1@example.com',
+  password: 'password123',
+  role: 'student',
+  phone: '+1234567890',
+  timezone: 'UTC',
+  avatar_url: '',
+});
 
 const flowCollection = {
   ...collection,

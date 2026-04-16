@@ -28,6 +28,11 @@ const DisputeType = sequelize.define('dispute_types', {
     type: DataTypes.ENUM('low', 'medium', 'high'),
     defaultValue: 'medium',
   },
+  affects_reliability_score: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: false,
+  },
 }, {
   tableName: 'dispute_types',
   timestamps: true,

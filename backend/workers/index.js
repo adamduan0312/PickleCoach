@@ -6,6 +6,8 @@ import * as payoutWorker from './payoutWorker.js';
 import * as reliabilityWorker from './reliabilityWorker.js';
 import * as chargePaidRescheduleWorker from './chargePaidRescheduleWorker.js';
 import * as retryFailedPaymentsWorker from './retryFailedPaymentsWorker.js';
+import * as stripeReconciliationWorker from './stripeReconciliationWorker.js';
+import * as pendingBookingExpiryWorker from './pendingBookingExpiryWorker.js';
 
 let workersRunning = false;
 
@@ -65,6 +67,15 @@ export const startWorkers = () => {
     }
   });
 
+  // Expire stale pending bookings (no coach response): every 15 minutes
+  cron.schedule('*/15 * * * *', async () => {
+    try {
+      await pendingBookingExpiryWorker.expireStalePendingBookings();
+    } catch (error) {
+      logger.error('Error in pending booking expiry worker:', error);
+    }
+  });
+
   // Recalculate reliability: daily at 2 AM
   cron.schedule('0 2 * * *', async () => {
     try {
@@ -74,14 +85,7 @@ export const startWorkers = () => {
     }
   });
 
-  // Monthly coach reliability reset: 1st of each month at 3 AM
-  cron.schedule('0 3 1 * *', async () => {
-    try {
-      await reliabilityWorker.monthlyCoachReliabilityReset();
-    } catch (error) {
-      logger.error('Error in monthly coach reliability reset:', error);
-    }
-  });
+  // V2 reliability uses rolling window + decay, so hard monthly resets are disabled.
 
   workersRunning = true;
   logger.info('✅ Background workers started successfully');
@@ -90,8 +94,10 @@ export const startWorkers = () => {
   logger.info('   - Process payouts: every 10 minutes');
   logger.info('   - Process paid reschedules: every 10 minutes');
   logger.info('   - Retry failed payments: every 10 minutes');
+  logger.info('   - Pending booking expiry: every 15 minutes (PENDING_BOOKING_EXPIRY_HOURS, default 24)');
+  logger.info('   - Stripe reconciliation: hourly');
   logger.info('   - Recalculate reliability: daily at 2 AM');
-  logger.info('   - Monthly coach reliability reset: 1st of month at 3 AM');
+  logger.info('   - Monthly coach reliability reset: disabled (V2 decay model)');
 };
 
 /**

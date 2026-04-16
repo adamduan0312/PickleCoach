@@ -90,8 +90,8 @@ Several update endpoints use `req.body` directly without validation:
 - `POST /api/disputes`
 - `PUT /api/disputes/:id/resolve`
 - `POST /api/notifications`
-- `PUT /api/payments/:id/status`
-- `POST /api/payments/:id/refund`
+
+_(Removed for MVP: `PUT /api/payments/:id/status`, `POST /api/payments/:id/refund`.)_
 
 **Note**: These endpoints still work correctly, but adding validation would:
 - Provide better error messages

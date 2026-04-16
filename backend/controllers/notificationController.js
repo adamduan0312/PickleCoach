@@ -1,12 +1,17 @@
 import { Notification, User } from '../models/index.js';
-import { successResponse, errorResponse } from '../utils/response.js';
+import { successResponse, errorResponse, paginatedResponse } from '../utils/response.js';
 import { getPagination, getPagingData } from '../utils/pagination.js';
 import { logger } from '../config/logger.js';
+
+const MAX_LIST_ALL_NOTIFICATIONS = 10000;
 
 export const getNotifications = async (req, res) => {
   try {
     const { page, limit, status } = req.validated;
-    const { limit: queryLimit, offset } = getPagination(page, limit);
+    const isPaginated = page != null || limit != null;
+    const { limit: queryLimit, offset } = isPaginated
+      ? getPagination(page, limit)
+      : { limit: MAX_LIST_ALL_NOTIFICATIONS, offset: 0 };
 
     const where = { user_id: req.user.id };
     if (status) where.status = status;
@@ -18,8 +23,12 @@ export const getNotifications = async (req, res) => {
       order: [['created_at', 'DESC']],
     });
 
+    if (!isPaginated) {
+      return successResponse(res, notifications.rows, 'Notifications retrieved successfully');
+    }
+
     const response = getPagingData(notifications, page, queryLimit);
-    return successResponse(res, response.items, 'Notifications retrieved successfully');
+    return paginatedResponse(res, response.items, response.pagination, 'Notifications retrieved successfully');
   } catch (error) {
     logger.error('Get notifications error:', error);
     return errorResponse(res, 'Failed to retrieve notifications', 500);

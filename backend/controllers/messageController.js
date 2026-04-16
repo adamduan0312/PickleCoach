@@ -1,12 +1,19 @@
 import { Op } from 'sequelize';
 import { Message, Conversation, Booking, User } from '../models/index.js';
-import { successResponse, errorResponse } from '../utils/response.js';
+import { successResponse, errorResponse, paginatedResponse } from '../utils/response.js';
 import { getPagination, getPagingData } from '../utils/pagination.js';
 import { logger } from '../config/logger.js';
 
+const MAX_LIST_ALL_CONVERSATIONS = 10000;
+const MAX_LIST_ALL_MESSAGES = 10000;
+
 export const getConversations = async (req, res) => {
   try {
-    const { booking_id } = req.validated;
+    const { booking_id, page, limit } = req.validated;
+    const isPaginated = page != null || limit != null;
+    const { limit: queryLimit, offset } = isPaginated
+      ? getPagination(page, limit)
+      : { limit: MAX_LIST_ALL_CONVERSATIONS, offset: 0 };
     const where = {};
     if (booking_id) where.booking_id = booking_id;
 
@@ -33,7 +40,7 @@ export const getConversations = async (req, res) => {
       where.booking_id = booking_id;
     }
 
-    const conversations = await Conversation.findAll({
+    const conversations = await Conversation.findAndCountAll({
       where,
       include: [
         { model: Booking, as: 'booking' },
@@ -47,10 +54,18 @@ export const getConversations = async (req, res) => {
           ],
         },
       ],
+      limit: queryLimit,
+      offset,
+      distinct: true,
       order: [['created_at', 'DESC']],
     });
 
-    return successResponse(res, conversations, 'Conversations retrieved successfully');
+    if (!isPaginated) {
+      return successResponse(res, conversations.rows, 'Conversations retrieved successfully');
+    }
+
+    const response = getPagingData(conversations, page, queryLimit);
+    return paginatedResponse(res, response.items, response.pagination, 'Conversations retrieved successfully');
   } catch (error) {
     logger.error('Get conversations error:', error);
     return errorResponse(res, 'Failed to retrieve conversations', 500);
@@ -61,21 +76,14 @@ export const getConversationById = async (req, res) => {
   try {
     const { id } = req.params;
     const { page, limit } = req.validated;
-    const { limit: queryLimit, offset } = getPagination(page, limit);
+    const isPaginated = page != null || limit != null;
+    const { limit: queryLimit, offset } = isPaginated
+      ? getPagination(page, limit)
+      : { limit: MAX_LIST_ALL_MESSAGES, offset: 0 };
 
     const conversation = await Conversation.findByPk(id, {
       include: [
         { model: Booking, as: 'booking' },
-        {
-          model: Message,
-          as: 'messages',
-          limit: queryLimit,
-          offset,
-          order: [['created_at', 'ASC']],
-          include: [
-            { model: User, as: 'sender', attributes: ['id', 'full_name', 'avatar_url'] },
-          ],
-        },
       ],
     });
 
@@ -90,7 +98,22 @@ export const getConversationById = async (req, res) => {
       }
     }
 
-    return successResponse(res, conversation, 'Conversation retrieved successfully');
+    const messages = await Message.findAndCountAll({
+      where: { conversation_id: id },
+      include: [{ model: User, as: 'sender', attributes: ['id', 'full_name', 'avatar_url'] }],
+      limit: queryLimit,
+      offset,
+      order: [['created_at', 'ASC']],
+    });
+
+    const payload = conversation.toJSON();
+    payload.messages = messages.rows;
+    if (isPaginated) {
+      const paging = getPagingData(messages, page, queryLimit);
+      payload.messages_pagination = paging.pagination;
+    }
+
+    return successResponse(res, payload, 'Conversation retrieved successfully');
   } catch (error) {
     logger.error('Get conversation error:', error);
     return errorResponse(res, 'Failed to retrieve conversation', 500);

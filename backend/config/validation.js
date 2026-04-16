@@ -52,13 +52,8 @@ export const createBookingSchema = Joi.object({
   player_ids: Joi.array().items(Joi.number().integer()).optional(),
   court_location_id: Joi.number().integer().positive().optional(),
   payment_method: Joi.string().valid('stripe', 'apple_pay', 'google_pay', 'card').default('stripe'),
-});
-
-export const createPaymentSchema = Joi.object({
-  booking_id: Joi.number().integer().positive().required(),
-  payment_method: Joi.string().valid('stripe', 'apple_pay', 'google_pay', 'card').default('stripe'),
-  payment_intent_id: Joi.string().optional(),
-  charge_id: Joi.string().optional(),
+  payment_method_id: Joi.string().max(255).optional(),
+  idempotency_key: Joi.string().trim().min(8).max(255).optional(),
 });
 
 export const rescheduleSchema = Joi.object({
@@ -161,8 +156,35 @@ export const updateLessonSchema = Joi.object({
   is_active: Joi.boolean().optional(),
 });
 
-export const updateBookingStatusSchema = Joi.object({
-  status: Joi.string().valid('pending', 'confirmed', 'completed', 'cancelled', 'no_show').required(),
+export const completeBookingSchema = Joi.object({
+  notes: Joi.string().max(255).allow('').optional(),
+});
+
+/** Body for POST .../student-no-show (and legacy .../no-show): coach/admin records primary student did not attend. */
+export const noShowBookingSchema = Joi.object({
+  notes: Joi.string().max(255).allow('').optional(),
+});
+
+/** Admin: mark booking outcome as coach did not attend. Optionally resolve a linked coach_no_show dispute. */
+export const adminCoachNoShowBookingSchema = Joi.object({
+  dispute_id: Joi.number().integer().positive().optional(),
+  resolution_action_id: Joi.number().integer().positive().optional(),
+  resolution_notes: Joi.string().max(1000).allow('').optional(),
+  notes: Joi.string().max(255).allow('').optional(),
+});
+
+/** PUT /api/admin/users/:id/reliability — which role row to adjust (defaults to coach). */
+export const adminAdjustReliabilitySchema = Joi.object({
+  new_score: Joi.number().min(0).max(100).required(),
+  role: Joi.string().valid('coach', 'student').default('coach'),
+  reason: Joi.string().max(500).allow('').optional(),
+  explanation: Joi.string().max(2000).allow('').optional(),
+});
+
+export const adminBookingRefundSchema = Joi.object({
+  refund_amount: Joi.number().positive().min(0.01).optional(),
+  reason: Joi.string().valid('requested_by_customer', 'duplicate', 'fraudulent').default('requested_by_customer'),
+  reason_notes: Joi.string().max(255).allow('').optional(),
 });
 
 export const updateReviewSchema = Joi.object({
@@ -170,14 +192,6 @@ export const updateReviewSchema = Joi.object({
   comment: Joi.string().max(1000).allow('').optional(),
   attendance_badges: Joi.array().items(Joi.string()).optional(),
   visibility: Joi.string().valid('public', 'private', 'semi_public').optional(),
-});
-
-export const updatePaymentStatusSchema = Joi.object({
-  payment_status: Joi.string().valid('pending', 'captured', 'failed', 'refunded', 'partially_refunded').optional(),
-  escrow_status: Joi.string().valid('held', 'released', 'refunded').optional(),
-  charge_id: Joi.string().optional(),
-  transfer_id: Joi.string().optional(),
-  payout_id: Joi.string().optional(),
 });
 
 export const createCoachProfileSchema = Joi.object({
@@ -255,20 +269,17 @@ export const createDisputeSchema = Joi.object({
 });
 
 export const resolveDisputeSchema = Joi.object({
+  resolution_action_id: Joi.number().integer().positive().required(),
   resolution_notes: Joi.string().max(1000).allow('').optional(),
-  resolution_action_id: Joi.number().integer().positive().optional(),
+  /** US dollars (decimal), not cents. Required when the chosen action is `partial_refund`. */
+  refund_amount: Joi.number().positive().min(0.01).optional(),
 });
 
 export const createNotificationSchema = Joi.object({
   user_id: Joi.number().integer().positive().required(),
   type: Joi.string().required(),
-  channel: Joi.string().valid('email', 'sms', 'push').required(),
+  channel: Joi.string().valid('email', 'sms', 'in_app').required(),
   payload: Joi.object().optional(),
-});
-
-export const processRefundSchema = Joi.object({
-  amount: Joi.number().positive().optional(), // If not provided, full refund
-  reason: Joi.string().max(255).optional(),
 });
 
 // Query parameter validation for GET endpoints (pagination, filters, DoS prevention)
@@ -278,21 +289,36 @@ const paginationQuery = {
 };
 
 export const getUsersQuerySchema = Joi.object({
-  ...paginationQuery,
+  page: Joi.number().integer().min(1).default(1),
+  /** Omit `limit` to return all users (admin list). Pass `limit` to paginate. */
+  limit: Joi.number().integer().min(1).max(10000).optional(),
   role: Joi.string().valid('student', 'coach', 'admin').optional(),
   include_deleted: Joi.string().valid('true', 'false').optional(),
   search: Joi.string().max(200).allow('').optional(),
 });
 
 export const getBookingsQuerySchema = Joi.object({
-  ...paginationQuery,
-  status: Joi.string().valid('pending', 'confirmed', 'completed', 'cancelled', 'no_show').optional(),
+  page: Joi.number().integer().min(1).optional(),
+  limit: Joi.number().integer().min(1).max(10000).optional(),
+  status: Joi.string()
+    .valid(
+      'pending',
+      'confirmed',
+      'awaiting_verification',
+      'completed',
+      'cancelled',
+      'disputed',
+      'no_show',
+      'coach_no_show'
+    )
+    .optional(),
   coach_id: Joi.number().integer().positive().optional(),
   student_id: Joi.number().integer().positive().optional(),
 });
 
 export const getCoachesQuerySchema = Joi.object({
-  ...paginationQuery,
+  page: Joi.number().integer().min(1).optional(),
+  limit: Joi.number().integer().min(1).max(10000).optional(),
   lat: Joi.number().min(-90).max(90).optional(),
   lng: Joi.number().min(-180).max(180).optional(),
   radius: Joi.number().positive().max(500).default(10), // miles, cap 500
@@ -301,53 +327,82 @@ export const getCoachesQuerySchema = Joi.object({
 });
 
 export const getLessonsQuerySchema = Joi.object({
-  ...paginationQuery,
+  page: Joi.number().integer().min(1).optional(),
+  limit: Joi.number().integer().min(1).max(10000).optional(),
   coach_id: Joi.number().integer().positive().optional(),
   min_price: Joi.number().min(0).optional(),
   max_price: Joi.number().min(0).optional(),
 });
 
+export const getMyLessonsQuerySchema = Joi.object({
+  page: Joi.number().integer().min(1).optional(),
+  limit: Joi.number().integer().min(1).max(10000).optional(),
+});
+
 export const getReviewsQuerySchema = Joi.object({
-  ...paginationQuery,
+  page: Joi.number().integer().min(1).optional(),
+  limit: Joi.number().integer().min(1).max(10000).optional(),
   target_user_id: Joi.number().integer().positive().optional(),
   reviewer_id: Joi.number().integer().positive().optional(),
 });
 
 export const getDisputesQuerySchema = Joi.object({
-  ...paginationQuery,
+  page: Joi.number().integer().min(1).optional(),
+  limit: Joi.number().integer().min(1).max(10000).optional(),
   status: Joi.string().valid('open', 'under_review', 'resolved').optional(),
   booking_id: Joi.number().integer().positive().optional(),
 });
 
 export const getNotificationsQuerySchema = Joi.object({
-  page: Joi.number().integer().min(1).default(1),
-  limit: Joi.number().integer().min(1).max(100).default(20),
+  page: Joi.number().integer().min(1).optional(),
+  limit: Joi.number().integer().min(1).max(10000).optional(),
   status: Joi.string().valid('pending', 'sent', 'failed', 'read').optional(),
 });
 
 export const getPaymentsQuerySchema = Joi.object({
-  ...paginationQuery,
-  status: Joi.string().valid('pending', 'captured', 'failed', 'refunded', 'partially_refunded').optional(),
-  escrow_status: Joi.string().valid('held', 'released', 'refunded').optional(),
+  page: Joi.number().integer().min(1).optional(),
+  limit: Joi.number().integer().min(1).max(10000).optional(),
+  status: Joi.string()
+    .valid(
+      'pending',
+      'captured',
+      'failed',
+      'refunded',
+      'partially_refunded',
+      'pending_capture',
+      'pending_void'
+    )
+    .optional(),
+  escrow_status: Joi.string()
+    .valid('held', 'released', 'refunded', 'disputed', 'manual_payout_required', 'pending_release')
+    .optional(),
   student_id: Joi.number().integer().positive().optional(),
   coach_id: Joi.number().integer().positive().optional(),
 });
 
 export const getConversationsQuerySchema = Joi.object({
   booking_id: Joi.number().integer().positive().optional(),
+  page: Joi.number().integer().min(1).optional(),
+  limit: Joi.number().integer().min(1).max(10000).optional(),
 });
 
 export const getConversationByIdQuerySchema = Joi.object({
-  page: Joi.number().integer().min(1).default(1),
-  limit: Joi.number().integer().min(1).max(100).default(50),
+  page: Joi.number().integer().min(1).optional(),
+  limit: Joi.number().integer().min(1).max(10000).optional(),
+});
+
+export const getCoachCourtsQuerySchema = Joi.object({
+  page: Joi.number().integer().min(1).optional(),
+  limit: Joi.number().integer().min(1).max(10000).optional(),
+});
+
+export const getCoachAvailabilityQuerySchema = Joi.object({
+  page: Joi.number().integer().min(1).optional(),
+  limit: Joi.number().integer().min(1).max(10000).optional(),
 });
 
 export const getRescheduleHistoryQuerySchema = Joi.object({
   booking_id: Joi.number().integer().positive().optional(),
-});
-
-export const getAlertsQuerySchema = Joi.object({
-  resolved: Joi.string().valid('true', 'false').default('false'),
 });
 
 export const getAuditLogsQuerySchema = Joi.object({
@@ -360,8 +415,11 @@ export const getAuditLogsQuerySchema = Joi.object({
   record_id: Joi.number().integer().min(0).optional(),
 });
 
+/** GET /api/courts — list-all: omit lat/lng; omit page & limit to return all (server-capped). Pass page and/or limit to paginate. Geo: lat+lng together; optional radius. */
 export const searchCourtsQuerySchema = Joi.object({
-  lat: Joi.number().min(-90).max(90).required(),
-  lng: Joi.number().min(-180).max(180).required(),
-  radius: Joi.number().positive().max(100).default(10), // miles
-});
+  page: Joi.number().integer().min(1).optional(),
+  limit: Joi.number().integer().min(1).max(10000).optional(),
+  lat: Joi.number().min(-90).max(90).optional(),
+  lng: Joi.number().min(-180).max(180).optional(),
+  radius: Joi.number().positive().max(100).default(10), // miles (geo search only)
+}).and('lat', 'lng');

@@ -113,9 +113,8 @@ export const sendNotification = async (notificationId) => {
     } else if (notification.channel === 'sms' && notification.user?.phone) {
       const message = getSMSContent(notification.type, notification.payload);
       sent = await sendSMS(notification.user.phone, message);
-    } else if (notification.channel === 'push') {
-      // Push notifications would be handled by FCM or similar
-      // For now, mark as sent if channel is push
+    } else if (notification.channel === 'in_app') {
+      // Stored for in-app feed; no external provider
       sent = true;
     }
 
@@ -152,6 +151,7 @@ const getEmailSubject = (type, payload) => {
     'email_verification': 'Verify Your PickleCoach Email',
     'email_change_confirm': 'Confirm Your New PickleCoach Email',
     'email_changed_notification': 'Your PickleCoach Email Was Changed',
+    booking_request_coach: 'New booking request — PickleCoach',
   };
   return subjects[type] || 'Notification from PickleCoach';
 };
@@ -215,6 +215,13 @@ const getEmailContent = (type, payload) => {
       <p>If you made this change, no further action is needed.</p>
       <p>If you did <strong>not</strong> make this change, please contact support immediately.</p>
     `,
+    booking_request_coach: `
+      <h2>You have a new booking request</h2>
+      <p><strong>${payload?.student_name || 'A student'}</strong> requested a lesson: <strong>${payload?.lesson_title || 'Lesson'}</strong>.</p>
+      <p>Scheduled: ${scheduledAt}</p>
+      <p>Booking ID: ${payload?.booking_id ?? ''}</p>
+      <p>Please open PickleCoach and accept or decline this request before it expires.</p>
+    `,
   };
   
   return templates[type] || `<p>You have a new notification from PickleCoach.</p>`;
@@ -230,6 +237,7 @@ const getSMSContent = (type, payload) => {
     'pre_lesson_48h': `PickleCoach: Lesson reminder - ${scheduledAt} with ${payload?.coach_name || 'your coach'}`,
     'pre_lesson_24h': `PickleCoach: Lesson tomorrow at ${scheduledAt}`,
     'pre_lesson_1h': `PickleCoach: Lesson in 1 hour at ${scheduledAt}`,
+    booking_request_coach: `PickleCoach: New booking request from ${payload?.student_name || 'a student'} — ${payload?.lesson_title || 'lesson'} at ${scheduledAt}. Accept or decline in the app.`,
   };
   
   return messages[type] || 'You have a new notification from PickleCoach.';
@@ -327,5 +335,68 @@ export const sendReminderNotification = async (booking, reminderType) => {
   } catch (error) {
     logger.error('Error sending reminder notification:', error);
     throw error;
+  }
+};
+
+/**
+ * Notify coach when a student creates a pending booking (log + in-app + email when SendGrid is configured).
+ */
+export const notifyCoachNewBookingRequest = async (bookingId) => {
+  const { Booking, User, Lesson } = await import('../models/index.js');
+
+  const booking = await Booking.findByPk(bookingId, {
+    include: [
+      { model: User, as: 'coach', attributes: ['id', 'full_name', 'email'] },
+      { model: User, as: 'primaryStudent', attributes: ['id', 'full_name', 'email'] },
+      { model: Lesson, as: 'lesson', attributes: ['id', 'title'] },
+    ],
+  });
+
+  if (!booking) {
+    logger.warn({ component: 'booking', event: 'notify_coach_new_booking_missing', bookingId });
+    return;
+  }
+
+  const payload = {
+    booking_id: booking.id,
+    scheduled_at: booking.scheduled_at,
+    student_name: booking.primaryStudent?.full_name || 'A student',
+    lesson_title: booking.lesson?.title || 'Lesson',
+    coach_name: booking.coach?.full_name,
+  };
+
+  logger.info({
+    component: 'booking',
+    event: 'new_booking_request_for_coach',
+    booking_id: booking.id,
+    coach_id: booking.coach_id,
+    student_id: booking.primary_student_id,
+    scheduled_at: booking.scheduled_at,
+  });
+
+  const inApp = await createNotification(booking.coach_id, 'booking_request_coach', 'in_app', payload);
+  try {
+    await sendNotification(inApp.id);
+  } catch (error) {
+    logger.warn({
+      component: 'booking',
+      event: 'coach_new_booking_in_app_notify_failed',
+      bookingId,
+      message: error?.message,
+    });
+  }
+
+  if (booking.coach?.email) {
+    const emailNotif = await createNotification(booking.coach_id, 'booking_request_coach', 'email', payload);
+    try {
+      await sendNotification(emailNotif.id);
+    } catch (error) {
+      logger.warn({
+        component: 'booking',
+        event: 'coach_new_booking_email_failed',
+        bookingId,
+        message: error?.message,
+      });
+    }
   }
 };

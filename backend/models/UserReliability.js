@@ -6,6 +6,13 @@ const UserReliability = sequelize.define('user_reliability', {
     type: DataTypes.INTEGER,
     primaryKey: true,
   },
+  role: {
+    type: DataTypes.STRING(20),
+    primaryKey: true,
+    validate: {
+      isIn: [['coach', 'student']],
+    },
+  },
   total_bookings: {
     type: DataTypes.INTEGER,
     defaultValue: 0,
@@ -19,6 +26,22 @@ const UserReliability = sequelize.define('user_reliability', {
     defaultValue: 0,
   },
   late_cancels: {
+    type: DataTypes.INTEGER,
+    defaultValue: 0,
+  },
+  late_arrivals: {
+    type: DataTypes.INTEGER,
+    defaultValue: 0,
+  },
+  coach_no_show_disputes: {
+    type: DataTypes.INTEGER,
+    defaultValue: 0,
+  },
+  misconduct_disputes: {
+    type: DataTypes.INTEGER,
+    defaultValue: 0,
+  },
+  lesson_not_completed_disputes: {
     type: DataTypes.INTEGER,
     defaultValue: 0,
   },

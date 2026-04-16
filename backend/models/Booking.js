@@ -32,7 +32,16 @@ const Booking = sequelize.define('bookings', {
     allowNull: false,
   },
   status: {
-    type: DataTypes.ENUM('pending', 'confirmed', 'awaiting_verification', 'completed', 'cancelled', 'disputed', 'no_show'),
+    type: DataTypes.ENUM(
+      'pending',
+      'confirmed',
+      'awaiting_verification',
+      'completed',
+      'cancelled',
+      'disputed',
+      'no_show',
+      'coach_no_show'
+    ),
     defaultValue: 'pending',
   },
   payout_status: {
@@ -40,7 +49,7 @@ const Booking = sequelize.define('bookings', {
     defaultValue: 'none',
   },
   cancelled_by: {
-    type: DataTypes.ENUM('student', 'coach', 'admin'),
+    type: DataTypes.ENUM('student', 'coach', 'admin', 'system'),
     allowNull: true,
   },
   cancelled_at: {
@@ -91,6 +100,10 @@ const Booking = sequelize.define('bookings', {
     type: DataTypes.STRING(50),
     allowNull: true,
   },
+  idempotency_key: {
+    type: DataTypes.STRING(255),
+    allowNull: true,
+  },
 }, {
   tableName: 'bookings',
   timestamps: true,
@@ -112,6 +125,7 @@ const Booking = sequelize.define('bookings', {
     { fields: ['court_location_id'] },
     { fields: ['coach_id', 'status', 'scheduled_at'] },
     { fields: ['primary_student_id', 'status', 'scheduled_at'] },
+    { fields: ['primary_student_id', 'idempotency_key'], unique: true, name: 'bookings_student_idempotency_unique' },
   ],
 });
 

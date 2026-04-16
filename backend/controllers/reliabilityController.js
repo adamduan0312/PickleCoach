@@ -3,14 +3,26 @@ import { Op } from 'sequelize';
 import { successResponse, errorResponse } from '../utils/response.js';
 import { logger } from '../config/logger.js';
 
+const DISPUTE_PENALTY_WEIGHTS = {
+  late_arrival: 5,
+  lesson_not_completed: 10,
+  coach_no_show: 35,
+  misconduct: 25,
+};
+
 const getDefaultCoachReliability = (userId) => ({
   user_id: userId,
+  role: 'coach',
   total_bookings: 0,
   // Penalized reschedules only (affects_reliability = true) comes from reliabilityService.
   reschedules: 0,
   // Penalized paid reschedules only (paid + affects_reliability=true + captured).
   paid_reschedules: 0,
   late_cancels: 0,
+  late_arrivals: 0,
+  coach_no_show_disputes: 0,
+  misconduct_disputes: 0,
+  lesson_not_completed_disputes: 0,
   no_shows: 0,
   coach_cancels: 0,
   reliability_score: 100.00,
@@ -25,7 +37,7 @@ const getDefaultCoachReliability = (userId) => ({
  *   (so it can't be used to infer that paid/non-penalized reasons bypass penalties).
  */
 const getCoachPenalizedReliabilityPayload = async (coachId) => {
-  const reliability = await UserReliability.findOne({ where: { user_id: coachId } });
+  const reliability = await UserReliability.findOne({ where: { user_id: coachId, role: 'coach' } });
   const payload = reliability ? reliability.toJSON() : getDefaultCoachReliability(coachId);
 
   // Override `paid_reschedules` to mean:
@@ -49,7 +61,7 @@ const getCoachPenalizedReliabilityPayload = async (coachId) => {
         include: [{
           model: Payment,
           as: 'transaction',
-          where: { payment_status: 'captured' },
+          where: { payment_status: { [Op.in]: ['captured', 'partially_refunded'] } },
           required: true,
           attributes: [],
         }],
@@ -153,7 +165,7 @@ export const getCoachReliabilityForAdmin = async (req, res) => {
       return errorResponse(res, 'Can only view reliability for coaches', 400);
     }
 
-    const reliabilityRow = await UserReliability.findOne({ where: { user_id: userId } });
+    const reliabilityRow = await UserReliability.findOne({ where: { user_id: userId, role: 'coach' } });
     const stored = reliabilityRow ? reliabilityRow.toJSON() : getDefaultCoachReliability(userId);
 
     const coachBookings = await Booking.findAll({
@@ -223,7 +235,7 @@ export const getCoachReliabilityForAdmin = async (req, res) => {
           model: Payment,
           as: 'transaction',
           attributes: ['total_charge_to_student'],
-          where: { payment_status: 'captured' },
+          where: { payment_status: { [Op.in]: ['captured', 'partially_refunded'] } },
           required: true,
         }],
         attributes: ['id', 'affects_reliability'],
@@ -275,10 +287,20 @@ export const getCoachReliabilityForAdmin = async (req, res) => {
       reschedules: reschedulesBlock,
       penalties: {
         late_cancels: stored.late_cancels,
+        late_arrivals: stored.late_arrivals || 0,
+        coach_no_show_disputes: stored.coach_no_show_disputes || 0,
+        misconduct_disputes: stored.misconduct_disputes || 0,
+        lesson_not_completed_disputes: stored.lesson_not_completed_disputes || 0,
         no_shows: stored.no_shows,
         // Penalized coach cancellations outside the late window only
         // (not double-counted with late_cancels).
         coach_cancels_non_late: stored.coach_cancels,
+        points: {
+          late_arrival: ((stored.late_arrivals || 0) / Math.max(1, stored.total_bookings || 0)) * DISPUTE_PENALTY_WEIGHTS.late_arrival,
+          coach_no_show: ((stored.coach_no_show_disputes || 0) / Math.max(1, stored.total_bookings || 0)) * DISPUTE_PENALTY_WEIGHTS.coach_no_show,
+          misconduct: ((stored.misconduct_disputes || 0) / Math.max(1, stored.total_bookings || 0)) * DISPUTE_PENALTY_WEIGHTS.misconduct,
+          lesson_not_completed: ((stored.lesson_not_completed_disputes || 0) / Math.max(1, stored.total_bookings || 0)) * DISPUTE_PENALTY_WEIGHTS.lesson_not_completed,
+        },
       },
       badges: stored.badges,
     };

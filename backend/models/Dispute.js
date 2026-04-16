@@ -15,6 +15,10 @@ const Dispute = sequelize.define('disputes', {
     type: DataTypes.INTEGER,
     allowNull: false,
   },
+  notes: {
+    type: DataTypes.TEXT,
+    allowNull: true,
+  },
   opened_by: {
     type: DataTypes.ENUM('student', 'coach', 'system', 'admin'),
     allowNull: false,
@@ -49,6 +53,15 @@ const Dispute = sequelize.define('disputes', {
   },
   escalation_triggered_at: {
     type: DataTypes.DATE,
+    allowNull: true,
+  },
+  stripe_dispute_id: {
+    type: DataTypes.STRING(255),
+    allowNull: true,
+    unique: true,
+  },
+  stripe_dispute_status: {
+    type: DataTypes.STRING(64),
     allowNull: true,
   },
 }, {

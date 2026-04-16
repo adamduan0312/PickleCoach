@@ -1,27 +1,40 @@
-import { User, UserReliability, Booking, SystemJob } from '../models/index.js';
+import { User, UserReliability, Booking, SystemJob, UserRole } from '../models/index.js';
 import { Op } from 'sequelize';
 import { logger } from '../config/logger.js';
 import { updateUserReliability } from '../services/reliabilityService.js';
 
 /**
- * Recalculate reliability scores for all users
- * Runs daily at 2 AM
+ * Recalculate reliability scores for all non-admin users (coach and student rows separately).
  */
 export const recalculateReliability = async () => {
   try {
-    // Only process coaches and students - admins are excluded from reliability
     const users = await User.findAll({
       where: {
-        role: { [Op.in]: ['student', 'coach'] }, // Admins excluded
         is_active: true,
+        deleted_at: { [Op.is]: null },
       },
+      include: [{ model: UserRole, as: 'userRoles', attributes: ['role'], required: false }],
     });
 
+    let updates = 0;
     for (const user of users) {
-      await calculateUserReliability(user.id);
+      const roles = user.userRoles?.map((r) => r.role) ?? [];
+      if (roles.includes('admin')) continue;
+      if (roles.includes('coach')) {
+        await updateUserReliability(user.id, 'coach').catch((err) => {
+          logger.error(`Coach reliability failed for user ${user.id}:`, err);
+        });
+        updates += 1;
+      }
+      if (roles.includes('student')) {
+        await updateUserReliability(user.id, 'student').catch((err) => {
+          logger.error(`Student reliability failed for user ${user.id}:`, err);
+        });
+        updates += 1;
+      }
     }
 
-    logger.info(`Reliability worker processed ${users.length} users`);
+    logger.info(`Reliability worker processed ${users.length} users (${updates} role updates)`);
   } catch (error) {
     logger.error('Error in reliability worker:', error);
     throw error;
@@ -29,12 +42,26 @@ export const recalculateReliability = async () => {
 };
 
 /**
- * Calculate reliability score for a specific user
- * Uses the updated service that separates coach and student reliability
+ * Calculate reliability for a specific user (both roles when applicable).
  */
 export const calculateUserReliability = async (userId) => {
   try {
-    await updateUserReliability(userId);
+    const user = await User.findByPk(userId, {
+      include: [{ model: UserRole, as: 'userRoles', attributes: ['role'], required: false }],
+    });
+    if (!user) {
+      throw new Error(`User ${userId} not found`);
+    }
+    const roles = user.userRoles?.map((r) => r.role) ?? [];
+    if (roles.includes('admin')) {
+      return;
+    }
+    if (roles.includes('coach')) {
+      await updateUserReliability(userId, 'coach');
+    }
+    if (roles.includes('student')) {
+      await updateUserReliability(userId, 'student');
+    }
     logger.info(`Calculated reliability for user ${userId}`);
   } catch (error) {
     logger.error(`Error calculating reliability for user ${userId}:`, error);
@@ -43,19 +70,15 @@ export const calculateUserReliability = async (userId) => {
 };
 
 /**
- * Monthly coach reliability reset
- * On the 1st of each month, reset reliability_score to 100 for all coaches
- * Historical data (reschedule_history, cancellation_history, audit_logs) are NEVER deleted
- * Only the reliability_score field is reset - this is a "soft reset"
+ * Monthly coach reliability reset — only the coach role row for users who coach.
  */
 export const monthlyCoachReliabilityReset = async () => {
   const jobType = 'recalculate_reliability';
-  
+
   try {
-    // Check if job already ran this month
     const now = new Date();
     const firstOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-    
+
     const existingJob = await SystemJob.findOne({
       where: {
         job_type: jobType,
@@ -71,7 +94,6 @@ export const monthlyCoachReliabilityReset = async () => {
       return;
     }
 
-    // Create system job record
     const systemJob = await SystemJob.create({
       job_type: jobType,
       status: 'pending',
@@ -80,48 +102,52 @@ export const monthlyCoachReliabilityReset = async () => {
     });
 
     try {
-      // Find all active coaches (admins excluded from reliability)
       const coaches = await User.findAll({
-        where: {
-          role: 'coach', // Admins excluded - they don't have reliability scores
-          is_active: true,
-        },
+        where: { is_active: true, deleted_at: { [Op.is]: null } },
+        include: [
+          {
+            model: UserRole,
+            as: 'userRoles',
+            attributes: ['role'],
+            where: { role: 'coach' },
+            required: true,
+          },
+        ],
       });
 
       let resetCount = 0;
 
       for (const coach of coaches) {
-        // Check if user has coach bookings
+        const fullUser = await User.findByPk(coach.id, {
+          include: [{ model: UserRole, as: 'userRoles', attributes: ['role'], required: false }],
+        });
+        const roles = fullUser?.userRoles?.map((r) => r.role) ?? [];
+        if (roles.includes('admin')) continue;
+
         const coachBookings = await Booking.count({
           where: { coach_id: coach.id },
         });
 
-        // Reset reliability for coaches (all coaches in the query are valid)
         if (coachBookings > 0) {
-          // Get or create reliability record
           const [reliability, created] = await UserReliability.findOrCreate({
-            where: { user_id: coach.id },
+            where: { user_id: coach.id, role: 'coach' },
             defaults: {
               user_id: coach.id,
-              reliability_score: 100.00,
+              role: 'coach',
+              reliability_score: 100.0,
             },
           });
 
           if (!created) {
-            // Soft reset: only reset the score, keep all historical metrics
             await reliability.update({
-              reliability_score: 100.00,
+              reliability_score: 100.0,
             });
-            resetCount++;
-          } else {
-            resetCount++;
           }
-
-          logger.info(`Reset reliability score for coach ${coach.id} (${coach.full_name})`);
+          resetCount += 1;
+          logger.info(`Reset coach reliability score for user ${coach.id} (${coach.full_name})`);
         }
       }
 
-      // Mark job as completed
       await systemJob.update({
         status: 'completed',
         attempted_at: new Date(),
@@ -129,7 +155,6 @@ export const monthlyCoachReliabilityReset = async () => {
 
       logger.info(`Monthly coach reliability reset completed: ${resetCount} coaches reset`);
     } catch (error) {
-      // Mark job as failed
       await systemJob.update({
         status: 'failed',
         attempted_at: new Date(),
@@ -143,4 +168,3 @@ export const monthlyCoachReliabilityReset = async () => {
     throw error;
   }
 };
-

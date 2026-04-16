@@ -1,13 +1,12 @@
 import { Op } from 'sequelize';
 import { User, UserRole, CoachProfile, UserReliability, sequelize } from '../models/index.js';
-import { successResponse, errorResponse } from '../utils/response.js';
+import { successResponse, errorResponse, paginatedResponse } from '../utils/response.js';
 import { getPagination, getPagingData } from '../utils/pagination.js';
 import { logger } from '../config/logger.js';
 
 export const getAllUsers = async (req, res) => {
   try {
     const { page, limit, role, include_deleted, search } = req.validated;
-    const { limit: queryLimit, offset } = getPagination(page, limit);
 
     const andConditions = [];
     // By default only return active, non-deleted users; admin can pass include_deleted=true to see all (including soft-deleted/inactive)
@@ -32,23 +31,32 @@ export const getAllUsers = async (req, res) => {
 
     const where = andConditions.length ? { [Op.and]: andConditions } : {};
 
-    const users = await User.findAndCountAll({
+    const findOptions = {
       where,
-      limit: queryLimit,
-      offset,
       attributes: { exclude: ['password_hash'] },
       include: includeForRole,
-      order: [['created_at', 'DESC']],
+      order: [['id', 'DESC']],
       distinct: true,
-    });
+    };
 
-    const response = getPagingData(users, page, queryLimit);
+    if (limit != null) {
+      const { limit: queryLimit, offset } = getPagination(page, limit);
+      findOptions.limit = queryLimit;
+      findOptions.offset = offset;
+    }
+
+    const users = await User.findAndCountAll(findOptions);
+
+    const response = getPagingData(users, page, limit ?? users.count);
     const itemsWithRoles = response.items.map((u) => {
       const json = u.toJSON();
       json.roles = (u.userRoles || []).map((r) => r.role);
       delete json.userRoles;
       return json;
     });
+    if (limit != null) {
+      return paginatedResponse(res, itemsWithRoles, response.pagination, 'Users retrieved successfully');
+    }
     return successResponse(res, itemsWithRoles, 'Users retrieved successfully', 200);
   } catch (error) {
     logger.error('Get users error:', error);
@@ -76,7 +84,7 @@ export const getUserById = async (req, res) => {
       include: [
         { model: UserRole, as: 'userRoles', attributes: ['role'] },
         { model: CoachProfile, as: 'coachProfile' },
-        { model: UserReliability, as: 'reliability' },
+        { model: UserReliability, as: 'reliabilities' },
       ],
     });
 
@@ -96,9 +104,15 @@ export const getUserById = async (req, res) => {
     payload.roles = roles;
     delete payload.userRoles;
 
-    // Only include reliability for coaches (only coaches have a reliability score)
-    if (!roles.includes('coach')) {
-      delete payload.reliability;
+    const relRows = user.reliabilities || [];
+    delete payload.reliabilities;
+    const coachRel = relRows.find((r) => r.role === 'coach');
+    const studentRel = relRows.find((r) => r.role === 'student');
+    if (roles.includes('coach') && coachRel) {
+      payload.reliability = coachRel;
+    }
+    if (roles.includes('student') && studentRel) {
+      payload.reliability_student = studentRel;
     }
 
     logger.info(`User ${req.user.id} (roles: ${(req.user.roles || []).join(',')}) retrieved user ${userId}`);
@@ -141,6 +155,10 @@ export const updateUser = async (req, res) => {
       avatar_url: avatar_url !== undefined ? avatar_url : user.avatar_url,
       is_active: is_active !== undefined ? is_active : user.is_active,
     };
+
+    if (email !== undefined && email !== user.email) {
+      updateData.token_version = (user.token_version ?? 0) + 1;
+    }
 
     // Allow explicit undelete by setting deleted_at to null
     if (deleted_at === null) {

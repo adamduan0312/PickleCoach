@@ -1,16 +1,17 @@
 import { Payment, Booking, User } from '../models/index.js';
-import { successResponse, errorResponse } from '../utils/response.js';
+import { successResponse, errorResponse, paginatedResponse } from '../utils/response.js';
 import { getPagination, getPagingData } from '../utils/pagination.js';
-import { Op } from 'sequelize';
-import { logAudit } from '../utils/audit.js';
 import { logger } from '../config/logger.js';
 
-const PLATFORM_FEE_PERCENT = 8.00;
+const MAX_LIST_ALL_PAYMENTS = 10000;
 
 export const getPayments = async (req, res) => {
   try {
     const { page, limit, status, escrow_status, student_id, coach_id } = req.validated;
-    const { limit: queryLimit, offset } = getPagination(page, limit);
+    const isPaginated = page != null || limit != null;
+    const { limit: queryLimit, offset } = isPaginated
+      ? getPagination(page, limit)
+      : { limit: MAX_LIST_ALL_PAYMENTS, offset: 0 };
 
     const where = {};
     if (status) where.payment_status = status;
@@ -38,8 +39,12 @@ export const getPayments = async (req, res) => {
       order: [['created_at', 'DESC']],
     });
 
+    if (!isPaginated) {
+      return successResponse(res, payments.rows, 'Payments retrieved successfully');
+    }
+
     const response = getPagingData(payments, page, queryLimit);
-    return successResponse(res, response.items, 'Payments retrieved successfully');
+    return paginatedResponse(res, response.items, response.pagination, 'Payments retrieved successfully');
   } catch (error) {
     logger.error('Get payments error:', error);
     return errorResponse(res, 'Failed to retrieve payments', 500);
@@ -69,117 +74,5 @@ export const getPaymentById = async (req, res) => {
   } catch (error) {
     logger.error('Get payment error:', error);
     return errorResponse(res, 'Failed to retrieve payment', 500);
-  }
-};
-
-export const createPayment = async (req, res) => {
-  try {
-    const { booking_id, payment_method = 'stripe', payment_intent_id, charge_id } = req.validated;
-
-    const booking = await Booking.findByPk(booking_id, {
-      include: [{ model: User, as: 'coach', attributes: ['id', 'full_name', 'email'] }],
-    });
-
-    if (!booking) {
-      return errorResponse(res, 'Booking not found', 404);
-    }
-
-    if (req.user.id !== booking.primary_student_id && !(req.user.roles || []).includes('admin')) {
-      return errorResponse(res, 'Unauthorized', 403);
-    }
-
-    const platformFeeAmount = (booking.price * PLATFORM_FEE_PERCENT) / 100;
-    const totalCharge = parseFloat(booking.price) + parseFloat(platformFeeAmount);
-    const coachPayoutExpected = parseFloat(booking.price) - parseFloat(platformFeeAmount);
-
-    const payment = await Payment.create({
-      booking_id,
-      coach_id: booking.coach_id,
-      student_id: req.user.id,
-      lesson_price: booking.price,
-      platform_fee_percent: PLATFORM_FEE_PERCENT,
-      platform_fee_amount: platformFeeAmount,
-      total_charge_to_student: totalCharge,
-      coach_payout_expected: coachPayoutExpected,
-      payment_method,
-      payment_intent_id,
-      charge_id,
-      escrow_status: 'held',
-      payment_status: 'pending',
-    });
-
-    await logAudit(req.user.id, 'payment_created', 'payments', payment.id, null, payment.toJSON(), req);
-
-    return successResponse(res, payment, 'Payment created successfully', 201);
-  } catch (error) {
-    logger.error('Create payment error:', error);
-    return errorResponse(res, 'Failed to create payment', 500);
-  }
-};
-
-export const updatePaymentStatus = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { payment_status, escrow_status, charge_id, transfer_id, payout_id } = req.validated;
-
-    const payment = await Payment.findByPk(id);
-    if (!payment) {
-      return errorResponse(res, 'Payment not found', 404);
-    }
-
-    if (!(req.user.roles || []).includes('admin')) {
-      return errorResponse(res, 'Unauthorized', 403);
-    }
-
-    const beforeState = payment.toJSON();
-    await payment.update({
-      payment_status: payment_status || payment.payment_status,
-      escrow_status: escrow_status || payment.escrow_status,
-      charge_id: charge_id || payment.charge_id,
-      transfer_id: transfer_id || payment.transfer_id,
-      payout_id: payout_id || payment.payout_id,
-    });
-
-    await logAudit(req.user.id, 'payment_status_updated', 'payments', payment.id, beforeState, payment.toJSON(), req);
-
-    return successResponse(res, payment, 'Payment status updated successfully');
-  } catch (error) {
-    logger.error('Update payment status error:', error);
-    return errorResponse(res, 'Failed to update payment status', 500);
-  }
-};
-
-export const processRefund = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { refund_amount, reason } = req.body;
-
-    const payment = await Payment.findByPk(id);
-    if (!payment) {
-      return errorResponse(res, 'Payment not found', 404);
-    }
-
-    if (!(req.user.roles || []).includes('admin')) {
-      return errorResponse(res, 'Unauthorized', 403);
-    }
-
-    const refundAmount = amount || payment.total_charge_to_student;
-    if (refundAmount > payment.total_charge_to_student) {
-      return errorResponse(res, 'Refund amount exceeds payment amount', 400);
-    }
-
-    const beforeState = payment.toJSON();
-    await payment.update({
-      payment_status: 'refunded',
-      escrow_status: 'refunded',
-      refunded_amount: refundAmount,
-    });
-
-    await logAudit(req.user.id, 'payment_refunded', 'payments', payment.id, beforeState, payment.toJSON(), req);
-
-    return successResponse(res, payment, 'Refund processed successfully');
-  } catch (error) {
-    logger.error('Process refund error:', error);
-    return errorResponse(res, 'Failed to process refund', 500);
   }
 };

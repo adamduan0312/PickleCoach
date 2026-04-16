@@ -7,13 +7,13 @@ A comprehensive backend API for the PickleCoach platform built with Node.js, Exp
 - **User Management**: Registration, authentication, profile management
 - **Coach Profiles**: Coach profiles, availability, ratings
 - **Lessons**: Lesson creation, management, and booking
-- **Bookings**: Booking system with rescheduling and cancellation
+- **Bookings**: MVP create/accept/decline flow plus rescheduling and cancellation
 - **Payments**: Payment processing with escrow, commissions, and refunds
 - **Reviews**: Student reviews and coach feedback
 - **Messaging**: In-app messaging system
 - **Disputes**: Dispute management and resolution
 - **Notifications**: Notification system
-- **Admin Dashboard**: Admin analytics and alerts
+- **Admin Dashboard**: Admin analytics
 - **Reliability System**: User reliability scoring
 
 ## Project Structure
@@ -126,8 +126,8 @@ Quick reference:
 - **Coaches**: `/api/coaches` - Coach profiles, availability, Stripe Connect
 - **Courts**: `/api/courts` - Court location search and management
 - **Lessons**: `/api/lessons` - Lesson creation and management
-- **Bookings**: `/api/bookings` - Booking system with rescheduling and cancellation
-- **Payments**: `/api/payments` - Payment processing and refunds
+- **Bookings**: `/api/bookings` - MVP: student `POST /bookings`, coach `PUT .../accept` | `PUT .../decline`; also list/detail, complete, `POST .../student-no-show` (student no-show; legacy `no-show`), cancel, reschedule
+- **Payments**: `/api/payments` - List and get payment records (created with bookings; refunds via booking flows / `paymentService`)
 - **Reschedules**: `/api/reschedules` - Reschedule history and requests
 - **Reviews**: `/api/reviews` - Review system
 - **Messages**: `/api/messages` - In-app messaging

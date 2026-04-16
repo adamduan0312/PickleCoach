@@ -26,15 +26,10 @@ const ConversationModule = await import('./Conversation.js');
 const MessageModule = await import('./Message.js');
 const WebhookLogModule = await import('./WebhookLog.js');
 const AuditLogModule = await import('./AuditLog.js');
-const AdminAnalyticsModule = await import('./AdminAnalytics.js');
-const AdminAlertModule = await import('./AdminAlert.js');
-const CoachReportModule = await import('./CoachReport.js');
 const StudentFeedbackModule = await import('./StudentFeedback.js');
 const MessageTemplateModule = await import('./MessageTemplate.js');
-const UserBadgeModule = await import('./UserBadge.js');
-const SessionHistoryModule = await import('./SessionHistory.js');
-const PromoCodeModule = await import('./PromoCode.js');
 const SystemJobModule = await import('./SystemJob.js');
+const PromoCodeModule = await import('./PromoCode.js');
 const NotificationModule = await import('./Notification.js');
 
 // Extract default exports
@@ -60,15 +55,10 @@ const Conversation = ConversationModule.default;
 const Message = MessageModule.default;
 const WebhookLog = WebhookLogModule.default;
 const AuditLog = AuditLogModule.default;
-const AdminAnalytics = AdminAnalyticsModule.default;
-const AdminAlert = AdminAlertModule.default;
-const CoachReport = CoachReportModule.default;
 const StudentFeedback = StudentFeedbackModule.default;
 const MessageTemplate = MessageTemplateModule.default;
-const UserBadge = UserBadgeModule.default;
-const SessionHistory = SessionHistoryModule.default;
-const PromoCode = PromoCodeModule.default;
 const SystemJob = SystemJobModule.default;
+const PromoCode = PromoCodeModule.default;
 const Notification = NotificationModule.default;
 
 // Initialize User model (it uses initModel pattern)
@@ -90,16 +80,13 @@ User.hasMany(Payment, { foreignKey: 'student_id', as: 'studentPayments' });
 User.hasMany(Payout, { foreignKey: 'coach_id', as: 'payouts' });
 User.hasMany(Review, { foreignKey: 'reviewer_id', as: 'reviewsGiven' });
 User.hasMany(Review, { foreignKey: 'target_user_id', as: 'reviewsReceived' });
-User.hasOne(UserReliability, { foreignKey: 'user_id', as: 'reliability' });
+User.hasMany(UserReliability, { foreignKey: 'user_id', as: 'reliabilities' });
 User.hasMany(Message, { foreignKey: 'sender_id', as: 'sentMessages' });
 User.hasMany(AuditLog, { foreignKey: 'user_id', as: 'auditLogs' });
 User.hasMany(Notification, { foreignKey: 'user_id', as: 'notifications' });
 User.hasMany(StudentFeedback, { foreignKey: 'coach_id', as: 'feedbackGiven' });
 User.hasMany(StudentFeedback, { foreignKey: 'student_id', as: 'feedbackReceived' });
 User.hasMany(MessageTemplate, { foreignKey: 'owner_id', as: 'messageTemplates' });
-User.hasMany(UserBadge, { foreignKey: 'user_id', as: 'badges' });
-User.hasMany(SessionHistory, { foreignKey: 'student_id', as: 'studentSessions' });
-User.hasMany(SessionHistory, { foreignKey: 'coach_id', as: 'coachSessions' });
 
 // CoachProfile associations
 CoachProfile.belongsTo(User, { foreignKey: 'user_id', as: 'user' });
@@ -133,7 +120,6 @@ Booking.hasMany(Dispute, { foreignKey: 'booking_id', as: 'disputes' });
 Booking.hasOne(Conversation, { foreignKey: 'booking_id', as: 'conversation' });
 Booking.hasMany(Review, { foreignKey: 'booking_id', as: 'reviews' });
 Booking.hasMany(StudentFeedback, { foreignKey: 'booking_id', as: 'feedback' });
-Booking.hasOne(SessionHistory, { foreignKey: 'booking_id', as: 'sessionHistory' });
 
 // BookingPlayer associations
 BookingPlayer.belongsTo(Booking, { foreignKey: 'booking_id', as: 'booking' });
@@ -185,14 +171,6 @@ Conversation.hasMany(Message, { foreignKey: 'conversation_id', as: 'messages' })
 Message.belongsTo(Conversation, { foreignKey: 'conversation_id', as: 'conversation' });
 Message.belongsTo(User, { foreignKey: 'sender_id', as: 'sender' });
 
-// AdminAlert associations
-AdminAlert.belongsTo(User, { foreignKey: 'related_user_id', as: 'relatedUser' });
-AdminAlert.belongsTo(Booking, { foreignKey: 'related_booking_id', as: 'relatedBooking' });
-AdminAlert.belongsTo(Payment, { foreignKey: 'related_payment_id', as: 'relatedPayment' });
-
-// CoachReport associations
-CoachReport.belongsTo(User, { foreignKey: 'coach_id', as: 'coach' });
-
 // StudentFeedback associations
 StudentFeedback.belongsTo(Booking, { foreignKey: 'booking_id', as: 'booking' });
 StudentFeedback.belongsTo(User, { foreignKey: 'coach_id', as: 'coach' });
@@ -200,14 +178,6 @@ StudentFeedback.belongsTo(User, { foreignKey: 'student_id', as: 'student' });
 
 // MessageTemplate associations
 MessageTemplate.belongsTo(User, { foreignKey: 'owner_id', as: 'owner' });
-
-// UserBadge associations
-UserBadge.belongsTo(User, { foreignKey: 'user_id', as: 'user' });
-
-// SessionHistory associations
-SessionHistory.belongsTo(Booking, { foreignKey: 'booking_id', as: 'booking' });
-SessionHistory.belongsTo(User, { foreignKey: 'student_id', as: 'student' });
-SessionHistory.belongsTo(User, { foreignKey: 'coach_id', as: 'coach' });
 
 // SystemJob associations
 SystemJob.belongsTo(Booking, { foreignKey: 'related_booking_id', as: 'relatedBooking' });
@@ -238,14 +208,9 @@ export {
   Message,
   WebhookLog,
   AuditLog,
-  AdminAnalytics,
-  AdminAlert,
-  CoachReport,
   StudentFeedback,
   MessageTemplate,
-  UserBadge,
-  SessionHistory,
-  PromoCode,
   SystemJob,
+  PromoCode,
   Notification,
 };

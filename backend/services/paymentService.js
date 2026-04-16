@@ -1,4 +1,4 @@
-import { Payment, Booking, Payout, User, UserRole, CoachProfile } from '../models/index.js';
+import { Payment, Booking, Payout, User, UserRole, CoachProfile, CancellationHistory, sequelize } from '../models/index.js';
 import { Op } from 'sequelize';
 import * as stripeService from './stripeService.js';
 import { logger } from '../config/logger.js';
@@ -7,6 +7,73 @@ import { createAuditLog } from '../utils/audit.js';
 const PLATFORM_FEE_PERCENT = 8.00;
 const COACH_COMMISSION_PERCENT = 92.00; // Coach receives 92% of lesson price
 const PAID_RESCHEDULE_FEE = parseFloat(process.env.PAID_RESCHEDULE_FEE || '3.00'); // Default $3
+
+/**
+ * Integer cents from decimal dollars string/number.
+ * Uses Math.round(n * 100) so float edge cases (e.g. 12.34 * 100) land on whole cents before Stripe.
+ */
+export const dollarsToCents = (value) => {
+  const n = Number.parseFloat(String(value ?? '0'), 10);
+  if (!Number.isFinite(n)) return 0;
+  return Math.round(n * 100);
+};
+
+/** DECIMAL(12,2) / API-safe string from integer cents (avoids float artifacts). */
+export const centsToDecimalString = (cents) => {
+  const c = Math.max(0, Math.round(cents));
+  const whole = Math.floor(c / 100);
+  const frac = c % 100;
+  return `${whole}.${String(frac).padStart(2, '0')}`;
+};
+
+/**
+ * Policy total for cancellations: always `payment.total_charge_to_student` when a payment row exists;
+ * otherwise `booking.price` (never charged / no payment row).
+ */
+export const parseTotalChargeCentsFromBooking = (payment, booking) => {
+  if (payment) {
+    const fromPayment = dollarsToCents(payment.total_charge_to_student);
+    if (fromPayment > 0) return fromPayment;
+  }
+  if (booking) {
+    return dollarsToCents(booking.price);
+  }
+  return 0;
+};
+
+/**
+ * Split cancellation into refund vs penalty in whole cents; invariant refundCents + penaltyCents === totalChargeCents.
+ */
+export const computeCancellationSplitCents = ({ totalChargeCents, isLateCancel, cancelledBy }) => {
+  const t = Math.round(totalChargeCents);
+  if (t < 1) {
+    return { refundCents: 0, penaltyCents: 0, penaltyReason: null };
+  }
+
+  if (isLateCancel && cancelledBy === 'student') {
+    const refundCents = Math.floor(t / 2);
+    const penaltyCents = t - refundCents;
+    return { refundCents, penaltyCents, penaltyReason: 'Late cancellation' };
+  }
+
+  if (cancelledBy === 'coach') {
+    return { refundCents: t, penaltyCents: 0, penaltyReason: 'Coach cancellation' };
+  }
+
+  return { refundCents: t, penaltyCents: 0, penaltyReason: null };
+};
+
+/**
+ * Cap policy refund by Stripe remaining balance; keeps refundCents + penaltyCents === totalChargeCents.
+ */
+export const applyStripeRefundCap = ({ policyRefundCents, totalChargeCents, remainingCents }) => {
+  const t = Math.round(totalChargeCents);
+  const r = Math.max(0, Math.round(remainingCents));
+  const policy = Math.min(Math.max(0, Math.round(policyRefundCents)), t);
+  const refundCents = Math.min(policy, r);
+  const penaltyCents = t - refundCents;
+  return { refundCents, penaltyCents, capped: refundCents < policy };
+};
 
 /**
  * Calculate payment amounts based on lesson price
@@ -40,6 +107,9 @@ export const MIN_LESSON_PRICE_USD = MIN_CHARGE_USD / (1 + PLATFORM_FEE_PERCENT /
  */
 export const createPaymentForBooking = async (booking, studentId, paymentMethod = 'stripe', options = {}) => {
   const { transaction = null } = options;
+  const paymentMethodId = options.paymentMethodId || null;
+  const idempotencyKey =
+    options.idempotencyKey || `booking_${studentId}_${booking.id}`;
   const amounts = calculatePaymentAmounts(booking.price);
   const totalCharge = Number(amounts.total_charge_to_student) || 0;
 
@@ -51,11 +121,54 @@ export const createPaymentForBooking = async (booking, studentId, paymentMethod 
 
   const createOptions = transaction ? { transaction } : {};
 
+  const student = await User.findByPk(studentId, createOptions);
+  if (!student) {
+    throw new Error(`Student not found: ${studentId}`);
+  }
+  let stripeCustomerId = student.stripe_customer_id || null;
+  if (!stripeCustomerId) {
+    const customer = await stripeService.createCustomer({
+      email: student.email,
+      name: student.full_name,
+      metadata: { user_id: String(student.id) },
+    });
+    stripeCustomerId = customer.id;
+    await student.update({ stripe_customer_id: stripeCustomerId }, createOptions);
+  }
+
   // Coach-must-confirm: use manual capture so we only charge when coach accepts
   const captureOnAccept = true;
+  const paymentFindOptions = {
+    where: {
+      booking_id: booking.id,
+      student_id: studentId,
+      payment_method: paymentMethod,
+      payment_status: { [Op.in]: ['pending', 'pending_capture', 'captured', 'partially_refunded'] },
+    },
+    order: [['id', 'DESC']],
+  };
+  if (transaction) {
+    paymentFindOptions.transaction = transaction;
+    paymentFindOptions.lock = transaction.LOCK.UPDATE;
+  }
+
+  const existingPayment = await Payment.findOne(paymentFindOptions);
+  if (existingPayment?.payment_intent_id) {
+    const existingPaymentIntent = await stripeService.getPaymentIntent(existingPayment.payment_intent_id);
+    return {
+      payment: existingPayment,
+      paymentIntent: {
+        id: existingPaymentIntent.id,
+        client_secret: existingPaymentIntent.client_secret,
+        amount: existingPaymentIntent.amount,
+        currency: existingPaymentIntent.currency,
+        status: existingPaymentIntent.status,
+      },
+    };
+  }
 
   // Create payment record (always pending until coach accepts and we capture)
-  const payment = await Payment.create({
+  const payment = existingPayment || await Payment.create({
     booking_id: booking.id,
     coach_id: booking.coach_id,
     student_id: studentId,
@@ -66,6 +179,7 @@ export const createPaymentForBooking = async (booking, studentId, paymentMethod 
     coach_payout_expected: amounts.coach_payout_expected,
     escrow_status: 'held',
     payment_status: 'pending',
+    refund_status: 'none',
     payment_method: paymentMethod,
     currency: 'USD',
     metadata: {
@@ -78,14 +192,18 @@ export const createPaymentForBooking = async (booking, studentId, paymentMethod 
   const paymentIntent = await stripeService.createPaymentIntent(
     totalCharge,
     'usd',
-    null,
+    stripeCustomerId,
     {
       booking_id: booking.id.toString(),
       payment_id: payment.id.toString(),
       coach_id: booking.coach_id.toString(),
       student_id: studentId.toString(),
     },
-    { captureMethod: captureOnAccept ? 'manual' : 'automatic' }
+    {
+      captureMethod: captureOnAccept ? 'manual' : 'automatic',
+      paymentMethodId,
+      idempotencyKey,
+    }
   );
 
   await payment.update(
@@ -127,21 +245,22 @@ export const handlePaymentCapture = async (paymentIntentId, chargeId) => {
   });
 
   if (!payment) {
-    throw new Error('Payment not found');
+    throw new Error(`Payment not found for PaymentIntent ${paymentIntentId}`);
   }
 
   // Coach-must-confirm: student has authorized; we don't capture until coach accepts
   const captureOnAccept = payment.metadata?.capture_on_accept === true;
   if (captureOnAccept) {
+    /** Coach accept triggers capture API; webhook payment_intent.succeeded finalizes captured + booking. */
     await payment.update({
       charge_id: chargeId,
+      payment_status: 'captured',
       escrow_status: 'held',
-      // Keep payment_status 'pending' (authorized, not captured) until coach accepts
     });
-    if (payment.booking) {
+    if (payment.booking && payment.booking.status === 'pending') {
       await payment.booking.update({
         messaging_locked: false,
-        // Do NOT set status to 'confirmed' — coach must accept first
+        status: 'confirmed',
       });
     }
     await createAuditLog({
@@ -149,7 +268,7 @@ export const handlePaymentCapture = async (paymentIntentId, chargeId) => {
       action: 'payment_captured',
       table_name: 'payments',
       record_id: payment.id,
-      after_state: { charge_id: chargeId, status: 'authorized', booking_stays_pending_until_coach_accepts: true },
+      after_state: { charge_id: chargeId, payment_status: 'captured', source: 'stripe_webhook' },
     });
     return payment;
   }
@@ -208,7 +327,8 @@ export const handlePaymentCapture = async (paymentIntentId, chargeId) => {
           });
           const updateRoles = userToUpdate?.userRoles?.map((r) => r.role) ?? [];
           if (userToUpdate && !updateRoles.includes('admin')) {
-            await updateUserReliability(userIdToUpdate).catch(err => {
+            const reliabilityRole = rescheduleHistory.requested_by === 'coach' ? 'coach' : 'student';
+            await updateUserReliability(userIdToUpdate, reliabilityRole).catch((err) => {
               logger.error('Failed to update reliability after paid reschedule:', err);
             });
           }
@@ -266,33 +386,41 @@ export const capturePaymentOnCoachAccept = async (paymentId) => {
 
   if (payment.payment_intent_id && payment.payment_status === 'pending') {
     const paymentIntent = await stripeService.capturePaymentIntent(payment.payment_intent_id);
-    const chargeId = paymentIntent.charges?.data?.[0]?.id || payment.charge_id;
+    const chargeId =
+      paymentIntent.latest_charge ||
+      paymentIntent.charges?.data?.[0]?.id ||
+      payment.charge_id;
+    const chargeIdStr = typeof chargeId === 'string' ? chargeId : chargeId?.id;
     await payment.update({
-      payment_status: 'captured',
-      charge_id: chargeId,
+      payment_status: 'pending_capture',
+      charge_id: chargeIdStr || payment.charge_id,
       escrow_status: 'held',
     });
     await createAuditLog({
       user_id: payment.coach_id,
-      action: 'payment_captured_on_coach_accept',
+      action: 'payment_capture_initiated',
       table_name: 'payments',
       record_id: payment.id,
-      after_state: { charge_id: chargeId, status: 'captured' },
+      after_state: {
+        charge_id: chargeIdStr,
+        payment_status: 'pending_capture',
+        note: 'awaiting payment_intent.succeeded webhook',
+      },
+    });
+    logger.info({
+      component: 'stripe',
+      event: 'capture_initiated_coach_accept',
+      paymentId: payment.id,
+      bookingId: payment.booking.id,
+      paymentIntentId: payment.payment_intent_id,
     });
   }
 
-  await payment.booking.update({
-    status: 'confirmed',
-    messaging_locked: false,
-  });
-  await createAuditLog({
-    user_id: payment.coach_id,
-    action: 'booking_confirmed_by_coach',
-    table_name: 'bookings',
-    record_id: payment.booking.id,
-    after_state: { status: 'confirmed' },
-  });
-  logger.info(`Coach accepted booking ${payment.booking.id}, payment ${payment.id} captured`);
+  /** Booking becomes confirmed only after Stripe reports capture success (webhook). */
+  logger.info(
+    `Coach accepted booking ${payment.booking.id}, payment ${payment.id}; capture pending webhook if applicable`
+  );
+  await payment.reload({ include: [{ model: Booking, as: 'booking' }] });
   return { payment, booking: payment.booking };
 };
 
@@ -312,13 +440,19 @@ export const cancelPaymentOnCoachDecline = async (paymentId) => {
   }
   if (payment.payment_intent_id && payment.payment_status === 'pending') {
     await stripeService.cancelPaymentIntent(payment.payment_intent_id);
-    await payment.update({ payment_status: 'failed' });
+    await payment.update({ payment_status: 'pending_void' });
     await createAuditLog({
       user_id: payment.coach_id,
-      action: 'payment_cancelled_on_coach_decline',
+      action: 'payment_void_initiated',
       table_name: 'payments',
       record_id: payment.id,
-      after_state: { payment_status: 'failed' },
+      after_state: { payment_status: 'pending_void', note: 'awaiting payment_intent.canceled webhook' },
+    });
+    logger.info({
+      component: 'stripe',
+      event: 'payment_intent_cancel_initiated',
+      paymentId: payment.id,
+      paymentIntentId: payment.payment_intent_id,
     });
   }
   await payment.booking.update({
@@ -337,7 +471,101 @@ export const cancelPaymentOnCoachDecline = async (paymentId) => {
 };
 
 /**
- * Release escrow and create payout (called by worker)
+ * Auto-expire a stale pending booking (no coach accept/decline): cancel uncaptured PaymentIntent, cancel booking, free the slot.
+ * Idempotent if booking is no longer pending.
+ * @returns {{ expired: boolean, reason?: string }}
+ */
+export const expirePendingBookingNoCoachResponse = async (bookingId) => {
+  const transaction = await sequelize.transaction();
+  try {
+    const booking = await Booking.findByPk(bookingId, {
+      transaction,
+      lock: transaction.LOCK.UPDATE,
+    });
+    if (!booking || booking.status !== 'pending') {
+      await transaction.commit();
+      return { expired: false, reason: 'not_pending' };
+    }
+
+    const payment = await Payment.findOne({
+      where: { booking_id: booking.id },
+      order: [['id', 'DESC']],
+      transaction,
+    });
+
+    if (payment?.payment_intent_id && payment.payment_status === 'pending') {
+      try {
+        await stripeService.cancelPaymentIntent(payment.payment_intent_id);
+        await payment.update({ payment_status: 'pending_void' }, { transaction });
+        await createAuditLog({
+          user_id: null,
+          action: 'payment_void_initiated',
+          table_name: 'payments',
+          record_id: payment.id,
+          after_state: {
+            payment_status: 'pending_void',
+            note: 'pending booking expired — awaiting payment_intent.canceled webhook',
+          },
+        });
+      } catch (stripeErr) {
+        logger.warn({
+          component: 'stripe',
+          event: 'expire_pending_pi_cancel_failed',
+          bookingId: booking.id,
+          message: stripeErr?.message || String(stripeErr),
+        });
+        await payment.update({ payment_status: 'pending_void' }, { transaction }).catch(() => {});
+      }
+    }
+
+    await booking.update(
+      {
+        status: 'cancelled',
+        cancelled_by: 'system',
+        cancelled_at: new Date(),
+        messaging_locked: true,
+      },
+      { transaction }
+    );
+
+    await CancellationHistory.create(
+      {
+        booking_id: booking.id,
+        cancelled_by: 'system',
+        reason: 'other',
+        reason_notes: 'Pending booking expired (no coach response within time limit)',
+        affects_reliability: false,
+        refund_amount: 0,
+        penalty_amount: 0,
+      },
+      { transaction }
+    );
+
+    await createAuditLog({
+      user_id: null,
+      action: 'booking_expired_pending',
+      table_name: 'bookings',
+      record_id: booking.id,
+      after_state: { status: 'cancelled', cancelled_by: 'system' },
+    });
+
+    await transaction.commit();
+    logger.info({
+      component: 'booking',
+      event: 'pending_booking_expired',
+      bookingId: booking.id,
+    });
+    return { expired: true };
+  } catch (e) {
+    await transaction.rollback();
+    throw e;
+  }
+};
+
+/**
+ * Release escrow and create payout (called by worker).
+ * Invariant: only invoked from payoutWorker for bookings in completed / awaiting_verification;
+ * releaseEscrow also rejects if booking status is otherwise (no payout on cancel / no-show).
  */
 export const releaseEscrow = async (paymentId, coachStripeAccountId = null) => {
   const payment = await Payment.findByPk(paymentId, {
@@ -384,12 +612,23 @@ export const releaseEscrow = async (paymentId, coachStripeAccountId = null) => {
       );
 
       await payout.update({
-        status: 'paid',
+        status: 'pending',
         external_payout_id: transfer.id,
-        processed_at: new Date(),
       });
 
-      await payment.update({ escrow_status: 'released' });
+      await payment.update({
+        escrow_status: 'pending_release',
+        transfer_id: transfer.id,
+      });
+
+      logger.info({
+        component: 'stripe',
+        event: 'transfer_initiated',
+        paymentId: payment.id,
+        payoutId: payout.id,
+        transferId: transfer.id,
+        note: 'Escrow released when transfer.* webhook confirms',
+      });
     } catch (error) {
       logger.error('Error transferring to coach account:', error);
       await payout.update({
@@ -398,58 +637,591 @@ export const releaseEscrow = async (paymentId, coachStripeAccountId = null) => {
       throw error;
     }
   } else {
-    // No Stripe Connect account, mark as pending manual processing
     await payout.update({ status: 'pending' });
+    await payment.update({ escrow_status: 'manual_payout_required' });
+    logger.warn({
+      component: 'stripe',
+      event: 'manual_payout_required',
+      severity: 'warn',
+      payoutId: payout.id,
+      coachId: payment.coach_id,
+      paymentId: payment.id,
+      message: 'Coach has no Stripe Connect account; escrow requires manual payout',
+    });
   }
 
+  const bookingStatusForAudit = payment.booking?.status;
+  await payment.reload();
   await createAuditLog({
     user_id: payment.coach_id,
     action: 'payout_created',
     table_name: 'payouts',
     record_id: payout.id,
-    after_state: { amount: payout.amount, status: payout.status },
+    after_state: {
+      payout_status: payout.status,
+      payout_amount: payout.amount,
+      currency: payout.currency,
+      booking_id: payment.booking_id,
+      booking_status: bookingStatusForAudit,
+      payment_escrow_status: payment.escrow_status,
+      coach_payout_expected: payment.coach_payout_expected,
+      transfer_id: payment.transfer_id ?? null,
+      stripe_connect_used: Boolean(coachStripeAccountId),
+    },
   });
 
   return { payment, payout };
 };
 
 /**
- * Process refund (with Stripe)
+ * Finalize escrow + payout from Stripe transfer webhook (transfer.created / transfer.paid).
  */
-export const processRefund = async (paymentId, refundAmount = null, reason = 'requested_by_customer') => {
-  const payment = await Payment.findByPk(paymentId);
+export const finalizeTransferFromStripe = async (transfer) => {
+  const paymentIdRaw = transfer.metadata?.payment_id;
+  const payoutIdRaw = transfer.metadata?.payout_id;
+  const paymentId = paymentIdRaw != null ? parseInt(String(paymentIdRaw), 10) : null;
+  const payoutId = payoutIdRaw != null ? parseInt(String(payoutIdRaw), 10) : null;
+
+  let payout =
+    Number.isFinite(payoutId) && payoutId > 0
+      ? await Payout.findByPk(payoutId)
+      : null;
+  if (!payout && transfer.id) {
+    payout = await Payout.findOne({ where: { external_payout_id: transfer.id } });
+  }
+
+  let payment =
+    Number.isFinite(paymentId) && paymentId > 0 ? await Payment.findByPk(paymentId) : null;
+  if (!payment && payout?.payment_id) {
+    payment = await Payment.findByPk(payout.payment_id);
+  }
+
   if (!payment) {
-    throw new Error('Payment not found');
+    throw new Error(`Payment not found for transfer ${transfer.id}; retry when payout metadata exists`);
   }
 
-  if (!payment.charge_id) {
-    throw new Error('Payment has no charge ID');
+  if (payment.transfer_id && payment.transfer_id !== transfer.id) {
+    logger.warn({
+      component: 'stripe',
+      event: 'transfer_metadata_mismatch',
+      paymentId: payment.id,
+      localTransferId: payment.transfer_id,
+      stripeTransferId: transfer.id,
+    });
+    return { skipped: true };
   }
 
-  const amount = refundAmount || payment.total_charge_to_student;
-  if (amount > payment.total_charge_to_student) {
-    throw new Error('Refund amount exceeds payment amount');
+  if (!payment.transfer_id) {
+    await payment.update({ transfer_id: transfer.id });
   }
 
-  // Create refund via Stripe
-  const refund = await stripeService.createRefund(payment.charge_id, amount, reason);
+  if (payment.escrow_status === 'released') {
+    if (payout && payout.status !== 'paid') {
+      await payout.update({
+        status: 'paid',
+        external_payout_id: transfer.id,
+        processed_at: payout.processed_at || new Date(),
+      });
+    }
+    return { idempotent: true, payment };
+  }
 
-  // Update payment
-  await payment.update({
-    payment_status: 'refunded',
-    escrow_status: 'refunded',
-    refunded_amount: amount,
+  if (payment.escrow_status !== 'pending_release') {
+    logger.warn({
+      component: 'stripe',
+      event: 'transfer_webhook_unexpected_escrow',
+      paymentId: payment.id,
+      escrow_status: payment.escrow_status,
+      transferId: transfer.id,
+    });
+  }
+
+  await payment.update({ escrow_status: 'released' });
+
+  if (payout) {
+    await payout.update({
+      status: 'paid',
+      external_payout_id: transfer.id,
+      processed_at: new Date(),
+    });
+  }
+
+  if (payout) {
+    await createAuditLog({
+      user_id: payment.coach_id,
+      action: 'payout_finalized_from_stripe',
+      table_name: 'payouts',
+      record_id: payout.id,
+      after_state: {
+        transfer_id: transfer.id,
+        escrow_status: 'released',
+        payout_status: 'paid',
+        booking_id: payment.booking_id,
+        payment_id: payment.id,
+        source: 'stripe_webhook',
+      },
+    });
+  }
+
+  logger.info({
+    component: 'stripe',
+    event: 'transfer_finalized',
+    paymentId: payment.id,
+    transferId: transfer.id,
+    payoutId: payout?.id,
   });
+
+  return { payment, payout };
+};
+
+/**
+ * Mirror refund-related payment fields from a Stripe Charge (amount / amount_refunded in cents).
+ * Single place so API-initiated refunds and webhooks stay consistent.
+ */
+export const applyRefundStateFromStripeCharge = async (payment, charge, { stripeRefundId = null, transaction } = {}) => {
+  const chargeAmountCents = charge.amount ?? 0;
+  const refundedCents = charge.amount_refunded ?? 0;
+  const refundedDollars = centsToDecimalString(refundedCents);
+
+  let payment_status;
+  let escrow_status;
+  if (chargeAmountCents > 0 && refundedCents >= chargeAmountCents) {
+    payment_status = 'refunded';
+    escrow_status = 'refunded';
+  } else if (refundedCents > 0) {
+    payment_status = 'partially_refunded';
+    escrow_status = 'held';
+  } else {
+    return payment;
+  }
+
+  const updates = {
+    refunded_amount: refundedDollars,
+    payment_status,
+    escrow_status,
+    refund_status: 'succeeded',
+  };
+  if (stripeRefundId) {
+    updates.stripe_refund_id = stripeRefundId;
+  }
+  await payment.update(updates, { transaction });
+  return payment.reload({ transaction });
+};
+
+/**
+ * Process refund via Stripe; DB state is finalized from charge.refunded webhook.
+ * @param {number} paymentId
+ * @param {Object} [opts]
+ * @param {number} opts.refundCents — integer cents to refund (must be ≤ Stripe remaining balance)
+ * @param {string} [opts.reason]
+ * @param {string} [opts.idempotencyKey] — Stripe idempotency key (prevents duplicate money movement)
+ * @param {object} [opts.transaction] — If set, use this transaction for `SELECT ... FOR UPDATE` on the payment (e.g. booking cancel holds booking lock first, then refund in same txn).
+ */
+export const processRefund = async (paymentId, opts = {}) => {
+  const {
+    refundCents: refundCentsIn,
+    reason = 'requested_by_customer',
+    idempotencyKey = null,
+    transaction = null,
+  } = opts;
+
+  const refundCents = Math.round(Number(refundCentsIn));
+  if (!Number.isFinite(refundCents) || refundCents < 1) {
+    throw new Error('refundCents must be a positive integer (cents)');
+  }
+
+  const lockPaymentRow = async (t) => {
+    const p = await Payment.findByPk(paymentId, {
+      transaction: t,
+      lock: t.LOCK.UPDATE,
+    });
+    if (!p) {
+      throw new Error('Payment not found');
+    }
+    if (p.refund_status === 'pending') {
+      logger.warn({
+        component: 'stripe',
+        event: 'refund_skipped_duplicate_pending',
+        paymentId: p.id,
+        stripeRefundId: p.stripe_refund_id,
+      });
+      return { skip: true, payment: p };
+    }
+    if (!p.charge_id) {
+      throw new Error('Payment has no charge ID');
+    }
+    return { skip: false, payment: p };
+  };
+
+  const lockResult = transaction
+    ? await lockPaymentRow(transaction)
+    : await sequelize.transaction((t) => lockPaymentRow(t));
+
+  if (lockResult.skip) {
+    return { payment: lockResult.payment, refund: { id: lockResult.payment.stripe_refund_id } };
+  }
+
+  const p = lockResult.payment;
+
+  const chargeBefore = await stripeService.retrieveCharge(p.charge_id);
+  const chargeAmountCents = Math.round(chargeBefore.amount || 0);
+  const refundedSoFar = Math.round(chargeBefore.amount_refunded || 0);
+  const remainingCents = chargeAmountCents - refundedSoFar;
+
+  logger.info({
+    component: 'stripe',
+    event: 'refund_precheck',
+    paymentId: p.id,
+    chargeId: p.charge_id,
+    chargeAmountCents,
+    refundedSoFarCents: refundedSoFar,
+    remainingCents,
+    requestedRefundCents: refundCents,
+  });
+
+  if (remainingCents < 1) {
+    throw new Error('No refundable balance remaining on Stripe charge');
+  }
+  if (refundCents > remainingCents) {
+    throw new Error(
+      `Refund (${refundCents}¢) exceeds remaining Stripe balance (${remainingCents}¢)`
+    );
+  }
+
+  const partial = refundCents < remainingCents;
+  const key =
+    idempotencyKey ||
+    `refund-payment-${p.id}-${refundCents}-${chargeBefore.id}`;
+
+  const refund = await stripeService.createRefund(p.charge_id, {
+    amountCents: partial ? refundCents : null,
+    reason,
+    idempotencyKey: key,
+  });
+
+  /** Final refund rows come from charge.refunded webhook; avoid racing webhook with succeeded state. */
+  await Payment.update(
+    {
+      refund_status: 'pending',
+      stripe_refund_id: refund.id,
+    },
+    {
+      where: { id: p.id },
+      transaction,
+    }
+  );
+
+  const updatedPayment = await Payment.findByPk(p.id, { transaction });
 
   await createAuditLog({
-    user_id: payment.student_id,
-    action: 'refund_processed',
+    user_id: updatedPayment.student_id,
+    action: 'refund_initiated',
     table_name: 'payments',
-    record_id: payment.id,
-    after_state: { refunded_amount: amount, status: 'refunded' },
+    record_id: updatedPayment.id,
+    after_state: {
+      stripe_refund_id: refund.id,
+      refund_status: 'pending',
+      refund_cents: refundCents,
+      charge_amount_cents: chargeAmountCents,
+      refunded_so_far_before_cents: refundedSoFar,
+      remaining_on_charge_after_refund_cents: remainingCents - refundCents,
+      partial_refund: partial,
+      note: 'awaiting charge.refunded webhook or reconciliation',
+    },
   });
 
-  return { payment, refund };
+  logger.info({
+    component: 'stripe',
+    event: 'refund_initiated_api',
+    paymentId: p.id,
+    chargeId: p.charge_id,
+    stripeRefundId: refund.id,
+    refundCents,
+    remainingCentsBefore: remainingCents,
+    partial,
+    idempotencyKey: key,
+  });
+
+  return { payment: updatedPayment, refund };
+};
+
+/**
+ * Stripe refund when an admin resolves a dispute with approved_refund (full remaining balance)
+ * or partial_refund (explicit amount). Skips when the action does not require payout adjustment.
+ * Uses stable Stripe idempotency keys per dispute/payment/refund size so retries do not double-refund.
+ *
+ * @param {object} params
+ * @param {number} params.bookingId
+ * @param {number} params.disputeId
+ * @param {{ code: string, requires_payout_adjustment: boolean }} params.action
+ * @param {number|null|undefined} params.refundAmountDollars — required for partial_refund (US dollars, not cents)
+ * @returns {Promise<{ payment: object, refund: object, refundCents: number }|null>}
+ */
+export const initiateBookingRefundForDisputeResolution = async ({
+  bookingId,
+  disputeId,
+  action,
+  refundAmountDollars,
+}) => {
+  if (!action?.requires_payout_adjustment) {
+    return null;
+  }
+
+  const payment = await Payment.findOne({
+    where: { booking_id: bookingId },
+    order: [['id', 'DESC']],
+  });
+  if (!payment) {
+    throw new Error('Payment not found for this booking');
+  }
+  if (!payment.charge_id) {
+    throw new Error('Payment has no Stripe charge to refund');
+  }
+
+  if (action.code === 'approved_refund') {
+    const charge = await stripeService.retrieveCharge(payment.charge_id);
+    const chargeAmount = Math.round(charge.amount || 0);
+    const alreadyRefunded = Math.round(charge.amount_refunded || 0);
+    const refundCents = chargeAmount - alreadyRefunded;
+    if (refundCents < 1) {
+      throw new Error('No refundable balance remaining on Stripe charge');
+    }
+    // Includes refundCents so a changed remaining balance (e.g. after another partial) gets a new key.
+    const idempotencyKey = `dispute-resolve-${disputeId}-payment-${payment.id}-full-${refundCents}`;
+    const result = await processRefund(payment.id, {
+      refundCents,
+      reason: 'requested_by_customer',
+      idempotencyKey,
+    });
+    return { ...result, refundCents };
+  }
+
+  if (action.code === 'partial_refund') {
+    if (refundAmountDollars == null) {
+      throw new Error('refund_amount is required when resolving with partial_refund');
+    }
+    const refundCents = dollarsToCents(refundAmountDollars);
+    if (refundCents < 1) {
+      throw new Error('refund_amount must be at least 0.01');
+    }
+    // Includes refundCents so different partial amounts never share the same idempotency key.
+    const idempotencyKey = `dispute-resolve-${disputeId}-payment-${payment.id}-partial-${refundCents}`;
+    const result = await processRefund(payment.id, {
+      refundCents,
+      reason: 'requested_by_customer',
+      idempotencyKey,
+    });
+    return { ...result, refundCents };
+  }
+
+  throw new Error(
+    `Resolution action "${action.code}" cannot be processed automatically; choose approved_refund, partial_refund, or no_action`,
+  );
+};
+
+/**
+ * Snapshot latest booking-payment refund state for guardrail checks.
+ * Used by controllers to prevent mixed refund paths (manual + dispute).
+ */
+export const getLatestBookingRefundState = async (bookingId) => {
+  const payment = await Payment.findOne({
+    where: { booking_id: bookingId },
+    order: [['id', 'DESC']],
+  });
+  if (!payment) {
+    return {
+      payment: null,
+      chargeAmountCents: 0,
+      refundedSoFarCents: 0,
+      hasAnyRefund: false,
+      hasPendingRefund: false,
+    };
+  }
+  if (!payment.charge_id) {
+    const hasPendingRefund = payment.refund_status === 'pending';
+    return {
+      payment,
+      chargeAmountCents: 0,
+      refundedSoFarCents: 0,
+      hasAnyRefund: hasPendingRefund,
+      hasPendingRefund,
+    };
+  }
+
+  const charge = await stripeService.retrieveCharge(payment.charge_id);
+  const chargeAmountCents = Math.round(charge.amount || 0);
+  const refundedSoFarCents = Math.round(charge.amount_refunded || 0);
+  const hasPendingRefund = payment.refund_status === 'pending';
+
+  return {
+    payment,
+    chargeAmountCents,
+    refundedSoFarCents,
+    hasAnyRefund: refundedSoFarCents > 0 || hasPendingRefund,
+    hasPendingRefund,
+  };
+};
+
+/**
+ * Compare local payment refund fields to Stripe Charge; optional auto-heal from Charge.
+ * Use after webhooks and in reconciliation jobs.
+ */
+/** @alias for audit/docs — same as assertStripePaymentConsistency */
+export const assertStripeConsistency = async (localPayment, options) =>
+  assertStripePaymentConsistency(localPayment, options);
+
+export const assertStripePaymentConsistency = async (payment, { autoHeal = false, context = '' } = {}) => {
+  const pay = typeof payment === 'number' ? await Payment.findByPk(payment) : payment;
+  if (!pay) {
+    return { ok: false, error: 'payment_missing' };
+  }
+
+  let pi = null;
+  if (pay.payment_intent_id) {
+    try {
+      pi = await stripeService.getPaymentIntent(pay.payment_intent_id);
+    } catch (err) {
+      logger.error({
+        component: 'stripe',
+        event: 'consistency_pi_fetch_failed',
+        paymentId: pay.id,
+        paymentIntentId: pay.payment_intent_id,
+        context,
+        message: err.message,
+      });
+    }
+  }
+
+  if (!pay.charge_id) {
+    if (pi?.status === 'succeeded' && pay.payment_status === 'pending_capture' && autoHeal) {
+      const latest =
+        typeof pi.latest_charge === 'string' ? pi.latest_charge : pi.latest_charge?.id;
+      if (latest) {
+        await pay.update({ charge_id: latest, payment_status: 'captured' });
+        logger.warn({
+          component: 'stripe',
+          event: 'pending_capture_healed_from_pi',
+          paymentId: pay.id,
+          context,
+        });
+      }
+    }
+    return { ok: true, skipped: true, reason: 'no_charge_id' };
+  }
+
+  let charge;
+  try {
+    charge = await stripeService.retrieveCharge(pay.charge_id);
+  } catch (err) {
+    logger.error({
+      component: 'stripe',
+      event: 'consistency_fetch_failed',
+      paymentId: pay.id,
+      chargeId: pay.charge_id,
+      context,
+      message: err.message,
+    });
+    return { ok: false, error: err.message };
+  }
+
+  const stripeRefundedCents = charge.amount_refunded ?? 0;
+  const localCents = Math.round(Number.parseFloat(String(pay.refunded_amount || 0), 10) * 100);
+  const refundMismatch = Math.abs(stripeRefundedCents - localCents) > 1;
+
+  const chargeAmountCents = charge.amount ?? 0;
+  const expectedTotalCents = Math.round(
+    Number.parseFloat(String(pay.total_charge_to_student || 0), 10) * 100
+  );
+  const amountMismatch =
+    expectedTotalCents > 0 &&
+    Math.abs(chargeAmountCents - expectedTotalCents) > 1 &&
+    !['refunded', 'partially_refunded'].includes(pay.payment_status);
+
+  let expectedRefundPaymentStatus;
+  if (chargeAmountCents > 0 && stripeRefundedCents >= chargeAmountCents) {
+    expectedRefundPaymentStatus = 'refunded';
+  } else if (stripeRefundedCents > 0) {
+    expectedRefundPaymentStatus = 'partially_refunded';
+  } else {
+    expectedRefundPaymentStatus = null;
+  }
+
+  const refundStatusMismatch =
+    expectedRefundPaymentStatus != null &&
+    pay.payment_status !== expectedRefundPaymentStatus &&
+    (pay.refund_status === 'succeeded' || stripeRefundedCents > 0);
+
+  let piMismatch = false;
+  if (pi) {
+    if (pi.status === 'succeeded' && pay.payment_status === 'pending_capture') {
+      piMismatch = false;
+    } else if (pi.status === 'succeeded' && pay.payment_status === 'pending' && !pay.metadata?.capture_on_accept) {
+      piMismatch = true;
+    } else if (pi.status === 'canceled' && !['failed', 'pending_void'].includes(pay.payment_status)) {
+      piMismatch = true;
+    }
+  }
+
+  if (refundMismatch || amountMismatch || refundStatusMismatch || piMismatch) {
+    logger.error({
+      component: 'stripe',
+      event: 'payment_state_mismatch',
+      severity: 'critical',
+      paymentId: pay.id,
+      chargeId: pay.charge_id,
+      context,
+      piMismatch,
+      local: {
+        refunded_amount: pay.refunded_amount,
+        payment_status: pay.payment_status,
+        refund_status: pay.refund_status,
+        total_charge_to_student: pay.total_charge_to_student,
+      },
+      stripe: {
+        amount_refunded_cents: stripeRefundedCents,
+        amount_cents: chargeAmountCents,
+        expected_refund_payment_status: expectedRefundPaymentStatus,
+        payment_intent_status: pi?.status,
+      },
+    });
+
+    if (autoHeal) {
+      const reloaded = await Payment.findByPk(pay.id, {
+        include: [{ model: Booking, as: 'booking' }],
+      });
+      if (stripeRefundedCents > 0 || expectedRefundPaymentStatus) {
+        await applyRefundStateFromStripeCharge(reloaded, charge, {});
+      }
+      if (pi?.status === 'succeeded' && reloaded.payment_status === 'pending_capture') {
+        await reloaded.update({ payment_status: 'captured' });
+        if (reloaded.booking?.status === 'pending') {
+          await reloaded.booking.update({ status: 'confirmed', messaging_locked: false });
+        }
+      }
+      logger.warn({
+        component: 'stripe',
+        event: 'payment_state_auto_healed',
+        paymentId: pay.id,
+        context,
+      });
+      return { ok: true, healed: true };
+    }
+    return { ok: false, mismatch: true };
+  }
+
+  if (pay.refund_status === 'pending' && stripeRefundedCents > 0 && autoHeal) {
+    const reloaded = await Payment.findByPk(pay.id);
+    await applyRefundStateFromStripeCharge(reloaded, charge, {});
+    logger.info({
+      component: 'stripe',
+      event: 'pending_refund_finalized_from_stripe',
+      paymentId: pay.id,
+      context,
+    });
+    return { ok: true, healed: true };
+  }
+
+  return { ok: true };
 };
 
 /**
@@ -472,6 +1244,7 @@ export const createPaymentForPaidReschedule = async (booking, studentId, resched
     coach_payout_expected: 0, // Reschedule fee goes to platform, not coach
     escrow_status: 'held',
     payment_status: 'pending',
+    refund_status: 'none',
     payment_method: 'stripe',
     currency: 'USD',
     metadata: {

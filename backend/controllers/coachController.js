@@ -1,5 +1,5 @@
 import { User, UserRole, CoachProfile, CoachAvailability, Lesson, Booking, Review, CoachCourtLocation, CourtLocation } from '../models/index.js';
-import { successResponse, errorResponse } from '../utils/response.js';
+import { successResponse, errorResponse, paginatedResponse } from '../utils/response.js';
 import { getPagination, getPagingData } from '../utils/pagination.js';
 import { Op } from 'sequelize';
 import { sequelize } from '../models/sequelize.js';
@@ -20,6 +20,9 @@ const calculateDistance = (lat1, lng1, lat2, lng2) => {
   return R * c;
 };
 
+const MAX_LIST_ALL_COACHES = 10000;
+const MAX_LIST_ALL_AVAILABILITY = 10000;
+
 export const getCoaches = async (req, res) => {
   try {
     // Only students and admins can search/list coaches (e.g. to find someone to book). Coaches don't use this to find other coaches.
@@ -28,7 +31,10 @@ export const getCoaches = async (req, res) => {
     }
 
     const { page, limit, lat, lng, radius, skill_level, min_rating } = req.validated;
-    const { limit: queryLimit, offset } = getPagination(page, limit);
+    const isPaginated = page != null || limit != null;
+    const { limit: queryLimit, offset } = isPaginated
+      ? getPagination(page, limit)
+      : { limit: MAX_LIST_ALL_COACHES, offset: 0 };
 
     const where = { is_active: true };
     const profileWhere = {};
@@ -109,12 +115,16 @@ export const getCoaches = async (req, res) => {
       coaches.count = filteredCoaches.length;
     }
 
+    if (!isPaginated) {
+      return successResponse(res, filteredCoaches, 'Coaches retrieved successfully');
+    }
+
     const response = getPagingData(
       { count: coaches.count, rows: filteredCoaches },
       page,
       queryLimit
     );
-    return successResponse(res, response.items, 'Coaches retrieved successfully');
+    return paginatedResponse(res, response.items, response.pagination, 'Coaches retrieved successfully');
   } catch (error) {
     logger.error('Get coaches error:', error);
     return errorResponse(res, 'Failed to retrieve coaches', 500);
@@ -125,8 +135,9 @@ export const getCoachById = async (req, res) => {
   try {
     const { id } = req.params;
     const coach = await User.findOne({
-      where: { id, role: 'coach' },
+      where: { id, is_active: true, deleted_at: null },
       include: [
+        { model: UserRole, as: 'userRoles', where: { role: 'coach' }, required: true, attributes: [] },
         { model: CoachProfile, as: 'coachProfile' },
         { model: CoachAvailability, as: 'availabilities' },
         { model: Lesson, as: 'lessons', where: { is_active: true, deleted_at: null }, required: false },
@@ -329,12 +340,24 @@ export const createAvailability = async (req, res) => {
 export const getCoachAvailability = async (req, res) => {
   try {
     const { id } = req.params;
-    const availabilities = await CoachAvailability.findAll({
+    const { page, limit } = req.validated || {};
+    const isPaginated = page != null || limit != null;
+    const { limit: queryLimit, offset } = isPaginated
+      ? getPagination(page, limit)
+      : { limit: MAX_LIST_ALL_AVAILABILITY, offset: 0 };
+
+    const availabilities = await CoachAvailability.findAndCountAll({
       where: { coach_id: id },
+      limit: queryLimit,
+      offset,
       order: [['weekday', 'ASC'], ['start_datetime', 'ASC']],
     });
 
-    return successResponse(res, availabilities, 'Availability retrieved successfully');
+    if (!isPaginated) {
+      return successResponse(res, availabilities.rows, 'Availability retrieved successfully');
+    }
+    const response = getPagingData(availabilities, page, queryLimit);
+    return paginatedResponse(res, response.items, response.pagination, 'Availability retrieved successfully');
   } catch (error) {
     logger.error('Get availability error:', error);
     return errorResponse(res, 'Failed to retrieve availability', 500);

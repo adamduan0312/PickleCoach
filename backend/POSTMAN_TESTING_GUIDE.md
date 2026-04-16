@@ -23,15 +23,19 @@ You can test almost everything with just the server and database running. No Str
 | **Lessons** (CRUD) | Pure DB. |
 | **Bookings** (get, cancel, reschedule) | Pure DB. **Create Booking** is *not* in Phase 1 — see below. |
 | **Reviews, Messages, Disputes, Notifications** (create/list/update) | Pure DB. |
-| **Admin** (users, dashboard, audit, alerts, refunds, disputes, etc.) | Pure DB. |
+| **Admin** (users, dashboard, audit, disputes, etc.) | Pure DB. |
 
 **What will be limited in Phase 1:**
 
-- **Create Booking** — **Requires Stripe.** Your API creates a Stripe PaymentIntent in the same transaction as the booking. For paid lessons, Create Booking will fail (500 or Stripe error) without Stripe configured. So you cannot test “student creates a booking” end-to-end until Phase 2. In Phase 1 you can still test **Get My Bookings**, **Get Booking By ID**, **Cancel Booking**, **Request Reschedule** if you have existing bookings (e.g. seed data or a booking you created after setting up Stripe once).
-- **Create Payment** (standalone) — Same as above; needs Stripe. Leave for Phase 2.
-- **Stripe Connect (coach onboarding)** — Needs Stripe keys. Skip or expect error until Phase 2.
-- **Real emails** — Forgot password, email verification, booking reminders: API can return 200 but no email is sent until SendGrid is set up. Optionally stub or check logs.
-- **Real SMS** — Any SMS (reminders, 2FA): same idea; set up Twilio in Phase 2.
+- **Create Booking** (`POST /api/bookings`) — **Requires Stripe.** Your API creates a Stripe PaymentIntent in the same transaction as the booking. For paid lessons, Create Booking will fail (500 or Stripe error) without Stripe configured. So you cannot test “student creates a booking” end-to-end until Phase 2. In Phase 1 you can still test **Get My Bookings**, **Get Booking By ID**, **Cancel Booking**, **Request Reschedule** if you have existing bookings (e.g. seed data or a booking you created after setting up Stripe once).
+- **Stripe Connect (coach onboarding)** (`POST /api/coaches/me/stripe-connect/onboard`, `GET /api/coaches/me/stripe-connect/status`) — Needs Stripe keys. Skip or expect error until Phase 2.
+- **Stripe Webhook** (`POST /api/webhooks/stripe`) — Needs Stripe webhook secret + Stripe test events.
+- **Paid reschedule checkout path** (`POST /api/bookings/:id/reschedule` when `paid_reschedule` becomes required after free-limit is reached) — Creates a Stripe PaymentIntent and must be validated in Phase 2.
+- **Real email delivery** (SendGrid-backed flows: Forgot Password, Request Email Verification, Confirm Email Change, booking/reminder emails if enabled) — API can return 200 but email is not actually sent until SendGrid is set up.
+- **Real SMS delivery** (Twilio-backed reminder/2FA/notification flows) — same idea; set up Twilio in Phase 2.
+
+**Phase 2 integration note:** After configuring Stripe, SendGrid, and Twilio, test these limited endpoints/flows in Postman and verify delivery in each provider dashboard.
+There are currently **no dedicated SendGrid/Twilio-only API endpoints**; those providers are exercised through the auth/booking notification flows listed above.
 
 ### Set up Stripe, Twilio, and SendGrid (between Phase 1 and Phase 2)
 
@@ -46,11 +50,11 @@ After Phase 1 is passing:
 
 | Service | Endpoints / flows to test | What to check |
 |---------|---------------------------|----------------|
-| **Stripe** | **Create Booking** (creates payment + PaymentIntent in same transaction; response includes `payment_intent_client_secret`), **Initiate Stripe Connect Onboarding**, **Get Stripe Connect Status**, **Stripe Webhook** | Create Booking returns 201 with `payment_intent_client_secret` (student pays on frontend with that); Connect completes in Stripe test UI; webhook receives event and returns 200. **Create Payment** (`POST /api/payments`) is not needed for the normal flow — booking already creates the payment. |
+| **Stripe** | **Create Booking** (creates payment + PaymentIntent in same transaction; response includes `payment_intent_client_secret`), **Request Reschedule (paid path)** (`POST /api/bookings/:id/reschedule`), **POST /api/coaches/me/stripe-connect/onboard**, **GET /api/coaches/me/stripe-connect/status**, **Stripe Webhook** | Create Booking returns 201 with `payment_intent_client_secret` (student pays on frontend with that); paid reschedule returns a payment intent when free reschedule limit is reached; Connect completes in Stripe test UI; webhook receives event and returns 200. Payment rows are created with the booking; there is no separate `POST /api/payments` in MVP. |
 | **SendGrid** | No dedicated endpoint — your API sends email when you call **Forgot Password**, **Request Email Verification**, **Confirm Email Change**, and (if implemented) booking created/reminder/cancel. | Call those endpoints; confirm no 500; check SendGrid Activity for the corresponding emails. |
 | **Twilio** | No dedicated endpoint — your API sends SMS when you trigger flows that use SMS (e.g. booking reminder, 2FA). | Trigger those flows; confirm no 500; check Twilio Console → Logs for the outbound SMS. |
 
-So: **Phase 1** = test everything that doesn’t touch Stripe (auth, coaches, courts, lessons, admin, and booking *read/cancel/reschedule* if you have data). **Then** set up Stripe (and optionally SendGrid/Twilio). **Phase 2** = test **Create Booking**, Stripe Connect, webhook, and email/SMS flows (and Admin → Create Payment (Admin) for reconciliation if needed). In practice, the full “student books a lesson” flow needs Stripe from the start.
+So: **Phase 1** = test everything that doesn’t touch Stripe (auth, coaches, courts, lessons, admin, and booking *read/cancel/reschedule* if you have data). **Then** set up Stripe (and optionally SendGrid/Twilio). **Phase 2** = test **Create Booking**, Stripe Connect, webhook, and email/SMS flows. In practice, the full “student books a lesson” flow needs Stripe from the start.
 
 ---
 
@@ -71,7 +75,9 @@ Create a Postman **Environment** (e.g. “PickleCoach Dev”) with:
 | `lesson_id`   | *(set after creating lesson)* | For bookings |
 | `booking_id`  | *(set after creating booking)* | For cancel, reschedule, payments |
 
-The collection already uses `{{base_url}}` and `{{api_url}}`. Register and Login requests can save `auth_token` and `user_id` in the **Tests** tab so you don’t have to copy-paste.
+The collection already uses `{{base_url}}` and `{{api_url}}`. Register, Login, **Change Password**, and **Confirm Email Change** save `auth_token` and `user_id` in the **Tests** tab (new JWT from those responses replaces the variable) so you don’t have to copy-paste. Token persistence runs **before** assertions and updates **collection, environment, and globals** so `{{auth_token}}` is not stuck on an old value from another scope.
+
+**If Confirm Email Change → Get Profile still 401s:** (1) Confirm must return **200** — copy the one-time token from the email into the **`email_change_token`** collection variable (or the request body) and send again; **400** means the token was invalid, expired, or already used. (2) Open **Postman Console** (bottom left) and confirm the Tests ran after Confirm. (3) After a successful Confirm, **View** → **Show Postman Console** and check the response body includes `data.token`.
 
 ### Two collection files (project root)
 
@@ -90,22 +96,22 @@ Import one or both into Postman. Select your environment so `base_url` and `api_
 
 The **PickleCoach API (By Flow)** collection has **only three top-level folders**. Every endpoint lives inside one of them, in the correct user-flow order. There are no separate “Authentication”, “Coaches”, “Bookings”, etc. folders — everything is in **1 – Flow: Admin**, **2 – Flow: Coach**, or **3 – Flow: Student**.
 
-**Rule:** Each folder contains only endpoints that role is **allowed** to use (no 403). Admin cannot use Switch Role or Delete My Account; Coach cannot use List Coaches (Search) or Create Booking; Student cannot use Update Booking Status (coach/admin only). Those endpoints appear only in the flows where the role has access.
+**Rule:** Each folder contains only endpoints that role is **allowed** to use (no 403). Admin cannot use Switch Role or Delete My Account; Coach cannot use List Coaches (Search) or Create Booking. There is no generic Update Booking Status endpoint.
 
-- **1 – Flow: Admin** — 43 requests. Health → Login (admin) → Profile → Dashboard → Users → Payments → Disputes → Notifications → Coach support (incl. Get Coach By ID) → Auth extras (no Switch Role / Delete My Account) → Courts/Lessons/Disputes → Update Booking Status → Payments → Webhook.
-- **2 – Flow: Coach** — 59 requests. Health → Register/Login → Profile → Coach profile → Get Coach By ID → Courts → Availability → Stripe Connect → Lessons → Bookings (Accept, Decline, Update Status, Cancel, Reschedule) → Payments → Reviews → Messages → Disputes → Notifications → Auth extras.
-- **3 – Flow: Student** — 45 requests. Health → Register/Login → Profile → Search coaches → Get Coach By ID → Get Coach Courts → Get Coach Availability → Courts → Lessons → Create Booking → Bookings (no Update Booking Status) → Payments → Reviews → Messages → Disputes → Notifications → Auth extras.
+- **1 – Flow: Admin** — 44 requests. Health → Login (admin) → Profile → Dashboard → Users → Payments → Disputes → Notifications → Coach support (incl. Get Coach By ID) → Auth extras (no Switch Role / Delete My Account) → Courts/Lessons/Disputes → Admin booking reads/overrides → Payments → Webhook.
+- **2 – Flow: Coach** — 60 requests. Health → Register/Login → Profile → Coach profile → Get Coach By ID → Courts → Availability → Stripe Connect → Lessons → Bookings (Accept, Decline, Complete, No-Show, Cancel, Reschedule + coach booking inbox) → Payments → Reviews → Messages → Disputes → Notifications → Auth extras.
+- **3 – Flow: Student** — 45 requests. Health → Register/Login → Profile → Search coaches → Get Coach By ID → Get Coach Courts → Get Coach Availability → Courts → Lessons → **Create Booking** (MVP: POST /bookings) → Bookings → Payments → Reviews → Messages → Disputes → Notifications → Auth extras.
 
 Run the requests in each folder in order (1, 2, 3, …). After editing the **ByType** collection, regenerate ByFlow with: `node backend/scripts/reorganize-postman-flows.js`.
 
-**Full order — 1 – Flow: Admin (43 steps):**  
-Health Check → Login → Get Profile → Refresh Token → Get Dashboard Stats → Get Audit Logs → Get Alerts → Resolve Alert → Create Admin User → Get All Users (Admin) → Get User By ID (Admin) → Update User (Admin) → Update Coach Profile (Admin) → **Get Coach By ID** → Adjust User Reliability → Create Payment (Admin) → Process Refund (Admin) → Update Payment Status (Admin) → Resolve Dispute (Admin) → Create Notification (Admin) → Get Coach Courts (Admin) → Delete Coach Court (Admin) → Delete Coach Availability (Admin) → Delete User (Admin) → Register → Forgot Password → Reset Password → Update Profile → Change Password → Request Email Verification → Confirm Email Verification → Request Email Change → Confirm Email Change → Logout → Get All Courts → Get Court By ID → Get All Lessons → Get Lesson By ID → Get All Disputes → Get Dispute By ID → Update Booking Status → Get My Payments → Get Payment By ID → Stripe Webhook.
+**Full order — 1 – Flow: Admin (41 steps):**  
+Health Check → Login → Get Profile → Refresh Token → Get Dashboard Stats → Get Audit Logs → Get Alerts → Resolve Alert → Create Admin User → Get All Users (Admin) → Get User By ID (Admin) → Update User (Admin) → Update Coach Profile (Admin) → **Get Coach By ID** → Adjust User Reliability → Resolve Dispute (Admin) → Create Notification (Admin) → Get Coach Courts (Admin) → Delete Coach Court (Admin) → Delete Coach Availability (Admin) → Delete User (Admin) → Register → Forgot Password → Reset Password → Update Profile → Change Password → Request Email Verification → Confirm Email Verification → Request Email Change → Confirm Email Change → Logout → List/Search Courts → Get Court By ID → Get All Lessons → Get Lesson By ID → Get All Disputes → Get Dispute By ID → Get Bookings (Admin) → Get Booking By ID (Admin) → Cancel Booking (Admin) → Mark No-Show (Admin) → Refund Booking (Admin) → Get My Payments → Get Payment By ID → Stripe Webhook.
 
 **Full order — 2 – Flow: Coach (59 steps):**  
-Health Check → Register → Login → Get Profile → Update Profile → Request Email Verification → Confirm Email Verification → Change Password → Request Email Change → Confirm Email Change → Switch Role → Create Coach Profile → Update Coach Profile → **Get Coach By ID** → Get Coach Availability → Create Availability → Delete Availability → Get All Courts → Get Court By ID → Create Court → Delete Court → Add Court to Coach → List My Courts → Remove Court from Coach → Initiate Stripe Connect Onboarding → Get Stripe Connect Status → Get All Lessons → Get Lesson By ID → Create Lesson → Update Lesson → Delete Lesson → Get My Bookings → Get Booking By ID → **Accept Booking** → **Decline Booking** → Update Booking Status → Cancel Booking → Request Reschedule → Get Reschedule History → Get My Payments → Get Payment By ID → Get All Reviews → Create Review → Update Review → Delete Review → Get Conversations → Create Conversation → Get Conversation By ID → Send Message → Mark Message As Read → Get All Disputes → Get Dispute By ID → Create Dispute → Get My Notifications → Mark Notification As Read → Forgot Password → Reset Password → Logout → Delete My Account.
+Health Check → Register → Login → Get Profile → Update Profile → Request Email Verification → Confirm Email Verification → Change Password → Request Email Change → Confirm Email Change → Switch Role → Create Coach Profile → Update Coach Profile → **Get Coach By ID** → Get Coach Availability → Create Availability → Delete Availability → List/Search Courts → Get Court By ID → Create Court → Delete Court → Add Court to Coach → List My Courts → Remove Court from Coach → Initiate Stripe Connect Onboarding → Get Stripe Connect Status → Get All Lessons → Get Lesson By ID → Create Lesson → Update Lesson → Delete Lesson → Get Coach Bookings → Get Booking By ID → **Accept Booking** → **Decline Booking** → Complete Booking → Mark No-Show → Cancel Booking → Request Reschedule → Get Reschedule History → Get My Payments → Get Payment By ID → Get All Reviews → Create Review → Update Review → Delete Review → Get Conversations → Create Conversation → Get Conversation By ID → Send Message → Mark Message As Read → Get All Disputes → Get Dispute By ID → Create Dispute → Get My Notifications → Mark Notification As Read → Forgot Password → Reset Password → Logout → Delete My Account.
 
 **Full order — 3 – Flow: Student (45 steps):**  
-Health Check → Register → Login → Get Profile → Update Profile → Request Email Verification → Confirm Email Verification → Change Password → Request Email Change → Confirm Email Change → Switch Role → List Coaches (Search) → Get Coach By ID → **Get Coach Courts** → **Get Coach Availability** → Get All Courts → Get Court By ID → Get All Lessons → Get Lesson By ID → **Create Booking** (requires Stripe) → Get My Bookings → Get Booking By ID → Cancel Booking → Request Reschedule → Get Reschedule History → Get My Payments → Get Payment By ID → Get All Reviews → Create Review → Update Review → Delete Review → Get Conversations → Create Conversation → Get Conversation By ID → Send Message → Mark Message As Read → Get All Disputes → Get Dispute By ID → Create Dispute → Get My Notifications → Mark Notification As Read → Forgot Password → Reset Password → Logout → Delete My Account.
+Health Check → Register → Login → Get Profile → Update Profile → Request Email Verification → Confirm Email Verification → Change Password → Request Email Change → Confirm Email Change → Switch Role → List Coaches (Search) → Get Coach By ID → **Get Coach Courts** → **Get Coach Availability** → List/Search Courts → Get Court By ID → Get All Lessons → Get Lesson By ID → **Create Booking** (requires Stripe) → Get My Bookings → Get Booking By ID → Cancel Booking → Request Reschedule → Get Reschedule History → Get My Payments → Get Payment By ID → Get All Reviews → Create Review → Update Review → Delete Review → Get Conversations → Create Conversation → Get Conversation By ID → Send Message → Mark Message As Read → Get All Disputes → Get Dispute By ID → Create Dispute → Get My Notifications → Mark Notification As Read → Forgot Password → Reset Password → Logout → Delete My Account.
 
 **Tip:** **Create Booking** (Student step 20) needs Stripe. For Phase 1, run Student steps 1–19 and 21+ if you have existing bookings; after setting up Stripe, run the full flow including Create Booking.
 
@@ -157,7 +163,7 @@ Use this as a living checklist. Check off each line as you verify it (happy path
 
 ### COURTS
 
-- [ ] Get All Courts — 200
+- [ ] List/Search Courts — 200
 - [ ] Get Court By ID — 200
 - [ ] Create Court — 201 (admin or per your design)
 - [ ] Delete Court — 200
@@ -165,6 +171,7 @@ Use this as a living checklist. Check off each line as you verify it (happy path
 ### LESSONS
 
 - [ ] Get All Lessons — 200
+  - Tip: filter by coach with `GET /api/lessons?coach_id={{coach_id}}`
 - [ ] Get Lesson By ID — 200
 - [ ] Create Lesson — 201
 - [ ] Update Lesson — 200
@@ -172,14 +179,20 @@ Use this as a living checklist. Check off each line as you verify it (happy path
 
 ### BOOKINGS
 
+**MVP:** `POST /bookings` (student) → `PUT /bookings/:id/accept` | `PUT /bookings/:id/decline` (**coach on that booking only**; admins get 403).
+
+- [ ] **Pending auto-expiry** — With workers running, pending bookings older than `PENDING_BOOKING_EXPIRY_HOURS` (default 24) are cancelled by the system (`cancelled_by: system`), PaymentIntent voided, slot freed (no manual Postman step; verify via DB/logs or wait past cutoff)
+- [ ] **Coach notify on create** — After Create Booking, check logs for `new_booking_request_for_coach` and coach notifications/email if SendGrid is set
 - [ ] Create Booking — 201 (verified email); **requires Stripe** (PaymentIntent created in same transaction); 403 if email not verified
 - [ ] Double booking blocked — same slot → 409 or 400
 - [ ] Get My Bookings — 200
 - [ ] Get Booking By ID — 200
-- [ ] **Accept Booking** (Coach/Admin only) — 200; confirms pending booking, captures payment; use this (not PUT status) to confirm
-- [ ] **Decline Booking** (Coach/Admin only) — 200; body: message_to_student (required), decline_reason_code (optional); cancels PaymentIntent
-- [ ] Update Booking Status (Coach/Admin only) — 200; allowed transitions: confirmed→completed|cancelled|no_show, awaiting_verification→completed|cancelled. Completed is only allowed after lesson end time has passed. Both confirmed→completed and awaiting_verification→completed mean “lesson is done” (booking may be in either state depending on whether the worker has run).
-- [ ] Cancel Booking — 200 (Student, Coach, Admin)
+- [ ] **Accept Booking** (coach only) — 200; confirms pending booking, captures payment; use this (not PUT status) to confirm
+- [ ] **Decline Booking** (coach only) — 200; body: message_to_student (required), decline_reason_code (optional); cancels PaymentIntent
+- [ ] Complete Booking (Coach only) — 200; use `POST /api/bookings/:id/complete`; only when lesson has ended; allowed from confirmed/awaiting_verification
+- [ ] Mark Student No-Show (Coach only) — 200; use `POST /api/bookings/:id/student-no-show` (legacy alias: `.../no-show`); only when lesson has ended; allowed from confirmed/awaiting_verification. Records **student** did not attend. Admin uses `POST /api/admin/bookings/:id/student-no-show`. Coach no-show → `POST /api/admin/bookings/:id/coach-no-show` (booking status `coach_no_show`), optionally after `POST /api/disputes` (or admin alias `POST /api/admin/disputes`) with `coach_no_show`.
+- [ ] Mark Coach No-Show (Admin) — 200; `POST /api/admin/bookings/:id/coach-no-show` after lesson end; statuses `confirmed`, `awaiting_verification`, or `disputed`. Resolves matching open `coach_no_show` dispute when unambiguous or when `dispute_id` set. Refund is separate (`POST /api/admin/bookings/:id/refund`).
+- [ ] Cancel Booking — 200 (Student, Coach, Admin); **only `pending` or `confirmed`** (pre-lesson). Use seed `npm run seed:bookings-no-charge` to test cancel without real charges.
 - [ ] Past booking blocked — start time in past → 400
 - [ ] Request Reschedule — 201 (Student, Coach, Admin)
 
@@ -187,7 +200,6 @@ Use this as a living checklist. Check off each line as you verify it (happy path
 
 - [ ] Get My Payments — 200
 - [ ] Get Payment By ID — 200
-- [ ] *(Optional)* POST /api/payments — admin reconciliation only (create payment record for a booking that has none, e.g. legacy/manual data; optionally link payment_intent_id/charge_id). In the collection: **Admin → Create Payment (Admin)**. Not needed for the normal “student books and pays” flow.
 
 ### RESCHEDULES
 
@@ -210,7 +222,7 @@ Use this as a living checklist. Check off each line as you verify it (happy path
 
 ### DISPUTES
 
-- [ ] Create Dispute — 201; 403 if not verified
+- [ ] Create Dispute — 201; students/coaches get 403 if not verified, admins are exempt on dispute-create routes; optional `notes` persisted; MVP `dispute_type_id`: 1 coach_no_show, 2 late_arrival, 3 misconduct, 4 lesson_not_completed, 5 refund_request, 6 billing_issue, 7 other (after migration `20260408120000-canonical-dispute-types-mvp`)
 - [ ] Get All Disputes — 200
 - [ ] Get Dispute By ID — 200
 
@@ -229,12 +241,10 @@ Use this as a living checklist. Check off each line as you verify it (happy path
 - [ ] Get User By ID — 200; 403 non-admin
 - [ ] Update User — 200; 403 non-admin
 - [ ] Delete User — 200; 403 non-admin
-- [ ] Create Payment (Admin) — 201; for reconciliation (booking with no payment); 403 non-admin
-- [ ] Process Refund — 200; 403 non-admin
-- [ ] Update Payment Status — 200; 403 non-admin
 - [ ] Resolve Dispute — 200; 403 non-admin
 - [ ] Create Notification — 200/201; 403 non-admin
 - [ ] Get Coach Courts (Admin) / Delete Coach Court (Admin) / Delete Coach Availability (Admin) — 200; 403 non-admin
+- [ ] Adjust User Reliability — `PUT /api/admin/users/:id/reliability`; body requires `new_score`; optional `role` defaults to **`coach`**. Send **`"role": "student"`** to adjust student reliability (required for student-only users). Dual-role users: call twice to set coach and student scores. Target user must have the role you select.
 
 ### WEBHOOKS
 
@@ -281,9 +291,9 @@ These fit into testing as follows: **set them up after Phase 1** (see §1). Then
 - **In Postman:**
   - **Initiate Stripe Connect Onboarding** — expect 200 and a URL; open it in the browser and complete test onboarding.
   - **Get Stripe Connect Status** — expect 200 and status (e.g. `charges_enabled: true` when onboarding is done).
-  - **Create Payment** — use a booking that exists; expect 200/201 and a Stripe payment intent or client secret (depending on your API design).
+  - **Create Booking** — payment row + PaymentIntent are created here (no separate create-payment endpoint in MVP).
 - **Webhook:** Run Stripe CLI: `stripe listen --forward-to localhost:4000/api/webhooks/stripe`. In Postman, you can’t “call” the webhook directly; trigger events from Stripe Dashboard or CLI (e.g. `stripe trigger payment_intent.succeeded`) and confirm your server returns 200 and processes the event (e.g. payment status updated).
-- **What to check:** Connect onboarding completes, payment creation doesn’t error, webhook receives events and responds 200.
+- **What to check:** Connect onboarding completes, booking + payment flow doesn’t error, webhook receives events and responds 200.
 
 ### SendGrid (email)
 
@@ -321,7 +331,6 @@ Use `API_ENDPOINTS.md` for full request/response specs. Minimal examples for flo
 - **Create Availability:** `weekday` (0–6 or "monday"), optional `start_time`/`end_time` (e.g. "09:00", "17:00") or `start_datetime`/`end_datetime`.
 - **Create Lesson:** title, duration_minutes, price, coach_id, etc.
 - **Create Booking:** lesson_id, coach_id, start datetime (and any other required fields).
-- **Create Payment:** booking_id, amount (and any Stripe-specific fields your API expects).
 - **Create Review:** booking_id or lesson_id, rating, comment (per your API).
 
 For “missing required” and “invalid data” tests, remove or corrupt one field at a time and confirm 400 with a validation message.

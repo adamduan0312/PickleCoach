@@ -1,13 +1,31 @@
-import { sequelize, Booking, Lesson, User, UserRole, BookingPlayer, Payment, RescheduleHistory, CancellationHistory, CourtLocation } from '../models/index.js';
-import { successResponse, errorResponse } from '../utils/response.js';
+import {
+  sequelize,
+  Booking,
+  Lesson,
+  User,
+  UserRole,
+  BookingPlayer,
+  Payment,
+  RescheduleHistory,
+  CancellationHistory,
+  CourtLocation,
+  CoachCourtLocation,
+  Dispute,
+  DisputeType,
+  DisputeResolutionAction,
+} from '../models/index.js';
+import { successResponse, errorResponse, paginatedResponse } from '../utils/response.js';
 import { getPagination, getPagingData } from '../utils/pagination.js';
 import { Op } from 'sequelize';
-import { logAudit } from '../utils/audit.js';
+import { logAudit, createAuditLog } from '../utils/audit.js';
 import { affectsReliability, sanitizeResponse } from '../services/reliabilityPenaltyService.js';
 import { updateUserReliability } from '../services/reliabilityService.js';
 import * as paymentService from '../services/paymentService.js';
+import * as stripeService from '../services/stripeService.js';
+import * as notificationService from '../services/notificationService.js';
 import { checkBookingAvailability } from '../services/bookingService.js';
 import { logger } from '../config/logger.js';
+import crypto from 'crypto';
 
 /** In dev, return clear error detail; if Stripe API key error, clarify it's server-side STRIPE_SECRET_KEY. */
 function getCreateBookingErrorDetail(error, isDev) {
@@ -23,15 +41,55 @@ function getCreateBookingErrorDetail(error, isDev) {
   return { detail: raw };
 }
 
+const generateBookingIdempotencyKey = (studentId) =>
+  `booking_${studentId}_${Date.now()}_${crypto.randomUUID()}`;
+
+const MAX_LIST_ALL_BOOKINGS = 10000;
+
+const buildReplayBookingPayload = async (booking) => {
+  const latestPayment = await Payment.findOne({
+    where: { booking_id: booking.id },
+    order: [['created_at', 'DESC']],
+  });
+
+  let paymentIntentClientSecret = null;
+  if (latestPayment?.payment_intent_id) {
+    try {
+      const paymentIntent = await stripeService.getPaymentIntent(latestPayment.payment_intent_id);
+      paymentIntentClientSecret = paymentIntent?.client_secret ?? null;
+    } catch (piError) {
+      logger.warn('Failed to fetch PaymentIntent during idempotent replay', {
+        bookingId: booking.id,
+        paymentIntentId: latestPayment.payment_intent_id,
+        error: piError?.message || String(piError),
+      });
+    }
+  }
+
+  return {
+    booking: booking.get({ plain: true }),
+    payment_intent_client_secret: paymentIntentClientSecret,
+    payment_intent_id: latestPayment?.payment_intent_id ?? null,
+  };
+};
+
 export const getBookings = async (req, res) => {
   try {
     const { page, limit, status, coach_id, student_id } = req.validated;
-    const { limit: queryLimit, offset } = getPagination(page, limit);
+    const isAdmin = (req.user.roles || []).includes('admin');
+    const isAdminRoute = (req.baseUrl || '').includes('/admin');
+    if (isAdmin && !isAdminRoute) {
+      return errorResponse(res, 'Use /api/admin/bookings for admin booking list access', 403);
+    }
+    const isPaginated = page != null || limit != null;
+    const { limit: queryLimit, offset } = isPaginated
+      ? getPagination(page, limit)
+      : { limit: MAX_LIST_ALL_BOOKINGS, offset: 0 };
 
     const where = {};
     if (status) where.status = status;
 
-    if (!(req.user.roles || []).includes('admin')) {
+    if (!isAdmin) {
       where[Op.or] = [{ coach_id: req.user.id }, { primary_student_id: req.user.id }];
     } else {
       if (coach_id) where.coach_id = coach_id;
@@ -51,11 +109,51 @@ export const getBookings = async (req, res) => {
       order: [['scheduled_at', 'DESC']],
     });
 
+    if (!isPaginated) {
+      return successResponse(res, bookings.rows, 'Bookings retrieved successfully');
+    }
+
     const response = getPagingData(bookings, page, queryLimit);
-    return successResponse(res, response.items, 'Bookings retrieved successfully');
+    return paginatedResponse(res, response.items, response.pagination, 'Bookings retrieved successfully');
   } catch (error) {
     logger.error('Get bookings error:', error);
     return errorResponse(res, 'Failed to retrieve bookings', 500);
+  }
+};
+
+export const getCoachBookings = async (req, res) => {
+  try {
+    const { page, limit, status } = req.validated;
+    const isPaginated = page != null || limit != null;
+    const { limit: queryLimit, offset } = isPaginated
+      ? getPagination(page, limit)
+      : { limit: MAX_LIST_ALL_BOOKINGS, offset: 0 };
+
+    const where = { coach_id: req.user.id };
+    if (status) where.status = status;
+
+    const bookings = await Booking.findAndCountAll({
+      where,
+      include: [
+        { model: Lesson, as: 'lesson' },
+        { model: User, as: 'coach', attributes: ['id', 'full_name', 'avatar_url'] },
+        { model: User, as: 'primaryStudent', attributes: ['id', 'full_name', 'avatar_url'] },
+        { model: CourtLocation, as: 'courtLocation' },
+      ],
+      limit: queryLimit,
+      offset,
+      order: [['scheduled_at', 'DESC']],
+    });
+
+    if (!isPaginated) {
+      return successResponse(res, bookings.rows, 'Coach bookings retrieved successfully');
+    }
+
+    const response = getPagingData(bookings, page, queryLimit);
+    return paginatedResponse(res, response.items, response.pagination, 'Coach bookings retrieved successfully');
+  } catch (error) {
+    logger.error('Get coach bookings error:', error);
+    return errorResponse(res, 'Failed to retrieve coach bookings', 500);
   }
 };
 
@@ -70,8 +168,18 @@ export const getBookingById = async (req, res) => {
         { model: CourtLocation, as: 'courtLocation' },
         { model: BookingPlayer, as: 'players', include: [{ model: User, as: 'player', attributes: ['id', 'full_name'] }] },
         { model: Payment, as: 'payments' },
-        { model: RescheduleHistory, as: 'rescheduleHistory', order: [['requested_at', 'DESC']] },
-        { model: CancellationHistory, as: 'cancellationHistory', order: [['cancelled_at', 'DESC']] },
+        {
+          model: RescheduleHistory,
+          as: 'rescheduleHistory',
+          separate: true,
+          order: [['requested_at', 'DESC']],
+        },
+        {
+          model: CancellationHistory,
+          as: 'cancellationHistory',
+          separate: true,
+          order: [['cancelled_at', 'DESC']],
+        },
       ],
     });
 
@@ -80,7 +188,12 @@ export const getBookingById = async (req, res) => {
     }
 
     const isParticipant = req.user.id === booking.coach_id || req.user.id === booking.primary_student_id;
-    if (!isParticipant && !(req.user.roles || []).includes('admin')) {
+    const isAdmin = (req.user.roles || []).includes('admin');
+    const isAdminRoute = (req.baseUrl || '').includes('/admin');
+    if (isAdmin && !isAdminRoute) {
+      return errorResponse(res, 'Use /api/admin/bookings/:id for admin booking access', 403);
+    }
+    if (!isParticipant && !isAdmin) {
       return errorResponse(res, 'Unauthorized', 403);
     }
 
@@ -100,9 +213,72 @@ export const getBookingById = async (req, res) => {
   }
 };
 
+export const getAdminBookings = async (req, res) => {
+  return getBookings(req, res);
+};
+
+export const getAdminBookingById = async (req, res) => {
+  return getBookingById(req, res);
+};
+
 export const createBooking = async (req, res) => {
   try {
-    const { lesson_id, scheduled_at, duration_minutes, player_ids, court_location_id, payment_method = 'stripe' } = req.validated;
+    const {
+      lesson_id,
+      scheduled_at,
+      duration_minutes,
+      player_ids,
+      court_location_id,
+      payment_method = 'stripe',
+      payment_method_id,
+      idempotency_key,
+    } = req.validated;
+    const requestIdempotencyKey =
+      idempotency_key ||
+      req.headers['idempotency-key'] ||
+      generateBookingIdempotencyKey(req.user.id);
+
+    const existingBooking = await Booking.findOne({
+      where: {
+        idempotency_key: requestIdempotencyKey,
+        primary_student_id: req.user.id,
+      },
+    });
+    if (existingBooking) {
+      let existingPayload = await buildReplayBookingPayload(existingBooking);
+      // Hardening: recover PaymentIntent if booking exists but payment row/intent is missing.
+      if (!existingPayload.payment_intent_id) {
+        try {
+          logger.info({
+            event: 'booking_replay_payment_recovery',
+            bookingId: existingBooking.id,
+            studentId: req.user.id,
+            idempotencyKey: requestIdempotencyKey,
+          });
+          const recovered = await paymentService.createPaymentForBooking(
+            existingBooking,
+            req.user.id,
+            payment_method,
+            {
+              paymentMethodId: payment_method_id || null,
+              idempotencyKey: requestIdempotencyKey,
+            }
+          );
+          existingPayload = {
+            ...existingPayload,
+            payment_intent_client_secret: recovered.paymentIntent?.client_secret ?? null,
+            payment_intent_id: recovered.paymentIntent?.id ?? null,
+          };
+        } catch (recoveryError) {
+          logger.warn('Idempotent replay payment recovery failed', {
+            bookingId: existingBooking.id,
+            idempotencyKey: requestIdempotencyKey,
+            error: recoveryError?.message || String(recoveryError),
+          });
+        }
+      }
+      return successResponse(res, existingPayload, 'Booking already exists for this idempotency key');
+    }
 
     const lesson = await Lesson.findByPk(lesson_id);
     if (!lesson || !lesson.is_active) {
@@ -110,8 +286,18 @@ export const createBooking = async (req, res) => {
     }
 
     const roles = req.user.roles || [];
-    if (!roles.includes('student') && !roles.includes('admin')) {
-      return errorResponse(res, 'Only students can create bookings', 403);
+    if (!roles.includes('student') || roles.includes('admin')) {
+      return errorResponse(res, 'Only non-admin students can create bookings', 403);
+    }
+
+    const lessonCoachRole = await UserRole.findOne({
+      where: {
+        user_id: lesson.coach_id,
+        role: 'coach',
+      },
+    });
+    if (!lessonCoachRole) {
+      return errorResponse(res, 'Lesson coach account is not a valid coach', 400);
     }
 
     // Coach and student must be different users (no self-booking)
@@ -119,8 +305,9 @@ export const createBooking = async (req, res) => {
       return errorResponse(res, 'You cannot book your own lesson. Coach and student must be different users.', 400);
     }
 
+    const now = new Date();
     const scheduledDate = new Date(scheduled_at);
-    if (scheduledDate < new Date()) {
+    if (scheduledDate < now) {
       return errorResponse(res, 'Cannot book in the past', 400);
     }
 
@@ -129,6 +316,16 @@ export const createBooking = async (req, res) => {
       const court = await CourtLocation.findByPk(court_location_id);
       if (!court || court.deleted_at) {
         return errorResponse(res, 'Court location not found', 404);
+      }
+
+      const coachCourtLink = await CoachCourtLocation.findOne({
+        where: {
+          coach_id: lesson.coach_id,
+          court_id: court_location_id,
+        },
+      });
+      if (!coachCourtLink) {
+        return errorResponse(res, 'Selected court is not available for this coach', 400);
       }
     }
 
@@ -153,6 +350,7 @@ export const createBooking = async (req, res) => {
         lesson_id,
         coach_id: lesson.coach_id,
         primary_student_id: req.user.id,
+        idempotency_key: requestIdempotencyKey,
         scheduled_at: scheduledDate,
         duration_minutes: duration_minutes || lesson.duration_minutes,
         price: lesson.price,
@@ -174,13 +372,29 @@ export const createBooking = async (req, res) => {
         booking,
         req.user.id,
         payment_method,
-        { transaction }
+        {
+          transaction,
+          paymentMethodId: payment_method_id || null,
+          idempotencyKey: requestIdempotencyKey,
+        }
       );
       paymentIntent = result.paymentIntent;
 
       await transaction.commit();
     } catch (txError) {
       await transaction.rollback();
+      if (txError?.name === 'SequelizeUniqueConstraintError') {
+        const racedBooking = await Booking.findOne({
+          where: {
+            idempotency_key: requestIdempotencyKey,
+            primary_student_id: req.user.id,
+          },
+        });
+        if (racedBooking) {
+          const payload = await buildReplayBookingPayload(racedBooking);
+          return successResponse(res, payload, 'Booking already exists for this idempotency key');
+        }
+      }
       const errMsg = (txError?.message || String(txError)) + (txError?.stack ? '\n' + txError.stack : '');
       logger.error('Create booking error: ' + errMsg);
       if (!res.headersSent) {
@@ -191,6 +405,14 @@ export const createBooking = async (req, res) => {
     }
 
     await logAudit(req.user.id, 'booking_created', 'bookings', booking.id, null, booking.get({ plain: true }), req);
+
+    void notificationService.notifyCoachNewBookingRequest(booking.id).catch((err) => {
+      logger.error({
+        event: 'notify_coach_new_booking_failed',
+        bookingId: booking.id,
+        message: err?.message || String(err),
+      });
+    });
 
     // Use plain object so res.json() never fails on Sequelize model serialization
     const bookingData = booking.get({ plain: true });
@@ -219,72 +441,119 @@ export const createBooking = async (req, res) => {
   }
 };
 
-// Valid status transitions for Update Booking Status (coach/admin). pending → confirmed/cancelled only via accept/decline endpoints.
-const BOOKING_STATUS_TRANSITIONS = {
-  pending: [], // Use POST /bookings/:id/accept or POST /bookings/:id/decline
-  confirmed: ['completed', 'cancelled', 'no_show'],
-  completed: [],
-  cancelled: [],
-  no_show: [],
-  awaiting_verification: ['completed', 'cancelled'],
-  disputed: [],
+const lessonHasEnded = (booking) => {
+  const lessonEndMs = new Date(booking.scheduled_at).getTime() + (booking.duration_minutes || 0) * 60 * 1000;
+  return Date.now() >= lessonEndMs;
 };
 
-export const updateBookingStatus = async (req, res) => {
+/**
+ * Mark a confirmed/awaiting_verification booking as completed.
+ * Coach-only endpoint. Admin override should use /api/admin/bookings/:id/complete (if introduced).
+ */
+export const completeBooking = async (req, res) => {
   try {
     const { id } = req.params;
-    const { status } = req.validated;
-
     const booking = await Booking.findByPk(id);
-    if (!booking) {
-      return errorResponse(res, 'Booking not found', 404);
-    }
+    if (!booking) return errorResponse(res, 'Booking not found', 404);
+    if (req.user.id !== booking.coach_id) return errorResponse(res, 'Only the coach for this booking can complete it', 403);
 
-    if (!(req.user.roles || []).includes('admin') && req.user.id !== booking.coach_id) {
-      return errorResponse(res, 'Unauthorized', 403);
-    }
-
-    const currentStatus = booking.status;
-    const allowed = BOOKING_STATUS_TRANSITIONS[currentStatus];
-    if (allowed == null || !allowed.includes(status)) {
+    if (!['confirmed', 'awaiting_verification'].includes(booking.status)) {
       return errorResponse(
         res,
-        `Invalid transition: cannot change status from '${currentStatus}' to '${status}'. Allowed: ${allowed?.length ? allowed.join(', ') : 'none'}.`,
+        `Booking must be confirmed or awaiting_verification to complete (current: ${booking.status}).`,
+        400
+      );
+    }
+    if (!lessonHasEnded(booking)) {
+      return errorResponse(
+        res,
+        'Cannot mark booking as completed before the lesson end time. Wait until the lesson has finished.',
         400
       );
     }
 
-    // Coach can only mark completed after the lesson end time has passed (prevents marking done before lesson)
-    if (status === 'completed') {
-      const lessonEndMs = new Date(booking.scheduled_at).getTime() + (booking.duration_minutes || 0) * 60 * 1000;
-      if (Date.now() < lessonEndMs) {
-        return errorResponse(
-          res,
-          'Cannot mark booking as completed before the lesson end time. Wait until the lesson has finished.',
-          400
-        );
-      }
-    }
-
     const beforeState = booking.toJSON();
-    const updatePayload = { status };
-    if (status === 'completed') {
-      updatePayload.payout_status = 'pending';
-    }
-    await booking.update(updatePayload);
+    await booking.update({ status: 'completed', payout_status: 'pending', messaging_locked: true });
+    await logAudit(req.user.id, 'booking_completed', 'bookings', booking.id, beforeState, booking.toJSON(), req);
 
-    await logAudit(req.user.id, 'booking_status_updated', 'bookings', booking.id, beforeState, booking.toJSON(), req);
-
-    return successResponse(res, booking, 'Booking status updated successfully');
+    const updated = await Booking.findByPk(id, {
+      include: [
+        { model: Lesson, as: 'lesson' },
+        { model: User, as: 'coach', attributes: ['id', 'full_name', 'avatar_url'] },
+        { model: User, as: 'primaryStudent', attributes: ['id', 'full_name', 'avatar_url'] },
+      ],
+    });
+    return successResponse(res, updated, 'Booking marked as completed');
   } catch (error) {
-    logger.error('Update booking status error:', error);
-    return errorResponse(res, 'Failed to update booking status', 500);
+    logger.error('Complete booking error:', error);
+    return errorResponse(res, 'Failed to complete booking', 500);
   }
 };
 
 /**
- * Coach (or admin) accepts a pending booking. Captures payment and sets status to confirmed.
- * Enterprise flow: coach must confirm before the booking is final.
+ * Mark a confirmed/awaiting_verification booking as `no_show` when the **primary student** did not attend.
+ * Coach calls `POST /api/bookings/:id/student-no-show`; admin uses `POST /api/admin/bookings/:id/student-no-show`.
+ * (Coach no-show: admin `POST /api/admin/bookings/:id/coach-no-show` and/or dispute type `coach_no_show`.)
+ */
+export const markBookingNoShow = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const booking = await Booking.findByPk(id);
+    if (!booking) return errorResponse(res, 'Booking not found', 404);
+    const isAdmin = (req.user.roles || []).includes('admin');
+    const isCoach = req.user.id === booking.coach_id;
+    const isAdminRoute = (req.baseUrl || '').includes('/admin');
+    // Strict separation: coach route only; admins must use /api/admin/bookings/:id/student-no-show (legacy: .../no-show).
+    if (!isCoach && !(isAdmin && isAdminRoute)) return errorResponse(res, 'Unauthorized', 403);
+
+    if (booking.status === 'coach_no_show') {
+      return errorResponse(
+        res,
+        'This booking is already marked coach_no_show. Use student no-show only when the student did not attend.',
+        400
+      );
+    }
+    if (!['confirmed', 'awaiting_verification'].includes(booking.status)) {
+      return errorResponse(
+        res,
+        `Booking must be confirmed or awaiting_verification to mark no_show (current: ${booking.status}).`,
+        400
+      );
+    }
+    if (!lessonHasEnded(booking)) {
+      return errorResponse(
+        res,
+        'Cannot mark booking as no_show before the lesson end time.',
+        400
+      );
+    }
+
+    const beforeState = booking.toJSON();
+    await booking.update({ status: 'no_show', messaging_locked: true });
+    await logAudit(req.user.id, 'booking_marked_no_show', 'bookings', booking.id, beforeState, booking.toJSON(), req);
+
+    const updated = await Booking.findByPk(id, {
+      include: [
+        { model: Lesson, as: 'lesson' },
+        { model: User, as: 'coach', attributes: ['id', 'full_name', 'avatar_url'] },
+        { model: User, as: 'primaryStudent', attributes: ['id', 'full_name', 'avatar_url'] },
+      ],
+    });
+    if (booking.primary_student_id != null) {
+      await updateUserReliability(booking.primary_student_id, 'student').catch((err) =>
+        logger.error('Failed to update student reliability after no_show:', err),
+      );
+    }
+    return successResponse(res, updated, 'Booking marked as no_show');
+  } catch (error) {
+    logger.error('No-show booking error:', error);
+    return errorResponse(res, 'Failed to mark booking as no_show', 500);
+  }
+};
+
+/**
+ * Coach accepts a pending booking. Captures payment and sets status to confirmed.
+ * MVP: only the assigned coach may accept (not admin, not student).
  */
 export const acceptBooking = async (req, res) => {
   try {
@@ -294,8 +563,8 @@ export const acceptBooking = async (req, res) => {
     if (booking.status !== 'pending') {
       return errorResponse(res, `Booking is not pending (status: ${booking.status}). Only pending bookings can be accepted.`, 400);
     }
-    if (!(req.user.roles || []).includes('admin') && req.user.id !== booking.coach_id) {
-      return errorResponse(res, 'Only the coach or an admin can accept this booking', 403);
+    if (req.user.id !== booking.coach_id) {
+      return errorResponse(res, 'Only the coach for this booking can accept it', 403);
     }
 
     const payment = await Payment.findOne({ where: { booking_id: booking.id }, order: [['id', 'DESC']] });
@@ -313,7 +582,11 @@ export const acceptBooking = async (req, res) => {
         { model: User, as: 'primaryStudent', attributes: ['id', 'full_name', 'avatar_url'] },
       ],
     });
-    return successResponse(res, updated, 'Booking accepted and confirmed');
+    return successResponse(
+      res,
+      updated,
+      'Booking accepted. If payment was pending capture, confirmation completes when Stripe sends payment_intent.succeeded.'
+    );
   } catch (error) {
     logger.error('Accept booking error:', error);
     const message = error.message || 'Failed to accept booking';
@@ -323,7 +596,8 @@ export const acceptBooking = async (req, res) => {
 };
 
 /**
- * Coach (or admin) declines a pending booking. Cancels PaymentIntent (no charge) and sets booking to cancelled.
+ * Coach declines a pending booking. Cancels PaymentIntent (no charge) and sets booking to cancelled.
+ * MVP: only the assigned coach may decline.
  * Optional message_to_student is shown to the student (e.g. "Something came up—please book another slot").
  * Optional decline_reason_code for analytics (e.g. availability_wrong, sick, other).
  */
@@ -336,8 +610,8 @@ export const declineBooking = async (req, res) => {
     if (booking.status !== 'pending') {
       return errorResponse(res, `Booking is not pending (status: ${booking.status}). Only pending bookings can be declined.`, 400);
     }
-    if (!(req.user.roles || []).includes('admin') && req.user.id !== booking.coach_id) {
-      return errorResponse(res, 'Only the coach or an admin can decline this booking', 403);
+    if (req.user.id !== booking.coach_id) {
+      return errorResponse(res, 'Only the coach for this booking can decline it', 403);
     }
 
     const payment = await Payment.findOne({ where: { booking_id: booking.id }, order: [['id', 'DESC']] });
@@ -396,130 +670,672 @@ export const cancelBooking = async (req, res) => {
     const { id } = req.params;
     const { reason, reason_notes } = req.validated;
 
-    // Reason is required and validated by schema
     if (!reason) {
       return errorResponse(res, 'Reason is required for cancellation', 400);
     }
 
-    const booking = await Booking.findByPk(id);
-    if (!booking) {
+    const bookingPreview = await Booking.findByPk(id);
+    if (!bookingPreview) {
       return errorResponse(res, 'Booking not found', 404);
     }
 
-    if (['completed', 'cancelled'].includes(booking.status)) {
-      return errorResponse(res, 'Booking cannot be cancelled', 400);
+    const isAdmin = (req.user.roles || []).includes('admin');
+    const isCoach = req.user.id === bookingPreview.coach_id;
+    const isStudent = req.user.id === bookingPreview.primary_student_id;
+    const isAdminRoute = (req.baseUrl || '').includes('/admin');
+    if (isAdmin && !isAdminRoute) {
+      return errorResponse(res, 'Use /api/admin/bookings/:id/cancel for admin cancellation', 403);
+    }
+    if (!isAdmin && !isCoach && !isStudent) {
+      return errorResponse(res, 'Unauthorized', 403);
     }
 
-    // Determine who is cancelling
-    const cancelledBy = (req.user.roles || []).includes('admin') ? 'admin' :
-                       req.user.id === booking.coach_id ? 'coach' : 'student';
-
-    // Admin cancellations NEVER affect reliability
-    // Only marketplace participant actions (student/coach) can affect reliability
+    const cancelledBy = isAdmin ? 'admin' : isCoach ? 'coach' : 'student';
     const willAffectReliability = cancelledBy === 'admin' ? false : affectsReliability(reason);
 
-    // Calculate if cancellation is late (within 24 hours BEFORE scheduled time, not after)
-    const hoursUntilBooking = (new Date(booking.scheduled_at) - new Date()) / (1000 * 60 * 60);
-    const isLateCancel = hoursUntilBooking >= 0 && hoursUntilBooking < 24;
+    let cancellationHistory;
+    let beforeState;
+    let afterBooking;
+    let refundPaymentId = null;
+    let voidedPaymentId = null;
+    let totalChargeCents;
+    let refundCents;
+    let penaltyCents;
+    let penaltyReason;
+    let stripeRemainingCents = null;
+    let paymentForAudit = null;
+    let isLateCancel = false;
 
-    // Calculate refund and penalty amounts (basic implementation - can be enhanced)
-    let refund_amount = 0;
-    let penalty_amount = 0;
-    let penalty_reason = null;
+    /**
+     * Lock booking row first (`SELECT ... FOR UPDATE`), re-check status, then Stripe refund/void, then persist.
+     * Prevents two concurrent cancels from both calling Stripe before either row shows `cancelled`.
+     */
+    await sequelize.transaction(async (t) => {
+      const booking = await Booking.findByPk(id, { transaction: t, lock: t.LOCK.UPDATE });
+      if (!booking) {
+        const err = new Error('Booking not found');
+        err.statusCode = 404;
+        throw err;
+      }
 
-    // If late cancellation by student, may apply penalty
-    if (isLateCancel && cancelledBy === 'student') {
-      // For now, refund 50% for late cancellations, but this can be configured per business rules
-      refund_amount = booking.price * 0.5;
-      penalty_amount = booking.price * 0.5;
-      penalty_reason = 'Late cancellation';
-    } else if (cancelledBy === 'coach') {
-      // Coach cancellations typically get full refund to student
-      refund_amount = booking.price;
-      penalty_reason = 'Coach cancellation';
-    } else {
-      // Early student cancellation gets full refund
-      refund_amount = booking.price;
-    }
+      const PRE_LESSON_STATUSES = ['pending', 'confirmed'];
+      if (!PRE_LESSON_STATUSES.includes(booking.status)) {
+        if (booking.status === 'awaiting_verification') {
+          const err = new Error(
+            'Booking is awaiting verification. Use dispute resolution instead of cancellation.',
+          );
+          err.statusCode = 400;
+          err.code = 'awaiting_verification_use_dispute';
+          err.booking_status = booking.status;
+          throw err;
+        }
+        if (booking.status === 'disputed') {
+          const err = new Error(
+            'Booking is already disputed. Resolve via dispute workflow instead of cancellation.',
+          );
+          err.statusCode = 400;
+          err.code = 'disputed_use_dispute_flow';
+          err.booking_status = booking.status;
+          throw err;
+        }
+        if (booking.status === 'cancelled') {
+          const err = new Error('This booking has already been cancelled.');
+          err.statusCode = 400;
+          err.code = 'booking_already_cancelled';
+          err.booking_status = booking.status;
+          throw err;
+        }
+        if (booking.status === 'completed') {
+          const err = new Error('This booking is already completed and cannot be cancelled.');
+          err.statusCode = 400;
+          err.code = 'booking_already_completed';
+          err.booking_status = booking.status;
+          throw err;
+        }
+        const err = new Error(
+          'Only pending or confirmed bookings can be cancelled. Use dispute flow for post-lesson issues.',
+        );
+        err.statusCode = 400;
+        err.code = 'cancel_pre_lesson_only';
+        err.booking_status = booking.status;
+        throw err;
+      }
 
-    // Create cancellation history record
-    const cancellationHistory = await CancellationHistory.create({
-      booking_id: booking.id,
-      cancelled_by: cancelledBy,
-      reason,
-      reason_notes: reason_notes || null,
-      affects_reliability: willAffectReliability, // Always false for admin
-      refund_amount,
-      penalty_amount,
-      penalty_reason,
+      beforeState = booking.toJSON();
+
+      const now = new Date();
+      const hoursUntilBooking = (new Date(booking.scheduled_at) - now) / (1000 * 60 * 60);
+      isLateCancel = hoursUntilBooking >= 0 && hoursUntilBooking < 24;
+
+      const payment = await Payment.findOne({
+        where: { booking_id: booking.id },
+        order: [['id', 'DESC']],
+        transaction: t,
+        lock: t.LOCK.UPDATE,
+      });
+      paymentForAudit = payment;
+
+      totalChargeCents = paymentService.parseTotalChargeCentsFromBooking(payment, booking);
+
+      const split = paymentService.computeCancellationSplitCents({
+        totalChargeCents,
+        isLateCancel,
+        cancelledBy,
+      });
+      refundCents = split.refundCents;
+      penaltyCents = split.penaltyCents;
+      penaltyReason = split.penaltyReason;
+
+      if (refundCents > 0 && payment?.charge_id) {
+        try {
+          const ch = await stripeService.retrieveCharge(payment.charge_id);
+          const chargeAmountCents = Math.round(ch.amount || 0);
+          const refundedSoFar = Math.round(ch.amount_refunded || 0);
+          stripeRemainingCents = chargeAmountCents - refundedSoFar;
+
+          const capped = paymentService.applyStripeRefundCap({
+            policyRefundCents: refundCents,
+            totalChargeCents,
+            remainingCents: stripeRemainingCents,
+          });
+          refundCents = capped.refundCents;
+          penaltyCents = capped.penaltyCents;
+          if (capped.capped) {
+            logger.warn({
+              component: 'stripe',
+              event: 'refund_capped_by_stripe_remaining',
+              bookingId: booking.id,
+              paymentId: payment.id,
+              stripeRemainingCents,
+            });
+          }
+        } catch (err) {
+          logger.error({
+            component: 'stripe',
+            event: 'cancel_stripe_remaining_fetch_failed',
+            paymentId: payment.id,
+            message: err.message,
+          });
+          const e = new Error(
+            'Could not verify charge with Stripe. Booking was not cancelled. Try again or contact support.',
+          );
+          e.statusCode = 502;
+          throw e;
+        }
+      }
+
+      const invariant =
+        totalChargeCents < 1 ||
+        Math.round(refundCents) + Math.round(penaltyCents) === Math.round(totalChargeCents);
+      if (!invariant) {
+        logger.error({
+          component: 'stripe',
+          event: 'cancellation_refund_invariant_broken',
+          bookingId: booking.id,
+          totalChargeCents,
+          refundCents,
+          penaltyCents,
+        });
+        const e = new Error('Refund calculation error. Please contact support.');
+        e.statusCode = 500;
+        throw e;
+      }
+
+      logger.info({
+        component: 'stripe',
+        event: 'cancellation_refund_calc',
+        bookingId: booking.id,
+        paymentId: payment?.id,
+        totalChargeCents,
+        isLateCancel,
+        cancelledBy,
+        refundCents,
+        penaltyCents,
+        stripeRemainingCents,
+        penaltyReason,
+      });
+
+      const refund_amount = paymentService.centsToDecimalString(refundCents);
+      const penalty_amount = paymentService.centsToDecimalString(penaltyCents);
+      const penalty_reason = penaltyReason;
+
+      if (refundCents > 0) {
+        if (
+          payment?.charge_id &&
+          (payment.payment_status === 'captured' ||
+            payment.payment_status === 'partially_refunded' ||
+            payment.payment_status === 'pending_capture')
+        ) {
+          try {
+            await paymentService.processRefund(payment.id, {
+              refundCents,
+              reason: 'requested_by_customer',
+              idempotencyKey: `cancel-booking-${booking.id}-payment-${payment.id}`,
+              transaction: t,
+            });
+            refundPaymentId = payment.id;
+          } catch (refundErr) {
+            logger.error('Stripe refund failed during cancellation; booking not cancelled:', refundErr);
+            const e = new Error(
+              refundErr.message || 'Refund failed. Booking was not cancelled. Try again or contact support.',
+            );
+            e.statusCode = 502;
+            throw e;
+          }
+        }
+      }
+      if (!payment?.charge_id && payment?.payment_intent_id && payment.payment_status === 'pending') {
+        try {
+          await stripeService.cancelPaymentIntent(payment.payment_intent_id);
+          await payment.update({ payment_status: 'pending_void' }, { transaction: t });
+          voidedPaymentId = payment.id;
+        } catch (voidErr) {
+          logger.error('Stripe PaymentIntent cancel failed during cancellation; booking not cancelled:', voidErr);
+          const e = new Error(
+            'Could not cancel payment authorization. Booking was not cancelled. Try again or contact support.',
+          );
+          e.statusCode = 502;
+          throw e;
+        }
+      }
+
+      cancellationHistory = await CancellationHistory.create(
+        {
+          booking_id: booking.id,
+          cancelled_by: cancelledBy,
+          reason,
+          reason_notes: reason_notes || null,
+          affects_reliability: willAffectReliability,
+          refund_amount,
+          penalty_amount,
+          penalty_reason,
+        },
+        { transaction: t },
+      );
+
+      if (refundPaymentId) {
+        await cancellationHistory.update({ refund_payment_id: refundPaymentId }, { transaction: t });
+      }
+
+      await booking.update(
+        {
+          status: 'cancelled',
+          cancelled_by: cancelledBy,
+          cancelled_at: new Date(),
+          messaging_locked: true,
+        },
+        { transaction: t },
+      );
     });
 
-    const beforeState = booking.toJSON();
-    await booking.update({
-      status: 'cancelled',
-      cancelled_by: cancelledBy,
-      cancelled_at: new Date(),
-      // Lock messaging after cancellation
-      messaging_locked: true,
-    });
-
-    await logAudit(req.user.id, 'booking_cancelled', 'bookings', booking.id, beforeState, booking.toJSON(), req);
+    afterBooking = await Booking.findByPk(id);
+    await logAudit(req.user.id, 'booking_cancelled', 'bookings', id, beforeState, afterBooking.toJSON(), req);
     await logAudit(req.user.id, 'cancellation_recorded', 'cancellation_history', cancellationHistory.id, null, cancellationHistory.toJSON(), req);
 
-    // Update reliability ONLY for marketplace participants (coach/student), never for admin
+    await createAuditLog({
+      user_id: req.user.id,
+      action: 'cancellation_financials',
+      table_name: 'bookings',
+      record_id: id,
+      after_state: {
+        cancellation_history_id: cancellationHistory.id,
+        payment_id: paymentForAudit?.id ?? null,
+        payment_voided_id: voidedPaymentId,
+        total_charge_cents: totalChargeCents,
+        refund_cents: refundCents,
+        retained_penalty_cents: penaltyCents,
+        is_late_cancel: isLateCancel,
+        cancelled_by: cancelledBy,
+        penalty_reason: penaltyReason,
+        stripe_remaining_cents_before_refund: stripeRemainingCents,
+      },
+      ip_address: req?.ip || req?.connection?.remoteAddress,
+      user_agent: req?.get?.('user-agent'),
+    });
+
     if (willAffectReliability && cancelledBy !== 'admin') {
-      const userIdToUpdate = cancelledBy === 'coach' ? booking.coach_id : booking.primary_student_id;
+      const userIdToUpdate = cancelledBy === 'coach' ? afterBooking.coach_id : afterBooking.primary_student_id;
       if (userIdToUpdate) {
-        // Double-check: ensure we're not updating an admin user
         const userToUpdate = await User.findByPk(userIdToUpdate, {
           include: [{ model: UserRole, as: 'userRoles', attributes: ['role'] }],
         });
         const updateRoles = userToUpdate?.userRoles?.map((r) => r.role) ?? [];
         if (userToUpdate && !updateRoles.includes('admin')) {
-          await updateUserReliability(userIdToUpdate).catch(err => {
+          const reliabilityRole = cancelledBy === 'coach' ? 'coach' : 'student';
+          await updateUserReliability(userIdToUpdate, reliabilityRole).catch((err) => {
             logger.error('Failed to update reliability after cancellation:', err);
           });
         }
       }
     }
 
-    // Process refund if applicable
-    if (refund_amount > 0) {
-      try {
-        // Find the payment for this booking
-        const payment = await Payment.findOne({
-          where: { booking_id: booking.id },
-        });
-
-        if (payment && payment.charge_id && payment.payment_status === 'captured') {
-          // Process refund through payment service
-          await paymentService.processRefund(
-            payment.id,
-            refund_amount,
-            cancelledBy === 'coach' ? 'coach_cancellation' : 'student_cancellation'
-          );
-          
-          // Update cancellation history with refund payment ID
-          await cancellationHistory.update({
-            refund_payment_id: payment.id,
-          });
-        }
-      } catch (refundError) {
-        // Log error but don't fail the cancellation
-        logger.error('Error processing refund during cancellation:', refundError);
-        // The cancellation is still recorded, refund can be processed manually later
-      }
-    }
-
-    // Sanitize response - remove affects_reliability from frontend
     const sanitizedCancellation = sanitizeResponse(cancellationHistory);
 
     return successResponse(res, {
-      booking: booking.toJSON(),
+      booking: afterBooking.toJSON(),
       cancellation: sanitizedCancellation,
     }, 'Booking cancelled successfully');
   } catch (error) {
+    if (error.statusCode === 404) {
+      return errorResponse(res, error.message, 404);
+    }
+    if (error.statusCode === 400) {
+      const extra =
+        error.code && typeof error.code === 'string'
+          ? { code: error.code, ...(error.booking_status && { booking_status: error.booking_status }) }
+          : null;
+      return errorResponse(res, error.message, 400, null, extra);
+    }
+    if (error.statusCode === 502) {
+      return errorResponse(res, error.message, 502);
+    }
+    if (error.statusCode === 500) {
+      return errorResponse(res, error.message, 500);
+    }
     logger.error('Cancel booking error:', error);
     return errorResponse(res, 'Failed to cancel booking', 500);
+  }
+};
+
+/**
+ * Admin pre-lesson cancel — thin wrapper around `cancelBooking` (pending/confirmed only; same rules as student/coach cancel).
+ */
+export const adminPreLessonCancelBooking = async (req, res) => {
+  return cancelBooking(req, res);
+};
+
+/**
+ * Admin: set booking to `coach_no_show` (coach did not attend). Optional `dispute_id` resolves that
+ * open `coach_no_show` dispute; if omitted and exactly one such dispute exists, it is resolved automatically.
+ */
+export const adminMarkCoachNoShow = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      dispute_id: disputeId,
+      resolution_action_id: resolutionActionId,
+      resolution_notes: resolutionNotes,
+      notes,
+    } = req.validated || {};
+
+    const booking = await Booking.findByPk(id);
+    if (!booking) return errorResponse(res, 'Booking not found', 404);
+
+    if (booking.status === 'coach_no_show') {
+      return errorResponse(
+        res,
+        'This booking is already marked coach_no_show.',
+        400,
+        null,
+        { code: 'booking_already_coach_no_show', booking_status: booking.status },
+      );
+    }
+    if (!['confirmed', 'awaiting_verification', 'disputed'].includes(booking.status)) {
+      return errorResponse(
+        res,
+        `Cannot mark coach_no_show from status ${booking.status}. Allowed: confirmed, awaiting_verification, disputed.`,
+        400,
+        null,
+        { booking_status: booking.status },
+      );
+    }
+    if (!lessonHasEnded(booking)) {
+      return errorResponse(res, 'Cannot mark coach_no_show before the lesson end time.', 400);
+    }
+
+    if (resolutionActionId != null) {
+      const action = await DisputeResolutionAction.findByPk(resolutionActionId);
+      if (!action) {
+        return errorResponse(
+          res,
+          'Invalid resolution_action_id: row does not exist in dispute_resolution_actions',
+          400,
+        );
+      }
+    }
+
+    const coachNoShowType = await DisputeType.findOne({ where: { code: 'coach_no_show' } });
+    const beforeState = booking.toJSON();
+
+    await sequelize.transaction(async (t) => {
+      const b = await Booking.findByPk(id, { transaction: t, lock: t.LOCK.UPDATE });
+      if (!b) {
+        const err = new Error('Booking not found');
+        err.statusCode = 404;
+        throw err;
+      }
+      if (b.status === 'coach_no_show') {
+        const err = new Error('This booking is already marked coach_no_show.');
+        err.statusCode = 400;
+        err.code = 'booking_already_coach_no_show';
+        err.booking_status = b.status;
+        throw err;
+      }
+      if (!['confirmed', 'awaiting_verification', 'disputed'].includes(b.status)) {
+        const err = new Error(`Cannot mark coach_no_show from status ${b.status}.`);
+        err.statusCode = 400;
+        err.booking_status = b.status;
+        throw err;
+      }
+
+      await b.update({ status: 'coach_no_show', messaging_locked: true }, { transaction: t });
+
+      if (coachNoShowType) {
+        const openWhere = {
+          booking_id: b.id,
+          dispute_type_id: coachNoShowType.id,
+          status: { [Op.in]: ['open', 'under_review'] },
+        };
+        if (disputeId != null) {
+          openWhere.id = disputeId;
+        }
+        const openDisputes = await Dispute.findAll({ where: openWhere, transaction: t });
+        if (disputeId != null && openDisputes.length === 0) {
+          const err = new Error(
+            'dispute_id does not match an open or under_review coach_no_show dispute for this booking.',
+          );
+          err.statusCode = 400;
+          throw err;
+        }
+        if (disputeId == null && openDisputes.length > 1) {
+          const err = new Error(
+            'Multiple open coach_no_show disputes for this booking; pass dispute_id to resolve one.',
+          );
+          err.statusCode = 400;
+          throw err;
+        }
+        const trimmedResolutionNotes =
+          resolutionNotes != null && String(resolutionNotes).trim() !== ''
+            ? String(resolutionNotes).trim()
+            : null;
+        for (const d of openDisputes) {
+          await d.update(
+            {
+              status: 'resolved',
+              resolution_action_id: resolutionActionId ?? null,
+              resolution_notes: trimmedResolutionNotes,
+              admin_id: req.user.id,
+              resolved_at: new Date(),
+            },
+            { transaction: t },
+          );
+        }
+      } else if (disputeId != null) {
+        const err = new Error('dispute_types.coach_no_show is missing; cannot resolve dispute by id.');
+        err.statusCode = 500;
+        throw err;
+      }
+    });
+
+    const updated = await Booking.findByPk(id, {
+      include: [
+        { model: Lesson, as: 'lesson' },
+        { model: User, as: 'coach', attributes: ['id', 'full_name', 'avatar_url'] },
+        { model: User, as: 'primaryStudent', attributes: ['id', 'full_name', 'avatar_url'] },
+      ],
+    });
+
+    await logAudit(req.user.id, 'booking_marked_coach_no_show', 'bookings', booking.id, beforeState, updated.toJSON(), req);
+    if (notes && String(notes).trim()) {
+      await logAudit(
+        req.user.id,
+        'admin_coach_no_show_notes',
+        'bookings',
+        booking.id,
+        null,
+        { notes: String(notes).trim() },
+        req,
+      );
+    }
+
+    if (booking.coach_id) {
+      const coachUser = await User.findByPk(booking.coach_id, {
+        include: [{ model: UserRole, as: 'userRoles', attributes: ['role'] }],
+      });
+      const roles = coachUser?.userRoles?.map((r) => r.role) ?? [];
+      if (coachUser && !roles.includes('admin')) {
+        await updateUserReliability(booking.coach_id, 'coach').catch((err) =>
+          logger.error('Failed to update reliability after coach_no_show:', err),
+        );
+      }
+    }
+
+    return successResponse(res, updated, 'Booking marked as coach_no_show');
+  } catch (error) {
+    if (error.statusCode === 404) {
+      return errorResponse(res, error.message, 404);
+    }
+    if (error.statusCode === 400) {
+      const extra =
+        error.code && typeof error.code === 'string'
+          ? { code: error.code, ...(error.booking_status && { booking_status: error.booking_status }) }
+          : null;
+      return errorResponse(res, error.message, 400, null, extra);
+    }
+    if (error.statusCode === 409) {
+      return errorResponse(res, error.message, 409);
+    }
+    if (error.statusCode === 500) {
+      return errorResponse(res, error.message, 500);
+    }
+    logger.error('Admin mark coach no-show error:', error);
+    return errorResponse(res, 'Failed to mark coach_no_show', 500);
+  }
+};
+
+/**
+ * Admin override: mark **student** no-show (same rules as coach `student-no-show` route).
+ */
+export const adminMarkBookingNoShow = async (req, res) => {
+  return markBookingNoShow(req, res);
+};
+
+/**
+ * Admin override: issue refund for a booking's latest payment.
+ * If refund_amount is omitted, refunds remaining Stripe balance.
+ */
+export const adminRefundBooking = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { refund_amount, reason, reason_notes } = req.validated || {};
+
+    const booking = await Booking.findByPk(id);
+    if (!booking) return errorResponse(res, 'Booking not found', 404);
+
+    const refundState = await paymentService.getLatestBookingRefundState(booking.id);
+    if (refundState.hasAnyRefund) {
+      logger.warn({
+        component: 'payments',
+        event: 'refund_already_started_blocked_admin_refund',
+        bookingId: booking.id,
+        paymentId: refundState.payment?.id ?? null,
+        refundedSoFarCents: refundState.refundedSoFarCents,
+        hasPendingRefund: refundState.hasPendingRefund,
+      });
+      return errorResponse(
+        res,
+        'A refund already exists for this booking. To keep one financial resolution per booking incident, additional refunds are blocked.',
+        409,
+        null,
+        { code: 'refund_path_already_used' },
+      );
+    }
+
+    // Guardrail: if dispute resolution already issued a refund, block manual refund path.
+    const disputeRefundResolution = await Dispute.findOne({
+      where: { booking_id: booking.id, status: 'resolved' },
+      include: [
+        {
+          model: DisputeResolutionAction,
+          as: 'resolutionAction',
+          attributes: ['id', 'code', 'requires_payout_adjustment'],
+          where: { requires_payout_adjustment: true },
+          required: true,
+        },
+      ],
+      order: [['resolved_at', 'DESC']],
+    });
+    if (disputeRefundResolution) {
+      logger.warn({
+        component: 'payments',
+        event: 'mixed_refund_path_blocked_admin_refund',
+        bookingId: booking.id,
+        disputeId: disputeRefundResolution.id,
+        resolutionAction: disputeRefundResolution.resolutionAction?.code || null,
+      });
+      return errorResponse(
+        res,
+        'This booking already has a dispute resolution with refund. To avoid duplicate refund paths, do not issue a manual booking refund.',
+        409,
+        null,
+        { code: 'refund_path_already_used' },
+      );
+    }
+
+    const openDispute = await Dispute.findOne({
+      where: {
+        booking_id: booking.id,
+        status: { [Op.in]: ['open', 'under_review'] },
+      },
+      attributes: ['id', 'status'],
+      order: [['opened_at', 'DESC']],
+    });
+    if (openDispute) {
+      logger.warn({
+        component: 'payments',
+        event: 'manual_refund_blocked_while_dispute_open',
+        bookingId: booking.id,
+        disputeId: openDispute.id,
+        disputeStatus: openDispute.status,
+      });
+      return errorResponse(
+        res,
+        'An active dispute exists for this booking. Resolve the dispute to apply any refund decision.',
+        409,
+        null,
+        { code: 'refund_requires_dispute_resolution' },
+      );
+    }
+
+    const payment = await Payment.findOne({
+      where: { booking_id: booking.id },
+      order: [['id', 'DESC']],
+    });
+    if (!payment) return errorResponse(res, 'Payment not found for this booking', 404);
+    if (!payment.charge_id) {
+      return errorResponse(res, 'Payment has no Stripe charge to refund', 400);
+    }
+
+    let refundCents;
+    if (refund_amount != null) {
+      refundCents = paymentService.dollarsToCents(refund_amount);
+      if (refundCents < 1) return errorResponse(res, 'refund_amount must be at least 0.01', 400);
+    } else {
+      const charge = await stripeService.retrieveCharge(payment.charge_id);
+      const chargeAmount = Math.round(charge.amount || 0);
+      const alreadyRefunded = Math.round(charge.amount_refunded || 0);
+      refundCents = chargeAmount - alreadyRefunded;
+      if (refundCents < 1) {
+        return errorResponse(res, 'No refundable balance remaining on Stripe charge', 400);
+      }
+    }
+
+    const initiated = await paymentService.processRefund(payment.id, {
+      refundCents,
+      reason: reason || 'requested_by_customer',
+      idempotencyKey: `admin-booking-refund-${booking.id}-${payment.id}-${refundCents}`,
+    });
+
+    await logAudit(
+      req.user.id,
+      'admin_booking_refund_initiated',
+      'bookings',
+      booking.id,
+      null,
+      {
+        payment_id: payment.id,
+        refund_cents: refundCents,
+        reason: reason || 'requested_by_customer',
+        reason_notes: reason_notes || null,
+        refund_status: initiated?.payment?.refund_status || 'pending',
+      },
+      req
+    );
+
+    return successResponse(
+      res,
+      {
+        booking_id: booking.id,
+        payment_id: payment.id,
+        refund_amount: paymentService.centsToDecimalString(refundCents),
+        refund_status: initiated?.payment?.refund_status || 'pending',
+        stripe_refund_id: initiated?.refund?.id || null,
+        reason: reason || 'requested_by_customer',
+      },
+      'Booking refund initiated by admin'
+    );
+  } catch (error) {
+    logger.error('Admin refund booking error:', error);
+    return errorResponse(res, error.message || 'Failed to refund booking', 500);
   }
 };
