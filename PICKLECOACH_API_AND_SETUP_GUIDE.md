@@ -838,7 +838,7 @@ pm.test("Availability created", function () {
 
 ### 4. Court Endpoints
 
-#### Get All Courts
+#### List/Search Courts
 
 **Request:**
 - Method: `GET`
@@ -2805,90 +2805,7 @@ Authorization: Bearer <token>
   }
   ```
 
-### `POST /api/payments`
-- **Auth**: Required
-- **Description**: Create a payment (usually created automatically with booking)
-- **Request Body**:
-  ```json
-  {
-    "booking_id": "number (required, positive integer)",
-    "payment_method": "string (optional, 'stripe' | 'apple_pay' | 'google_pay' | 'card', defaults to 'stripe')",
-    "payment_intent_id": "string (optional)",
-    "charge_id": "string (optional)"
-  }
-  ```
-- **Response** (Status: 201):
-  ```json
-  {
-    "success": true,
-    "message": "Payment created successfully",
-    "data": {
-      "id": 1,
-      "booking_id": 1,
-      "student_id": 1,
-      "coach_id": 2,
-      "total_charge_to_student": 50.00,
-      "platform_fee_amount": 4.00,
-      "coach_payout_amount": 46.00,
-      "payment_status": "pending",
-      "escrow_status": "held",
-      "created_at": "2026-01-01T00:00:00.000Z"
-    }
-  }
-  ```
-
-### `PUT /api/payments/:id/status`
-- **Auth**: Required (Admin only)
-- **Description**: Update payment status (admin only)
-- **Request Body**:
-  ```json
-  {
-    "payment_status": "string (optional)",
-    "escrow_status": "string (optional)",
-    "charge_id": "string (optional)",
-    "transfer_id": "string (optional)",
-    "payout_id": "string (optional)"
-  }
-  ```
-- **Response** (Status: 200):
-  ```json
-  {
-    "success": true,
-    "message": "Payment status updated successfully",
-    "data": {
-      "id": 1,
-      "payment_status": "captured",
-      "escrow_status": "released",
-      "charge_id": "ch_...",
-      "updated_at": "2026-01-01T00:00:00.000Z"
-    }
-  }
-  ```
-
-### `POST /api/payments/:id/refund`
-- **Auth**: Required (Admin only)
-- **Description**: Process a refund for a payment (admin only)
-- **Request Body**:
-  ```json
-  {
-    "refund_amount": "number (optional)",
-    "reason": "string (optional)"
-  }
-  ```
-- **Response** (Status: 200):
-  ```json
-  {
-    "success": true,
-    "message": "Refund processed successfully",
-    "data": {
-      "id": 1,
-      "refund_amount": 50.00,
-      "refund_status": "processed",
-      "refund_id": "re_...",
-      "updated_at": "2026-01-01T00:00:00.000Z"
-    }
-  }
-  ```
+**MVP note:** Payment rows are created when a student books a lesson (`POST /api/bookings`) and updated via Stripe webhooks and booking flows. There are no admin HTTP endpoints to create payments, adjust status, or mark refunds in isolation—use Stripe Dashboard and webhook replay; refunds that move money go through **`paymentService.processRefund`** (e.g. booking cancellation).
 
 ---
 
@@ -3141,6 +3058,8 @@ Authorization: Bearer <token>
 
 ## Disputes (`/api/disputes`)
 
+MVP `dispute_types` ids (see migration `20260408120000-canonical-dispute-types-mvp`): **1** `coach_no_show`, **2** `late_arrival`, **3** `misconduct`, **4** `lesson_not_completed`, **5** `refund_request`, **6** `billing_issue`, **7** `other`.
+
 ### `GET /api/disputes`
 - **Auth**: Required
 - **Description**: Get disputes (filtered by user role)
@@ -3188,7 +3107,10 @@ Authorization: Bearer <token>
 
 ### `POST /api/disputes`
 - **Auth**: Required
-- **Description**: Create a dispute
+- **Description**: Create a dispute. Admins can also use `POST /api/admin/disputes` (same handler) when support opens a case; this sets `opened_by` to `admin`.
+- **Reliability consistency (current rules)**:
+  - `coach_no_show` severity is aligned across signals: **35-point weight** whether represented by booking no-show status or a resolved `coach_no_show` dispute bucket.
+  - Duplicate-signal protection is enabled: if booking status already represents the no-show incident, the matching `coach_no_show` dispute is not counted again for scoring.
 - **Request Body**:
   ```json
   {
@@ -3215,28 +3137,7 @@ Authorization: Bearer <token>
 
 ### `PUT /api/disputes/:id/resolve`
 - **Auth**: Required (Admin only)
-- **Description**: Resolve a dispute (admin only)
-- **Request Body**:
-  ```json
-  {
-    "resolution_action_id": "number (required)",
-    "resolution_notes": "string (optional)"
-  }
-  ```
-- **Response** (Status: 200):
-  ```json
-  {
-    "success": true,
-    "message": "Dispute resolved successfully",
-    "data": {
-      "id": 1,
-      "status": "resolved",
-      "resolution_action_id": 1,
-      "resolution_notes": "Approved refund due to service issue",
-      "resolved_at": "2026-01-01T00:00:00.000Z"
-    }
-  }
-  ```
+- **Description**: Resolve a dispute (admin only). **`resolution_action_id` is required.** Optional automatic Stripe refunds and reliability rules are documented in **`backend/API_ENDPOINTS.md`** (same path): refunds go to the **original charge / payer** (usually the student); **`refund_amount`** for partial refunds is **US dollars**, not cents; idempotency keys prevent duplicate refunds on retry; reliability scoring uses canonical dispute types and currently applies `coach_no_show` with **35-point weight**.
 
 ---
 
@@ -3342,51 +3243,7 @@ Authorization: Bearer <token>
       },
       "disputes": {
         "pending": 3
-      },
-      "alerts": {
-        "unresolved": 5
       }
-    }
-  }
-  ```
-
-### `GET /api/admin/alerts`
-- **Auth**: Required (Admin only)
-- **Description**: Get system alerts
-- **Query Parameters**: `resolved` (boolean, optional, defaults to false)
-- **Response** (Status: 200):
-  ```json
-  {
-    "success": true,
-    "message": "Alerts retrieved successfully",
-    "data": [
-      {
-        "id": 1,
-        "alert_type": "payment_failed",
-        "severity": "high",
-        "resolved": false,
-        "relatedUser": {
-          "id": 1,
-          "full_name": "John Doe"
-        },
-        "created_at": "2026-01-01T00:00:00.000Z"
-      }
-    ]
-  }
-  ```
-
-### `PUT /api/admin/alerts/:id/resolve`
-- **Auth**: Required (Admin only)
-- **Description**: Resolve an alert
-- **Response** (Status: 200):
-  ```json
-  {
-    "success": true,
-    "message": "Alert resolved successfully",
-    "data": {
-      "id": 1,
-      "resolved": true,
-      "resolved_at": "2026-01-01T12:00:00.000Z"
     }
   }
   ```

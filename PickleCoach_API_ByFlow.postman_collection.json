@@ -65,7 +65,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"email\": \"adamduan0312@gmail.com\",\n  \"password\": \"03122003\"\n}"
+							"raw": "{\n  \"email\": \"admin@picklecoach.com\",\n  \"password\": \"admin123\"\n}"
 						},
 						"url": {
 							"raw": "{{api_url}}/auth/login",
@@ -85,6 +85,25 @@
 							"listen": "test",
 							"script": {
 								"exec": [
+									"(function persistAuthTokenFromResponse() {",
+									"    try {",
+									"        var code = pm.response.code;",
+									"        if (code !== 200 && code !== 201) return;",
+									"        var json = pm.response.json();",
+									"        if (!json || !json.data || !json.data.token) return;",
+									"        var t = json.data.token;",
+									"        pm.collectionVariables.set(\"auth_token\", t);",
+									"        pm.environment.set(\"auth_token\", t);",
+									"        pm.globals.set(\"auth_token\", t);",
+									"        if (json.data.user && json.data.user.id != null) {",
+									"            var uid = String(json.data.user.id);",
+									"            pm.collectionVariables.set(\"user_id\", uid);",
+									"            pm.environment.set(\"user_id\", uid);",
+									"            pm.globals.set(\"user_id\", uid);",
+									"        }",
+									"    } catch (e) {}",
+									"})();",
+									"",
 									"pm.test(\"Status code is 200\", function () {",
 									"    pm.response.to.have.status(200);",
 									"});",
@@ -93,12 +112,6 @@
 									"    var jsonData = pm.response.json();",
 									"    pm.expect(jsonData).to.have.property('data');",
 									"    pm.expect(jsonData.data).to.have.property('token');",
-									"    ",
-									"    // Save token and user ID",
-									"    pm.environment.set(\"auth_token\", jsonData.data.token);",
-									"    if (jsonData.data.user && jsonData.data.user.id) {",
-									"        pm.environment.set(\"user_id\", jsonData.data.user.id);",
-									"    }",
 									"});",
 									"",
 									"pm.test(\"Login successful\", function () {",
@@ -191,16 +204,33 @@
 							"listen": "test",
 							"script": {
 								"exec": [
+									"(function persistAuthTokenFromResponse() {",
+									"    try {",
+									"        var code = pm.response.code;",
+									"        if (code !== 200 && code !== 201) return;",
+									"        var json = pm.response.json();",
+									"        if (!json || !json.data || !json.data.token) return;",
+									"        var t = json.data.token;",
+									"        pm.collectionVariables.set(\"auth_token\", t);",
+									"        pm.environment.set(\"auth_token\", t);",
+									"        pm.globals.set(\"auth_token\", t);",
+									"        if (json.data.user && json.data.user.id != null) {",
+									"            var uid = String(json.data.user.id);",
+									"            pm.collectionVariables.set(\"user_id\", uid);",
+									"            pm.environment.set(\"user_id\", uid);",
+									"            pm.globals.set(\"user_id\", uid);",
+									"        }",
+									"    } catch (e) {}",
+									"})();",
+									"",
 									"pm.test(\"Status code is 200\", function () {",
 									"    pm.response.to.have.status(200);",
 									"});",
 									"",
 									"pm.test(\"New token received\", function () {",
 									"    var jsonData = pm.response.json();",
-									"    if (jsonData.data && jsonData.data.token) {",
-									"        pm.environment.set(\"auth_token\", jsonData.data.token);",
-									"    }",
 									"    pm.expect(jsonData).to.have.property('data');",
+									"    pm.expect(jsonData.data).to.have.property('token');",
 									"});"
 								],
 								"type": "text/javascript"
@@ -306,100 +336,7 @@
 					"response": []
 				},
 				{
-					"name": "7. Get Alerts",
-					"request": {
-						"method": "GET",
-						"header": [
-							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
-							}
-						],
-						"url": {
-							"raw": "{{api_url}}/admin/alerts",
-							"host": [
-								"{{api_url}}"
-							],
-							"path": [
-								"admin",
-								"alerts"
-							]
-						},
-						"description": "Roles: Admin. Get admin alerts."
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Status code is 200\", function () {",
-									"    pm.response.to.have.status(200);",
-									"});",
-									"",
-									"pm.test(\"Returns array of alerts\", function () {",
-									"    var jsonData = pm.response.json();",
-									"    pm.expect(jsonData).to.have.property('data');",
-									"    pm.expect(jsonData.data).to.be.an('array');",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "8. Resolve Alert",
-					"request": {
-						"method": "PUT",
-						"header": [
-							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
-							}
-						],
-						"url": {
-							"raw": "{{api_url}}/admin/alerts/:id/resolve",
-							"host": [
-								"{{api_url}}"
-							],
-							"path": [
-								"admin",
-								"alerts",
-								":id",
-								"resolve"
-							],
-							"variable": [
-								{
-									"key": "id",
-									"value": "1"
-								}
-							]
-						},
-						"description": "Roles: Admin. Resolve an alert."
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Status code is 200\", function () {",
-									"    pm.response.to.have.status(200);",
-									"});",
-									"",
-									"pm.test(\"Alert resolved\", function () {",
-									"    var jsonData = pm.response.json();",
-									"    pm.expect(jsonData.success).to.be.true;",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "9. Create Admin User",
+					"name": "7. Create Admin User",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -451,7 +388,7 @@
 					]
 				},
 				{
-					"name": "10. Get All Users (Admin)",
+					"name": "8. Get All Users (Admin)",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -470,6 +407,17 @@
 							],
 							"query": [
 								{
+									"key": "page",
+									"value": "1",
+									"disabled": true
+								},
+								{
+									"key": "limit",
+									"value": "10",
+									"description": "Optional. Omit to return all users. Set to paginate.",
+									"disabled": true
+								},
+								{
 									"key": "search",
 									"value": "",
 									"description": "Filter by full name or email (case-insensitive, partial match).",
@@ -483,7 +431,7 @@
 								}
 							]
 						},
-						"description": "Roles: Admin. Get all users (non-deleted by default). Query params: include_deleted=true to include soft-deleted; search to filter by full name or email (case-insensitive)."
+						"description": "Roles: Admin. Get all users (non-deleted by default). Omit `limit` to return every user. Provide `limit` (with optional `page`) for paged mode (`data` + `pagination`). Optional filters: `include_deleted=true`, `search`."
 					},
 					"response": [],
 					"event": [
@@ -507,7 +455,7 @@
 					]
 				},
 				{
-					"name": "11. Get User By ID (Admin)",
+					"name": "9. Get User By ID (Admin)",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -556,7 +504,7 @@
 					]
 				},
 				{
-					"name": "12. Update User (Admin)",
+					"name": "10. Update User (Admin)",
 					"request": {
 						"method": "PUT",
 						"header": [
@@ -614,7 +562,7 @@
 					]
 				},
 				{
-					"name": "13. Adjust User Reliability",
+					"name": "11. Adjust User Reliability",
 					"request": {
 						"method": "PUT",
 						"header": [
@@ -629,7 +577,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"new_score\": 85.5,\n  \"reason\": \"Manual adjustment\",\n  \"explanation\": \"Adjusted due to dispute resolution\"\n}"
+							"raw": "{\n  \"new_score\": 85,\n  \"role\": \"coach\",\n  \"reason\": \"Manual adjustment\",\n  \"explanation\": \"Support override after review\"\n}"
 						},
 						"url": {
 							"raw": "{{api_url}}/admin/users/:id/reliability",
@@ -649,9 +597,59 @@
 								}
 							]
 						},
-						"description": "Roles: Admin. Manually adjust a coach's reliability score (coaches only)."
+						"description": "Roles: Admin. Adjust one user_reliability row (user_id + role). Body `role` defaults to **coach** — omit or set `coach` for the coach score. Student-only users must send `\"role\": \"student\"`. Dual-role users: call twice (coach default vs `student`) to set both scores."
 					},
-					"response": [],
+					"response": [
+						{
+							"name": "200 OK — adjust reliability",
+							"originalRequest": {
+								"method": "PUT",
+								"header": [
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									},
+									{
+										"key": "Authorization",
+										"value": "Bearer {{auth_token}}"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n  \"new_score\": 85,\n  \"role\": \"coach\",\n  \"reason\": \"Manual adjustment\",\n  \"explanation\": \"Support override after review\"\n}"
+								},
+								"url": {
+									"raw": "{{api_url}}/admin/users/:id/reliability",
+									"host": [
+										"{{api_url}}"
+									],
+									"path": [
+										"admin",
+										"users",
+										":id",
+										"reliability"
+									],
+									"variable": [
+										{
+											"key": "id",
+											"value": "{{user_id}}"
+										}
+									]
+								}
+							},
+							"status": "OK",
+							"code": 200,
+							"_postman_previewlanguage": "json",
+							"header": [
+								{
+									"key": "Content-Type",
+									"value": "application/json"
+								}
+							],
+							"cookie": [],
+							"body": "{\"success\":true,\"message\":\"Reliability score adjusted successfully\",\"data\":{\"user_id\":1,\"role\":\"coach\",\"user_roles\":[\"coach\",\"student\"],\"previous_score\":100,\"new_score\":85,\"adjusted_by\":10,\"reason\":\"Manual adjustment\",\"explanation\":\"Support override after review\",\"guidance\":\"Roles: Admin. Adjust one user_reliability row (user_id + role). Body `role` defaults to **coach** — omit or set `coach` for the coach score. Student-only users must send \\\"role\\\": \\\"student\\\". Dual-role users: call twice (coach default vs `student`) to set both scores.\"}}"
+						}
+					],
 					"event": [
 						{
 							"listen": "test",
@@ -673,60 +671,7 @@
 					]
 				},
 				{
-					"name": "13.5. Get Coach Reliability (Admin Full Breakdown)",
-					"request": {
-						"method": "GET",
-						"header": [
-							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
-							}
-						],
-						"url": {
-							"raw": "{{api_url}}/admin/users/:id/reliability",
-							"host": [
-								"{{api_url}}"
-							],
-							"path": [
-								"admin",
-								"users",
-								":id",
-								"reliability"
-							],
-							"variable": [
-								{
-									"key": "id",
-									"value": "{{user_id}}"
-								}
-							]
-						},
-						"description": "Roles: Admin. Get a coach's full reliability breakdown + score. Path :id is the coach's user id."
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Status code is 200\", function () {",
-									"    pm.response.to.have.status(200);",
-									"});",
-									"",
-									"pm.test(\"Reliability returned\", function () {",
-									"    var jsonData = pm.response.json();",
-									"    pm.expect(jsonData.success).to.be.true;",
-									"    pm.expect(jsonData.data).to.have.property('reliability');",
-									"    pm.expect(jsonData.data.reliability).to.have.property('reliability_score');",
-									"    pm.expect(jsonData.data.reliability).to.have.property('reschedules');",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "14. Create Payment (Admin)",
+					"name": "12. Create Notification (Admin)",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -741,18 +686,18 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"booking_id\": {{booking_id}},\n  \"payment_method\": \"stripe\",\n  \"payment_intent_id\": null,\n  \"charge_id\": null\n}"
+							"raw": "{\n  \"user_id\": 2,\n  \"type\": \"system\",\n  \"channel\": \"in_app\",\n  \"payload\": {\n    \"title\": \"System Notification\",\n    \"message\": \"This is a system notification\",\n    \"sender_id\": 1,\n    \"sender_name\": \"Admin\"\n  }\n}"
 						},
 						"url": {
-							"raw": "{{api_url}}/payments",
+							"raw": "{{api_url}}/notifications",
 							"host": [
 								"{{api_url}}"
 							],
 							"path": [
-								"payments"
+								"notifications"
 							]
 						},
-						"description": "Roles: Admin (in practice). Create a payment record for a booking — for reconciliation when a booking exists without a payment (e.g. legacy data, manual DB insert). Does not create a Stripe PaymentIntent; optional payment_intent_id/charge_id to link existing Stripe payment."
+						"description": "Roles: Admin. Create a notification for any user (recipient `user_id`). `payload.sender_id` and `payload.sender_name` are optional client-side hints so the recipient can show who sent it (e.g. another admin to an admin)."
 					},
 					"response": [],
 					"event": [
@@ -764,7 +709,7 @@
 									"    pm.response.to.have.status(201);",
 									"});",
 									"",
-									"pm.test(\"Payment created\", function () {",
+									"pm.test(\"Notification created\", function () {",
 									"    var jsonData = pm.response.json();",
 									"    pm.expect(jsonData.success).to.be.true;",
 									"});"
@@ -775,41 +720,37 @@
 					]
 				},
 				{
-					"name": "15. Process Refund (Admin)",
+					"name": "13. Get My Notifications",
 					"request": {
-						"method": "POST",
+						"method": "GET",
 						"header": [
-							{
-								"key": "Content-Type",
-								"value": "application/json"
-							},
 							{
 								"key": "Authorization",
 								"value": "Bearer {{auth_token}}"
 							}
 						],
-						"body": {
-							"mode": "raw",
-							"raw": "{\n  \"refund_amount\": 50.00,\n  \"reason\": \"Customer request\"\n}"
-						},
 						"url": {
-							"raw": "{{api_url}}/payments/:id/refund",
+							"raw": "{{api_url}}/notifications",
 							"host": [
 								"{{api_url}}"
 							],
 							"path": [
-								"payments",
-								":id",
-								"refund"
+								"notifications"
 							],
-							"variable": [
+							"query": [
 								{
-									"key": "id",
-									"value": "1"
+									"key": "page",
+									"value": "1",
+									"disabled": true
+								},
+								{
+									"key": "limit",
+									"value": "10",
+									"disabled": true
 								}
 							]
 						},
-						"description": "Roles: Admin. Process a refund for a payment."
+						"description": "Roles: Admin (and any authenticated user). Lists in-app notifications for the logged-in user only (`user_id` = JWT). Use optional query: page, limit, status."
 					},
 					"response": [],
 					"event": [
@@ -821,7 +762,203 @@
 									"    pm.response.to.have.status(200);",
 									"});",
 									"",
-									"pm.test(\"Refund processed\", function () {",
+									"pm.test(\"Returns array of notifications\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('data');",
+									"    pm.expect(jsonData.data).to.be.an('array');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "14. Get Coach Courts (Admin)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{api_url}}/admin/coaches/:coachId/courts",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"admin",
+								"coaches",
+								":coachId",
+								"courts"
+							],
+							"variable": [
+								{
+									"key": "coachId",
+									"value": "{{coach_id}}"
+								}
+							]
+						},
+						"description": "Roles: Admin. List courts linked to a coach (for support/moderation). Path coachId = coach's user id."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "15. Delete Coach Court (Admin)",
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{api_url}}/admin/coaches/:coachId/courts/:courtId",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"admin",
+								"coaches",
+								":coachId",
+								"courts",
+								":courtId"
+							],
+							"variable": [
+								{
+									"key": "coachId",
+									"value": "{{coach_id}}"
+								},
+								{
+									"key": "courtId",
+									"value": "1",
+									"description": "court_locations.id (same as data[].court_id or data[].court.id from GET .../courts)"
+								}
+							]
+						},
+						"description": "Roles: Admin. Unlink a court from a coach. Path `courtId` is the court id (not the coach_court_locations row id)."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "16. Delete Coach Availability (Admin)",
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{api_url}}/admin/coaches/:coachId/availability/:id",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"admin",
+								"coaches",
+								":coachId",
+								"availability",
+								":id"
+							],
+							"variable": [
+								{
+									"key": "coachId",
+									"value": "{{coach_id}}"
+								},
+								{
+									"key": "id",
+									"value": "{{availability_id}}",
+									"description": "Availability record id from GET /coaches/:id/availability"
+								}
+							]
+						},
+						"description": "Roles: Admin. Delete a coach's availability slot (e.g. wrong times). coachId = coach user id, id = availability record id."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "17. Delete User (Admin)",
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{api_url}}/users/:id",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"users",
+								":id"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "{{user_id}}"
+								}
+							]
+						},
+						"description": "Roles: Admin. Delete user (soft delete)."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"User deleted successfully\", function () {",
 									"    var jsonData = pm.response.json();",
 									"    pm.expect(jsonData.success).to.be.true;",
 									"});"
@@ -832,7 +969,185 @@
 					]
 				},
 				{
-					"name": "16. Update Payment Status (Admin)",
+					"name": "18. Register",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"full_name\": \"Adam Duan\",\n  \"email\": \"adamduan0312@gmail.com\",\n  \"password\": \"03122003\",\n  \"role\": \"admin\",\n  \"phone\": \"+1234567890\",\n  \"timezone\": \"UTC\",\n  \"avatar_url\": \"\"\n}"
+						},
+						"url": {
+							"raw": "{{api_url}}/auth/register",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"auth",
+								"register"
+							]
+						},
+						"description": "Roles: Any (no auth). Register a new user account. Optional: avatar_url (valid URL, max 255 chars)."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "prerequest",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"const unique = Date.now().toString(36) + Math.floor(Math.random() * 10000).toString();",
+									"const role = pm.collectionVariables.get(\"auth_role\") || \"student\";",
+									"const email = `${role}+${unique}@example.com`;",
+									"pm.collectionVariables.set(\"auth_email\", email);",
+									"pm.environment.set(\"auth_email\", email);"
+								]
+							}
+						},
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"(function persistAuthTokenFromResponse() {",
+									"    try {",
+									"        var code = pm.response.code;",
+									"        if (code !== 200 && code !== 201) return;",
+									"        var json = pm.response.json();",
+									"        if (!json || !json.data || !json.data.token) return;",
+									"        var t = json.data.token;",
+									"        pm.collectionVariables.set(\"auth_token\", t);",
+									"        pm.environment.set(\"auth_token\", t);",
+									"        pm.globals.set(\"auth_token\", t);",
+									"        if (json.data.user && json.data.user.id != null) {",
+									"            var uid = String(json.data.user.id);",
+									"            pm.collectionVariables.set(\"user_id\", uid);",
+									"            pm.environment.set(\"user_id\", uid);",
+									"            pm.globals.set(\"user_id\", uid);",
+									"        }",
+									"    } catch (e) {}",
+									"})();",
+									"",
+									"pm.test(\"Status code is 201\", function () {",
+									"    pm.response.to.have.status(201);",
+									"});",
+									"",
+									"pm.test(\"Response has token\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('data');",
+									"    pm.expect(jsonData.data).to.have.property('token');",
+									"});",
+									"",
+									"pm.test(\"User is created successfully\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"    pm.expect(jsonData.data.user).to.have.property('email');",
+									"    pm.expect(jsonData.data.user).to.have.property('avatar_url');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "19. Forgot Password",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"john@example.com\"\n}"
+						},
+						"url": {
+							"raw": "{{api_url}}/auth/forgot-password",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"auth",
+								"forgot-password"
+							]
+						},
+						"description": "Request password reset link via email"
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Password reset request processed\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "20. Reset Password",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"token\": \"reset_token_from_email\",\n  \"password\": \"NewSecurePassword123!\"\n}"
+						},
+						"url": {
+							"raw": "{{api_url}}/auth/reset-password",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"auth",
+								"reset-password"
+							]
+						},
+						"description": "Reset password using token from forgot-password email"
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Password reset successful\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "21. Update Profile",
 					"request": {
 						"method": "PUT",
 						"header": [
@@ -847,26 +1162,19 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"payment_status\": \"captured\",\n  \"escrow_status\": \"released\",\n  \"charge_id\": null,\n  \"transfer_id\": null,\n  \"payout_id\": null\n}"
+							"raw": "{\n  \"full_name\": \"John Updated\",\n  \"phone\": \"+1234567890\",\n  \"timezone\": \"America/New_York\",\n  \"avatar_url\": \"https://example.com/avatar.jpg\"\n}"
 						},
 						"url": {
-							"raw": "{{api_url}}/payments/:id/status",
+							"raw": "{{api_url}}/auth/profile",
 							"host": [
 								"{{api_url}}"
 							],
 							"path": [
-								"payments",
-								":id",
-								"status"
-							],
-							"variable": [
-								{
-									"key": "id",
-									"value": "1"
-								}
+								"auth",
+								"profile"
 							]
 						},
-						"description": "Roles: Admin. Update payment status."
+						"description": "Roles: Student, Coach, Admin. Update current authenticated user's profile."
 					},
 					"response": [],
 					"event": [
@@ -878,7 +1186,777 @@
 									"    pm.response.to.have.status(200);",
 									"});",
 									"",
-									"pm.test(\"Payment status updated\", function () {",
+									"pm.test(\"Profile updated successfully\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"    pm.expect(jsonData.data).to.have.property('full_name');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "22. Change Password",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"current_password\": \"CurrentPassword123!\",\n  \"new_password\": \"NewSecurePassword123!\"\n}"
+						},
+						"url": {
+							"raw": "{{api_url}}/auth/change-password",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"auth",
+								"change-password"
+							]
+						},
+						"description": "Roles: Student, Coach, Admin. Change password using the current password and a new password. Bumps token_version (other sessions invalidated). Response includes a fresh JWT — test script saves it to auth_token like Login."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"(function persistAuthTokenFromResponse() {",
+									"    try {",
+									"        var code = pm.response.code;",
+									"        if (code !== 200 && code !== 201) return;",
+									"        var json = pm.response.json();",
+									"        if (!json || !json.data || !json.data.token) return;",
+									"        var t = json.data.token;",
+									"        pm.collectionVariables.set(\"auth_token\", t);",
+									"        pm.environment.set(\"auth_token\", t);",
+									"        pm.globals.set(\"auth_token\", t);",
+									"        if (json.data.user && json.data.user.id != null) {",
+									"            var uid = String(json.data.user.id);",
+									"            pm.collectionVariables.set(\"user_id\", uid);",
+									"            pm.environment.set(\"user_id\", uid);",
+									"            pm.globals.set(\"user_id\", uid);",
+									"        }",
+									"    } catch (e) {}",
+									"})();",
+									"",
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Response has token (session updated)\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"    pm.expect(jsonData.data).to.have.property('token');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "23. Request Email Verification",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{}"
+						},
+						"url": {
+							"raw": "{{api_url}}/auth/verify-email/request",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"auth",
+								"verify-email",
+								"request"
+							]
+						},
+						"description": "Roles: Student, Coach, Admin. Request a verification email to be sent to the current user's email address."
+					},
+					"response": []
+				},
+				{
+					"name": "24. Confirm Email Verification",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"token\": \"verification_token_from_email\"\n}"
+						},
+						"url": {
+							"raw": "{{api_url}}/auth/verify-email/confirm",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"auth",
+								"verify-email",
+								"confirm"
+							]
+						},
+						"description": "Roles: Any (no auth). Confirm email verification using the token from the verification email."
+					},
+					"response": []
+				},
+				{
+					"name": "25. Request Email Change",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"new_email\": \"new-email@example.com\",\n  \"password\": \"{{auth_password}}\"\n}"
+						},
+						"url": {
+							"raw": "{{api_url}}/auth/change-email/request",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"auth",
+								"change-email",
+								"request"
+							]
+						},
+						"description": "Roles: Student, Coach, Admin. **password** must be your **current account password** (same one you use for Login), not a new password. Set collection var **auth_password** to match, or edit the JSON body. Sends confirmation to the NEW email address."
+					},
+					"response": []
+				},
+				{
+					"name": "26. Confirm Email Change",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"token\": \"{{email_change_token}}\"\n}"
+						},
+						"url": {
+							"raw": "{{api_url}}/auth/change-email/confirm",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"auth",
+								"change-email",
+								"confirm"
+							]
+						},
+						"description": "Roles: Any (no auth). Confirm email change using the token from the email sent to the new address. Response includes token + user (same shape as Login). Test script saves auth_token so Profile and other requests work without manual paste."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"(function persistAuthTokenFromResponse() {",
+									"    try {",
+									"        var code = pm.response.code;",
+									"        if (code !== 200 && code !== 201) return;",
+									"        var json = pm.response.json();",
+									"        if (!json || !json.data || !json.data.token) return;",
+									"        var t = json.data.token;",
+									"        pm.collectionVariables.set(\"auth_token\", t);",
+									"        pm.environment.set(\"auth_token\", t);",
+									"        pm.globals.set(\"auth_token\", t);",
+									"        if (json.data.user && json.data.user.id != null) {",
+									"            var uid = String(json.data.user.id);",
+									"            pm.collectionVariables.set(\"user_id\", uid);",
+									"            pm.environment.set(\"user_id\", uid);",
+									"            pm.globals.set(\"user_id\", uid);",
+									"        }",
+									"    } catch (e) {}",
+									"})();",
+									"",
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Response has token (session updated)\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"    pm.expect(jsonData.data).to.have.property('token');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "27. Logout",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{api_url}}/auth/logout",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"auth",
+								"logout"
+							]
+						},
+						"description": "Invalidate current and all other tokens for this user (increments token_version). Client should discard the token after calling."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"if (pm.response.code === 200) {",
+									"    pm.collectionVariables.unset(\"auth_token\");",
+									"    pm.environment.unset(\"auth_token\");",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "28. List/Search Courts",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{api_url}}/courts",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"courts"
+							],
+							"query": [
+								{
+									"key": "page",
+									"value": "1",
+									"description": "Optional. Omit page & limit with no lat/lng to list all (server-capped).",
+									"disabled": true
+								},
+								{
+									"key": "limit",
+									"value": "10",
+									"description": "Optional. Use with page for pagination; max 100 per page.",
+									"disabled": true
+								},
+								{
+									"key": "lat",
+									"value": "40.7128",
+									"description": "Optional. Enable with lng for nearby geo search.",
+									"disabled": true
+								},
+								{
+									"key": "lng",
+									"value": "-74.0060",
+									"description": "Optional. Enable with lat for nearby geo search.",
+									"disabled": true
+								},
+								{
+									"key": "radius",
+									"value": "10",
+									"description": "Optional miles radius (used with lat/lng).",
+									"disabled": true
+								}
+							]
+						},
+						"description": "Roles: Any (no auth). **No lat/lng, no page/limit** = all courts in `data` (capped server-side). **page** and/or **limit** = paginated list (`pagination`). **lat** + **lng** (+ optional **radius**) = nearby search; results ordered **closest first** (lazy OSM import if empty)."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Returns array of courts\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('data');",
+									"    pm.expect(jsonData.data).to.be.an('array');",
+									"    ",
+									"    // Save first court ID if available",
+									"    if (jsonData.data.length > 0 && jsonData.data[0].id) {",
+									"        pm.environment.set(\"court_id\", jsonData.data[0].id);",
+									"    }",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "29. Get Court By ID",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{api_url}}/courts/:id",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"courts",
+								":id"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "{{court_id}}"
+								}
+							]
+						},
+						"description": "Roles: Any (no auth). Get court details by ID."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Court data returned\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('data');",
+									"    pm.expect(jsonData.data).to.have.property('id');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "30. Get All Lessons (Filter by coach_id)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{api_url}}/lessons",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"lessons"
+							],
+							"query": [
+								{
+									"key": "page",
+									"value": "1",
+									"disabled": true
+								},
+								{
+									"key": "limit",
+									"value": "10",
+									"disabled": true
+								},
+								{
+									"key": "coach_id",
+									"value": "{{coach_id}}",
+									"disabled": true
+								},
+								{
+									"key": "min_price",
+									"value": "20",
+									"disabled": true
+								},
+								{
+									"key": "max_price",
+									"value": "80",
+									"disabled": true
+								}
+							]
+						},
+						"description": "Roles: Any (no auth). Get lessons. Omit page/limit to return all matching lessons (server-capped), or enable page/limit to paginate. Optional filters: coach_id, min_price, max_price."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Returns array of lessons\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('data');",
+									"    pm.expect(jsonData.data).to.be.an('array');",
+									"    ",
+									"    // Save first lesson ID if available",
+									"    if (jsonData.data.length > 0 && jsonData.data[0].id) {",
+									"        pm.environment.set(\"lesson_id\", jsonData.data[0].id);",
+									"    }",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "31. Get Lesson By ID",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{api_url}}/lessons/:id",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"lessons",
+								":id"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "{{lesson_id}}"
+								}
+							]
+						},
+						"description": "Roles: Any (no auth). Get lesson by ID."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Lesson data returned\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('data');",
+									"    pm.expect(jsonData.data).to.have.property('id');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "32. Get All Disputes",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{api_url}}/disputes",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"disputes"
+							],
+							"query": [
+								{
+									"key": "page",
+									"value": "1",
+									"disabled": true
+								},
+								{
+									"key": "limit",
+									"value": "10",
+									"disabled": true
+								}
+							]
+						},
+						"description": "Roles: Student, Coach, Admin. Get disputes (own if student/coach; all if admin). Omit page/limit to return all matching disputes (server-capped), or enable page/limit to paginate."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Returns array of disputes\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('data');",
+									"    pm.expect(jsonData.data).to.be.an('array');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "33. Get Dispute By ID",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{api_url}}/disputes/:id",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"disputes",
+								":id"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "1"
+								}
+							]
+						},
+						"description": "Get dispute details by ID. Resolver: `data.resolved_by_admin` (`id`, `full_name`) or null. Use `resolved_by_admin.id` for the resolver user id."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Dispute data returned\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('data');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "34. Get Bookings (Admin)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{api_url}}/admin/bookings",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"admin",
+								"bookings"
+							],
+							"query": [
+								{
+									"key": "page",
+									"value": "1",
+									"disabled": true
+								},
+								{
+									"key": "limit",
+									"value": "10",
+									"disabled": true
+								}
+							]
+						},
+						"description": "Roles: Admin only. List all bookings with optional filters."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Returns array of bookings\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('data');",
+									"    pm.expect(jsonData.data).to.be.an('array');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "35. Get Booking By ID (Admin)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{api_url}}/admin/bookings/:id",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"admin",
+								"bookings",
+								":id"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "{{booking_id}}"
+								}
+							]
+						},
+						"description": "Roles: Admin only. Get any booking by id."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Booking data returned\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('data');",
+									"    pm.expect(jsonData.data).to.have.property('id');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "36. Cancel Booking (Admin)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"reason\": \"schedule_conflict\",\n  \"reason_notes\": \"Schedule conflict - need to reschedule\"\n}"
+						},
+						"url": {
+							"raw": "{{api_url}}/admin/bookings/:id/cancel",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"admin",
+								"bookings",
+								":id",
+								"cancel"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "{{booking_id}}"
+								}
+							]
+						},
+						"description": "Roles: Admin only. Same as POST /api/bookings/:id/cancel: only pending or confirmed bookings (pre-lesson). Same cancellation/refund/void-PI behavior; cancelled_by is admin. Body: reason (required) + optional reason_notes. Post-lesson bookings (e.g. awaiting_verification, disputed, no_show) are rejected — use dispute resolution, POST /api/admin/bookings/:id/refund, or other documented admin actions."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Booking cancelled\", function () {",
 									"    var jsonData = pm.response.json();",
 									"    pm.expect(jsonData.success).to.be.true;",
 									"});"
@@ -889,7 +1967,232 @@
 					]
 				},
 				{
-					"name": "17. Resolve Dispute (Admin)",
+					"name": "37. Create Dispute (Admin)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"booking_id\": \"{{booking_id}}\",\n  \"dispute_type_id\": 1,\n  \"notes\": \"Support-created case: coach no-show reported via support channel.\"\n}"
+						},
+						"url": {
+							"raw": "{{api_url}}/admin/disputes",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"admin",
+								"disputes"
+							]
+						},
+						"description": "Roles: Admin only. Opens a dispute with opened_by=admin (support/moderation workflow). Booking status does not change automatically; combine with resolve/refund/no-show endpoints as needed."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"Status code is 201\", function () {",
+									"    pm.response.to.have.status(201);",
+									"});",
+									"",
+									"pm.test(\"Dispute created by admin\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"    pm.expect(jsonData.data).to.have.property('opened_by');",
+									"});"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "38. Mark Student No-Show (Admin)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": ""
+						},
+						"url": {
+							"raw": "{{api_url}}/admin/bookings/:id/student-no-show",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"admin",
+								"bookings",
+								":id",
+								"student-no-show"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "{{booking_id}}"
+								}
+							]
+						},
+						"description": "Admin override: primary student did not attend → status no_show. For coach no-show use Mark Coach No-Show (Admin). Legacy alias: .../no-show."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Booking marked no_show\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"});"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "39. Mark Coach No-Show (Admin)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"resolution_notes\": \"Verified with student; coach did not attend.\",\n  \"notes\": \"optional internal note\"\n}"
+						},
+						"url": {
+							"raw": "{{api_url}}/admin/bookings/:id/coach-no-show",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"admin",
+								"bookings",
+								":id",
+								"coach-no-show"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "{{booking_id}}"
+								}
+							]
+						},
+						"description": "Sets booking status coach_no_show after lesson end. Resolves open coach_no_show dispute(s): omit dispute_id if exactly one; pass dispute_id if several. Refund separately."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Booking marked coach_no_show\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"});"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "40. Refund Booking (Admin)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"refund_amount\": 10.00,\n  \"reason\": \"requested_by_customer\",\n  \"reason_notes\": \"Admin support adjustment\"\n}"
+						},
+						"url": {
+							"raw": "{{api_url}}/admin/bookings/:id/refund",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"admin",
+								"bookings",
+								":id",
+								"refund"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "{{booking_id}}"
+								}
+							]
+						},
+						"description": "Roles: Admin only. Initiate refund for booking latest payment. Omit refund_amount to refund full remaining Stripe balance."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Refund initiated\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"});"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "40. Resolve Dispute (Admin)",
 					"request": {
 						"method": "PUT",
 						"header": [
@@ -946,1083 +2249,7 @@
 					]
 				},
 				{
-					"name": "18. Create Notification (Admin)",
-					"request": {
-						"method": "POST",
-						"header": [
-							{
-								"key": "Content-Type",
-								"value": "application/json"
-							},
-							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
-							}
-						],
-						"body": {
-							"mode": "raw",
-							"raw": "{\n  \"user_id\": \"{{user_id}}\",\n  \"type\": \"system\",\n  \"channel\": \"in_app\",\n  \"payload\": {\n    \"title\": \"System Notification\",\n    \"message\": \"This is a system notification\"\n  }\n}"
-						},
-						"url": {
-							"raw": "{{api_url}}/notifications",
-							"host": [
-								"{{api_url}}"
-							],
-							"path": [
-								"notifications"
-							]
-						},
-						"description": "Roles: Admin. Create a notification."
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Status code is 201\", function () {",
-									"    pm.response.to.have.status(201);",
-									"});",
-									"",
-									"pm.test(\"Notification created\", function () {",
-									"    var jsonData = pm.response.json();",
-									"    pm.expect(jsonData.success).to.be.true;",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "19. Get Coach Courts (Admin)",
-					"request": {
-						"method": "GET",
-						"header": [
-							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
-							}
-						],
-						"url": {
-							"raw": "{{api_url}}/admin/coaches/:coachId/courts",
-							"host": [
-								"{{api_url}}"
-							],
-							"path": [
-								"admin",
-								"coaches",
-								":coachId",
-								"courts"
-							],
-							"variable": [
-								{
-									"key": "coachId",
-									"value": "{{coach_id}}"
-								}
-							]
-						},
-						"description": "Roles: Admin. List courts linked to a coach (for support/moderation). Path coachId = coach's user id."
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Status code is 200\", function () {",
-									"    pm.response.to.have.status(200);",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "20. Delete Coach Court (Admin)",
-					"request": {
-						"method": "DELETE",
-						"header": [
-							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
-							}
-						],
-						"url": {
-							"raw": "{{api_url}}/admin/coaches/:coachId/courts/:linkId",
-							"host": [
-								"{{api_url}}"
-							],
-							"path": [
-								"admin",
-								"coaches",
-								":coachId",
-								"courts",
-								":linkId"
-							],
-							"variable": [
-								{
-									"key": "coachId",
-									"value": "{{coach_id}}"
-								},
-								{
-									"key": "linkId",
-									"value": "1",
-									"description": "Coach court link id from GET /admin/coaches/:coachId/courts (data[].id)"
-								}
-							]
-						},
-						"description": "Roles: Admin. Unlink a court from a coach (e.g. wrong court linked). coachId = coach user id, linkId = coach_court_location id."
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Status code is 200\", function () {",
-									"    pm.response.to.have.status(200);",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "21. Delete Coach Availability (Admin)",
-					"request": {
-						"method": "DELETE",
-						"header": [
-							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
-							}
-						],
-						"url": {
-							"raw": "{{api_url}}/admin/coaches/:coachId/availability/:id",
-							"host": [
-								"{{api_url}}"
-							],
-							"path": [
-								"admin",
-								"coaches",
-								":coachId",
-								"availability",
-								":id"
-							],
-							"variable": [
-								{
-									"key": "coachId",
-									"value": "{{coach_id}}"
-								},
-								{
-									"key": "id",
-									"value": "{{availability_id}}",
-									"description": "Availability record id from GET /coaches/:id/availability"
-								}
-							]
-						},
-						"description": "Roles: Admin. Delete a coach's availability slot (e.g. wrong times). coachId = coach user id, id = availability record id."
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Status code is 200\", function () {",
-									"    pm.response.to.have.status(200);",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "22. Delete User (Admin)",
-					"request": {
-						"method": "DELETE",
-						"header": [
-							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
-							}
-						],
-						"url": {
-							"raw": "{{api_url}}/users/:id",
-							"host": [
-								"{{api_url}}"
-							],
-							"path": [
-								"users",
-								":id"
-							],
-							"variable": [
-								{
-									"key": "id",
-									"value": "{{user_id}}"
-								}
-							]
-						},
-						"description": "Roles: Admin. Delete user (soft delete)."
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Status code is 200\", function () {",
-									"    pm.response.to.have.status(200);",
-									"});",
-									"",
-									"pm.test(\"User deleted successfully\", function () {",
-									"    var jsonData = pm.response.json();",
-									"    pm.expect(jsonData.success).to.be.true;",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "23. Register",
-					"request": {
-						"method": "POST",
-						"header": [
-							{
-								"key": "Content-Type",
-								"value": "application/json"
-							}
-						],
-						"body": {
-							"mode": "raw",
-							"raw": "{\n  \"full_name\": \"John Doe\",\n  \"email\": \"john@example.com\",\n  \"password\": \"SecurePassword123!\",\n  \"role\": \"student\",\n  \"phone\": \"+1234567890\",\n  \"timezone\": \"America/New_York\",\n  \"avatar_url\": \"\"\n}"
-						},
-						"url": {
-							"raw": "{{api_url}}/auth/register",
-							"host": [
-								"{{api_url}}"
-							],
-							"path": [
-								"auth",
-								"register"
-							]
-						},
-						"description": "Roles: Any (no auth). Register a new user account. Optional: avatar_url (valid URL, max 255 chars)."
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Status code is 201\", function () {",
-									"    pm.response.to.have.status(201);",
-									"});",
-									"",
-									"pm.test(\"Response has token\", function () {",
-									"    var jsonData = pm.response.json();",
-									"    pm.expect(jsonData).to.have.property('data');",
-									"    pm.expect(jsonData.data).to.have.property('token');",
-									"    ",
-									"    // Save token and user ID",
-									"    pm.environment.set(\"auth_token\", jsonData.data.token);",
-									"    if (jsonData.data.user && jsonData.data.user.id) {",
-									"        pm.environment.set(\"user_id\", jsonData.data.user.id);",
-									"    }",
-									"});",
-									"",
-									"pm.test(\"User is created successfully\", function () {",
-									"    var jsonData = pm.response.json();",
-									"    pm.expect(jsonData.success).to.be.true;",
-									"    pm.expect(jsonData.data.user).to.have.property('email');",
-									"    pm.expect(jsonData.data.user).to.have.property('avatar_url');",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "24. Forgot Password",
-					"request": {
-						"method": "POST",
-						"header": [
-							{
-								"key": "Content-Type",
-								"value": "application/json"
-							}
-						],
-						"body": {
-							"mode": "raw",
-							"raw": "{\n  \"email\": \"john@example.com\"\n}"
-						},
-						"url": {
-							"raw": "{{api_url}}/auth/forgot-password",
-							"host": [
-								"{{api_url}}"
-							],
-							"path": [
-								"auth",
-								"forgot-password"
-							]
-						},
-						"description": "Request password reset link via email"
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Status code is 200\", function () {",
-									"    pm.response.to.have.status(200);",
-									"});",
-									"",
-									"pm.test(\"Password reset request processed\", function () {",
-									"    var jsonData = pm.response.json();",
-									"    pm.expect(jsonData.success).to.be.true;",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "25. Reset Password",
-					"request": {
-						"method": "POST",
-						"header": [
-							{
-								"key": "Content-Type",
-								"value": "application/json"
-							}
-						],
-						"body": {
-							"mode": "raw",
-							"raw": "{\n  \"token\": \"reset_token_from_email\",\n  \"password\": \"NewSecurePassword123!\"\n}"
-						},
-						"url": {
-							"raw": "{{api_url}}/auth/reset-password",
-							"host": [
-								"{{api_url}}"
-							],
-							"path": [
-								"auth",
-								"reset-password"
-							]
-						},
-						"description": "Reset password using token from forgot-password email"
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Status code is 200\", function () {",
-									"    pm.response.to.have.status(200);",
-									"});",
-									"",
-									"pm.test(\"Password reset successful\", function () {",
-									"    var jsonData = pm.response.json();",
-									"    pm.expect(jsonData.success).to.be.true;",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "26. Update Profile",
-					"request": {
-						"method": "PUT",
-						"header": [
-							{
-								"key": "Content-Type",
-								"value": "application/json"
-							},
-							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
-							}
-						],
-						"body": {
-							"mode": "raw",
-							"raw": "{\n  \"full_name\": \"John Updated\",\n  \"phone\": \"+1234567890\",\n  \"timezone\": \"America/New_York\",\n  \"avatar_url\": \"https://example.com/avatar.jpg\"\n}"
-						},
-						"url": {
-							"raw": "{{api_url}}/auth/profile",
-							"host": [
-								"{{api_url}}"
-							],
-							"path": [
-								"auth",
-								"profile"
-							]
-						},
-						"description": "Roles: Student, Coach, Admin. Update current authenticated user's profile."
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Status code is 200\", function () {",
-									"    pm.response.to.have.status(200);",
-									"});",
-									"",
-									"pm.test(\"Profile updated successfully\", function () {",
-									"    var jsonData = pm.response.json();",
-									"    pm.expect(jsonData.success).to.be.true;",
-									"    pm.expect(jsonData.data).to.have.property('full_name');",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "27. Change Password",
-					"request": {
-						"method": "PUT",
-						"header": [
-							{
-								"key": "Content-Type",
-								"value": "application/json"
-							},
-							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
-							}
-						],
-						"body": {
-							"mode": "raw",
-							"raw": "{\n  \"current_password\": \"CurrentPassword123!\",\n  \"new_password\": \"NewSecurePassword123!\"\n}"
-						},
-						"url": {
-							"raw": "{{api_url}}/auth/change-password",
-							"host": [
-								"{{api_url}}"
-							],
-							"path": [
-								"auth",
-								"change-password"
-							]
-						},
-						"description": "Roles: Student, Coach, Admin. Change password using the current password and a new password. Revokes all existing tokens."
-					},
-					"response": []
-				},
-				{
-					"name": "28. Request Email Verification",
-					"request": {
-						"method": "POST",
-						"header": [
-							{
-								"key": "Content-Type",
-								"value": "application/json"
-							},
-							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
-							}
-						],
-						"body": {
-							"mode": "raw",
-							"raw": "{}"
-						},
-						"url": {
-							"raw": "{{api_url}}/auth/verify-email/request",
-							"host": [
-								"{{api_url}}"
-							],
-							"path": [
-								"auth",
-								"verify-email",
-								"request"
-							]
-						},
-						"description": "Roles: Student, Coach, Admin. Request a verification email to be sent to the current user's email address."
-					},
-					"response": []
-				},
-				{
-					"name": "29. Confirm Email Verification",
-					"request": {
-						"method": "POST",
-						"header": [
-							{
-								"key": "Content-Type",
-								"value": "application/json"
-							}
-						],
-						"body": {
-							"mode": "raw",
-							"raw": "{\n  \"token\": \"verification_token_from_email\"\n}"
-						},
-						"url": {
-							"raw": "{{api_url}}/auth/verify-email/confirm",
-							"host": [
-								"{{api_url}}"
-							],
-							"path": [
-								"auth",
-								"verify-email",
-								"confirm"
-							]
-						},
-						"description": "Roles: Any (no auth). Confirm email verification using the token from the verification email."
-					},
-					"response": []
-				},
-				{
-					"name": "30. Request Email Change",
-					"request": {
-						"method": "POST",
-						"header": [
-							{
-								"key": "Content-Type",
-								"value": "application/json"
-							},
-							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
-							}
-						],
-						"body": {
-							"mode": "raw",
-							"raw": "{\n  \"new_email\": \"new-email@example.com\",\n  \"password\": \"CurrentPassword123!\"\n}"
-						},
-						"url": {
-							"raw": "{{api_url}}/auth/change-email/request",
-							"host": [
-								"{{api_url}}"
-							],
-							"path": [
-								"auth",
-								"change-email",
-								"request"
-							]
-						},
-						"description": "Roles: Student, Coach, Admin. Start 2-step email change flow. Sends confirmation to the NEW email address."
-					},
-					"response": []
-				},
-				{
-					"name": "31. Confirm Email Change",
-					"request": {
-						"method": "POST",
-						"header": [
-							{
-								"key": "Content-Type",
-								"value": "application/json"
-							}
-						],
-						"body": {
-							"mode": "raw",
-							"raw": "{\n  \"token\": \"email_change_token_from_email\"\n}"
-						},
-						"url": {
-							"raw": "{{api_url}}/auth/change-email/confirm",
-							"host": [
-								"{{api_url}}"
-							],
-							"path": [
-								"auth",
-								"change-email",
-								"confirm"
-							]
-						},
-						"description": "Roles: Any (no auth). Confirm email change using the token from the email sent to the new address."
-					},
-					"response": []
-				},
-				{
-					"name": "32. Logout",
-					"request": {
-						"method": "POST",
-						"header": [
-							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
-							}
-						],
-						"url": {
-							"raw": "{{api_url}}/auth/logout",
-							"host": [
-								"{{api_url}}"
-							],
-							"path": [
-								"auth",
-								"logout"
-							]
-						},
-						"description": "Invalidate current and all other tokens for this user (increments token_version). Client should discard the token after calling."
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Status code is 200\", function () {",
-									"    pm.response.to.have.status(200);",
-									"});",
-									"if (pm.response.code === 200) {",
-									"    pm.environment.unset(\"auth_token\");",
-									"}"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "33. Get All Courts",
-					"request": {
-						"method": "GET",
-						"header": [],
-						"url": {
-							"raw": "{{api_url}}/courts",
-							"host": [
-								"{{api_url}}"
-							],
-							"path": [
-								"courts"
-							]
-						},
-						"description": "Roles: Any (no auth). Search courts (with lazy import from OpenStreetMap if no results)."
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Status code is 200\", function () {",
-									"    pm.response.to.have.status(200);",
-									"});",
-									"",
-									"pm.test(\"Returns array of courts\", function () {",
-									"    var jsonData = pm.response.json();",
-									"    pm.expect(jsonData).to.have.property('data');",
-									"    pm.expect(jsonData.data).to.be.an('array');",
-									"    ",
-									"    // Save first court ID if available",
-									"    if (jsonData.data.length > 0 && jsonData.data[0].id) {",
-									"        pm.environment.set(\"court_id\", jsonData.data[0].id);",
-									"    }",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "34. Get Court By ID",
-					"request": {
-						"method": "GET",
-						"header": [],
-						"url": {
-							"raw": "{{api_url}}/courts/:id",
-							"host": [
-								"{{api_url}}"
-							],
-							"path": [
-								"courts",
-								":id"
-							],
-							"variable": [
-								{
-									"key": "id",
-									"value": "{{court_id}}"
-								}
-							]
-						},
-						"description": "Roles: Any (no auth). Get court details by ID."
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Status code is 200\", function () {",
-									"    pm.response.to.have.status(200);",
-									"});",
-									"",
-									"pm.test(\"Court data returned\", function () {",
-									"    var jsonData = pm.response.json();",
-									"    pm.expect(jsonData).to.have.property('data');",
-									"    pm.expect(jsonData.data).to.have.property('id');",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "35. Get All Lessons",
-					"request": {
-						"method": "GET",
-						"header": [],
-						"url": {
-							"raw": "{{api_url}}/lessons",
-							"host": [
-								"{{api_url}}"
-							],
-							"path": [
-								"lessons"
-							]
-						},
-						"description": "Get all lessons (public)"
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Status code is 200\", function () {",
-									"    pm.response.to.have.status(200);",
-									"});",
-									"",
-									"pm.test(\"Returns array of lessons\", function () {",
-									"    var jsonData = pm.response.json();",
-									"    pm.expect(jsonData).to.have.property('data');",
-									"    pm.expect(jsonData.data).to.be.an('array');",
-									"    ",
-									"    // Save first lesson ID if available",
-									"    if (jsonData.data.length > 0 && jsonData.data[0].id) {",
-									"        pm.environment.set(\"lesson_id\", jsonData.data[0].id);",
-									"    }",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "36. Get Lesson By ID",
-					"request": {
-						"method": "GET",
-						"header": [],
-						"url": {
-							"raw": "{{api_url}}/lessons/:id",
-							"host": [
-								"{{api_url}}"
-							],
-							"path": [
-								"lessons",
-								":id"
-							],
-							"variable": [
-								{
-									"key": "id",
-									"value": "{{lesson_id}}"
-								}
-							]
-						},
-						"description": "Roles: Any (no auth). Get lesson by ID."
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Status code is 200\", function () {",
-									"    pm.response.to.have.status(200);",
-									"});",
-									"",
-									"pm.test(\"Lesson data returned\", function () {",
-									"    var jsonData = pm.response.json();",
-									"    pm.expect(jsonData).to.have.property('data');",
-									"    pm.expect(jsonData.data).to.have.property('id');",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "37. Get All Disputes",
-					"request": {
-						"method": "GET",
-						"header": [
-							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
-							}
-						],
-						"url": {
-							"raw": "{{api_url}}/disputes",
-							"host": [
-								"{{api_url}}"
-							],
-							"path": [
-								"disputes"
-							]
-						},
-						"description": "Roles: Student, Coach, Admin. Get disputes (own if student/coach; all if admin)."
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Status code is 200\", function () {",
-									"    pm.response.to.have.status(200);",
-									"});",
-									"",
-									"pm.test(\"Returns array of disputes\", function () {",
-									"    var jsonData = pm.response.json();",
-									"    pm.expect(jsonData).to.have.property('data');",
-									"    pm.expect(jsonData.data).to.be.an('array');",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "38. Get Dispute By ID",
-					"request": {
-						"method": "GET",
-						"header": [
-							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
-							}
-						],
-						"url": {
-							"raw": "{{api_url}}/disputes/:id",
-							"host": [
-								"{{api_url}}"
-							],
-							"path": [
-								"disputes",
-								":id"
-							],
-							"variable": [
-								{
-									"key": "id",
-									"value": "1"
-								}
-							]
-						},
-						"description": "Get dispute details by ID"
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Status code is 200\", function () {",
-									"    pm.response.to.have.status(200);",
-									"});",
-									"",
-									"pm.test(\"Dispute data returned\", function () {",
-									"    var jsonData = pm.response.json();",
-									"    pm.expect(jsonData).to.have.property('data');",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "39. Accept Booking",
-					"request": {
-						"method": "POST",
-						"header": [
-							{
-								"key": "Content-Type",
-								"value": "application/json"
-							},
-							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
-							}
-						],
-						"body": {
-							"mode": "raw",
-							"raw": ""
-						},
-						"url": {
-							"raw": "{{api_url}}/bookings/:id/accept",
-							"host": [
-								"{{api_url}}"
-							],
-							"path": [
-								"bookings",
-								":id",
-								"accept"
-							],
-							"variable": [
-								{
-									"key": "id",
-									"value": "{{booking_id}}"
-								}
-							]
-						},
-						"description": "Roles: Coach, Admin. Confirm a pending booking. Use this (not PUT status) to confirm. Captures payment and sets status to confirmed. Only for bookings in pending state."
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Status code is 200\", function () {",
-									"    pm.response.to.have.status(200);",
-									"});",
-									"",
-									"pm.test(\"Booking accepted\", function () {",
-									"    var jsonData = pm.response.json();",
-									"    pm.expect(jsonData.success).to.be.true;",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "40. Decline Booking",
-					"request": {
-						"method": "POST",
-						"header": [
-							{
-								"key": "Content-Type",
-								"value": "application/json"
-							},
-							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
-							}
-						],
-						"body": {
-							"mode": "raw",
-							"raw": "{\n  \"message_to_student\": \"This time no longer works for me—please choose another slot.\",\n  \"decline_reason_code\": \"availability_wrong\"\n}"
-						},
-						"url": {
-							"raw": "{{api_url}}/bookings/:id/decline",
-							"host": [
-								"{{api_url}}"
-							],
-							"path": [
-								"bookings",
-								":id",
-								"decline"
-							],
-							"variable": [
-								{
-									"key": "id",
-									"value": "{{booking_id}}"
-								}
-							]
-						},
-						"description": "Roles: Coach, Admin. Decline a pending booking. Cancels the PaymentIntent (student not charged). Body: message_to_student (required, 10–500 chars), decline_reason_code (optional, e.g. availability_wrong, sick, other). Student sees the message."
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Status code is 200\", function () {",
-									"    pm.response.to.have.status(200);",
-									"});",
-									"",
-									"pm.test(\"Booking declined\", function () {",
-									"    var jsonData = pm.response.json();",
-									"    pm.expect(jsonData.success).to.be.true;",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "41. Update Booking Status",
-					"request": {
-						"method": "PUT",
-						"header": [
-							{
-								"key": "Content-Type",
-								"value": "application/json"
-							},
-							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
-							}
-						],
-						"body": {
-							"mode": "raw",
-							"raw": "{\n  \"status\": \"completed\"\n}"
-						},
-						"url": {
-							"raw": "{{api_url}}/bookings/:id/status",
-							"host": [
-								"{{api_url}}"
-							],
-							"path": [
-								"bookings",
-								":id",
-								"status"
-							],
-							"variable": [
-								{
-									"key": "id",
-									"value": "{{booking_id}}"
-								}
-							]
-						},
-						"description": "Roles: Coach, Admin. Change booking status only for allowed transitions. Do not use this to confirm or decline a pending booking — use POST .../accept and POST .../decline for that.\n\nAllowed transitions:\n- confirmed → completed | cancelled | no_show\n- awaiting_verification → completed | cancelled\n- pending has no transitions here (use accept/decline).\n\nCompleted is only allowed after the lesson end time has passed (400 if you try before). Both confirmed→completed and awaiting_verification→completed mean “lesson is done”; the booking may be in either state depending on whether the background worker has already moved it to awaiting_verification.\n\nExamples: Mark as completed {\"status\": \"completed\"}; mark as no-show {\"status\": \"no_show\"}; cancel {\"status\": \"cancelled\"}."
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Status code is 200\", function () {",
-									"    pm.response.to.have.status(200);",
-									"});",
-									"",
-									"pm.test(\"Booking status updated\", function () {",
-									"    var jsonData = pm.response.json();",
-									"    pm.expect(jsonData.success).to.be.true;",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "42. Get My Payments",
+					"name": "41. Get My Payments",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -2038,9 +2265,21 @@
 							],
 							"path": [
 								"payments"
+							],
+							"query": [
+								{
+									"key": "page",
+									"value": "1",
+									"disabled": true
+								},
+								{
+									"key": "limit",
+									"value": "10",
+									"disabled": true
+								}
 							]
 						},
-						"description": "Roles: Student, Coach, Admin. Get payments (own if student/coach; all if admin)."
+						"description": "Roles: Student, Coach, Admin. Get payments (own if student/coach; all if admin). Omit page/limit to return all matching rows (server-capped), or enable page/limit for paged mode (`data` + `pagination`)."
 					},
 					"response": [],
 					"event": [
@@ -2064,7 +2303,7 @@
 					]
 				},
 				{
-					"name": "43. Get Payment By ID",
+					"name": "42. Get Payment By ID",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -2112,7 +2351,7 @@
 					]
 				},
 				{
-					"name": "44. Stripe Webhook",
+					"name": "43. Stripe Webhook",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -2160,7 +2399,7 @@
 		},
 		{
 			"name": "2 – Flow: Coach",
-			"description": "All coach endpoints in user-flow order. Run in sequence: Health → Register/Login → Profile → Coach profile → Courts → Availability → Stripe Connect → Lessons → Bookings → Payments → Reviews → Messages → Disputes → Notifications → Auth extras. See backend/POSTMAN_TESTING_GUIDE.md.",
+			"description": "All coach endpoints in user-flow order. Run in sequence: Health → Register/Login → Profile → Coach profile → Courts → Availability → Stripe Connect → Lessons → Bookings → Payments → Reviews → Messages → Disputes → Notifications → Auth extras. See backend/POSTMAN_TESTING_GUIDE.md.\n\nBooking MVP: student uses POST /bookings; coach uses PUT .../accept or PUT .../decline only for pending requests (coach on that booking only).",
 			"item": [
 				{
 					"name": "1. Health Check",
@@ -2217,7 +2456,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"full_name\": \"John Doe\",\n  \"email\": \"john@example.com\",\n  \"password\": \"SecurePassword123!\",\n  \"role\": \"student\",\n  \"phone\": \"+1234567890\",\n  \"timezone\": \"America/New_York\",\n  \"avatar_url\": \"\"\n}"
+							"raw": "{\n  \"full_name\": \"Coach One\",\n  \"email\": \"coach1@example.com\",\n  \"password\": \"password123\",\n  \"role\": \"coach\",\n  \"phone\": \"+1234567890\",\n  \"timezone\": \"UTC\",\n  \"avatar_url\": \"\"\n}"
 						},
 						"url": {
 							"raw": "{{api_url}}/auth/register",
@@ -2234,9 +2473,41 @@
 					"response": [],
 					"event": [
 						{
+							"listen": "prerequest",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"const unique = Date.now().toString(36) + Math.floor(Math.random() * 10000).toString();",
+									"const role = pm.collectionVariables.get(\"auth_role\") || \"student\";",
+									"const email = `${role}+${unique}@example.com`;",
+									"pm.collectionVariables.set(\"auth_email\", email);",
+									"pm.environment.set(\"auth_email\", email);"
+								]
+							}
+						},
+						{
 							"listen": "test",
 							"script": {
 								"exec": [
+									"(function persistAuthTokenFromResponse() {",
+									"    try {",
+									"        var code = pm.response.code;",
+									"        if (code !== 200 && code !== 201) return;",
+									"        var json = pm.response.json();",
+									"        if (!json || !json.data || !json.data.token) return;",
+									"        var t = json.data.token;",
+									"        pm.collectionVariables.set(\"auth_token\", t);",
+									"        pm.environment.set(\"auth_token\", t);",
+									"        pm.globals.set(\"auth_token\", t);",
+									"        if (json.data.user && json.data.user.id != null) {",
+									"            var uid = String(json.data.user.id);",
+									"            pm.collectionVariables.set(\"user_id\", uid);",
+									"            pm.environment.set(\"user_id\", uid);",
+									"            pm.globals.set(\"user_id\", uid);",
+									"        }",
+									"    } catch (e) {}",
+									"})();",
+									"",
 									"pm.test(\"Status code is 201\", function () {",
 									"    pm.response.to.have.status(201);",
 									"});",
@@ -2245,12 +2516,6 @@
 									"    var jsonData = pm.response.json();",
 									"    pm.expect(jsonData).to.have.property('data');",
 									"    pm.expect(jsonData.data).to.have.property('token');",
-									"    ",
-									"    // Save token and user ID",
-									"    pm.environment.set(\"auth_token\", jsonData.data.token);",
-									"    if (jsonData.data.user && jsonData.data.user.id) {",
-									"        pm.environment.set(\"user_id\", jsonData.data.user.id);",
-									"    }",
 									"});",
 									"",
 									"pm.test(\"User is created successfully\", function () {",
@@ -2277,7 +2542,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"email\": \"adamduan0312@gmail.com\",\n  \"password\": \"03122003\"\n}"
+							"raw": "{\n  \"email\": \"coach1@example.com\",\n  \"password\": \"password123\"\n}"
 						},
 						"url": {
 							"raw": "{{api_url}}/auth/login",
@@ -2297,6 +2562,25 @@
 							"listen": "test",
 							"script": {
 								"exec": [
+									"(function persistAuthTokenFromResponse() {",
+									"    try {",
+									"        var code = pm.response.code;",
+									"        if (code !== 200 && code !== 201) return;",
+									"        var json = pm.response.json();",
+									"        if (!json || !json.data || !json.data.token) return;",
+									"        var t = json.data.token;",
+									"        pm.collectionVariables.set(\"auth_token\", t);",
+									"        pm.environment.set(\"auth_token\", t);",
+									"        pm.globals.set(\"auth_token\", t);",
+									"        if (json.data.user && json.data.user.id != null) {",
+									"            var uid = String(json.data.user.id);",
+									"            pm.collectionVariables.set(\"user_id\", uid);",
+									"            pm.environment.set(\"user_id\", uid);",
+									"            pm.globals.set(\"user_id\", uid);",
+									"        }",
+									"    } catch (e) {}",
+									"})();",
+									"",
 									"pm.test(\"Status code is 200\", function () {",
 									"    pm.response.to.have.status(200);",
 									"});",
@@ -2305,12 +2589,6 @@
 									"    var jsonData = pm.response.json();",
 									"    pm.expect(jsonData).to.have.property('data');",
 									"    pm.expect(jsonData.data).to.have.property('token');",
-									"    ",
-									"    // Save token and user ID",
-									"    pm.environment.set(\"auth_token\", jsonData.data.token);",
-									"    if (jsonData.data.user && jsonData.data.user.id) {",
-									"        pm.environment.set(\"user_id\", jsonData.data.user.id);",
-									"    }",
 									"});",
 									"",
 									"pm.test(\"Login successful\", function () {",
@@ -2360,51 +2638,6 @@
 									"    pm.expect(jsonData).to.have.property('data');",
 									"    pm.expect(jsonData.data).to.have.property('id');",
 									"    pm.expect(jsonData.data).to.have.property('email');",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "4.5 Get Coach Reliability (Me)",
-					"request": {
-						"method": "GET",
-						"header": [
-							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
-							}
-						],
-						"url": {
-							"raw": "{{api_url}}/coaches/me/reliability",
-							"host": [
-								"{{api_url}}"
-							],
-							"path": [
-								"coaches",
-								"me",
-								"reliability"
-							]
-						},
-						"description": "Roles: Coach. Get authenticated coach's reliability breakdown + score (penalized-impact only)."
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Status code is 200\", function () {",
-									"    pm.response.to.have.status(200);",
-									"});",
-									"",
-									"pm.test(\"Reliability returned\", function () {",
-									"    var jsonData = pm.response.json();",
-									"    pm.expect(jsonData.success).to.be.true;",
-									"    pm.expect(jsonData.data).to.have.property('reliability');",
-									"    pm.expect(jsonData.data.reliability).to.have.property('reliability_score');",
 									"});"
 								],
 								"type": "text/javascript"
@@ -2553,9 +2786,47 @@
 								"change-password"
 							]
 						},
-						"description": "Roles: Student, Coach, Admin. Change password using the current password and a new password. Revokes all existing tokens."
+						"description": "Roles: Student, Coach, Admin. Change password using the current password and a new password. Bumps token_version (other sessions invalidated). Response includes a fresh JWT — test script saves it to auth_token like Login."
 					},
-					"response": []
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"(function persistAuthTokenFromResponse() {",
+									"    try {",
+									"        var code = pm.response.code;",
+									"        if (code !== 200 && code !== 201) return;",
+									"        var json = pm.response.json();",
+									"        if (!json || !json.data || !json.data.token) return;",
+									"        var t = json.data.token;",
+									"        pm.collectionVariables.set(\"auth_token\", t);",
+									"        pm.environment.set(\"auth_token\", t);",
+									"        pm.globals.set(\"auth_token\", t);",
+									"        if (json.data.user && json.data.user.id != null) {",
+									"            var uid = String(json.data.user.id);",
+									"            pm.collectionVariables.set(\"user_id\", uid);",
+									"            pm.environment.set(\"user_id\", uid);",
+									"            pm.globals.set(\"user_id\", uid);",
+									"        }",
+									"    } catch (e) {}",
+									"})();",
+									"",
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Response has token (session updated)\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"    pm.expect(jsonData.data).to.have.property('token');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
 				},
 				{
 					"name": "9. Request Email Change",
@@ -2573,7 +2844,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"new_email\": \"new-email@example.com\",\n  \"password\": \"CurrentPassword123!\"\n}"
+							"raw": "{\n  \"new_email\": \"new-email@example.com\",\n  \"password\": \"{{auth_password}}\"\n}"
 						},
 						"url": {
 							"raw": "{{api_url}}/auth/change-email/request",
@@ -2586,7 +2857,7 @@
 								"request"
 							]
 						},
-						"description": "Roles: Student, Coach, Admin. Start 2-step email change flow. Sends confirmation to the NEW email address."
+						"description": "Roles: Student, Coach, Admin. **password** must be your **current account password** (same one you use for Login), not a new password. Set collection var **auth_password** to match, or edit the JSON body. Sends confirmation to the NEW email address."
 					},
 					"response": []
 				},
@@ -2602,7 +2873,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"token\": \"email_change_token_from_email\"\n}"
+							"raw": "{\n  \"token\": \"{{email_change_token}}\"\n}"
 						},
 						"url": {
 							"raw": "{{api_url}}/auth/change-email/confirm",
@@ -2615,9 +2886,47 @@
 								"confirm"
 							]
 						},
-						"description": "Roles: Any (no auth). Confirm email change using the token from the email sent to the new address."
+						"description": "Roles: Any (no auth). Confirm email change using the token from the email sent to the new address. Response includes token + user (same shape as Login). Test script saves auth_token so Profile and other requests work without manual paste."
 					},
-					"response": []
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"(function persistAuthTokenFromResponse() {",
+									"    try {",
+									"        var code = pm.response.code;",
+									"        if (code !== 200 && code !== 201) return;",
+									"        var json = pm.response.json();",
+									"        if (!json || !json.data || !json.data.token) return;",
+									"        var t = json.data.token;",
+									"        pm.collectionVariables.set(\"auth_token\", t);",
+									"        pm.environment.set(\"auth_token\", t);",
+									"        pm.globals.set(\"auth_token\", t);",
+									"        if (json.data.user && json.data.user.id != null) {",
+									"            var uid = String(json.data.user.id);",
+									"            pm.collectionVariables.set(\"user_id\", uid);",
+									"            pm.environment.set(\"user_id\", uid);",
+									"            pm.globals.set(\"user_id\", uid);",
+									"        }",
+									"    } catch (e) {}",
+									"})();",
+									"",
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Response has token (session updated)\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"    pm.expect(jsonData.data).to.have.property('token');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
 				},
 				{
 					"name": "11. Switch Role (Student ↔ Coach)",
@@ -2656,14 +2965,21 @@
 							"listen": "test",
 							"script": {
 								"exec": [
+									"(function persistAuthTokenFromResponse() {",
+									"    try {",
+									"        if (pm.response.code !== 200) return;",
+									"        var json = pm.response.json();",
+									"        if (!json || !json.data || !json.data.token) return;",
+									"        var t = json.data.token;",
+									"        pm.collectionVariables.set(\"auth_token\", t);",
+									"        pm.environment.set(\"auth_token\", t);",
+									"        pm.globals.set(\"auth_token\", t);",
+									"    } catch (e) {}",
+									"})();",
+									"",
 									"pm.test(\"Status code is 200 or 403 (admin)\", function () {",
 									"    pm.expect([200, 403]).to.include(pm.response.code);",
-									"});",
-									"",
-									"var jsonData = pm.response.json();",
-									"if (jsonData.success && jsonData.data && jsonData.data.token) {",
-									"    pm.environment.set(\"auth_token\", jsonData.data.token);",
-									"}"
+									"});"
 								],
 								"type": "text/javascript"
 							}
@@ -2802,9 +3118,21 @@
 									"key": "id",
 									"value": "{{coach_id}}"
 								}
+							],
+							"query": [
+								{
+									"key": "page",
+									"value": "1",
+									"disabled": true
+								},
+								{
+									"key": "limit",
+									"value": "10",
+									"disabled": true
+								}
 							]
 						},
-						"description": "Roles: Any (no auth). Get coach availability. Path :id is the coach's **user id**."
+						"description": "Roles: Any (no auth). Get coach availability. Omit page/limit to return all rows (server-capped), or enable page/limit for paged mode (data + pagination). Path :id is the coach's user id."
 					},
 					"response": [],
 					"event": [
@@ -2921,7 +3249,7 @@
 					]
 				},
 				{
-					"name": "17. Get All Courts",
+					"name": "17. List/Search Courts",
 					"request": {
 						"method": "GET",
 						"header": [],
@@ -2932,9 +3260,41 @@
 							],
 							"path": [
 								"courts"
+							],
+							"query": [
+								{
+									"key": "page",
+									"value": "1",
+									"description": "Optional. Omit page & limit with no lat/lng to list all (server-capped).",
+									"disabled": true
+								},
+								{
+									"key": "limit",
+									"value": "10",
+									"description": "Optional. Use with page for pagination; max 100 per page.",
+									"disabled": true
+								},
+								{
+									"key": "lat",
+									"value": "40.7128",
+									"description": "Optional. Enable with lng for nearby geo search.",
+									"disabled": true
+								},
+								{
+									"key": "lng",
+									"value": "-74.0060",
+									"description": "Optional. Enable with lat for nearby geo search.",
+									"disabled": true
+								},
+								{
+									"key": "radius",
+									"value": "10",
+									"description": "Optional miles radius (used with lat/lng).",
+									"disabled": true
+								}
 							]
 						},
-						"description": "Roles: Any (no auth). Search courts (with lazy import from OpenStreetMap if no results)."
+						"description": "Roles: Any (no auth). **No lat/lng, no page/limit** = all courts in `data` (capped server-side). **page** and/or **limit** = paginated list (`pagination`). **lat** + **lng** (+ optional **radius**) = nearby search; results ordered **closest first** (lazy OSM import if empty)."
 					},
 					"response": [],
 					"event": [
@@ -3132,7 +3492,7 @@
 								"courts"
 							]
 						},
-						"description": "Roles: Coach. Link an existing court to my courts. Create courts with POST /api/courts first (coaches auto-linked when they create). Body: court_id (required), optional rate_modifier, preferred, notes. For admin fix use DELETE /api/admin/coaches/:coachId/courts/:linkId."
+						"description": "Roles: Coach. Link an existing court to my courts. Create courts with POST /api/courts first (coaches auto-linked when they create). Body: court_id (required), optional rate_modifier, preferred, notes. For admin fix use DELETE /api/admin/coaches/:coachId/courts/:courtId."
 					},
 					"response": [],
 					"event": [
@@ -3173,9 +3533,21 @@
 								"coaches",
 								"me",
 								"courts"
+							],
+							"query": [
+								{
+									"key": "page",
+									"value": "1",
+									"disabled": true
+								},
+								{
+									"key": "limit",
+									"value": "10",
+									"disabled": true
+								}
 							]
 						},
-						"description": "Roles: Coach. List my linked courts. For admin view use GET /api/admin/coaches/:coachId/courts."
+						"description": "Roles: Coach. List my linked courts. Omit page/limit to return all rows (server-capped), or enable page/limit for paged mode (data + pagination). For admin view use GET /api/admin/coaches/:coachId/courts."
 					},
 					"response": [],
 					"event": [
@@ -3200,7 +3572,66 @@
 					]
 				},
 				{
-					"name": "23. Remove Court from Coach",
+					"name": "23. Get My Lessons",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{api_url}}/coaches/me/lessons",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"coaches",
+								"me",
+								"lessons"
+							],
+							"query": [
+								{
+									"key": "page",
+									"value": "1",
+									"disabled": true
+								},
+								{
+									"key": "limit",
+									"value": "10",
+									"disabled": true
+								}
+							]
+						},
+						"description": "Roles: Coach. Get my own lessons. Omit page/limit to return all matching lessons (server-capped), or enable page/limit for paged mode (data + pagination)."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Returns array of lessons\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('data');",
+									"    pm.expect(jsonData.data).to.be.an('array');",
+									"    if (jsonData.data.length > 0 && jsonData.data[0].id) {",
+									"        pm.environment.set(\"lesson_id\", jsonData.data[0].id);",
+									"    }",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "24. Remove Court from Coach",
 					"request": {
 						"method": "DELETE",
 						"header": [
@@ -3228,7 +3659,7 @@
 								}
 							]
 						},
-						"description": "Roles: Coach. Unlink a court from my courts. :id is the coach_court_location id from List My Courts (data[].id). For admin fix use DELETE /api/admin/coaches/:coachId/courts/:linkId."
+						"description": "Roles: Coach. Unlink a court from my courts. :id is the coach_court_location id from List My Courts (data[].id). For admin fix use DELETE /api/admin/coaches/:coachId/courts/:courtId."
 					},
 					"response": [],
 					"event": [
@@ -3251,7 +3682,7 @@
 					]
 				},
 				{
-					"name": "24. Initiate Stripe Connect Onboarding",
+					"name": "25. Initiate Stripe Connect Onboarding",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -3304,7 +3735,7 @@
 					]
 				},
 				{
-					"name": "25. Get Stripe Connect Status",
+					"name": "26. Get Stripe Connect Status",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -3348,7 +3779,7 @@
 					]
 				},
 				{
-					"name": "26. Get All Lessons",
+					"name": "27. Get All Lessons (Filter by coach_id)",
 					"request": {
 						"method": "GET",
 						"header": [],
@@ -3359,9 +3790,36 @@
 							],
 							"path": [
 								"lessons"
+							],
+							"query": [
+								{
+									"key": "page",
+									"value": "1",
+									"disabled": true
+								},
+								{
+									"key": "limit",
+									"value": "10",
+									"disabled": true
+								},
+								{
+									"key": "coach_id",
+									"value": "{{coach_id}}",
+									"disabled": true
+								},
+								{
+									"key": "min_price",
+									"value": "20",
+									"disabled": true
+								},
+								{
+									"key": "max_price",
+									"value": "80",
+									"disabled": true
+								}
 							]
 						},
-						"description": "Get all lessons (public)"
+						"description": "Roles: Any (no auth). Get lessons. Omit page/limit to return all matching lessons (server-capped), or enable page/limit to paginate. Optional filters: coach_id, min_price, max_price."
 					},
 					"response": [],
 					"event": [
@@ -3390,7 +3848,7 @@
 					]
 				},
 				{
-					"name": "27. Get Lesson By ID",
+					"name": "28. Get Lesson By ID",
 					"request": {
 						"method": "GET",
 						"header": [],
@@ -3434,7 +3892,7 @@
 					]
 				},
 				{
-					"name": "28. Create Lesson",
+					"name": "29. Create Lesson",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -3488,7 +3946,7 @@
 					]
 				},
 				{
-					"name": "29. Update Lesson",
+					"name": "30. Update Lesson",
 					"request": {
 						"method": "PUT",
 						"header": [
@@ -3544,7 +4002,7 @@
 					]
 				},
 				{
-					"name": "30. Delete Lesson",
+					"name": "31. Delete Lesson",
 					"request": {
 						"method": "DELETE",
 						"header": [
@@ -3592,7 +4050,7 @@
 					]
 				},
 				{
-					"name": "31. Get My Bookings",
+					"name": "32. Get Coach Bookings",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -3602,15 +4060,28 @@
 							}
 						],
 						"url": {
-							"raw": "{{api_url}}/bookings",
+							"raw": "{{api_url}}/coaches/bookings",
 							"host": [
 								"{{api_url}}"
 							],
 							"path": [
+								"coaches",
 								"bookings"
+							],
+							"query": [
+								{
+									"key": "page",
+									"value": "1",
+									"disabled": true
+								},
+								{
+									"key": "limit",
+									"value": "10",
+									"disabled": true
+								}
 							]
 						},
-						"description": "Roles: Student, Coach, Admin. Get bookings (own if student/coach; all if admin)."
+						"description": "Roles: Coach only. List bookings where authenticated coach is assigned."
 					},
 					"response": [],
 					"event": [
@@ -3634,7 +4105,7 @@
 					]
 				},
 				{
-					"name": "32. Get Booking By ID",
+					"name": "33. Get Booking By ID",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -3683,9 +4154,9 @@
 					]
 				},
 				{
-					"name": "33. Accept Booking",
+					"name": "34. Accept Booking",
 					"request": {
-						"method": "POST",
+						"method": "PUT",
 						"header": [
 							{
 								"key": "Content-Type",
@@ -3717,7 +4188,7 @@
 								}
 							]
 						},
-						"description": "Roles: Coach, Admin. Confirm a pending booking. Use this (not PUT status) to confirm. Captures payment and sets status to confirmed. Only for bookings in pending state."
+						"description": "MVP — POST /bookings/:id/accept. Roles: Coach only (booking coach_id = you). Confirms pending booking."
 					},
 					"response": [],
 					"event": [
@@ -3740,9 +4211,9 @@
 					]
 				},
 				{
-					"name": "34. Decline Booking",
+					"name": "35. Decline Booking",
 					"request": {
-						"method": "POST",
+						"method": "PUT",
 						"header": [
 							{
 								"key": "Content-Type",
@@ -3774,7 +4245,7 @@
 								}
 							]
 						},
-						"description": "Roles: Coach, Admin. Decline a pending booking. Cancels the PaymentIntent (student not charged). Body: message_to_student (required, 10–500 chars), decline_reason_code (optional, e.g. availability_wrong, sick, other). Student sees the message."
+						"description": "MVP — POST /bookings/:id/decline. Roles: Coach only. Declines pending booking; student not charged."
 					},
 					"response": [],
 					"event": [
@@ -3787,63 +4258,6 @@
 									"});",
 									"",
 									"pm.test(\"Booking declined\", function () {",
-									"    var jsonData = pm.response.json();",
-									"    pm.expect(jsonData.success).to.be.true;",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "35. Update Booking Status",
-					"request": {
-						"method": "PUT",
-						"header": [
-							{
-								"key": "Content-Type",
-								"value": "application/json"
-							},
-							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
-							}
-						],
-						"body": {
-							"mode": "raw",
-							"raw": "{\n  \"status\": \"completed\"\n}"
-						},
-						"url": {
-							"raw": "{{api_url}}/bookings/:id/status",
-							"host": [
-								"{{api_url}}"
-							],
-							"path": [
-								"bookings",
-								":id",
-								"status"
-							],
-							"variable": [
-								{
-									"key": "id",
-									"value": "{{booking_id}}"
-								}
-							]
-						},
-						"description": "Roles: Coach, Admin. Change booking status only for allowed transitions. Do not use this to confirm or decline a pending booking — use POST .../accept and POST .../decline for that.\n\nAllowed transitions:\n- confirmed → completed | cancelled | no_show\n- awaiting_verification → completed | cancelled\n- pending has no transitions here (use accept/decline).\n\nCompleted is only allowed after the lesson end time has passed (400 if you try before). Both confirmed→completed and awaiting_verification→completed mean “lesson is done”; the booking may be in either state depending on whether the background worker has already moved it to awaiting_verification.\n\nExamples: Mark as completed {\"status\": \"completed\"}; mark as no-show {\"status\": \"no_show\"}; cancel {\"status\": \"cancelled\"}."
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Status code is 200\", function () {",
-									"    pm.response.to.have.status(200);",
-									"});",
-									"",
-									"pm.test(\"Booking status updated\", function () {",
 									"    var jsonData = pm.response.json();",
 									"    pm.expect(jsonData.success).to.be.true;",
 									"});"
@@ -3911,7 +4325,121 @@
 					]
 				},
 				{
-					"name": "37. Request Reschedule",
+					"name": "37. Complete Booking",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": ""
+						},
+						"url": {
+							"raw": "{{api_url}}/bookings/:id/complete",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"bookings",
+								":id",
+								"complete"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "{{booking_id}}"
+								}
+							]
+						},
+						"description": "Intent endpoint. Roles: Coach (primary) or Admin override. Marks booking as completed after lesson end time. Allowed from confirmed/awaiting_verification."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Booking completed\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"});"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "38. Mark Student No-Show",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": ""
+						},
+						"url": {
+							"raw": "{{api_url}}/bookings/:id/student-no-show",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"bookings",
+								":id",
+								"student-no-show"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "{{booking_id}}"
+								}
+							]
+						},
+						"description": "Coach only. Records primary student did not attend; sets booking to no_show after lesson end. Not coach no-show — use POST /api/disputes with coach_no_show. Admin: POST /admin/bookings/:id/student-no-show. Legacy alias: .../no-show."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Booking marked no_show\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"});"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "39. Request Reschedule",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -3968,7 +4496,7 @@
 					]
 				},
 				{
-					"name": "38. Get Reschedule History",
+					"name": "40. Get Reschedule History",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -4010,7 +4538,7 @@
 					]
 				},
 				{
-					"name": "39. Get My Payments",
+					"name": "41. Get My Payments",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -4026,9 +4554,21 @@
 							],
 							"path": [
 								"payments"
+							],
+							"query": [
+								{
+									"key": "page",
+									"value": "1",
+									"disabled": true
+								},
+								{
+									"key": "limit",
+									"value": "10",
+									"disabled": true
+								}
 							]
 						},
-						"description": "Roles: Student, Coach, Admin. Get payments (own if student/coach; all if admin)."
+						"description": "Roles: Student, Coach, Admin. Get payments (own if student/coach; all if admin). Omit page/limit to return all matching rows (server-capped), or enable page/limit for paged mode (`data` + `pagination`)."
 					},
 					"response": [],
 					"event": [
@@ -4052,7 +4592,7 @@
 					]
 				},
 				{
-					"name": "40. Get Payment By ID",
+					"name": "42. Get Payment By ID",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -4100,7 +4640,7 @@
 					]
 				},
 				{
-					"name": "41. Get All Reviews",
+					"name": "43. Get All Reviews",
 					"request": {
 						"method": "GET",
 						"header": [],
@@ -4111,9 +4651,21 @@
 							],
 							"path": [
 								"reviews"
+							],
+							"query": [
+								{
+									"key": "page",
+									"value": "1",
+									"disabled": true
+								},
+								{
+									"key": "limit",
+									"value": "10",
+									"disabled": true
+								}
 							]
 						},
-						"description": "Roles: Any (no auth). Get reviews."
+						"description": "Roles: Auth required. Get reviews. Omit page/limit to return all matching reviews (server-capped), or enable page/limit to paginate."
 					},
 					"response": [],
 					"event": [
@@ -4137,7 +4689,7 @@
 					]
 				},
 				{
-					"name": "42. Create Review",
+					"name": "44. Create Review",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -4187,7 +4739,7 @@
 					]
 				},
 				{
-					"name": "43. Update Review",
+					"name": "45. Update Review",
 					"request": {
 						"method": "PUT",
 						"header": [
@@ -4243,7 +4795,7 @@
 					]
 				},
 				{
-					"name": "44. Delete Review",
+					"name": "46. Delete Review",
 					"request": {
 						"method": "DELETE",
 						"header": [
@@ -4291,7 +4843,7 @@
 					]
 				},
 				{
-					"name": "45. Get Conversations",
+					"name": "47. Get Conversations",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -4308,9 +4860,21 @@
 							"path": [
 								"messages",
 								"conversations"
+							],
+							"query": [
+								{
+									"key": "page",
+									"value": "1",
+									"disabled": true
+								},
+								{
+									"key": "limit",
+									"value": "10",
+									"disabled": true
+								}
 							]
 						},
-						"description": "Roles: Student, Coach, Admin. Get conversations (own if student/coach; all if admin)."
+						"description": "Roles: Student, Coach, Admin. Get conversations (own if student/coach; all if admin). Omit page/limit to return all rows (server-capped), or enable page/limit for paged mode (data + pagination)."
 					},
 					"response": [],
 					"event": [
@@ -4334,7 +4898,7 @@
 					]
 				},
 				{
-					"name": "46. Create Conversation",
+					"name": "48. Create Conversation",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -4389,7 +4953,7 @@
 					]
 				},
 				{
-					"name": "47. Get Conversation By ID",
+					"name": "49. Get Conversation By ID",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -4413,9 +4977,21 @@
 									"key": "id",
 									"value": "{{conversation_id}}"
 								}
+							],
+							"query": [
+								{
+									"key": "page",
+									"value": "1",
+									"disabled": true
+								},
+								{
+									"key": "limit",
+									"value": "10",
+									"disabled": true
+								}
 							]
 						},
-						"description": "Roles: Student, Coach, Admin. Get conversation details by ID (own or any if admin)."
+						"description": "Roles: Student, Coach, Admin. Get conversation details by ID (own or any if admin). Omit page/limit to return all messages (server-capped), or enable page/limit for message pagination metadata (`data.messages_pagination`)."
 					},
 					"response": [],
 					"event": [
@@ -4438,7 +5014,7 @@
 					]
 				},
 				{
-					"name": "48. Send Message",
+					"name": "50. Send Message",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -4489,7 +5065,7 @@
 					]
 				},
 				{
-					"name": "49. Mark Message As Read",
+					"name": "51. Mark Message As Read",
 					"request": {
 						"method": "PUT",
 						"header": [
@@ -4538,7 +5114,7 @@
 					]
 				},
 				{
-					"name": "50. Get All Disputes",
+					"name": "52. Get All Disputes",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -4554,9 +5130,21 @@
 							],
 							"path": [
 								"disputes"
+							],
+							"query": [
+								{
+									"key": "page",
+									"value": "1",
+									"disabled": true
+								},
+								{
+									"key": "limit",
+									"value": "10",
+									"disabled": true
+								}
 							]
 						},
-						"description": "Roles: Student, Coach, Admin. Get disputes (own if student/coach; all if admin)."
+						"description": "Roles: Student, Coach, Admin. Get disputes (own if student/coach; all if admin). Omit page/limit to return all matching disputes (server-capped), or enable page/limit to paginate."
 					},
 					"response": [],
 					"event": [
@@ -4580,7 +5168,7 @@
 					]
 				},
 				{
-					"name": "51. Get Dispute By ID",
+					"name": "53. Get Dispute By ID",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -4605,7 +5193,7 @@
 								}
 							]
 						},
-						"description": "Get dispute details by ID"
+						"description": "Get dispute details by ID. Resolver: `data.resolved_by_admin` (`id`, `full_name`) or null. Use `resolved_by_admin.id` for the resolver user id."
 					},
 					"response": [],
 					"event": [
@@ -4628,7 +5216,7 @@
 					]
 				},
 				{
-					"name": "52. Create Dispute",
+					"name": "54. Create Dispute",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -4643,7 +5231,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"booking_id\": \"{{booking_id}}\",\n  \"dispute_type_id\": 1,\n  \"notes\": \"Issue with the lesson - coach was late\"\n}"
+							"raw": "{\n  \"booking_id\": \"{{booking_id}}\",\n  \"dispute_type_id\": 1,\n  \"notes\": \"Coach no-show — waited 20 min, coach never arrived (stored on dispute row).\"\n}"
 						},
 						"url": {
 							"raw": "{{api_url}}/disputes",
@@ -4654,7 +5242,7 @@
 								"disputes"
 							]
 						},
-						"description": "Roles: Student, Coach. Create a dispute for a booking."
+						"description": "Roles: Student, Coach, Admin (must be party to booking). POST /api/disputes — booking status unchanged. Admins can also use POST /api/admin/disputes as an explicit support route (same handler, opened_by=admin). MVP dispute_type_id: 1 coach_no_show, 2 late_arrival, 3 misconduct, 4 lesson_not_completed, 5 refund_request, 6 billing_issue, 7 other. Optional notes persisted as TEXT."
 					},
 					"response": [],
 					"event": [
@@ -4677,7 +5265,7 @@
 					]
 				},
 				{
-					"name": "53. Get My Notifications",
+					"name": "55. Get My Notifications",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -4693,9 +5281,21 @@
 							],
 							"path": [
 								"notifications"
+							],
+							"query": [
+								{
+									"key": "page",
+									"value": "1",
+									"disabled": true
+								},
+								{
+									"key": "limit",
+									"value": "10",
+									"disabled": true
+								}
 							]
 						},
-						"description": "Get user's notifications"
+						"description": "Roles: Any authenticated user. Get notifications for the logged-in user. Omit page/limit to return all matching notifications (server-capped), or enable page/limit for paged mode (`data` + `pagination`)."
 					},
 					"response": [],
 					"event": [
@@ -4719,7 +5319,7 @@
 					]
 				},
 				{
-					"name": "54. Mark Notification As Read",
+					"name": "56. Mark Notification As Read",
 					"request": {
 						"method": "PUT",
 						"header": [
@@ -4768,7 +5368,7 @@
 					]
 				},
 				{
-					"name": "55. Forgot Password",
+					"name": "57. Forgot Password",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -4814,7 +5414,7 @@
 					]
 				},
 				{
-					"name": "56. Reset Password",
+					"name": "58. Reset Password",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -4860,7 +5460,7 @@
 					]
 				},
 				{
-					"name": "57. Logout",
+					"name": "59. Logout",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -4891,6 +5491,7 @@
 									"    pm.response.to.have.status(200);",
 									"});",
 									"if (pm.response.code === 200) {",
+									"    pm.collectionVariables.unset(\"auth_token\");",
 									"    pm.environment.unset(\"auth_token\");",
 									"}"
 								],
@@ -4900,7 +5501,7 @@
 					]
 				},
 				{
-					"name": "58. Delete My Account",
+					"name": "60. Delete My Account",
 					"request": {
 						"method": "DELETE",
 						"header": [
@@ -4940,7 +5541,7 @@
 		},
 		{
 			"name": "3 – Flow: Student",
-			"description": "All student endpoints in user-flow order. Run in sequence: Health → Register/Login → Profile → Search coaches → Open coach (GET /coaches/:id) → Get coach courts (GET /coaches/:id/courts) → Check availability (GET /coaches/:id/availability) → Create Booking → Bookings → Payments → Reviews → Messages → Disputes → Notifications → Auth extras. See backend/POSTMAN_TESTING_GUIDE.md.",
+			"description": "All student endpoints in user-flow order. Run in sequence: Health → Register/Login → Profile → Search coaches → Open coach (GET /coaches/:id) → Get coach courts (GET /coaches/:id/courts) → Check availability (GET /coaches/:id/availability) → Create Booking → Bookings → Payments → Reviews → Messages → Disputes → Notifications → Auth extras. See backend/POSTMAN_TESTING_GUIDE.md.\n\nBooking MVP: POST /bookings creates a pending request; the coach accepts or declines with PUT .../accept | PUT .../decline.",
 			"item": [
 				{
 					"name": "1. Health Check",
@@ -4997,7 +5598,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"full_name\": \"John Doe\",\n  \"email\": \"john@example.com\",\n  \"password\": \"SecurePassword123!\",\n  \"role\": \"student\",\n  \"phone\": \"+1234567890\",\n  \"timezone\": \"America/New_York\",\n  \"avatar_url\": \"\"\n}"
+							"raw": "{\n  \"full_name\": \"Student One\",\n  \"email\": \"student1@example.com\",\n  \"password\": \"password123\",\n  \"role\": \"student\",\n  \"phone\": \"+1234567890\",\n  \"timezone\": \"UTC\",\n  \"avatar_url\": \"\"\n}"
 						},
 						"url": {
 							"raw": "{{api_url}}/auth/register",
@@ -5014,9 +5615,41 @@
 					"response": [],
 					"event": [
 						{
+							"listen": "prerequest",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"const unique = Date.now().toString(36) + Math.floor(Math.random() * 10000).toString();",
+									"const role = pm.collectionVariables.get(\"auth_role\") || \"student\";",
+									"const email = `${role}+${unique}@example.com`;",
+									"pm.collectionVariables.set(\"auth_email\", email);",
+									"pm.environment.set(\"auth_email\", email);"
+								]
+							}
+						},
+						{
 							"listen": "test",
 							"script": {
 								"exec": [
+									"(function persistAuthTokenFromResponse() {",
+									"    try {",
+									"        var code = pm.response.code;",
+									"        if (code !== 200 && code !== 201) return;",
+									"        var json = pm.response.json();",
+									"        if (!json || !json.data || !json.data.token) return;",
+									"        var t = json.data.token;",
+									"        pm.collectionVariables.set(\"auth_token\", t);",
+									"        pm.environment.set(\"auth_token\", t);",
+									"        pm.globals.set(\"auth_token\", t);",
+									"        if (json.data.user && json.data.user.id != null) {",
+									"            var uid = String(json.data.user.id);",
+									"            pm.collectionVariables.set(\"user_id\", uid);",
+									"            pm.environment.set(\"user_id\", uid);",
+									"            pm.globals.set(\"user_id\", uid);",
+									"        }",
+									"    } catch (e) {}",
+									"})();",
+									"",
 									"pm.test(\"Status code is 201\", function () {",
 									"    pm.response.to.have.status(201);",
 									"});",
@@ -5025,12 +5658,6 @@
 									"    var jsonData = pm.response.json();",
 									"    pm.expect(jsonData).to.have.property('data');",
 									"    pm.expect(jsonData.data).to.have.property('token');",
-									"    ",
-									"    // Save token and user ID",
-									"    pm.environment.set(\"auth_token\", jsonData.data.token);",
-									"    if (jsonData.data.user && jsonData.data.user.id) {",
-									"        pm.environment.set(\"user_id\", jsonData.data.user.id);",
-									"    }",
 									"});",
 									"",
 									"pm.test(\"User is created successfully\", function () {",
@@ -5057,7 +5684,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"email\": \"adamduan0312@gmail.com\",\n  \"password\": \"03122003\"\n}"
+							"raw": "{\n  \"email\": \"student1@example.com\",\n  \"password\": \"password123\"\n}"
 						},
 						"url": {
 							"raw": "{{api_url}}/auth/login",
@@ -5077,6 +5704,25 @@
 							"listen": "test",
 							"script": {
 								"exec": [
+									"(function persistAuthTokenFromResponse() {",
+									"    try {",
+									"        var code = pm.response.code;",
+									"        if (code !== 200 && code !== 201) return;",
+									"        var json = pm.response.json();",
+									"        if (!json || !json.data || !json.data.token) return;",
+									"        var t = json.data.token;",
+									"        pm.collectionVariables.set(\"auth_token\", t);",
+									"        pm.environment.set(\"auth_token\", t);",
+									"        pm.globals.set(\"auth_token\", t);",
+									"        if (json.data.user && json.data.user.id != null) {",
+									"            var uid = String(json.data.user.id);",
+									"            pm.collectionVariables.set(\"user_id\", uid);",
+									"            pm.environment.set(\"user_id\", uid);",
+									"            pm.globals.set(\"user_id\", uid);",
+									"        }",
+									"    } catch (e) {}",
+									"})();",
+									"",
 									"pm.test(\"Status code is 200\", function () {",
 									"    pm.response.to.have.status(200);",
 									"});",
@@ -5085,12 +5731,6 @@
 									"    var jsonData = pm.response.json();",
 									"    pm.expect(jsonData).to.have.property('data');",
 									"    pm.expect(jsonData.data).to.have.property('token');",
-									"    ",
-									"    // Save token and user ID",
-									"    pm.environment.set(\"auth_token\", jsonData.data.token);",
-									"    if (jsonData.data.user && jsonData.data.user.id) {",
-									"        pm.environment.set(\"user_id\", jsonData.data.user.id);",
-									"    }",
 									"});",
 									"",
 									"pm.test(\"Login successful\", function () {",
@@ -5288,9 +5928,47 @@
 								"change-password"
 							]
 						},
-						"description": "Roles: Student, Coach, Admin. Change password using the current password and a new password. Revokes all existing tokens."
+						"description": "Roles: Student, Coach, Admin. Change password using the current password and a new password. Bumps token_version (other sessions invalidated). Response includes a fresh JWT — test script saves it to auth_token like Login."
 					},
-					"response": []
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"(function persistAuthTokenFromResponse() {",
+									"    try {",
+									"        var code = pm.response.code;",
+									"        if (code !== 200 && code !== 201) return;",
+									"        var json = pm.response.json();",
+									"        if (!json || !json.data || !json.data.token) return;",
+									"        var t = json.data.token;",
+									"        pm.collectionVariables.set(\"auth_token\", t);",
+									"        pm.environment.set(\"auth_token\", t);",
+									"        pm.globals.set(\"auth_token\", t);",
+									"        if (json.data.user && json.data.user.id != null) {",
+									"            var uid = String(json.data.user.id);",
+									"            pm.collectionVariables.set(\"user_id\", uid);",
+									"            pm.environment.set(\"user_id\", uid);",
+									"            pm.globals.set(\"user_id\", uid);",
+									"        }",
+									"    } catch (e) {}",
+									"})();",
+									"",
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Response has token (session updated)\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"    pm.expect(jsonData.data).to.have.property('token');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
 				},
 				{
 					"name": "9. Request Email Change",
@@ -5308,7 +5986,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"new_email\": \"new-email@example.com\",\n  \"password\": \"CurrentPassword123!\"\n}"
+							"raw": "{\n  \"new_email\": \"new-email@example.com\",\n  \"password\": \"{{auth_password}}\"\n}"
 						},
 						"url": {
 							"raw": "{{api_url}}/auth/change-email/request",
@@ -5321,7 +5999,7 @@
 								"request"
 							]
 						},
-						"description": "Roles: Student, Coach, Admin. Start 2-step email change flow. Sends confirmation to the NEW email address."
+						"description": "Roles: Student, Coach, Admin. **password** must be your **current account password** (same one you use for Login), not a new password. Set collection var **auth_password** to match, or edit the JSON body. Sends confirmation to the NEW email address."
 					},
 					"response": []
 				},
@@ -5337,7 +6015,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"token\": \"email_change_token_from_email\"\n}"
+							"raw": "{\n  \"token\": \"{{email_change_token}}\"\n}"
 						},
 						"url": {
 							"raw": "{{api_url}}/auth/change-email/confirm",
@@ -5350,9 +6028,47 @@
 								"confirm"
 							]
 						},
-						"description": "Roles: Any (no auth). Confirm email change using the token from the email sent to the new address."
+						"description": "Roles: Any (no auth). Confirm email change using the token from the email sent to the new address. Response includes token + user (same shape as Login). Test script saves auth_token so Profile and other requests work without manual paste."
 					},
-					"response": []
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"(function persistAuthTokenFromResponse() {",
+									"    try {",
+									"        var code = pm.response.code;",
+									"        if (code !== 200 && code !== 201) return;",
+									"        var json = pm.response.json();",
+									"        if (!json || !json.data || !json.data.token) return;",
+									"        var t = json.data.token;",
+									"        pm.collectionVariables.set(\"auth_token\", t);",
+									"        pm.environment.set(\"auth_token\", t);",
+									"        pm.globals.set(\"auth_token\", t);",
+									"        if (json.data.user && json.data.user.id != null) {",
+									"            var uid = String(json.data.user.id);",
+									"            pm.collectionVariables.set(\"user_id\", uid);",
+									"            pm.environment.set(\"user_id\", uid);",
+									"            pm.globals.set(\"user_id\", uid);",
+									"        }",
+									"    } catch (e) {}",
+									"})();",
+									"",
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Response has token (session updated)\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"    pm.expect(jsonData.data).to.have.property('token');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
 				},
 				{
 					"name": "11. Switch Role (Student ↔ Coach)",
@@ -5391,14 +6107,21 @@
 							"listen": "test",
 							"script": {
 								"exec": [
+									"(function persistAuthTokenFromResponse() {",
+									"    try {",
+									"        if (pm.response.code !== 200) return;",
+									"        var json = pm.response.json();",
+									"        if (!json || !json.data || !json.data.token) return;",
+									"        var t = json.data.token;",
+									"        pm.collectionVariables.set(\"auth_token\", t);",
+									"        pm.environment.set(\"auth_token\", t);",
+									"        pm.globals.set(\"auth_token\", t);",
+									"    } catch (e) {}",
+									"})();",
+									"",
 									"pm.test(\"Status code is 200 or 403 (admin)\", function () {",
 									"    pm.expect([200, 403]).to.include(pm.response.code);",
-									"});",
-									"",
-									"var jsonData = pm.response.json();",
-									"if (jsonData.success && jsonData.data && jsonData.data.token) {",
-									"    pm.environment.set(\"auth_token\", jsonData.data.token);",
-									"}"
+									"});"
 								],
 								"type": "text/javascript"
 							}
@@ -5468,7 +6191,7 @@
 								}
 							]
 						},
-						"description": "Roles: Student, Admin (coaches get 403). List/search coaches. Query params: lat, lng (optional – center for radius), radius (miles), skill_level, min_rating, page, limit."
+						"description": "Roles: Student, Admin (coaches get 403). List/search coaches. Omit page/limit to return all matches (server-capped), or enable page/limit for paged mode (`data` + `pagination`). Query params: lat, lng (optional – center for radius), radius (miles), skill_level, min_rating."
 					},
 					"response": [],
 					"event": [
@@ -5541,57 +6264,6 @@
 					]
 				},
 				{
-					"name": "13.5. Get Coach Reliability (Score Only)",
-					"request": {
-						"method": "GET",
-						"header": [
-							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
-							}
-						],
-						"url": {
-							"raw": "{{api_url}}/coaches/:id/reliability",
-							"host": [
-								"{{api_url}}"
-							],
-							"path": [
-								"coaches",
-								":id",
-								"reliability"
-							],
-							"variable": [
-								{
-									"key": "id",
-									"value": "{{coach_id}}"
-								}
-							]
-						},
-						"description": "Roles: Student or Admin. Get a coach's reliability score only (no breakdown fields). Path :id is the coach's **user id**."
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Status code is 200\", function () {",
-									"    pm.response.to.have.status(200);",
-									"});",
-									"",
-									"pm.test(\"Reliability returned\", function () {",
-									"    var jsonData = pm.response.json();",
-									"    pm.expect(jsonData.success).to.be.true;",
-									"    pm.expect(jsonData.data).to.have.property('reliability');",
-									"    pm.expect(jsonData.data.reliability).to.have.property('reliability_score');",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
 					"name": "14. Get Coach Courts",
 					"request": {
 						"method": "GET",
@@ -5611,9 +6283,21 @@
 									"key": "id",
 									"value": "{{coach_id}}"
 								}
+							],
+							"query": [
+								{
+									"key": "page",
+									"value": "1",
+									"disabled": true
+								},
+								{
+									"key": "limit",
+									"value": "10",
+									"disabled": true
+								}
 							]
 						},
-						"description": "Roles: Any (no auth). List courts where this coach teaches. For students viewing a coach's profile. Path :id is the coach's **user id**. Response: data[] with court_id, name, address, city, lat, lng."
+						"description": "Roles: Any (no auth). List courts where this coach teaches. Omit page/limit to return all rows (server-capped), or enable page/limit for paged mode (data + pagination). Path :id is the coach's user id."
 					},
 					"response": [],
 					"event": [
@@ -5656,9 +6340,21 @@
 									"key": "id",
 									"value": "{{coach_id}}"
 								}
+							],
+							"query": [
+								{
+									"key": "page",
+									"value": "1",
+									"disabled": true
+								},
+								{
+									"key": "limit",
+									"value": "10",
+									"disabled": true
+								}
 							]
 						},
-						"description": "Roles: Any (no auth). Get coach availability. Path :id is the coach's **user id**."
+						"description": "Roles: Any (no auth). Get coach availability. Omit page/limit to return all rows (server-capped), or enable page/limit for paged mode (data + pagination). Path :id is the coach's user id."
 					},
 					"response": [],
 					"event": [
@@ -5681,7 +6377,7 @@
 					]
 				},
 				{
-					"name": "16. Get All Courts",
+					"name": "16. List/Search Courts",
 					"request": {
 						"method": "GET",
 						"header": [],
@@ -5692,9 +6388,41 @@
 							],
 							"path": [
 								"courts"
+							],
+							"query": [
+								{
+									"key": "page",
+									"value": "1",
+									"description": "Optional. Omit page & limit with no lat/lng to list all (server-capped).",
+									"disabled": true
+								},
+								{
+									"key": "limit",
+									"value": "10",
+									"description": "Optional. Use with page for pagination; max 100 per page.",
+									"disabled": true
+								},
+								{
+									"key": "lat",
+									"value": "40.7128",
+									"description": "Optional. Enable with lng for nearby geo search.",
+									"disabled": true
+								},
+								{
+									"key": "lng",
+									"value": "-74.0060",
+									"description": "Optional. Enable with lat for nearby geo search.",
+									"disabled": true
+								},
+								{
+									"key": "radius",
+									"value": "10",
+									"description": "Optional miles radius (used with lat/lng).",
+									"disabled": true
+								}
 							]
 						},
-						"description": "Roles: Any (no auth). Search courts (with lazy import from OpenStreetMap if no results)."
+						"description": "Roles: Any (no auth). **No lat/lng, no page/limit** = all courts in `data` (capped server-side). **page** and/or **limit** = paginated list (`pagination`). **lat** + **lng** (+ optional **radius**) = nearby search; results ordered **closest first** (lazy OSM import if empty)."
 					},
 					"response": [],
 					"event": [
@@ -5767,7 +6495,7 @@
 					]
 				},
 				{
-					"name": "18. Get All Lessons",
+					"name": "18. Get All Lessons (Filter by coach_id)",
 					"request": {
 						"method": "GET",
 						"header": [],
@@ -5778,9 +6506,36 @@
 							],
 							"path": [
 								"lessons"
+							],
+							"query": [
+								{
+									"key": "page",
+									"value": "1",
+									"disabled": true
+								},
+								{
+									"key": "limit",
+									"value": "10",
+									"disabled": true
+								},
+								{
+									"key": "coach_id",
+									"value": "{{coach_id}}",
+									"disabled": true
+								},
+								{
+									"key": "min_price",
+									"value": "20",
+									"disabled": true
+								},
+								{
+									"key": "max_price",
+									"value": "80",
+									"disabled": true
+								}
 							]
 						},
-						"description": "Get all lessons (public)"
+						"description": "Roles: Any (no auth). Get lessons. Omit page/limit to return all matching lessons (server-capped), or enable page/limit to paginate. Optional filters: coach_id, min_price, max_price."
 					},
 					"response": [],
 					"event": [
@@ -5879,7 +6634,7 @@
 								"bookings"
 							]
 						},
-						"description": "Roles: Student. Create a new booking."
+						"description": "MVP — POST /bookings. Roles: Student (non-admin). Creates a pending booking; response `data.booking` plus payment client secret when Stripe is configured."
 					},
 					"response": [],
 					"event": [
@@ -5896,8 +6651,8 @@
 									"    pm.expect(jsonData.success).to.be.true;",
 									"    ",
 									"    // Save booking ID",
-									"    if (jsonData.data && jsonData.data.id) {",
-									"        pm.environment.set(\"booking_id\", jsonData.data.id);",
+									"    if (jsonData.data && jsonData.data.booking && jsonData.data.booking.id) {",
+									"        pm.environment.set(\"booking_id\", jsonData.data.booking.id);",
 									"    }",
 									"});"
 								],
@@ -5923,9 +6678,21 @@
 							],
 							"path": [
 								"bookings"
+							],
+							"query": [
+								{
+									"key": "page",
+									"value": "1",
+									"disabled": true
+								},
+								{
+									"key": "limit",
+									"value": "10",
+									"disabled": true
+								}
 							]
 						},
-						"description": "Roles: Student, Coach, Admin. Get bookings (own if student/coach; all if admin)."
+						"description": "Roles: Student, Coach, Admin. Get bookings (own if student/coach; all if admin). Omit page/limit to return all matching rows (server-capped), or enable page/limit for paged mode (`data` + `pagination`)."
 					},
 					"response": [],
 					"event": [
@@ -6170,9 +6937,21 @@
 							],
 							"path": [
 								"payments"
+							],
+							"query": [
+								{
+									"key": "page",
+									"value": "1",
+									"disabled": true
+								},
+								{
+									"key": "limit",
+									"value": "10",
+									"disabled": true
+								}
 							]
 						},
-						"description": "Roles: Student, Coach, Admin. Get payments (own if student/coach; all if admin)."
+						"description": "Roles: Student, Coach, Admin. Get payments (own if student/coach; all if admin). Omit page/limit to return all matching rows (server-capped), or enable page/limit for paged mode (`data` + `pagination`)."
 					},
 					"response": [],
 					"event": [
@@ -6255,9 +7034,21 @@
 							],
 							"path": [
 								"reviews"
+							],
+							"query": [
+								{
+									"key": "page",
+									"value": "1",
+									"disabled": true
+								},
+								{
+									"key": "limit",
+									"value": "10",
+									"disabled": true
+								}
 							]
 						},
-						"description": "Roles: Any (no auth). Get reviews."
+						"description": "Roles: Auth required. Get reviews. Omit page/limit to return all matching reviews (server-capped), or enable page/limit to paginate."
 					},
 					"response": [],
 					"event": [
@@ -6452,9 +7243,21 @@
 							"path": [
 								"messages",
 								"conversations"
+							],
+							"query": [
+								{
+									"key": "page",
+									"value": "1",
+									"disabled": true
+								},
+								{
+									"key": "limit",
+									"value": "10",
+									"disabled": true
+								}
 							]
 						},
-						"description": "Roles: Student, Coach, Admin. Get conversations (own if student/coach; all if admin)."
+						"description": "Roles: Student, Coach, Admin. Get conversations (own if student/coach; all if admin). Omit page/limit to return all rows (server-capped), or enable page/limit for paged mode (data + pagination)."
 					},
 					"response": [],
 					"event": [
@@ -6557,9 +7360,21 @@
 									"key": "id",
 									"value": "{{conversation_id}}"
 								}
+							],
+							"query": [
+								{
+									"key": "page",
+									"value": "1",
+									"disabled": true
+								},
+								{
+									"key": "limit",
+									"value": "10",
+									"disabled": true
+								}
 							]
 						},
-						"description": "Roles: Student, Coach, Admin. Get conversation details by ID (own or any if admin)."
+						"description": "Roles: Student, Coach, Admin. Get conversation details by ID (own or any if admin). Omit page/limit to return all messages (server-capped), or enable page/limit for message pagination metadata (`data.messages_pagination`)."
 					},
 					"response": [],
 					"event": [
@@ -6698,9 +7513,21 @@
 							],
 							"path": [
 								"disputes"
+							],
+							"query": [
+								{
+									"key": "page",
+									"value": "1",
+									"disabled": true
+								},
+								{
+									"key": "limit",
+									"value": "10",
+									"disabled": true
+								}
 							]
 						},
-						"description": "Roles: Student, Coach, Admin. Get disputes (own if student/coach; all if admin)."
+						"description": "Roles: Student, Coach, Admin. Get disputes (own if student/coach; all if admin). Omit page/limit to return all matching disputes (server-capped), or enable page/limit to paginate."
 					},
 					"response": [],
 					"event": [
@@ -6749,7 +7576,7 @@
 								}
 							]
 						},
-						"description": "Get dispute details by ID"
+						"description": "Get dispute details by ID. Resolver: `data.resolved_by_admin` (`id`, `full_name`) or null. Use `resolved_by_admin.id` for the resolver user id."
 					},
 					"response": [],
 					"event": [
@@ -6787,7 +7614,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"booking_id\": \"{{booking_id}}\",\n  \"dispute_type_id\": 1,\n  \"notes\": \"Issue with the lesson - coach was late\"\n}"
+							"raw": "{\n  \"booking_id\": \"{{booking_id}}\",\n  \"dispute_type_id\": 1,\n  \"notes\": \"Coach no-show — waited 20 min, coach never arrived (stored on dispute row).\"\n}"
 						},
 						"url": {
 							"raw": "{{api_url}}/disputes",
@@ -6798,7 +7625,7 @@
 								"disputes"
 							]
 						},
-						"description": "Roles: Student, Coach. Create a dispute for a booking."
+						"description": "Roles: Student, Coach, Admin (must be party to booking). POST /api/disputes — booking status unchanged. Admins can also use POST /api/admin/disputes as an explicit support route (same handler, opened_by=admin). MVP dispute_type_id: 1 coach_no_show, 2 late_arrival, 3 misconduct, 4 lesson_not_completed, 5 refund_request, 6 billing_issue, 7 other. Optional notes persisted as TEXT."
 					},
 					"response": [],
 					"event": [
@@ -6837,9 +7664,21 @@
 							],
 							"path": [
 								"notifications"
+							],
+							"query": [
+								{
+									"key": "page",
+									"value": "1",
+									"disabled": true
+								},
+								{
+									"key": "limit",
+									"value": "10",
+									"disabled": true
+								}
 							]
 						},
-						"description": "Get user's notifications"
+						"description": "Roles: Any authenticated user. Get notifications for the logged-in user. Omit page/limit to return all matching notifications (server-capped), or enable page/limit for paged mode (`data` + `pagination`)."
 					},
 					"response": [],
 					"event": [
@@ -7035,6 +7874,7 @@
 									"    pm.response.to.have.status(200);",
 									"});",
 									"if (pm.response.code === 200) {",
+									"    pm.collectionVariables.unset(\"auth_token\");",
 									"    pm.environment.unset(\"auth_token\");",
 									"}"
 								],
@@ -7112,6 +7952,46 @@
 		{
 			"key": "api_url",
 			"value": "{{base_url}}/api",
+			"type": "string"
+		},
+		{
+			"key": "auth_token",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "auth_email",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "auth_password",
+			"value": "SecurePassword123!",
+			"type": "string"
+		},
+		{
+			"key": "auth_full_name",
+			"value": "API Test User",
+			"type": "string"
+		},
+		{
+			"key": "auth_role",
+			"value": "student",
+			"type": "string"
+		},
+		{
+			"key": "auth_phone",
+			"value": "+1234567890",
+			"type": "string"
+		},
+		{
+			"key": "timezone",
+			"value": "America/New_York",
+			"type": "string"
+		},
+		{
+			"key": "email_change_token",
+			"value": "",
 			"type": "string"
 		}
 	]
