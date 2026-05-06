@@ -17,12 +17,17 @@ export const getDashboardStats = async (req, res) => {
     const totalBookings = await Booking.count();
     const activeBookings = await Booking.count({ where: { status: { [Op.in]: ['pending', 'confirmed'] } } });
     
-    const totalRevenue = await Payment.sum('total_charge_to_student', {
-      where: { payment_status: 'captured' },
+    const revenueStatuses = { [Op.in]: ['captured', 'partially_refunded', 'refunded'] };
+    const totalCaptured = await Payment.sum('total_charge_to_student', {
+      where: { payment_status: revenueStatuses },
     }) || 0;
+    const totalRefunded = await Payment.sum('refunded_amount', {
+      where: { payment_status: revenueStatuses },
+    }) || 0;
+    const totalRevenue = Number(totalCaptured) - Number(totalRefunded);
 
     const totalCommissions = await Payment.sum('platform_fee_amount', {
-      where: { payment_status: 'captured' },
+      where: { payment_status: revenueStatuses },
     }) || 0;
 
     const pendingDisputes = await Dispute.count({ where: { status: { [Op.in]: ['open', 'under_review'] } } });

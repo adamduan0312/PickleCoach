@@ -27,7 +27,7 @@ export const requestReschedule = async (req, res) => {
       return errorResponse(res, 'Unauthorized', 403);
     }
 
-    if (['completed', 'cancelled', 'no_show', 'coach_no_show'].includes(booking.status)) {
+    if (['completed', 'cancelled', 'student_no_show', 'coach_no_show'].includes(booking.status)) {
       return errorResponse(res, 'Cannot reschedule completed, cancelled, or no-show booking', 400);
     }
 

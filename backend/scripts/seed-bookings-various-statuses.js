@@ -3,7 +3,7 @@
  *
  * Creates: pending, confirmed, awaiting_verification (+ duplicate with same
  * “lesson ended ~30m ago” timing), completed, cancelled, disputed (with an
- * open disputes row), no_show.
+ * open disputes row), student_no_show.
  *
  * Usage:
  *   node scripts/seed-bookings-various-statuses.js
@@ -190,8 +190,8 @@ const STATUS_ROWS = [
     extra: () => ({ messaging_locked: true }),
   },
   {
-    key: 'no_show',
-    status: 'no_show',
+    key: 'student_no_show',
+    status: 'student_no_show',
     payout_status: 'forfeited',
     offsetDays: -4,
     extra: () => ({ messaging_locked: true }),

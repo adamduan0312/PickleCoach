@@ -104,8 +104,8 @@ The **PickleCoach API (By Flow)** collection has **only three top-level folders*
 
 Run the requests in each folder in order (1, 2, 3, …). After editing the **ByType** collection, regenerate ByFlow with: `node backend/scripts/reorganize-postman-flows.js`.
 
-**Full order — 1 – Flow: Admin (41 steps):**  
-Health Check → Login → Get Profile → Refresh Token → Get Dashboard Stats → Get Audit Logs → Get Alerts → Resolve Alert → Create Admin User → Get All Users (Admin) → Get User By ID (Admin) → Update User (Admin) → Update Coach Profile (Admin) → **Get Coach By ID** → Adjust User Reliability → Resolve Dispute (Admin) → Create Notification (Admin) → Get Coach Courts (Admin) → Delete Coach Court (Admin) → Delete Coach Availability (Admin) → Delete User (Admin) → Register → Forgot Password → Reset Password → Update Profile → Change Password → Request Email Verification → Confirm Email Verification → Request Email Change → Confirm Email Change → Logout → List/Search Courts → Get Court By ID → Get All Lessons → Get Lesson By ID → Get All Disputes → Get Dispute By ID → Get Bookings (Admin) → Get Booking By ID (Admin) → Cancel Booking (Admin) → Mark No-Show (Admin) → Refund Booking (Admin) → Get My Payments → Get Payment By ID → Stripe Webhook.
+**Full order — 1 – Flow: Admin (44 steps):**  
+Health Check → Login → Get Profile → Refresh Token → Get Dashboard Stats → Get Audit Logs → Get Alerts → Resolve Alert → Create Admin User → Get All Users (Admin) → Get User By ID (Admin) → Update User (Admin) → Update Coach Profile (Admin) → **Get Coach By ID** → Adjust User Reliability → Create Notification (Admin) → Get Coach Courts (Admin) → Delete Coach Court (Admin) → Delete Coach Availability (Admin) → Delete User (Admin) → Register → Forgot Password → Reset Password → Update Profile → Change Password → Request Email Verification → Confirm Email Verification → Request Email Change → Confirm Email Change → Logout → List/Search Courts → Get Court By ID → Get All Lessons → Get Lesson By ID → Get All Disputes → Get Dispute By ID → Get Bookings (Admin) → Get Booking By ID (Admin) → Cancel Booking (Admin) → Create Dispute (Admin) → Mark Student No-Show (Admin) → Mark Coach No-Show (Admin) → Refund Booking (Admin) → Resolve Dispute → Get My Payments → Get Payment By ID → Stripe Webhook.
 
 **Full order — 2 – Flow: Coach (59 steps):**  
 Health Check → Register → Login → Get Profile → Update Profile → Request Email Verification → Confirm Email Verification → Change Password → Request Email Change → Confirm Email Change → Switch Role → Create Coach Profile → Update Coach Profile → **Get Coach By ID** → Get Coach Availability → Create Availability → Delete Availability → List/Search Courts → Get Court By ID → Create Court → Delete Court → Add Court to Coach → List My Courts → Remove Court from Coach → Initiate Stripe Connect Onboarding → Get Stripe Connect Status → Get All Lessons → Get Lesson By ID → Create Lesson → Update Lesson → Delete Lesson → Get Coach Bookings → Get Booking By ID → **Accept Booking** → **Decline Booking** → Complete Booking → Mark No-Show → Cancel Booking → Request Reschedule → Get Reschedule History → Get My Payments → Get Payment By ID → Get All Reviews → Create Review → Update Review → Delete Review → Get Conversations → Create Conversation → Get Conversation By ID → Send Message → Mark Message As Read → Get All Disputes → Get Dispute By ID → Create Dispute → Get My Notifications → Mark Notification As Read → Forgot Password → Reset Password → Logout → Delete My Account.
@@ -190,8 +190,9 @@ Use this as a living checklist. Check off each line as you verify it (happy path
 - [ ] **Accept Booking** (coach only) — 200; confirms pending booking, captures payment; use this (not PUT status) to confirm
 - [ ] **Decline Booking** (coach only) — 200; body: message_to_student (required), decline_reason_code (optional); cancels PaymentIntent
 - [ ] Complete Booking (Coach only) — 200; use `POST /api/bookings/:id/complete`; only when lesson has ended; allowed from confirmed/awaiting_verification
-- [ ] Mark Student No-Show (Coach only) — 200; use `POST /api/bookings/:id/student-no-show` (legacy alias: `.../no-show`); only when lesson has ended; allowed from confirmed/awaiting_verification. Records **student** did not attend. Admin uses `POST /api/admin/bookings/:id/student-no-show`. Coach no-show → `POST /api/admin/bookings/:id/coach-no-show` (booking status `coach_no_show`), optionally after `POST /api/disputes` (or admin alias `POST /api/admin/disputes`) with `coach_no_show`.
-- [ ] Mark Coach No-Show (Admin) — 200; `POST /api/admin/bookings/:id/coach-no-show` after lesson end; statuses `confirmed`, `awaiting_verification`, or `disputed`. Resolves matching open `coach_no_show` dispute when unambiguous or when `dispute_id` set. Refund is separate (`POST /api/admin/bookings/:id/refund`).
+- [ ] Mark Student No-Show (Coach only) — 200; use `POST /api/bookings/:id/student-no-show` ; only when lesson has ended; coach route allowed from confirmed/awaiting_verification. Records **student** did not attend and sets booking status `student_no_show`. If booking is disputed (or has open/under_review dispute), this route returns 409 and you must use `PUT /api/disputes/:id/resolve`.
+- [ ] Mark Student No-Show (Admin) — 200; `POST /api/admin/bookings/:id/student-no-show` after lesson end; statuses `confirmed` or `awaiting_verification` when **no active dispute**. Optional body: `{ "notes": "optional internal note" }` for internal context only.
+- [ ] Mark Coach No-Show (Admin) — 200; `POST /api/admin/bookings/:id/coach-no-show` after lesson end; statuses `confirmed`, `awaiting_verification`, or `student_no_show` when **no active dispute**. If disputed/open case exists, route returns 409 and resolution should happen via `PUT /api/disputes/:id/resolve` (final authority). Attempts automatic student refund; if response `auto_refund.status` is `skipped`, use `POST /api/admin/bookings/:id/refund` as fallback.
 - [ ] Cancel Booking — 200 (Student, Coach, Admin); **only `pending` or `confirmed`** (pre-lesson). Use seed `npm run seed:bookings-no-charge` to test cancel without real charges.
 - [ ] Past booking blocked — start time in past → 400
 - [ ] Request Reschedule — 201 (Student, Coach, Admin)
@@ -222,9 +223,10 @@ Use this as a living checklist. Check off each line as you verify it (happy path
 
 ### DISPUTES
 
-- [ ] Create Dispute — 201; students/coaches get 403 if not verified, admins are exempt on dispute-create routes; optional `notes` persisted; MVP `dispute_type_id`: 1 coach_no_show, 2 late_arrival, 3 misconduct, 4 lesson_not_completed, 5 refund_request, 6 billing_issue, 7 other (after migration `20260408120000-canonical-dispute-types-mvp`)
+- [ ] Create Dispute — 201; students/coaches get 403 if not verified, admins are exempt on dispute-create routes; optional `notes` persisted; MVP `dispute_type_id`: **1** `coach_no_show_claim` (student opens), **8** `student_no_show_claim` (coach opens), 2 late_arrival, 3 misconduct, 4 lesson_not_completed, 5 refund_request, 6 billing_issue, 7 other (after migrations `20260408120000-canonical-dispute-types-mvp` + `20260421120000-dispute-types-attendance-claims`)
 - [ ] Get All Disputes — 200
 - [ ] Get Dispute By ID — 200
+- [ ] Resolve Dispute — attendance claim — 200 (admin); body must include `decision` + `outcome` + `financial_action` (no `resolution_action_id`) for types **1** / **8**; e.g. `{"decision":"upheld","outcome":"coach_no_show","financial_action":"refund_student","resolution_notes":"…"}`; optional `data.resolution` in response
 
 ### NOTIFICATIONS
 
@@ -241,10 +243,11 @@ Use this as a living checklist. Check off each line as you verify it (happy path
 - [ ] Get User By ID — 200; 403 non-admin
 - [ ] Update User — 200; 403 non-admin
 - [ ] Delete User — 200; 403 non-admin
-- [ ] Resolve Dispute — 200; 403 non-admin
+- [ ] Resolve Dispute — 200; 403 non-admin; body always requires `decision` + `financial_action` (`refund_amount` required for `refund_student_partial`; `outcome` required only for attendance claims and forbidden otherwise)
 - [ ] Create Notification — 200/201; 403 non-admin
 - [ ] Get Coach Courts (Admin) / Delete Coach Court (Admin) / Delete Coach Availability (Admin) — 200; 403 non-admin
 - [ ] Adjust User Reliability — `PUT /api/admin/users/:id/reliability`; body requires `new_score`; optional `role` defaults to **`coach`**. Send **`"role": "student"`** to adjust student reliability (required for student-only users). Dual-role users: call twice to set coach and student scores. Target user must have the role you select.
+- [ ] No-show notes usage — Optional `notes` on both admin no-show endpoints are not required for state transition. Use for quick internal context; for contested or financially sensitive cases, open/resolve a dispute and treat `disputes.notes` + `resolution_notes` as canonical.
 
 ### WEBHOOKS
 

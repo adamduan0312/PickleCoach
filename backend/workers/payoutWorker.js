@@ -7,8 +7,8 @@ import * as paymentService from '../services/paymentService.js';
  * Process payouts for completed bookings
  * Runs every 10 minutes
  *
- * Selection: only payments with booking.status in completed / awaiting_verification (and payout gating).
- * Cancelled, no-show, and other statuses never appear here — coach payout cannot run before lesson completion path.
+ * Selection: only payments with booking.status in completed / awaiting_verification / student_no_show
+ * (and payout gating). student_no_show is payable because coach reserved and delivered attendance.
  */
 export const processPayouts = async () => {
   try {
@@ -19,14 +19,14 @@ export const processPayouts = async () => {
     const payments = await Payment.findAll({
       where: {
         escrow_status: 'held',
-        payment_status: 'captured',
+        payment_status: { [Op.in]: ['captured', 'partially_refunded'] },
       },
       include: [
         {
           model: Booking,
           as: 'booking',
           where: {
-            status: { [Op.in]: ['completed', 'awaiting_verification'] },
+            status: { [Op.in]: ['completed', 'awaiting_verification', 'student_no_show'] },
             payout_status: { [Op.in]: ['none', 'pending', 'awaiting_verification'] },
           },
           include: [
@@ -64,8 +64,15 @@ export const processPayouts = async () => {
           continue;
         }
 
-        // Check if booking is completed (or auto-confirmed)
-        if (payment.booking.status !== 'completed') {
+        // Refunds are finalized from Stripe charge webhooks; do not release escrow while refund is pending.
+        if (payment.refund_status === 'pending') {
+          logger.info(`Skipping payout for payment ${payment.id} - refund pending`);
+          continue;
+        }
+
+        // completed and student_no_show are payable immediately once selected.
+        // awaiting_verification keeps the 24h delay fallback.
+        if (payment.booking.status === 'awaiting_verification') {
           // Only process if it's been 24 hours since scheduled time
           const scheduledTime = new Date(payment.booking.scheduled_at);
           const now = new Date();

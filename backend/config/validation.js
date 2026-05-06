@@ -160,16 +160,13 @@ export const completeBookingSchema = Joi.object({
   notes: Joi.string().max(255).allow('').optional(),
 });
 
-/** Body for POST .../student-no-show (and legacy .../no-show): coach/admin records primary student did not attend. */
+/** Body for POST .../student-no-show: coach/admin records primary student did not attend. */
 export const noShowBookingSchema = Joi.object({
   notes: Joi.string().max(255).allow('').optional(),
 });
 
-/** Admin: mark booking outcome as coach did not attend. Optionally resolve a linked coach_no_show dispute. */
+/** Admin: mark booking outcome as coach did not attend (attendance fact only). */
 export const adminCoachNoShowBookingSchema = Joi.object({
-  dispute_id: Joi.number().integer().positive().optional(),
-  resolution_action_id: Joi.number().integer().positive().optional(),
-  resolution_notes: Joi.string().max(1000).allow('').optional(),
   notes: Joi.string().max(255).allow('').optional(),
 });
 
@@ -269,11 +266,90 @@ export const createDisputeSchema = Joi.object({
 });
 
 export const resolveDisputeSchema = Joi.object({
-  resolution_action_id: Joi.number().integer().positive().required(),
+  /** Derived server-side from dispute id and stripped from validated payload. */
+  dispute_type_code: Joi.string().required().strip(),
+  /** Canonical admin ruling for all dispute types. */
+  decision: Joi.string().valid('upheld', 'rejected', 'partial').required(),
+  /**
+   * Explicit attendance resolve (with `financial_action`): who actually missed the lesson.
+   * Booking status is derived from this only — not from resolution action codes.
+   * Neutral rejected path: attendance claims may omit `outcome` when `decision = rejected`.
+   */
+  outcome: Joi.string()
+    .valid('student_no_show', 'coach_no_show')
+    .when('dispute_type_code', {
+      is: Joi.valid('coach_no_show_claim', 'student_no_show_claim'),
+      then: Joi.optional(),
+      otherwise: Joi.forbidden(),
+    }),
+  /** Behavior disputes only: which party should receive reliability penalty. */
+  penalize_role: Joi.string()
+    .valid('coach', 'student', 'none')
+    .when('dispute_type_code', {
+      is: Joi.valid('late_arrival', 'misconduct', 'lesson_not_completed'),
+      then: Joi.required(),
+      otherwise: Joi.forbidden(),
+    }),
+  /**
+   * Explicit money decision: `refund_student` = full remaining on charge; `refund_student_partial` needs `refund_amount`;
+   * `no_change` = no Stripe refund here (coach payout still follows booking status elsewhere).
+   */
+  financial_action: Joi.string()
+    .valid('no_change', 'refund_student', 'refund_student_partial')
+    .required(),
   resolution_notes: Joi.string().max(1000).allow('').optional(),
-  /** US dollars (decimal), not cents. Required when the chosen action is `partial_refund`. */
+  /** US dollars (decimal), not cents. Required for `refund_student_partial`. */
   refund_amount: Joi.number().positive().min(0.01).optional(),
-});
+})
+  .custom((value, helpers) => {
+    const isAttendanceClaim = ['coach_no_show_claim', 'student_no_show_claim'].includes(
+      value.dispute_type_code,
+    );
+    const isBehaviorDispute = ['late_arrival', 'misconduct', 'lesson_not_completed'].includes(
+      value.dispute_type_code,
+    );
+
+    if (value.resolution_action_id != null) {
+      return helpers.error('any.custom', {
+        message: 'resolution_action_id is no longer accepted. Use decision + financial_action (and outcome for attendance claims).',
+      });
+    }
+    if (value.financial_action === 'refund_student_partial' && value.refund_amount == null) {
+      return helpers.error('any.custom', {
+        message: 'refund_amount is required when financial_action is refund_student_partial',
+      });
+    }
+    if (isAttendanceClaim && value.decision !== 'rejected' && value.outcome == null) {
+      return helpers.error('any.custom', {
+        message: 'outcome is required for attendance claims unless decision is rejected',
+      });
+    }
+    if (isAttendanceClaim && value.decision === 'rejected' && value.outcome != null) {
+      return helpers.error('any.custom', {
+        message: 'outcome must be omitted when rejecting an attendance claim',
+      });
+    }
+    if (
+      isAttendanceClaim &&
+      value.decision === 'rejected' &&
+      value.financial_action !== 'no_change'
+    ) {
+      return helpers.error('any.custom', {
+        message: 'financial_action must be no_change when rejecting an attendance claim',
+      });
+    }
+    if (isBehaviorDispute && ['upheld', 'partial'].includes(value.decision) && value.penalize_role === 'none') {
+      return helpers.error('any.custom', {
+        message: 'penalize_role must be coach or student for upheld/partial behavior disputes',
+      });
+    }
+    if (isBehaviorDispute && value.decision === 'rejected' && value.penalize_role !== 'none') {
+      return helpers.error('any.custom', {
+        message: 'penalize_role must be none when rejecting a behavior dispute',
+      });
+    }
+    return value;
+  });
 
 export const createNotificationSchema = Joi.object({
   user_id: Joi.number().integer().positive().required(),
@@ -308,7 +384,7 @@ export const getBookingsQuerySchema = Joi.object({
       'completed',
       'cancelled',
       'disputed',
-      'no_show',
+      'student_no_show',
       'coach_no_show'
     )
     .optional(),

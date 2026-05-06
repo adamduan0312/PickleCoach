@@ -3,7 +3,7 @@
  * without Stripe charges (avoids fake `ch_test_*` charge IDs).
  *
  * Creates: pending, confirmed, awaiting_verification, completed, cancelled, disputed (+ dispute row),
- * no_show, coach_no_show.
+ * student_no_show, coach_no_show.
  *
  * Usage:
  *   node scripts/seed-bookings-no-charge.js
@@ -172,8 +172,8 @@ const STATUS_ROWS = [
     extra: () => ({ messaging_locked: true }),
   },
   {
-    key: 'no_show',
-    status: 'no_show',
+    key: 'student_no_show',
+    status: 'student_no_show',
     payout_status: 'forfeited',
     offsetDays: -4,
     extra: () => ({ messaging_locked: true }),

@@ -41,9 +41,8 @@ router.delete('/coaches/:coachId/availability/:id', authenticate, authorize('adm
 router.get('/bookings', authenticate, authorize('admin'), validateQuery(getBookingsQuerySchema), bookingController.getAdminBookings);
 router.get('/bookings/:id', authenticate, authorize('admin'), bookingController.getAdminBookingById);
 router.post('/bookings/:id/cancel', authenticate, authorize('admin'), validateRequest(cancellationSchema), bookingController.adminPreLessonCancelBooking);
-/** Same as coach route: marks student no-show. Coach no-show: `POST .../coach-no-show`. Legacy alias: `/bookings/:id/no-show`. */
+/** Same as coach route: marks student no-show. Coach no-show: `POST .../coach-no-show`. */
 router.post('/bookings/:id/student-no-show', authenticate, authorize('admin'), validateRequest(noShowBookingSchema), bookingController.adminMarkBookingNoShow);
-router.post('/bookings/:id/no-show', authenticate, authorize('admin'), validateRequest(noShowBookingSchema), bookingController.adminMarkBookingNoShow);
 router.post(
   '/bookings/:id/coach-no-show',
   authenticate,

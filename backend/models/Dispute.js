@@ -35,6 +35,15 @@ const Dispute = sequelize.define('disputes', {
     type: DataTypes.TEXT,
     allowNull: true,
   },
+  decision: {
+    type: DataTypes.ENUM('upheld', 'rejected', 'partial'),
+    allowNull: true,
+  },
+  penalize_role: {
+    type: DataTypes.ENUM('coach', 'student', 'none'),
+    allowNull: false,
+    defaultValue: 'none',
+  },
   admin_id: {
     type: DataTypes.INTEGER,
     allowNull: true,
@@ -72,6 +81,7 @@ const Dispute = sequelize.define('disputes', {
   indexes: [
     { fields: ['status'] },
     { fields: ['dispute_type_id'] },
+    { fields: ['decision'] },
     { fields: ['admin_id'] },
     { fields: ['escalated'] },
   ],

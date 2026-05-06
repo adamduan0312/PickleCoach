@@ -29,11 +29,15 @@ const UserReliability = sequelize.define('user_reliability', {
     type: DataTypes.INTEGER,
     defaultValue: 0,
   },
-  late_arrivals: {
+  late_arrival_disputes: {
     type: DataTypes.INTEGER,
     defaultValue: 0,
   },
   coach_no_show_disputes: {
+    type: DataTypes.INTEGER,
+    defaultValue: 0,
+  },
+  student_no_show_disputes: {
     type: DataTypes.INTEGER,
     defaultValue: 0,
   },

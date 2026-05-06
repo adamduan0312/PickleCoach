@@ -19,8 +19,9 @@ const getDefaultCoachReliability = (userId) => ({
   // Penalized paid reschedules only (paid + affects_reliability=true + captured).
   paid_reschedules: 0,
   late_cancels: 0,
-  late_arrivals: 0,
+  late_arrival_disputes: 0,
   coach_no_show_disputes: 0,
+  student_no_show_disputes: 0,
   misconduct_disputes: 0,
   lesson_not_completed_disputes: 0,
   no_shows: 0,
@@ -287,8 +288,9 @@ export const getCoachReliabilityForAdmin = async (req, res) => {
       reschedules: reschedulesBlock,
       penalties: {
         late_cancels: stored.late_cancels,
-        late_arrivals: stored.late_arrivals || 0,
+        late_arrival_disputes: stored.late_arrival_disputes || 0,
         coach_no_show_disputes: stored.coach_no_show_disputes || 0,
+        student_no_show_disputes: stored.student_no_show_disputes || 0,
         misconduct_disputes: stored.misconduct_disputes || 0,
         lesson_not_completed_disputes: stored.lesson_not_completed_disputes || 0,
         no_shows: stored.no_shows,
@@ -296,7 +298,7 @@ export const getCoachReliabilityForAdmin = async (req, res) => {
         // (not double-counted with late_cancels).
         coach_cancels_non_late: stored.coach_cancels,
         points: {
-          late_arrival: ((stored.late_arrivals || 0) / Math.max(1, stored.total_bookings || 0)) * DISPUTE_PENALTY_WEIGHTS.late_arrival,
+          late_arrival: ((stored.late_arrival_disputes || 0) / Math.max(1, stored.total_bookings || 0)) * DISPUTE_PENALTY_WEIGHTS.late_arrival,
           coach_no_show: ((stored.coach_no_show_disputes || 0) / Math.max(1, stored.total_bookings || 0)) * DISPUTE_PENALTY_WEIGHTS.coach_no_show,
           misconduct: ((stored.misconduct_disputes || 0) / Math.max(1, stored.total_bookings || 0)) * DISPUTE_PENALTY_WEIGHTS.misconduct,
           lesson_not_completed: ((stored.lesson_not_completed_disputes || 0) / Math.max(1, stored.total_bookings || 0)) * DISPUTE_PENALTY_WEIGHTS.lesson_not_completed,

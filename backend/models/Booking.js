@@ -39,7 +39,7 @@ const Booking = sequelize.define('bookings', {
       'completed',
       'cancelled',
       'disputed',
-      'no_show',
+      'student_no_show',
       'coach_no_show'
     ),
     defaultValue: 'pending',

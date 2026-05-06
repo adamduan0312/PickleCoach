@@ -20,6 +20,14 @@ function formatDisputeResponse(dispute) {
   };
 }
 
+async function findDisputeResolutionActionByCode(code) {
+  const row = await DisputeResolutionAction.findOne({ where: { code } });
+  if (!row) {
+    throw new Error(`dispute_resolution_actions missing code "${code}"; run seeds/migrations`);
+  }
+  return row;
+}
+
 export const getDisputes = async (req, res) => {
   try {
     const { page, limit, status, booking_id } = req.validated;
@@ -144,6 +152,26 @@ export const createDispute = async (req, res) => {
       );
     }
 
+    const openerRole = isAdmin ? 'admin' : uid === coachId ? 'coach' : 'student';
+    if (disputeType.code === 'coach_no_show_claim') {
+      if (openerRole !== 'student' && openerRole !== 'admin') {
+        return errorResponse(
+          res,
+          'Dispute type coach_no_show_claim must be opened by the student (or admin).',
+          400,
+        );
+      }
+    }
+    if (disputeType.code === 'student_no_show_claim') {
+      if (openerRole !== 'coach' && openerRole !== 'admin') {
+        return errorResponse(
+          res,
+          'Dispute type student_no_show_claim must be opened by the coach (or admin).',
+          400,
+        );
+      }
+    }
+
     const existingDispute = await Dispute.findOne({
       where: { booking_id, status: { [Op.in]: ['open', 'under_review'] } },
     });
@@ -188,7 +216,14 @@ export const createDispute = async (req, res) => {
 export const resolveDispute = async (req, res) => {
   try {
     const { id } = req.params;
-    const { resolution_action_id, resolution_notes, refund_amount } = req.validated;
+    const {
+      resolution_notes,
+      refund_amount,
+      decision,
+      outcome,
+      penalize_role: penalizeRole,
+      financial_action: financialAction,
+    } = req.validated;
 
     if (!(req.user.roles || []).includes('admin')) {
       return errorResponse(res, 'Only admins can resolve disputes', 403);
@@ -210,27 +245,75 @@ export const resolveDispute = async (req, res) => {
       return errorResponse(res, message, 400, null, { current_status: current });
     }
 
-    const resolutionAction = await DisputeResolutionAction.findByPk(resolution_action_id);
-    if (!resolutionAction) {
+    const disputeType = await DisputeType.findByPk(dispute.dispute_type_id, {
+      attributes: ['code', 'affects_reliability_score'],
+    });
+    const typeCode = disputeType?.code;
+    const isAttendanceClaim = typeCode === 'coach_no_show_claim' || typeCode === 'student_no_show_claim';
+    const isBehaviorDispute = ['late_arrival', 'misconduct', 'lesson_not_completed'].includes(typeCode);
+    if (isAttendanceClaim && decision === 'rejected') {
+      if (outcome != null) {
+        return errorResponse(
+          res,
+          'outcome must be omitted when rejecting an attendance claim',
+          400,
+        );
+      }
+      if (financialAction !== 'no_change') {
+        return errorResponse(
+          res,
+          'financial_action must be no_change when rejecting an attendance claim',
+          400,
+        );
+      }
+    }
+    if (isBehaviorDispute && ['upheld', 'partial'].includes(decision) && penalizeRole === 'none') {
       return errorResponse(
         res,
-        'Invalid resolution_action_id: row does not exist in dispute_resolution_actions (seed reference data or use a valid id)',
+        'penalize_role must be coach or student for upheld/partial behavior disputes',
         400,
       );
     }
-    if (resolutionAction.code === 'partial_refund' && refund_amount == null) {
+    if (isBehaviorDispute && decision === 'rejected' && penalizeRole !== 'none') {
       return errorResponse(
         res,
-        'refund_amount is required when resolving with partial_refund',
+        'penalize_role must be none when rejecting a behavior dispute',
         400,
-        null,
-        { code: 'refund_amount_required' },
       );
     }
 
-    /** Money back to student (Stripe) before persisting resolution when action requires it. */
+    let resolutionAction;
+    if (financialAction === 'refund_student') {
+      resolutionAction = await findDisputeResolutionActionByCode('approved_refund');
+    } else if (financialAction === 'refund_student_partial') {
+      resolutionAction = await findDisputeResolutionActionByCode('partial_refund');
+    } else {
+      resolutionAction = await findDisputeResolutionActionByCode('no_action');
+    }
+
+    const booking = await Booking.findByPk(dispute.booking_id, {
+      attributes: ['id', 'status', 'coach_id', 'primary_student_id'],
+    });
+    if (!booking) {
+      return errorResponse(res, 'Booking not found for dispute', 404);
+    }
+
+    // Dispute resolution is the final authority for adjudication and refund intent.
+    // Attendance claims only set booking status when the claim is upheld/partial.
+    // Rejected attendance claims support a neutral path with no attendance outcome change.
+    let resolvedBookingStatus = booking.status;
+    const shouldApplyAttendanceOutcome = isAttendanceClaim && decision !== 'rejected';
+    if (isAttendanceClaim) {
+      if (shouldApplyAttendanceOutcome) {
+        resolvedBookingStatus = outcome === 'student_no_show' ? 'student_no_show' : 'coach_no_show';
+      }
+    }
+
+    const needsRefund = financialAction === 'refund_student' || financialAction === 'refund_student_partial';
+
+    /** Money back to student (Stripe) before persisting resolution when the financial path requires it. */
     let refundSummary = null;
-    if (resolutionAction?.requires_payout_adjustment) {
+    if (needsRefund) {
       const refundState = await paymentService.getLatestBookingRefundState(dispute.booking_id);
       if (refundState.hasAnyRefund) {
         logger.warn({
@@ -244,7 +327,7 @@ export const resolveDispute = async (req, res) => {
         });
         return errorResponse(
           res,
-          'A refund already exists for this booking. To avoid double refund paths, resolve this dispute with no_action or issue only the remaining refund through one path.',
+          'A refund already exists for this booking. To avoid double refund paths, use financial_action no_change, or issue only the remaining refund through one path.',
           409,
           null,
           { code: 'refund_path_already_used' },
@@ -252,11 +335,12 @@ export const resolveDispute = async (req, res) => {
       }
 
       try {
+        const refundDollars = financialAction === 'refund_student_partial' ? refund_amount : null;
         const initiated = await paymentService.initiateBookingRefundForDisputeResolution({
           bookingId: dispute.booking_id,
           disputeId: dispute.id,
           action: resolutionAction,
-          refundAmountDollars: refund_amount ?? null,
+          refundAmountDollars: refundDollars,
         });
         if (initiated) {
           refundSummary = {
@@ -275,6 +359,9 @@ export const resolveDispute = async (req, res) => {
               dispute_id: dispute.id,
               resolution_action_id: resolutionAction.id,
               resolution_action_code: resolutionAction.code,
+              decision,
+              explicit_outcome: outcome ?? null,
+              explicit_financial_action: financialAction,
               payment_id: initiated.payment.id,
               refund_cents: initiated.refundCents,
             },
@@ -295,36 +382,66 @@ export const resolveDispute = async (req, res) => {
     const beforeState = dispute.toJSON();
     await dispute.update({
       status: 'resolved',
-      resolution_action_id,
+      resolution_action_id: resolutionAction.id,
+      decision,
+      penalize_role: isBehaviorDispute ? penalizeRole : 'none',
       resolution_notes,
       admin_id: req.user.id,
       resolved_at: new Date(),
     });
 
+    if (resolvedBookingStatus !== booking.status) {
+      const bookingBefore = booking.toJSON();
+      await booking.update({ status: resolvedBookingStatus, messaging_locked: true });
+      await logAudit(
+        req.user.id,
+        'booking_status_set_from_dispute_resolution',
+        'bookings',
+        booking.id,
+        bookingBefore,
+        booking.toJSON(),
+        req,
+      );
+    }
+
     await logAudit(req.user.id, 'dispute_resolved', 'disputes', dispute.id, beforeState, dispute.toJSON(), req);
 
-    // Reliability recompute runs only for reliability-eligible dispute types.
-    // Extra safety gate on top of reliabilityService filtering.
-    const disputeType = await DisputeType.findByPk(dispute.dispute_type_id, {
-      attributes: ['code', 'affects_reliability_score'],
-    });
-    if (
-      Boolean(disputeType?.affects_reliability_score) &&
-      ['coach_no_show', 'late_arrival', 'misconduct', 'lesson_not_completed'].includes(disputeType.code)
-    ) {
-      const booking = await Booking.findByPk(dispute.booking_id, {
-        attributes: ['id', 'coach_id', 'primary_student_id'],
-      });
-      if (booking) {
-        if (dispute.opened_by === 'student' && booking.coach_id != null) {
+    if (isAttendanceClaim && shouldApplyAttendanceOutcome) {
+      if (resolvedBookingStatus === 'student_no_show' && booking.primary_student_id != null) {
+        await updateUserReliability(booking.primary_student_id, 'student').catch((err) =>
+          logger.error('Failed to update student reliability after dispute resolved:', err),
+        );
+      }
+      if (resolvedBookingStatus === 'coach_no_show' && booking.coach_id != null) {
+        await updateUserReliability(booking.coach_id, 'coach').catch((err) =>
+          logger.error('Failed to update coach reliability after dispute resolved:', err),
+        );
+      }
+      if (resolvedBookingStatus === 'completed') {
+        if (booking.coach_id != null) {
           await updateUserReliability(booking.coach_id, 'coach').catch((err) =>
             logger.error('Failed to update coach reliability after dispute resolved:', err),
           );
-        } else if (dispute.opened_by === 'coach' && booking.primary_student_id != null) {
+        }
+        if (booking.primary_student_id != null) {
           await updateUserReliability(booking.primary_student_id, 'student').catch((err) =>
             logger.error('Failed to update student reliability after dispute resolved:', err),
           );
         }
+      }
+    } else if (
+      Boolean(disputeType?.affects_reliability_score) &&
+      ['late_arrival', 'misconduct', 'lesson_not_completed'].includes(disputeType.code) &&
+      ['upheld', 'partial'].includes(decision)
+    ) {
+      if (penalizeRole === 'coach' && booking.coach_id != null) {
+        await updateUserReliability(booking.coach_id, 'coach').catch((err) =>
+          logger.error('Failed to update coach reliability after dispute resolved:', err),
+        );
+      } else if (penalizeRole === 'student' && booking.primary_student_id != null) {
+        await updateUserReliability(booking.primary_student_id, 'student').catch((err) =>
+          logger.error('Failed to update student reliability after dispute resolved:', err),
+        );
       }
     }
 
@@ -335,6 +452,13 @@ export const resolveDispute = async (req, res) => {
     const payload = {
       dispute: formatDisputeResponse(dispute),
       ...(refundSummary && { refund: refundSummary }),
+      resolution: {
+        decision,
+        financial_action: financialAction,
+        ...(isBehaviorDispute && { penalize_role: penalizeRole }),
+        ...(isAttendanceClaim &&
+          shouldApplyAttendanceOutcome && { outcome, derived_booking_status: resolvedBookingStatus }),
+      },
     };
 
     return successResponse(res, payload, 'Dispute resolved successfully');
@@ -347,7 +471,7 @@ export const resolveDispute = async (req, res) => {
     if (mysqlFkChildRow) {
       return errorResponse(
         res,
-        'Invalid resolution_action_id or related reference (foreign key constraint)',
+        'Invalid dispute reference (foreign key constraint)',
         400,
       );
     }

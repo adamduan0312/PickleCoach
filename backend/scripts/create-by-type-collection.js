@@ -17,11 +17,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const flowPath = path.join(__dirname, '../../PickleCoach_API_ByFlow.postman_collection.json');
 const typePath = path.join(__dirname, '../../PickleCoach_API_ByType.postman_collection.json');
 
-// Allow reading from legacy name if ByFlow doesn't exist yet
-const flowPathLegacy = path.join(__dirname, '../../PickleCoach_API.postman_collection.json');
-const pathToRead = fs.existsSync(flowPath) ? flowPath : flowPathLegacy;
-
-const collection = JSON.parse(fs.readFileSync(pathToRead, 'utf8'));
+const collection = JSON.parse(fs.readFileSync(flowPath, "utf8"));
 
 function getPathSegments(request) {
   const url = request.url;

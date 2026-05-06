@@ -126,7 +126,7 @@ Quick reference:
 - **Coaches**: `/api/coaches` - Coach profiles, availability, Stripe Connect
 - **Courts**: `/api/courts` - Court location search and management
 - **Lessons**: `/api/lessons` - Lesson creation and management
-- **Bookings**: `/api/bookings` - MVP: student `POST /bookings`, coach `PUT .../accept` | `PUT .../decline`; also list/detail, complete, `POST .../student-no-show` (student no-show; legacy `no-show`), cancel, reschedule
+- **Bookings**: `/api/bookings` - MVP: student `POST /bookings`, coach `PUT .../accept` | `PUT .../decline`; also list/detail, complete, `POST .../student-no-show`, cancel, reschedule
 - **Payments**: `/api/payments` - List and get payment records (created with bookings; refunds via booking flows / `paymentService`)
 - **Reschedules**: `/api/reschedules` - Reschedule history and requests
 - **Reviews**: `/api/reviews` - Review system

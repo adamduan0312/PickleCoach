@@ -273,7 +273,7 @@ export const handlePaymentCapture = async (paymentIntentId, chargeId) => {
     return payment;
   }
 
-  // Standard capture (paid reschedule or legacy automatic capture)
+  // Standard capture (paid reschedule or automatic capture)
   await payment.update({
     payment_status: 'captured',
     charge_id: chargeId,
@@ -564,7 +564,7 @@ export const expirePendingBookingNoCoachResponse = async (bookingId) => {
 
 /**
  * Release escrow and create payout (called by worker).
- * Invariant: only invoked from payoutWorker for bookings in completed / awaiting_verification;
+ * Invariant: only invoked from payoutWorker for bookings in completed / awaiting_verification / student_no_show;
  * releaseEscrow also rejects if booking status is otherwise (no payout on cancel / no-show).
  */
 export const releaseEscrow = async (paymentId, coachStripeAccountId = null) => {
@@ -584,25 +584,52 @@ export const releaseEscrow = async (paymentId, coachStripeAccountId = null) => {
   }
 
   // Check if booking is completed and no disputes
-  if (payment.booking.status !== 'completed' && payment.booking.status !== 'awaiting_verification') {
-    throw new Error('Booking must be completed before payout');
+  if (!['completed', 'awaiting_verification', 'student_no_show'].includes(payment.booking.status)) {
+    throw new Error('Booking must be completed, awaiting_verification, or student_no_show before payout');
   }
+
+  const totalChargeCents = dollarsToCents(payment.total_charge_to_student);
+  const refundedCents = dollarsToCents(payment.refunded_amount);
+  const netRetainedCents = Math.max(0, totalChargeCents - refundedCents);
+  const originalCoachPayoutCents = dollarsToCents(payment.coach_payout_expected);
+  const coachShare = totalChargeCents > 0 ? originalCoachPayoutCents / totalChargeCents : 0;
+  const payoutCents = Math.round(netRetainedCents * coachShare);
+  const payoutAmountDollars = centsToDecimalString(payoutCents);
 
   // Create payout record
   const payout = await Payout.create({
     coach_id: payment.coach_id,
     payment_id: paymentId,
-    amount: payment.coach_payout_expected,
+    amount: payoutAmountDollars,
     currency: 'USD',
     status: 'pending',
   });
+
+  if (payoutCents < 1) {
+    await payout.update({ status: 'paid', processed_at: new Date() });
+    await payment.update({ escrow_status: 'released' });
+    await createAuditLog({
+      user_id: payment.coach_id,
+      action: 'payout_zero_after_refund',
+      table_name: 'payouts',
+      record_id: payout.id,
+      after_state: {
+        payout_status: 'paid',
+        payout_amount: payout.amount,
+        booking_id: payment.booking_id,
+        payment_escrow_status: 'released',
+        note: 'Net retained amount is zero after refunds; no transfer initiated',
+      },
+    });
+    return { payment: await Payment.findByPk(payment.id), payout };
+  }
 
   // If coach has Stripe Connect account, transfer funds
   if (coachStripeAccountId) {
     try {
       const transfer = await stripeService.transferToConnectedAccount(
         coachStripeAccountId,
-        payment.coach_payout_expected,
+        payoutAmountDollars,
         'usd',
         {
           payment_id: payment.id.toString(),
@@ -665,6 +692,12 @@ export const releaseEscrow = async (paymentId, coachStripeAccountId = null) => {
       booking_status: bookingStatusForAudit,
       payment_escrow_status: payment.escrow_status,
       coach_payout_expected: payment.coach_payout_expected,
+      payout_basis: {
+        total_charge_to_student: payment.total_charge_to_student,
+        refunded_amount: payment.refunded_amount,
+        net_retained_amount: centsToDecimalString(netRetainedCents),
+        coach_share_ratio: coachShare,
+      },
       transfer_id: payment.transfer_id ?? null,
       stripe_connect_used: Boolean(coachStripeAccountId),
     },
@@ -782,6 +815,15 @@ export const applyRefundStateFromStripeCharge = async (payment, charge, { stripe
   const chargeAmountCents = charge.amount ?? 0;
   const refundedCents = charge.amount_refunded ?? 0;
   const refundedDollars = centsToDecimalString(refundedCents);
+  const totalChargeCents = dollarsToCents(payment.total_charge_to_student);
+  const originalPlatformFeeCents = dollarsToCents(payment.platform_fee_amount);
+  const originalCoachPayoutCents = dollarsToCents(payment.coach_payout_expected);
+  const coachShare = totalChargeCents > 0 ? originalCoachPayoutCents / totalChargeCents : 0;
+  const netRetainedCents = Math.max(0, chargeAmountCents - refundedCents);
+  // Keep cent-level accounting exact: assign any rounding remainder to platform.
+  let adjustedCoachPayoutCents = Math.round(netRetainedCents * coachShare);
+  adjustedCoachPayoutCents = Math.min(netRetainedCents, Math.max(0, adjustedCoachPayoutCents));
+  const adjustedPlatformFeeCents = netRetainedCents - adjustedCoachPayoutCents;
 
   let payment_status;
   let escrow_status;
@@ -797,6 +839,8 @@ export const applyRefundStateFromStripeCharge = async (payment, charge, { stripe
 
   const updates = {
     refunded_amount: refundedDollars,
+    platform_fee_amount: centsToDecimalString(adjustedPlatformFeeCents),
+    coach_payout_expected: centsToDecimalString(adjustedCoachPayoutCents),
     payment_status,
     escrow_status,
     refund_status: 'succeeded',

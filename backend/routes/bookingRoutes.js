@@ -14,9 +14,8 @@ router.post('/', authenticate, requireVerifiedEmail, validateRequest(createBooki
 router.put('/:id/accept', authenticate, bookingController.acceptBooking);
 router.put('/:id/decline', authenticate, validateRequest(declineBookingSchema), bookingController.declineBooking);
 router.post('/:id/complete', authenticate, validateRequest(completeBookingSchema), bookingController.completeBooking);
-/** Coach records that the primary student did not attend (booking → status `no_show`). Legacy alias: `/:id/no-show`. */
+/** Coach records that the primary student did not attend (booking → status `student_no_show`). */
 router.post('/:id/student-no-show', authenticate, validateRequest(noShowBookingSchema), bookingController.markBookingNoShow);
-router.post('/:id/no-show', authenticate, validateRequest(noShowBookingSchema), bookingController.markBookingNoShow);
 router.post('/:id/cancel', authenticate, validateRequest(cancellationSchema), bookingController.cancelBooking);
 // Reschedule endpoint matching architecture spec: POST /api/bookings/:id/reschedule
 router.post('/:id/reschedule', authenticate, validateRequest(rescheduleSchema), rescheduleController.requestReschedule);

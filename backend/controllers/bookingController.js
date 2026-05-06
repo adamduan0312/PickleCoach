@@ -11,7 +11,6 @@ import {
   CourtLocation,
   CoachCourtLocation,
   Dispute,
-  DisputeType,
   DisputeResolutionAction,
 } from '../models/index.js';
 import { successResponse, errorResponse, paginatedResponse } from '../utils/response.js';
@@ -446,6 +445,67 @@ const lessonHasEnded = (booking) => {
   return Date.now() >= lessonEndMs;
 };
 
+const ADMIN_ATTENDANCE_MUTABLE_STATUSES = ['confirmed', 'awaiting_verification', 'student_no_show', 'coach_no_show'];
+
+const isRefundFinalizedForAttendanceLock = (payment) => {
+  if (!payment) return false;
+  if (['refunded', 'partially_refunded'].includes(String(payment.payment_status || ''))) return true;
+  const refundStatus = String(payment.refund_status || '').toLowerCase();
+  return ['succeeded', 'complete', 'completed', 'full', 'partial'].includes(refundStatus);
+};
+
+const canModifyAttendanceStatus = (booking, payment) => {
+  if (['processing', 'paid', 'forfeited'].includes(String(booking.payout_status || ''))) {
+    return {
+      allowed: false,
+      message: 'Attendance outcome is locked because payout has already been finalized for this booking.',
+      code: 'attendance_locked_payout_finalized',
+    };
+  }
+  if (!payment) return { allowed: true };
+
+  if (['released', 'pending_release', 'manual_payout_required'].includes(String(payment.escrow_status || ''))) {
+    return {
+      allowed: false,
+      message: 'Attendance outcome is locked because escrow has already been released for this booking.',
+      code: 'attendance_locked_escrow_released',
+    };
+  }
+  if (isRefundFinalizedForAttendanceLock(payment)) {
+    return {
+      allowed: false,
+      message: 'Attendance outcome is locked because refund finalization has already occurred for this booking.',
+      code: 'attendance_locked_refund_finalized',
+    };
+  }
+
+  return { allowed: true };
+};
+
+const getLatestBookingPayment = async (bookingId) =>
+  Payment.findOne({
+    where: { booking_id: bookingId },
+    order: [['id', 'DESC']],
+  });
+
+const logAdminAttendanceChange = async ({ req, bookingId, fromStatus, toStatus, notes }) => {
+  await logAudit(
+    req.user.id,
+    'admin_attendance_status_updated',
+    'bookings',
+    bookingId,
+    null,
+    {
+      previous_status: fromStatus,
+      new_status: toStatus,
+      admin_id: req.user.id,
+      note: notes || null,
+      changed_at: new Date().toISOString(),
+    },
+    req,
+  );
+};
+
 /**
  * Mark a confirmed/awaiting_verification booking as completed.
  * Coach-only endpoint. Admin override should use /api/admin/bookings/:id/complete (if introduced).
@@ -491,9 +551,12 @@ export const completeBooking = async (req, res) => {
 };
 
 /**
- * Mark a confirmed/awaiting_verification booking as `no_show` when the **primary student** did not attend.
+ * Mark booking as `student_no_show` when the **primary student** did not attend.
  * Coach calls `POST /api/bookings/:id/student-no-show`; admin uses `POST /api/admin/bookings/:id/student-no-show`.
- * (Coach no-show: admin `POST /api/admin/bookings/:id/coach-no-show` and/or dispute type `coach_no_show`.)
+ * Allowed status gates:
+ * - Coach route: `confirmed`, `awaiting_verification`
+ * - Admin route: `confirmed`, `awaiting_verification`
+ * (Coach no-show: admin `POST /api/admin/bookings/:id/coach-no-show` and/or dispute type `coach_no_show_claim`.)
  */
 export const markBookingNoShow = async (req, res) => {
   try {
@@ -503,7 +566,7 @@ export const markBookingNoShow = async (req, res) => {
     const isAdmin = (req.user.roles || []).includes('admin');
     const isCoach = req.user.id === booking.coach_id;
     const isAdminRoute = (req.baseUrl || '').includes('/admin');
-    // Strict separation: coach route only; admins must use /api/admin/bookings/:id/student-no-show (legacy: .../no-show).
+    // Strict separation: coach route only; admins must use /api/admin/bookings/:id/student-no-show.
     if (!isCoach && !(isAdmin && isAdminRoute)) return errorResponse(res, 'Unauthorized', 403);
 
     if (booking.status === 'coach_no_show') {
@@ -513,24 +576,50 @@ export const markBookingNoShow = async (req, res) => {
         400
       );
     }
-    if (!['confirmed', 'awaiting_verification'].includes(booking.status)) {
+    const activeDispute = await Dispute.findOne({
+      where: {
+        booking_id: booking.id,
+        status: { [Op.in]: ['open', 'under_review'] },
+      },
+      attributes: ['id', 'status'],
+    });
+    if (activeDispute || booking.status === 'disputed') {
       return errorResponse(
         res,
-        `Booking must be confirmed or awaiting_verification to mark no_show (current: ${booking.status}).`,
+        'This booking has an active dispute. Resolve the dispute first to set the final booking outcome.',
+        409,
+        null,
+        { code: 'disputed_use_resolve_dispute', booking_status: booking.status },
+      );
+    }
+    const allowedStatuses = ['confirmed', 'awaiting_verification'];
+    if (!allowedStatuses.includes(booking.status)) {
+      const allowedLabel = 'confirmed or awaiting_verification';
+      return errorResponse(
+        res,
+        `Booking must be ${allowedLabel} to mark student_no_show (current: ${booking.status}).`,
         400
       );
     }
     if (!lessonHasEnded(booking)) {
       return errorResponse(
         res,
-        'Cannot mark booking as no_show before the lesson end time.',
+        'Cannot mark booking as student_no_show before the lesson end time.',
         400
       );
     }
 
     const beforeState = booking.toJSON();
-    await booking.update({ status: 'no_show', messaging_locked: true });
-    await logAudit(req.user.id, 'booking_marked_no_show', 'bookings', booking.id, beforeState, booking.toJSON(), req);
+    await booking.update({ status: 'student_no_show', messaging_locked: true });
+    await logAudit(
+      req.user.id,
+      'booking_marked_student_no_show',
+      'bookings',
+      booking.id,
+      beforeState,
+      booking.toJSON(),
+      req,
+    );
 
     const updated = await Booking.findByPk(id, {
       include: [
@@ -541,13 +630,18 @@ export const markBookingNoShow = async (req, res) => {
     });
     if (booking.primary_student_id != null) {
       await updateUserReliability(booking.primary_student_id, 'student').catch((err) =>
-        logger.error('Failed to update student reliability after no_show:', err),
+        logger.error('Failed to update student reliability after student_no_show:', err),
       );
     }
-    return successResponse(res, updated, 'Booking marked as no_show');
+    const responseData = {
+      ...updated.toJSON(),
+      attendance_outcome: 'student_no_show',
+      no_show_party: 'student',
+    };
+    return successResponse(res, responseData, 'Booking marked as student_no_show');
   } catch (error) {
     logger.error('No-show booking error:', error);
-    return errorResponse(res, 'Failed to mark booking as no_show', 500);
+    return errorResponse(res, 'Failed to mark booking as student_no_show', 500);
   }
 };
 
@@ -1005,18 +1099,13 @@ export const adminPreLessonCancelBooking = async (req, res) => {
 };
 
 /**
- * Admin: set booking to `coach_no_show` (coach did not attend). Optional `dispute_id` resolves that
- * open `coach_no_show` dispute; if omitted and exactly one such dispute exists, it is resolved automatically.
+ * Admin: set booking to `coach_no_show` (coach did not attend).
+ * Attendance-only endpoint: dispute outcomes are decided via `PUT /api/disputes/:id/resolve`.
  */
 export const adminMarkCoachNoShow = async (req, res) => {
   try {
     const { id } = req.params;
-    const {
-      dispute_id: disputeId,
-      resolution_action_id: resolutionActionId,
-      resolution_notes: resolutionNotes,
-      notes,
-    } = req.validated || {};
+    const notes = String(req.validated?.notes || '').trim();
 
     const booking = await Booking.findByPk(id);
     if (!booking) return errorResponse(res, 'Booking not found', 404);
@@ -1030,102 +1119,44 @@ export const adminMarkCoachNoShow = async (req, res) => {
         { code: 'booking_already_coach_no_show', booking_status: booking.status },
       );
     }
-    if (!['confirmed', 'awaiting_verification', 'disputed'].includes(booking.status)) {
+    if (!ADMIN_ATTENDANCE_MUTABLE_STATUSES.includes(booking.status)) {
       return errorResponse(
         res,
-        `Cannot mark coach_no_show from status ${booking.status}. Allowed: confirmed, awaiting_verification, disputed.`,
+        `Cannot mark coach_no_show from status ${booking.status}. Allowed: ${ADMIN_ATTENDANCE_MUTABLE_STATUSES.join(', ')}.`,
         400,
         null,
         { booking_status: booking.status },
+      );
+    }
+    const activeDispute = await Dispute.findOne({
+      where: {
+        booking_id: booking.id,
+        status: { [Op.in]: ['open', 'under_review'] },
+      },
+      attributes: ['id', 'status'],
+    });
+    if (activeDispute || booking.status === 'disputed') {
+      return errorResponse(
+        res,
+        'This booking has an active dispute. Resolve the dispute first to set final status and money outcome.',
+        409,
+        null,
+        { code: 'disputed_use_resolve_dispute', booking_status: booking.status },
       );
     }
     if (!lessonHasEnded(booking)) {
       return errorResponse(res, 'Cannot mark coach_no_show before the lesson end time.', 400);
     }
 
-    if (resolutionActionId != null) {
-      const action = await DisputeResolutionAction.findByPk(resolutionActionId);
-      if (!action) {
-        return errorResponse(
-          res,
-          'Invalid resolution_action_id: row does not exist in dispute_resolution_actions',
-          400,
-        );
-      }
+    const payment = await getLatestBookingPayment(booking.id);
+    const attendanceLock = canModifyAttendanceStatus(booking, payment);
+    if (!attendanceLock.allowed) {
+      return errorResponse(res, attendanceLock.message, 409, null, { code: attendanceLock.code, booking_status: booking.status });
     }
 
-    const coachNoShowType = await DisputeType.findOne({ where: { code: 'coach_no_show' } });
     const beforeState = booking.toJSON();
-
-    await sequelize.transaction(async (t) => {
-      const b = await Booking.findByPk(id, { transaction: t, lock: t.LOCK.UPDATE });
-      if (!b) {
-        const err = new Error('Booking not found');
-        err.statusCode = 404;
-        throw err;
-      }
-      if (b.status === 'coach_no_show') {
-        const err = new Error('This booking is already marked coach_no_show.');
-        err.statusCode = 400;
-        err.code = 'booking_already_coach_no_show';
-        err.booking_status = b.status;
-        throw err;
-      }
-      if (!['confirmed', 'awaiting_verification', 'disputed'].includes(b.status)) {
-        const err = new Error(`Cannot mark coach_no_show from status ${b.status}.`);
-        err.statusCode = 400;
-        err.booking_status = b.status;
-        throw err;
-      }
-
-      await b.update({ status: 'coach_no_show', messaging_locked: true }, { transaction: t });
-
-      if (coachNoShowType) {
-        const openWhere = {
-          booking_id: b.id,
-          dispute_type_id: coachNoShowType.id,
-          status: { [Op.in]: ['open', 'under_review'] },
-        };
-        if (disputeId != null) {
-          openWhere.id = disputeId;
-        }
-        const openDisputes = await Dispute.findAll({ where: openWhere, transaction: t });
-        if (disputeId != null && openDisputes.length === 0) {
-          const err = new Error(
-            'dispute_id does not match an open or under_review coach_no_show dispute for this booking.',
-          );
-          err.statusCode = 400;
-          throw err;
-        }
-        if (disputeId == null && openDisputes.length > 1) {
-          const err = new Error(
-            'Multiple open coach_no_show disputes for this booking; pass dispute_id to resolve one.',
-          );
-          err.statusCode = 400;
-          throw err;
-        }
-        const trimmedResolutionNotes =
-          resolutionNotes != null && String(resolutionNotes).trim() !== ''
-            ? String(resolutionNotes).trim()
-            : null;
-        for (const d of openDisputes) {
-          await d.update(
-            {
-              status: 'resolved',
-              resolution_action_id: resolutionActionId ?? null,
-              resolution_notes: trimmedResolutionNotes,
-              admin_id: req.user.id,
-              resolved_at: new Date(),
-            },
-            { transaction: t },
-          );
-        }
-      } else if (disputeId != null) {
-        const err = new Error('dispute_types.coach_no_show is missing; cannot resolve dispute by id.');
-        err.statusCode = 500;
-        throw err;
-      }
-    });
+    const fromStatus = booking.status;
+    await booking.update({ status: 'coach_no_show', messaging_locked: true });
 
     const updated = await Booking.findByPk(id, {
       include: [
@@ -1136,14 +1167,21 @@ export const adminMarkCoachNoShow = async (req, res) => {
     });
 
     await logAudit(req.user.id, 'booking_marked_coach_no_show', 'bookings', booking.id, beforeState, updated.toJSON(), req);
-    if (notes && String(notes).trim()) {
+    await logAdminAttendanceChange({
+      req,
+      bookingId: booking.id,
+      fromStatus,
+      toStatus: 'coach_no_show',
+      notes,
+    });
+    if (notes) {
       await logAudit(
         req.user.id,
         'admin_coach_no_show_notes',
         'bookings',
         booking.id,
         null,
-        { notes: String(notes).trim() },
+        { notes },
         req,
       );
     }
@@ -1160,7 +1198,60 @@ export const adminMarkCoachNoShow = async (req, res) => {
       }
     }
 
-    return successResponse(res, updated, 'Booking marked as coach_no_show');
+    // Status-driven money path: coach_no_show should refund the student when refundable payment exists.
+    const autoRefund = {
+      status: 'skipped',
+      reason: 'no_refundable_payment',
+      payment_id: null,
+      refund_cents: 0,
+      stripe_refund_id: null,
+    };
+    const hasOpenDispute = await Dispute.count({
+      where: {
+        booking_id: booking.id,
+        status: { [Op.in]: ['open', 'under_review'] },
+      },
+    });
+    if (hasOpenDispute > 0) {
+      autoRefund.reason = 'open_dispute_present';
+    } else {
+      const refundState = await paymentService.getLatestBookingRefundState(booking.id);
+      const payment = refundState.payment;
+      if (!payment) {
+        autoRefund.reason = 'payment_missing';
+      } else if (!payment.charge_id) {
+        autoRefund.payment_id = payment.id;
+        autoRefund.reason = 'charge_missing';
+      } else {
+        autoRefund.payment_id = payment.id;
+        const remainingCents = Math.max(0, refundState.chargeAmountCents - refundState.refundedSoFarCents);
+        if (payment.refund_status === 'pending') {
+          autoRefund.reason = 'refund_pending';
+        } else if (remainingCents < 1) {
+          autoRefund.reason = 'already_fully_refunded';
+        } else if (!['captured', 'partially_refunded'].includes(payment.payment_status)) {
+          autoRefund.reason = `payment_status_not_refundable:${payment.payment_status}`;
+        } else {
+          const result = await paymentService.processRefund(payment.id, {
+            refundCents: remainingCents,
+            reason: 'requested_by_customer',
+            idempotencyKey: `admin-coach-no-show-${booking.id}-payment-${payment.id}-full-${remainingCents}`,
+          });
+          autoRefund.status = 'initiated';
+          autoRefund.reason = null;
+          autoRefund.refund_cents = remainingCents;
+          autoRefund.stripe_refund_id = result?.refund?.id || null;
+        }
+      }
+    }
+
+    const responseData = {
+      ...updated.toJSON(),
+      attendance_outcome: 'coach_no_show',
+      no_show_party: 'coach',
+      auto_refund: autoRefund,
+    };
+    return successResponse(res, responseData, 'Booking marked as coach_no_show');
   } catch (error) {
     if (error.statusCode === 404) {
       return errorResponse(res, error.message, 404);
@@ -1178,16 +1269,133 @@ export const adminMarkCoachNoShow = async (req, res) => {
     if (error.statusCode === 500) {
       return errorResponse(res, error.message, 500);
     }
+    if (error.message?.includes('No refundable balance remaining on Stripe charge')) {
+      return errorResponse(res, error.message, 400);
+    }
+    if (error.message?.includes('Refund (') && error.message?.includes('exceeds remaining Stripe balance')) {
+      return errorResponse(res, error.message, 400);
+    }
+    if (error.message?.includes('Stripe')) {
+      return errorResponse(res, error.message, 502);
+    }
     logger.error('Admin mark coach no-show error:', error);
     return errorResponse(res, 'Failed to mark coach_no_show', 500);
   }
 };
 
 /**
- * Admin override: mark **student** no-show (same rules as coach `student-no-show` route).
+ * Admin override: mark **student** no-show.
  */
 export const adminMarkBookingNoShow = async (req, res) => {
-  return markBookingNoShow(req, res);
+  try {
+    const { id } = req.params;
+    const notes = String(req.validated?.notes || '').trim();
+
+    const booking = await Booking.findByPk(id);
+    if (!booking) return errorResponse(res, 'Booking not found', 404);
+
+    if (booking.status === 'student_no_show') {
+      return errorResponse(
+        res,
+        'This booking is already marked student_no_show.',
+        400,
+        null,
+        { code: 'booking_already_student_no_show', booking_status: booking.status },
+      );
+    }
+    if (!ADMIN_ATTENDANCE_MUTABLE_STATUSES.includes(booking.status)) {
+      return errorResponse(
+        res,
+        `Cannot mark student_no_show from status ${booking.status}. Allowed: ${ADMIN_ATTENDANCE_MUTABLE_STATUSES.join(', ')}.`,
+        400,
+        null,
+        { booking_status: booking.status },
+      );
+    }
+
+    const activeDispute = await Dispute.findOne({
+      where: {
+        booking_id: booking.id,
+        status: { [Op.in]: ['open', 'under_review'] },
+      },
+      attributes: ['id', 'status'],
+    });
+    if (activeDispute || booking.status === 'disputed') {
+      return errorResponse(
+        res,
+        'This booking has an active dispute. Resolve the dispute first to set final status and money outcome.',
+        409,
+        null,
+        { code: 'disputed_use_resolve_dispute', booking_status: booking.status },
+      );
+    }
+    if (!lessonHasEnded(booking)) {
+      return errorResponse(
+        res,
+        'Cannot mark booking as student_no_show before the lesson end time.',
+        400
+      );
+    }
+
+    const payment = await getLatestBookingPayment(booking.id);
+    const attendanceLock = canModifyAttendanceStatus(booking, payment);
+    if (!attendanceLock.allowed) {
+      return errorResponse(res, attendanceLock.message, 409, null, { code: attendanceLock.code, booking_status: booking.status });
+    }
+
+    const beforeState = booking.toJSON();
+    const fromStatus = booking.status;
+    await booking.update({ status: 'student_no_show', messaging_locked: true });
+    await logAudit(
+      req.user.id,
+      'booking_marked_student_no_show',
+      'bookings',
+      booking.id,
+      beforeState,
+      booking.toJSON(),
+      req,
+    );
+    await logAdminAttendanceChange({
+      req,
+      bookingId: booking.id,
+      fromStatus,
+      toStatus: 'student_no_show',
+      notes,
+    });
+    if (notes) {
+      await logAudit(
+        req.user.id,
+        'admin_student_no_show_notes',
+        'bookings',
+        booking.id,
+        null,
+        { notes },
+        req,
+      );
+    }
+
+    const updated = await Booking.findByPk(id, {
+      include: [
+        { model: Lesson, as: 'lesson' },
+        { model: User, as: 'coach', attributes: ['id', 'full_name', 'avatar_url'] },
+        { model: User, as: 'primaryStudent', attributes: ['id', 'full_name', 'avatar_url'] },
+      ],
+    });
+    if (booking.primary_student_id != null) {
+      await updateUserReliability(booking.primary_student_id, 'student').catch((err) =>
+        logger.error('Failed to update student reliability after admin student_no_show:', err),
+      );
+    }
+    const responseData = {
+      ...updated.toJSON(),
+      attendance_outcome: 'student_no_show',
+      no_show_party: 'student',
+    };
+    return successResponse(res, responseData, 'Booking marked as student_no_show');
+  } catch (error) {
+    logger.error('Admin mark student no-show error:', error);
+    return errorResponse(res, 'Failed to mark booking as student_no_show', 500);
+  }
 };
 
 /**
