@@ -500,7 +500,7 @@
 								"change-password"
 							]
 						},
-						"description": "Roles: Student, Coach, Admin. Change password using the current password and a new password. Bumps token_version (other sessions invalidated). Response includes a fresh JWT — test script saves it to auth_token like Login."
+						"description": "Roles: Student, Coach, Admin. Change password using the current password and a new password. Bumps token_version (other sessions invalidated). Response includes a fresh JWT \u2014 test script saves it to auth_token like Login."
 					},
 					"response": [],
 					"event": [
@@ -705,7 +705,7 @@
 					]
 				},
 				{
-					"name": "Switch Role (Student ↔ Coach)",
+					"name": "Switch Role (Student \u2194 Coach)",
 					"request": {
 						"method": "PUT",
 						"header": [
@@ -733,7 +733,7 @@
 								"role"
 							]
 						},
-						"description": "Roles: Student, Coach (not Admin). Switch account between student and coach without deleting. Body: role = 'student' or 'coach'. Response includes new token — save it (test script sets auth_token) for subsequent requests."
+						"description": "Roles: Student, Coach (not Admin). Switch account between student and coach without deleting. Body: role = 'student' or 'coach'. Response includes new token \u2014 save it (test script sets auth_token) for subsequent requests."
 					},
 					"response": [],
 					"event": [
@@ -1485,7 +1485,7 @@
 								}
 							]
 						},
-						"description": "Roles: Student, Admin (coaches get 403). List/search coaches. Omit page/limit to return all matches (server-capped), or enable page/limit for paged mode (`data` + `pagination`). Query params: lat, lng (optional – center for radius), radius (miles), skill_level, min_rating."
+						"description": "Roles: Student, Admin (coaches get 403). List/search coaches. Omit page/limit to return all matches (server-capped), or enable page/limit for paged mode (`data` + `pagination`). Query params: lat, lng (optional \u2013 center for radius), radius (miles), skill_level, min_rating."
 					},
 					"response": [],
 					"event": [
@@ -2265,7 +2265,7 @@
 		},
 		{
 			"name": "Bookings",
-			"description": "MVP: POST /bookings (student) → POST .../accept and POST .../decline (assigned coach only). Below: list/detail and extended routes (complete, student-no-show, cancel, reschedule). Legacy path no-show is an alias for student-no-show.",
+			"description": "MVP: POST /bookings (student) \u2192 POST .../accept and POST .../decline (assigned coach only). Below: list/detail and extended routes (complete, student-no-show, cancel, reschedule). Use the explicit student-no-show route.",
 			"item": [
 				{
 					"name": "Create Booking",
@@ -2294,7 +2294,7 @@
 								"bookings"
 							]
 						},
-						"description": "MVP — POST /bookings. Roles: Student (non-admin). Creates a pending booking; response `data.booking` plus payment client secret when Stripe is configured."
+						"description": "MVP \u2014 POST /bookings. Roles: Student (non-admin). Creates a pending booking; response `data.booking` plus payment client secret when Stripe is configured."
 					},
 					"response": [],
 					"event": [
@@ -2337,7 +2337,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": ""
+							"raw": "{\n  \"notes\": \"optional internal note\"\n}"
 						},
 						"url": {
 							"raw": "{{api_url}}/bookings/:id/accept",
@@ -2356,7 +2356,7 @@
 								}
 							]
 						},
-						"description": "MVP — POST /bookings/:id/accept. Roles: Coach only (booking coach_id = you). Confirms pending booking."
+						"description": "MVP \u2014 POST /bookings/:id/accept. Roles: Coach only (booking coach_id = you). Confirms pending booking."
 					},
 					"response": [],
 					"event": [
@@ -2394,7 +2394,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"message_to_student\": \"This time no longer works for me—please choose another slot.\",\n  \"decline_reason_code\": \"availability_wrong\"\n}"
+							"raw": "{\n  \"message_to_student\": \"This time no longer works for me\u2014please choose another slot.\",\n  \"decline_reason_code\": \"availability_wrong\"\n}"
 						},
 						"url": {
 							"raw": "{{api_url}}/bookings/:id/decline",
@@ -2413,7 +2413,7 @@
 								}
 							]
 						},
-						"description": "MVP — POST /bookings/:id/decline. Roles: Coach only. Declines pending booking; student not charged."
+						"description": "MVP \u2014 POST /bookings/:id/decline. Roles: Coach only. Declines pending booking; student not charged."
 					},
 					"response": [],
 					"event": [
@@ -2527,7 +2527,7 @@
 								}
 							]
 						},
-						"description": "Coach only. Records primary student did not attend; sets booking to no_show after lesson end. Not coach no-show — use POST /api/disputes with coach_no_show. Admin: POST /admin/bookings/:id/student-no-show. Legacy alias: .../no-show."
+						"description": "Coach only. Records primary student did not attend; sets booking to student_no_show after lesson end. Not coach no-show \u2014 use POST /api/disputes with coach_no_show_claim. Admin: POST /admin/bookings/:id/student-no-show. "
 					},
 					"response": [],
 					"event": [
@@ -2540,7 +2540,7 @@
 									"    pm.response.to.have.status(200);",
 									"});",
 									"",
-									"pm.test(\"Booking marked no_show\", function () {",
+									"pm.test(\"Booking marked student_no_show\", function () {",
 									"    var jsonData = pm.response.json();",
 									"    pm.expect(jsonData.success).to.be.true;",
 									"});"
@@ -3425,7 +3425,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"resolution_action_id\": 1,\n  \"resolution_notes\": \"Approved refund due to service issue\"\n}"
+							"raw": "{\n  \"decision\": \"upheld\",\n  \"outcome\": \"coach_no_show\",\n  \"penalize_role\": \"none\",\n  \"financial_action\": \"refund_student\",\n  \"resolution_notes\": \"Coach did not attend; full refund to student.\",\n  \"refund_amount\": 25.00\n}"
 						},
 						"url": {
 							"raw": "{{api_url}}/disputes/:id/resolve",
@@ -3444,7 +3444,7 @@
 								}
 							]
 						},
-						"description": "Roles: Admin. Resolve a dispute."
+						"description": "Roles: Admin. Superset body template includes all possible fields; remove fields that do not apply to your scenario. Always send `decision` + `financial_action`. `outcome` (`student_no_show` | `coach_no_show`) is attendance-claims only. `penalize_role` (`coach` | `student` | `none`) is behavior-disputes only. `refund_amount` (US dollars) is required only when `financial_action=refund_student_partial`. Do not send `resolution_action_id`. See `backend/API_ENDPOINTS.md`."
 					},
 					"response": [],
 					"event": [
@@ -3584,7 +3584,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"booking_id\": \"{{booking_id}}\",\n  \"dispute_type_id\": 1,\n  \"notes\": \"Coach no-show — waited 20 min, coach never arrived (stored on dispute row).\"\n}"
+							"raw": "{\n  \"booking_id\": \"{{booking_id}}\",\n  \"dispute_type_id\": 1,\n  \"notes\": \"Coach no-show \u2014 waited 20 min, coach never arrived (stored on dispute row).\"\n}"
 						},
 						"url": {
 							"raw": "{{api_url}}/disputes",
@@ -3595,7 +3595,7 @@
 								"disputes"
 							]
 						},
-						"description": "Roles: Student, Coach, Admin (must be party to booking). POST /api/disputes — booking status unchanged. Admins can also use POST /api/admin/disputes as an explicit support route (same handler, opened_by=admin). MVP dispute_type_id: 1 coach_no_show, 2 late_arrival, 3 misconduct, 4 lesson_not_completed, 5 refund_request, 6 billing_issue, 7 other. Optional notes persisted as TEXT."
+						"description": "Roles: Student, Coach, Admin (must be party to booking). POST /api/disputes \u2014 booking status unchanged. Admins can also use POST /api/admin/disputes as an explicit support route (same handler, opened_by=admin). MVP dispute_type_id: 1 coach_no_show_claim (student), 8 student_no_show_claim (coach), 2 late_arrival, 3 misconduct, 4 lesson_not_completed, 5 refund_request, 6 billing_issue, 7 other. Optional notes persisted as TEXT."
 					},
 					"response": [],
 					"event": [
@@ -4249,11 +4249,11 @@
 								}
 							]
 						},
-						"description": "Roles: Admin. Adjust one user_reliability row (user_id + role). Body `role` defaults to **coach** — omit or set `coach` for the coach score. Student-only users must send `\"role\": \"student\"`. Dual-role users: call twice (coach default vs `student`) to set both scores."
+						"description": "Roles: Admin. Adjust one user_reliability row (user_id + role). Body `role` defaults to **coach** \u2014 omit or set `coach` for the coach score. Student-only users must send `\"role\": \"student\"`. Dual-role users: call twice (coach default vs `student`) to set both scores."
 					},
 					"response": [
 						{
-							"name": "200 OK — adjust reliability",
+							"name": "200 OK \u2014 adjust reliability",
 							"originalRequest": {
 								"method": "PUT",
 								"header": [
@@ -4299,7 +4299,7 @@
 								}
 							],
 							"cookie": [],
-							"body": "{\"success\":true,\"message\":\"Reliability score adjusted successfully\",\"data\":{\"user_id\":1,\"role\":\"coach\",\"user_roles\":[\"coach\",\"student\"],\"previous_score\":100,\"new_score\":85,\"adjusted_by\":10,\"reason\":\"Manual adjustment\",\"explanation\":\"Support override after review\",\"guidance\":\"Roles: Admin. Adjust one user_reliability row (user_id + role). Body `role` defaults to **coach** — omit or set `coach` for the coach score. Student-only users must send \\\"role\\\": \\\"student\\\". Dual-role users: call twice (coach default vs `student`) to set both scores.\"}}"
+							"body": "{\"success\":true,\"message\":\"Reliability score adjusted successfully\",\"data\":{\"user_id\":1,\"role\":\"coach\",\"user_roles\":[\"coach\",\"student\"],\"previous_score\":100,\"new_score\":85,\"adjusted_by\":10,\"reason\":\"Manual adjustment\",\"explanation\":\"Support override after review\",\"guidance\":\"Roles: Admin. Adjust one user_reliability row (user_id + role). Body `role` defaults to **coach** \u2014 omit or set `coach` for the coach score. Student-only users must send \\\"role\\\": \\\"student\\\". Dual-role users: call twice (coach default vs `student`) to set both scores.\"}}"
 						}
 					],
 					"event": [
@@ -4774,7 +4774,7 @@
 								}
 							]
 						},
-						"description": "Admin override: primary student did not attend → status no_show. For coach no-show use Mark Coach No-Show (Admin). Legacy alias: .../no-show."
+						"description": "Admin override: primary student did not attend \u2192 status student_no_show. Optional body field `notes` is for internal context/audit only (not required for state transition). For contested/financially sensitive cases, use dispute flow and treat disputes.notes/resolution_notes as canonical. For coach no-show use Mark Coach No-Show (Admin). "
 					},
 					"response": [],
 					"event": [
@@ -4787,7 +4787,7 @@
 									"    pm.response.to.have.status(200);",
 									"});",
 									"",
-									"pm.test(\"Booking marked no_show\", function () {",
+									"pm.test(\"Booking marked student_no_show\", function () {",
 									"    var jsonData = pm.response.json();",
 									"    pm.expect(jsonData.success).to.be.true;",
 									"});"
@@ -4812,7 +4812,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"resolution_notes\": \"Verified with student; coach did not attend.\",\n  \"notes\": \"optional internal note\"\n}"
+							"raw": "{\n  \"notes\": \"optional internal note\"\n}"
 						},
 						"url": {
 							"raw": "{{api_url}}/admin/bookings/:id/coach-no-show",
@@ -4832,7 +4832,7 @@
 								}
 							]
 						},
-						"description": "Sets booking status coach_no_show after lesson end. Resolves open coach_no_show dispute(s): omit dispute_id if exactly one; pass dispute_id if several. Refund separately via POST /admin/bookings/:id/refund if needed."
+						"description": "Sets booking status coach_no_show after lesson end (attendance fact only). Optional body field `notes` is for internal context/audit only (not required for state transition). For contested/financially sensitive cases, use dispute flow and treat disputes.notes/resolution_notes as canonical. Does not resolve disputes; use PUT /api/disputes/:id/resolve for dispute outcomes. Attempts automatic student refund when refundable payment exists (or use POST /admin/bookings/:id/refund when needed)."
 					},
 					"response": [],
 					"event": [

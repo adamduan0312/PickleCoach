@@ -3058,7 +3058,7 @@ Authorization: Bearer <token>
 
 ## Disputes (`/api/disputes`)
 
-MVP `dispute_types` ids (see migration `20260408120000-canonical-dispute-types-mvp`): **1** `coach_no_show`, **2** `late_arrival`, **3** `misconduct`, **4** `lesson_not_completed`, **5** `refund_request`, **6** `billing_issue`, **7** `other`.
+MVP `dispute_types` ids (see migrations `20260408120000-canonical-dispute-types-mvp` and `20260421120000-dispute-types-attendance-claims`): **1** `coach_no_show_claim` (student claims coach no-show), **2** `late_arrival`, **3** `misconduct`, **4** `lesson_not_completed`, **5** `refund_request`, **6** `billing_issue`, **7** `other`, **8** `student_no_show_claim` (coach claims student no-show). Final attendance outcomes are **`bookings.status`** (`student_no_show` / `coach_no_show`), set when resolving disputes or via admin no-show booking routes when not disputed.
 
 ### `GET /api/disputes`
 - **Auth**: Required
@@ -3109,8 +3109,8 @@ MVP `dispute_types` ids (see migration `20260408120000-canonical-dispute-types-m
 - **Auth**: Required
 - **Description**: Create a dispute. Admins can also use `POST /api/admin/disputes` (same handler) when support opens a case; this sets `opened_by` to `admin`.
 - **Reliability consistency (current rules)**:
-  - `coach_no_show` severity is aligned across signals: **35-point weight** whether represented by booking no-show status or a resolved `coach_no_show` dispute bucket.
-  - Duplicate-signal protection is enabled: if booking status already represents the no-show incident, the matching `coach_no_show` dispute is not counted again for scoring.
+  - Coach no-show severity is aligned across signals: **35-point weight** whether represented by booking status `coach_no_show` or resolved **`coach_no_show_claim`** disputes (same bucket as before rename).
+  - Duplicate-signal protection is enabled: if booking status already represents the no-show incident, the matching claim dispute is not counted again for scoring.
 - **Request Body**:
   ```json
   {
@@ -3137,7 +3137,7 @@ MVP `dispute_types` ids (see migration `20260408120000-canonical-dispute-types-m
 
 ### `PUT /api/disputes/:id/resolve`
 - **Auth**: Required (Admin only)
-- **Description**: Resolve a dispute (admin only). **`resolution_action_id` is required.** Optional automatic Stripe refunds and reliability rules are documented in **`backend/API_ENDPOINTS.md`** (same path): refunds go to the **original charge / payer** (usually the student); **`refund_amount`** for partial refunds is **US dollars**, not cents; idempotency keys prevent duplicate refunds on retry; reliability scoring uses canonical dispute types and currently applies `coach_no_show` with **35-point weight**.
+- **Description**: Resolve a dispute (admin only). Full contract is in **`backend/API_ENDPOINTS.md`**. Summary: send **`decision`** (`upheld` \| `rejected` \| `partial`) + **`financial_action`** (`no_change` \| `refund_student` \| `refund_student_partial`) for all dispute types. Send **`outcome`** (`student_no_show` \| `coach_no_show`) only for attendance claims (`coach_no_show_claim`, `student_no_show_claim`); it updates `bookings.status`. With **`no_change`**, no financial or payout changes are made as part of dispute resolution; the booking continues under standard payout rules (typically coach payout when validly completed and not refunded). **`refund_amount`** (US dollars) is required for **`refund_student_partial`**. Response may include **`data.resolution`** and **`data.refund`**.
 
 ---
 
