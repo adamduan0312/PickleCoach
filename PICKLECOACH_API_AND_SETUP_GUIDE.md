@@ -703,7 +703,7 @@ pm.test("Profile updated successfully", function () {
 - Method: `GET`
 - URL: `{{api_url}}/coaches`
 - Headers: None (public endpoint)
-- Query params (all optional): `lat`, `lng`, `radius` (miles, default 10), `skill_level`, `min_rating`, `page`, `limit` – use lat/lng/radius to find coaches near a location (e.g. "coaches near me").
+- Query params (all optional): `lat`, `lng`, `radius` (miles, default 10), `min_skill_rating`, `max_skill_rating`, `min_rating`, `page`, `limit` – use lat/lng/radius to find coaches near a location (e.g. "coaches near me").
 - Body: None
 
 **Test Script:**
@@ -731,9 +731,9 @@ Creating a coach involves **two separate steps**:
 
 2. **Then**: Create the Coach Profile (this endpoint)
    - This creates the CoachProfile record linked to your User account
-   - Contains coach-specific data: `bio`, `hourly_rate`, `skill_level`, `experience_years`, etc.
+   - Contains coach-specific data: `bio`, `hourly_rate`, `skill_rating`, `rating_system`, `experience_years`, etc.
 
-**Why two steps?** The User account (`full_name`, `email`, `password_hash`, `role`, etc.) is separate from the Coach Profile (`bio`, `hourly_rate`, `skill_level`, etc.). This allows:
+**Why two steps?** The User account (`full_name`, `email`, `password_hash`, `role`, etc.) is separate from the Coach Profile (`bio`, `hourly_rate`, `skill_rating`, etc.). This allows:
 - Users to exist without profiles (e.g., students)
 - Coaches to have additional profile information beyond basic user data
 - Better data organization and separation of concerns
@@ -749,7 +749,8 @@ Creating a coach involves **two separate steps**:
 {
   "bio": "Experienced pickleball coach with 10 years of teaching",
   "hourly_rate": 50.00,
-  "skill_level": "advanced",
+  "skill_rating": 4.5,
+  "rating_system": "self",
   "experience_years": 10
 }
 ```
@@ -770,7 +771,8 @@ Creating a coach involves **two separate steps**:
 {
   "bio": "Experienced pickleball coach with 10 years of teaching",
   "hourly_rate": 50.00,
-  "skill_level": "advanced",
+  "skill_rating": 4.5,
+  "rating_system": "self",
   "experience_years": 10
 }
 ```
@@ -781,7 +783,8 @@ Creating a coach involves **two separate steps**:
   "user_id": 27,
   "bio": "Experienced pickleball coach with 10 years of teaching",
   "hourly_rate": 50.00,
-  "skill_level": "advanced",
+  "skill_rating": 4.5,
+  "rating_system": "self",
   "experience_years": 10
 }
 ```
@@ -2053,7 +2056,8 @@ Authorization: Bearer <token>
         "user_id": 1,
         "bio": "Experienced coach",
         "hourly_rate": 50.00,
-        "skill_level": "advanced"
+        "skill_rating": 4.5,
+        "rating_system": "self"
       },
       "reliability": {
         "user_id": 1,
@@ -2108,8 +2112,8 @@ Authorization: Bearer <token>
 
 ### `GET /api/coaches` (List / search coaches)
 - **Auth**: Required (student or admin only). Coaches cannot use this endpoint (403).
-- **Description**: List coaches with optional filters. Use **lat**, **lng**, and **radius** to find coaches who have courts within that distance (e.g. "coaches near me"). Other filters: skill_level, min_rating, page, limit.
-- **Query Parameters**: `lat`, `lng`, `radius` (miles), `skill_level`, `min_rating`, `page`, `limit` (all optional).
+- **Description**: List coaches with optional filters. Use **lat**, **lng**, and **radius** to find coaches who have courts within that distance (e.g. "coaches near me"). Other filters: **min_skill_rating**, **max_skill_rating**, **min_rating** (review average), page, limit.
+- **Query Parameters**: `lat`, `lng`, `radius` (miles), `min_skill_rating`, `max_skill_rating`, `min_rating`, `page`, `limit` (all optional).
 - **Response** (Status: 200):
   ```json
   {
@@ -2120,10 +2124,12 @@ Authorization: Bearer <token>
         "id": 1,
         "user_id": 2,
         "full_name": "Jane Coach",
-        "bio": "Experienced pickleball coach",
-        "hourly_rate": 50.00,
-        "skill_level": "advanced",
-        "average_rating": 4.8
+        "coachProfile": {
+          "hourly_rate": 50.00,
+          "skill_rating": 4.5,
+          "rating_system": "self",
+          "rating_average": 4.8
+        }
       }
     ]
   }
@@ -2141,10 +2147,12 @@ Authorization: Bearer <token>
       "id": 1,
       "user_id": 2,
       "full_name": "Jane Coach",
-      "bio": "Experienced pickleball coach",
-      "hourly_rate": 50.00,
-      "skill_level": "advanced",
-      "average_rating": 4.8,
+      "coachProfile": {
+        "hourly_rate": 50.00,
+        "skill_rating": 4.5,
+        "rating_system": "self",
+        "rating_average": 4.8
+      },
       "total_reviews": 25,
       "availability": [],
       "lessons": []
@@ -2163,7 +2171,8 @@ Authorization: Bearer <token>
     "bio": "string (optional)",
     "hourly_rate": "number (optional, defaults to 0)",
     "experience_years": "number (optional, defaults to 0)",
-    "skill_level": "string (optional, defaults to 'intermediate')",
+    "skill_rating": "number (optional, 2.0–6.0, 0.5 steps) or null",
+    "rating_system": "string (optional, default self)",
     "certifications": "string (optional)",
     "location": "string (optional)"
   }
@@ -2180,7 +2189,8 @@ Authorization: Bearer <token>
       "bio": "Experienced pickleball coach with 10 years of teaching",
       "hourly_rate": 50.00,
       "experience_years": 10,
-      "skill_level": "advanced",
+      "skill_rating": 4.5,
+      "rating_system": "self",
       "certifications": "USAPA Certified",
       "location": "New York, NY",
       "created_at": "2026-01-01T00:00:00.000Z"
@@ -2198,7 +2208,8 @@ Authorization: Bearer <token>
     "bio": "string (optional)",
     "hourly_rate": "number (optional)",
     "experience_years": "number (optional)",
-    "skill_level": "string (optional)",
+    "skill_rating": "number (optional) or null",
+    "rating_system": "string (optional)",
     "certifications": "string (optional)",
     "location": "string (optional)"
   }
@@ -2214,7 +2225,8 @@ Authorization: Bearer <token>
       "bio": "Updated bio with more experience",
       "hourly_rate": 60.00,
       "experience_years": 12,
-      "skill_level": "advanced"
+      "skill_rating": 4.5,
+      "rating_system": "self"
     }
   }
   ```
@@ -3137,7 +3149,7 @@ MVP `dispute_types` ids (see migrations `20260408120000-canonical-dispute-types-
 
 ### `PUT /api/disputes/:id/resolve`
 - **Auth**: Required (Admin only)
-- **Description**: Resolve a dispute (admin only). Full contract is in **`backend/API_ENDPOINTS.md`**. Summary: send **`decision`** (`upheld` \| `rejected` \| `partial`) + **`financial_action`** (`no_change` \| `refund_student` \| `refund_student_partial`) for all dispute types. Send **`outcome`** (`student_no_show` \| `coach_no_show`) only for attendance claims (`coach_no_show_claim`, `student_no_show_claim`); it updates `bookings.status`. With **`no_change`**, no financial or payout changes are made as part of dispute resolution; the booking continues under standard payout rules (typically coach payout when validly completed and not refunded). **`refund_amount`** (US dollars) is required for **`refund_student_partial`**. Response may include **`data.resolution`** and **`data.refund`**.
+- **Description**: Resolve a dispute (admin only). Full contract is in **`backend/API_ENDPOINTS.md`**. Summary: send **`decision`** + **`financial_action`**. For attendance claims, **`outcome`** is always required; **`rejected`** fixes the contradicting factual outcome, and **`financial_action`** must match that outcome (e.g. **`coach_no_show`** → refund path; **`student_no_show`** → **`no_change`**). **`refund_amount`** is required for **`refund_student_partial`**. Response may include **`data.resolution`** and **`data.refund`**.
 
 ---
 

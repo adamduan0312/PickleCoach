@@ -8,7 +8,7 @@
 	"item": [
 		{
 			"name": "1 \u2013 Flow: Admin",
-			"description": "All admin endpoints in user-flow order. Run in sequence: Health \u2192 Login (admin) \u2192 Profile \u2192 Dashboard \u2192 Users \u2192 Payments \u2192 Disputes \u2192 Notifications \u2192 Coach support \u2192 Auth extras \u2192 Webhook. See backend/POSTMAN_TESTING_GUIDE.md.",
+			"description": "All admin endpoints in user-flow order. Run in sequence: Health \u2192 Login (admin) \u2192 Profile \u2192 Dashboard \u2192 Users \u2192 Payments \u2192 Disputes \u2192 Notifications \u2192 Coach support \u2192 Auth extras. See backend/POSTMAN_TESTING_GUIDE.md.\n\nNote: The Stripe webhook (`POST /api/webhooks/stripe`) is documentation-only and lives under the top-level **Reference (Not for Manual Run)** folder. It is intentionally excluded from this flow so the runner stays green end-to-end.",
 			"item": [
 				{
 					"name": "1. Health Check",
@@ -554,6 +554,65 @@
 									"    pm.expect(jsonData.success).to.be.true;",
 									"    pm.expect(jsonData.data).to.have.property('role');",
 									"    pm.expect(jsonData.data).to.have.property('is_active');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "10b. Get User Reliability (Admin)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{api_url}}/admin/users/:id/reliability",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"admin",
+								"users",
+								":id",
+								"reliability"
+							],
+							"query": [
+								{
+									"key": "role",
+									"value": "coach",
+									"description": "Optional: coach or student. Omit to default (coach if user coaches, else student). Use student for student-only or dual-role student row.",
+									"disabled": true
+								}
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "{{user_id}}"
+								}
+							]
+						},
+						"description": "Roles: Admin. Read full reliability breakdown (`data.reliability`). Optional query `role=coach` | `role=student` to pick the `user_reliability` row; omitted defaults to coach when the user has that role, otherwise student."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Reliability payload\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.data).to.have.property('reliability');",
+									"    pm.expect(jsonData.data.reliability).to.have.property('reliability_score');",
 									"});"
 								],
 								"type": "text/javascript"
@@ -2127,6 +2186,18 @@
 									"pm.test(\"Booking marked coach_no_show\", function () {",
 									"    var jsonData = pm.response.json();",
 									"    pm.expect(jsonData.success).to.be.true;",
+									"    pm.expect(jsonData.data).to.have.property('attendance_outcome');",
+									"    pm.expect(jsonData.data.attendance_outcome).to.eql('coach_no_show');",
+									"});",
+									"",
+									"pm.test(\"Auto refund shape is async-safe\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    if (jsonData.data && jsonData.data.auto_refund && jsonData.data.auto_refund.status === 'queued') {",
+									"        pm.expect(jsonData.data.auto_refund).to.have.property('payment_action_id');",
+									"        pm.expect(jsonData.data.auto_refund.refund_status).to.eql('pending_stripe_execution');",
+									"    } else {",
+									"        pm.expect(jsonData.data.auto_refund).to.have.property('status');",
+									"    }",
 									"});"
 								]
 							}
@@ -2182,9 +2253,16 @@
 									"    pm.response.to.have.status(200);",
 									"});",
 									"",
-									"pm.test(\"Refund initiated\", function () {",
+									"pm.test(\"Refund queued or accepted\", function () {",
 									"    var jsonData = pm.response.json();",
 									"    pm.expect(jsonData.success).to.be.true;",
+									"    pm.expect(jsonData.data).to.have.property('payment_id');",
+									"    if (jsonData.data.queued === true) {",
+									"        pm.expect(jsonData.data).to.have.property('payment_action_id');",
+									"        pm.expect(jsonData.data.refund_status).to.eql('pending_stripe_execution');",
+									"    } else {",
+									"        pm.expect(jsonData.data).to.have.property('refund_status');",
+									"    }",
 									"});"
 								]
 							}
@@ -2226,7 +2304,7 @@
 								}
 							]
 						},
-						"description": "Roles: Admin. Superset body template includes all possible fields; remove fields that do not apply to your scenario. `outcome` is attendance-claims only. `penalize_role` is behavior-disputes only. `refund_amount` is required only when `financial_action=refund_student_partial`. No `resolution_action_id`. See `backend/API_ENDPOINTS.md`."
+						"description": "Roles: Admin. Superset body template; trim fields per dispute type. Attendance: required `outcome`; `rejected` uses contradicting outcome; `financial_action` must match outcome (coach_no_show \u2192 refund path, student_no_show \u2192 no_change). Behavior: omit `outcome`. `penalize_role` behavior only. `refund_amount` for `refund_student_partial`. See `backend/API_ENDPOINTS.md`."
 					},
 					"response": [],
 					"event": [
@@ -2349,57 +2427,12 @@
 							}
 						}
 					]
-				},
-				{
-					"name": "44. Stripe Webhook",
-					"request": {
-						"method": "POST",
-						"header": [
-							{
-								"key": "Content-Type",
-								"value": "application/json"
-							},
-							{
-								"key": "Stripe-Signature",
-								"value": "t=1234567890,v1=signature"
-							}
-						],
-						"body": {
-							"mode": "raw",
-							"raw": "{\n  \"type\": \"payment_intent.succeeded\",\n  \"data\": {\n    \"object\": {\n      \"id\": \"pi_test_123\"\n    }\n  }\n}"
-						},
-						"url": {
-							"raw": "{{api_url}}/webhooks/stripe",
-							"host": [
-								"{{api_url}}"
-							],
-							"path": [
-								"webhooks",
-								"stripe"
-							]
-						},
-						"description": "Roles: System (Stripe webhook; no user auth; uses Stripe-Signature verification)."
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Status code is 200\", function () {",
-									"    pm.response.to.have.status(200);",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
 				}
 			]
 		},
 		{
 			"name": "2 \u2013 Flow: Coach",
-			"description": "All coach endpoints in user-flow order. Run in sequence: Health \u2192 Register/Login \u2192 Profile \u2192 Coach profile \u2192 Courts \u2192 Availability \u2192 Stripe Connect \u2192 Lessons \u2192 Bookings \u2192 Payments \u2192 Reviews \u2192 Messages \u2192 Disputes \u2192 Notifications \u2192 Auth extras. See backend/POSTMAN_TESTING_GUIDE.md.\n\nBooking MVP: student uses POST /bookings; coach uses PUT .../accept or PUT .../decline only for pending requests (coach on that booking only).",
+			"description": "All coach endpoints in user-flow order. Run in sequence: Health \u2192 Register/Login \u2192 Profile \u2192 **GET /coaches/me/reliability** \u2192 Coach profile \u2192 Courts \u2192 Availability \u2192 Stripe Connect \u2192 Lessons \u2192 Bookings \u2192 Payments \u2192 Reviews \u2192 Messages \u2192 Disputes \u2192 Notifications \u2192 Auth extras. See backend/POSTMAN_TESTING_GUIDE.md.\n\nBooking MVP: student uses POST /bookings; coach uses PUT .../accept or PUT .../decline only for pending requests (coach on that booking only).",
 			"item": [
 				{
 					"name": "1. Health Check",
@@ -2621,7 +2654,7 @@
 								"profile"
 							]
 						},
-						"description": "Roles: Student, Coach, Admin. Get current authenticated user's profile."
+						"description": "Roles: Student, Coach, Admin. Get current authenticated user's profile. Coaches may see `data.reliability`; users with both roles may also see `data.reliability_student`."
 					},
 					"response": [],
 					"event": [
@@ -2638,6 +2671,50 @@
 									"    pm.expect(jsonData).to.have.property('data');",
 									"    pm.expect(jsonData.data).to.have.property('id');",
 									"    pm.expect(jsonData.data).to.have.property('email');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "4b. Get My Coach Reliability",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{api_url}}/coaches/me/reliability",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"coaches",
+								"me",
+								"reliability"
+							]
+						},
+						"description": "Roles: Coach. Full penalized-impact reliability breakdown for the authenticated coach (`data.reliability`)."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Reliability object\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.data).to.have.property('reliability');",
+									"    pm.expect(jsonData.data.reliability).to.have.property('reliability_score');",
 									"});"
 								],
 								"type": "text/javascript"
@@ -3002,7 +3079,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"headline\": \"Professional Pickleball Coach\",\n  \"bio\": \"Experienced pickleball coach with 10 years of teaching\",\n  \"hourly_rate\": 50.00,\n  \"experience_years\": 10,\n  \"skill_level\": \"advanced\",\n  \"certifications\": \"USAPA Certified\",\n  \"location\": \"New York, NY\"\n}"
+							"raw": "{\n  \"headline\": \"Professional Pickleball Coach\",\n  \"bio\": \"Experienced pickleball coach with 10 years of teaching\",\n  \"hourly_rate\": 50.00,\n  \"experience_years\": 10,\n  \"skill_rating\": 4.5,\n  \"rating_system\": \"self\",\n  \"certifications\": \"USAPA Certified\",\n  \"location\": \"New York, NY\"\n}"
 						},
 						"url": {
 							"raw": "{{api_url}}/coaches/profile",
@@ -3057,7 +3134,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"headline\": \"Updated Headline\",\n  \"bio\": \"Updated bio with more experience\",\n  \"hourly_rate\": 60.00,\n  \"experience_years\": 12,\n  \"skill_level\": \"advanced\",\n  \"certifications\": \"USAPA Certified, PPR Certified\",\n  \"location\": \"Los Angeles, CA\"\n}"
+							"raw": "{\n  \"headline\": \"Updated Headline\",\n  \"bio\": \"Updated bio with more experience\",\n  \"hourly_rate\": 60.00,\n  \"experience_years\": 12,\n  \"skill_rating\": 4.5,\n  \"rating_system\": \"self\",\n  \"certifications\": \"USAPA Certified, PPR Certified\",\n  \"location\": \"Los Angeles, CA\"\n}"
 						},
 						"url": {
 							"raw": "{{api_url}}/coaches/profile/:id",
@@ -5541,7 +5618,7 @@
 		},
 		{
 			"name": "3 \u2013 Flow: Student",
-			"description": "All student endpoints in user-flow order. Run in sequence: Health \u2192 Register/Login \u2192 Profile \u2192 Search coaches \u2192 Open coach (GET /coaches/:id) \u2192 Get coach courts (GET /coaches/:id/courts) \u2192 Check availability (GET /coaches/:id/availability) \u2192 Create Booking \u2192 Bookings \u2192 Payments \u2192 Reviews \u2192 Messages \u2192 Disputes \u2192 Notifications \u2192 Auth extras. See backend/POSTMAN_TESTING_GUIDE.md.\n\nBooking MVP: POST /bookings creates a pending request; the coach accepts or declines with PUT .../accept | PUT .../decline.",
+			"description": "All student endpoints in user-flow order. Run in sequence: Health \u2192 Register/Login \u2192 Profile \u2192 **GET /students/me/reliability** \u2192 Search coaches (each result includes **reliability** score) \u2192 Open coach (GET /coaches/:id, includes **reliability**) \u2192 Optional GET /coaches/:id/reliability \u2192 Get coach courts \u2192 Check availability \u2192 Create Booking \u2192 Bookings \u2192 Payments \u2192 Reviews \u2192 Messages \u2192 Disputes \u2192 Notifications \u2192 Auth extras. See backend/POSTMAN_TESTING_GUIDE.md.\n\nBooking MVP: POST /bookings creates a pending request; the coach accepts or declines with PUT .../accept | PUT .../decline.",
 			"item": [
 				{
 					"name": "1. Health Check",
@@ -5763,7 +5840,7 @@
 								"profile"
 							]
 						},
-						"description": "Roles: Student, Coach, Admin. Get current authenticated user's profile."
+						"description": "Roles: Student, Coach, Admin. Get current authenticated user's profile. Students may see `data.reliability_student` when a student reliability row exists; dual-role users may also see coach `data.reliability`."
 					},
 					"response": [],
 					"event": [
@@ -5780,6 +5857,50 @@
 									"    pm.expect(jsonData).to.have.property('data');",
 									"    pm.expect(jsonData.data).to.have.property('id');",
 									"    pm.expect(jsonData.data).to.have.property('email');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "4b. Get My Student Reliability",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{api_url}}/students/me/reliability",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"students",
+								"me",
+								"reliability"
+							]
+						},
+						"description": "Roles: Student. Full penalized-impact reliability breakdown for the authenticated student (`data.reliability`)."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Reliability object\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.data).to.have.property('reliability');",
+									"    pm.expect(jsonData.data.reliability).to.have.property('reliability_score');",
 									"});"
 								],
 								"type": "text/javascript"
@@ -6166,9 +6287,15 @@
 									"disabled": true
 								},
 								{
-									"key": "skill_level",
-									"value": "advanced",
-									"description": "beginner | intermediate | advanced | professional",
+									"key": "min_skill_rating",
+									"value": "4.0",
+									"description": "Self-reported pickleball level \u2265 this (2.0\u20136.0, 0.5 steps); excludes coaches with no skill_rating",
+									"disabled": true
+								},
+								{
+									"key": "max_skill_rating",
+									"value": "5.5",
+									"description": "Optional upper bound; must be \u2265 min_skill_rating when both set",
 									"disabled": true
 								},
 								{
@@ -6191,7 +6318,7 @@
 								}
 							]
 						},
-						"description": "Roles: Student, Admin (coaches get 403). List/search coaches. Omit page/limit to return all matches (server-capped), or enable page/limit for paged mode (`data` + `pagination`). Query params: lat, lng (optional \u2013 center for radius), radius (miles), skill_level, min_rating."
+						"description": "Roles: Student, Admin (coaches get 403). List/search coaches. `coachProfile` includes **`skill_rating`** and **`rating_system`** (default self). Each coach includes **`reliability`**: `{ reliability_score, last_updated }` (defaults to score 100 when no row). Query params: lat, lng, radius, **min_skill_rating**, **max_skill_rating**, **min_rating** (review average), page, limit."
 					},
 					"response": [],
 					"event": [
@@ -6207,6 +6334,13 @@
 									"    var jsonData = pm.response.json();",
 									"    pm.expect(jsonData).to.have.property('data');",
 									"    pm.expect(jsonData.data).to.be.an('array');",
+									"});",
+									"",
+									"pm.test(\"First coach has reliability summary when list non-empty\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    if (!jsonData.data || jsonData.data.length === 0) return;",
+									"    pm.expect(jsonData.data[0]).to.have.property('reliability');",
+									"    pm.expect(jsonData.data[0].reliability).to.have.property('reliability_score');",
 									"});"
 								],
 								"type": "text/javascript"
@@ -6240,7 +6374,7 @@
 								}
 							]
 						},
-						"description": "Roles: Student or Admin. Get coach details by ID. Path :id is the coach's **user id** (users.id). Set `coach_id` env var to that user id. Requires auth token."
+						"description": "Roles: Student or Admin. Get coach details by ID. Response includes **`reliability`**: `{ reliability_score, last_updated }`. Path :id is the coach's **user id** (users.id). Set `coach_id` env var to that user id. Requires auth token."
 					},
 					"response": [],
 					"event": [
@@ -6256,6 +6390,58 @@
 									"    var jsonData = pm.response.json();",
 									"    pm.expect(jsonData).to.have.property('data');",
 									"    pm.expect(jsonData.data).to.have.property('id');",
+									"    pm.expect(jsonData.data).to.have.property('reliability');",
+									"    pm.expect(jsonData.data.reliability).to.have.property('reliability_score');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "13b. Get Coach Reliability (Student \u2014 detail)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{api_url}}/coaches/:id/reliability",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"coaches",
+								":id",
+								"reliability"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "{{coach_id}}"
+								}
+							]
+						},
+						"description": "Roles: Student or Admin. Same score as list/detail: `data.reliability` with **`reliability_score`** and **`last_updated`** only (no penalty breakdown). Path :id is the coach's user id."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Slim reliability\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.data).to.have.property('reliability');",
+									"    pm.expect(jsonData.data.reliability).to.have.property('reliability_score');",
 									"});"
 								],
 								"type": "text/javascript"
@@ -7914,6 +8100,46 @@
 									"pm.test(\"Status code is 200 or 403 (admin)\", function () {",
 									"    pm.expect([200, 403]).to.include(pm.response.code);",
 									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				}
+			]
+		},
+		{
+			"name": "Reference (Not for Manual Run)",
+			"description": "Endpoints documented here for visibility, but **not** part of any Postman flow. They cannot be exercised meaningfully from Postman (e.g. signed webhooks). See each request's description for how to trigger them via the appropriate tooling (Stripe CLI, Dashboard resend, etc.).",
+			"item": [
+				{
+					"name": "[DO NOT RUN] Stripe Webhook (POST /api/webhooks/stripe)",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": ""
+						},
+						"url": {
+							"raw": "{{api_url}}/webhooks/stripe",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"webhooks",
+								"stripe"
+							]
+						},
+						"description": "**DO NOT RUN MANUALLY.**\n\nStripe calls this endpoint directly. It verifies the `Stripe-Signature` header using `STRIPE_WEBHOOK_SECRET`, so a hand-crafted body in Postman will return **400 Webhook Error: No signatures found matching the expected signature**.\n\n### How to actually test it\n1. Install the Stripe CLI.\n2. Run: `stripe listen --forward-to localhost:4000/api/webhooks/stripe`\n3. Copy the printed `whsec_...` into `.env.development` as `STRIPE_WEBHOOK_SECRET`, then restart the backend.\n4. Trigger events, e.g.:\n   - `stripe trigger payment_intent.succeeded`\n   - `stripe trigger charge.refunded`\n   - `stripe trigger charge.dispute.created`\n5. Or, in the Stripe Dashboard, use **Developers \u2192 Events \u2192 Resend** on a real event.\n\nHandled event types (see `backend/controllers/webhookController.js`):\n- payment_intent.succeeded / payment_failed / canceled\n- charge.refunded\n- charge.dispute.created / updated / closed\n- transfer.created / transfer.paid\n\nSuccess response: `{ \"received\": true }` (or `{ \"received\": true, \"duplicate\": true }`).\n\nRoles: System (Stripe webhook; no user auth; uses Stripe-Signature verification)."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "prerequest",
+							"script": {
+								"exec": [
+									"throw new Error(\"This webhook is documentation only. Use `stripe listen` or Dashboard resend. See request description.\");"
 								],
 								"type": "text/javascript"
 							}
