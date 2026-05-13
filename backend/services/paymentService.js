@@ -1,4 +1,14 @@
-import { Payment, Booking, Payout, User, UserRole, CoachProfile, CancellationHistory, sequelize } from '../models/index.js';
+import {
+  Payment,
+  PaymentAction,
+  Booking,
+  Payout,
+  User,
+  UserRole,
+  CoachProfile,
+  CancellationHistory,
+  sequelize,
+} from '../models/index.js';
 import { Op } from 'sequelize';
 import * as stripeService from './stripeService.js';
 import { logger } from '../config/logger.js';
@@ -860,6 +870,8 @@ export const applyRefundStateFromStripeCharge = async (payment, charge, { stripe
  * @param {string} [opts.reason]
  * @param {string} [opts.idempotencyKey] — Stripe idempotency key (prevents duplicate money movement)
  * @param {object} [opts.transaction] — If set, use this transaction for `SELECT ... FOR UPDATE` on the payment (e.g. booking cancel holds booking lock first, then refund in same txn).
+ * @param {boolean} [opts.paymentActionExecution] — When true, allow calling Stripe while local `refund_status` is `pending` (idempotent replays from `payment_actions` workers/reconcilers).
+ * @param {object} [opts.refundMetadata] — Optional Stripe refund metadata (`payment_action_id`, `booking_id`, …).
  */
 export const processRefund = async (paymentId, opts = {}) => {
   const {
@@ -867,6 +879,7 @@ export const processRefund = async (paymentId, opts = {}) => {
     reason = 'requested_by_customer',
     idempotencyKey = null,
     transaction = null,
+    refundMetadata = null,
   } = opts;
 
   const refundCents = Math.round(Number(refundCentsIn));
@@ -882,7 +895,7 @@ export const processRefund = async (paymentId, opts = {}) => {
     if (!p) {
       throw new Error('Payment not found');
     }
-    if (p.refund_status === 'pending') {
+    if (p.refund_status === 'pending' && !opts.paymentActionExecution) {
       logger.warn({
         component: 'stripe',
         event: 'refund_skipped_duplicate_pending',
@@ -941,6 +954,7 @@ export const processRefund = async (paymentId, opts = {}) => {
     amountCents: partial ? refundCents : null,
     reason,
     idempotencyKey: key,
+    metadata: refundMetadata || undefined,
   });
 
   /** Final refund rows come from charge.refunded webhook; avoid racing webhook with succeeded state. */
@@ -984,83 +998,471 @@ export const processRefund = async (paymentId, opts = {}) => {
     remainingCentsBefore: remainingCents,
     partial,
     idempotencyKey: key,
+    metadata: refundMetadata || undefined,
   });
 
   return { payment: updatedPayment, refund };
 };
 
+/** Max Stripe execution failures per `payment_actions` row before status `failed`. */
+export const PAYMENT_ACTION_MAX_FAILURE_ATTEMPTS = 8;
+
+/** Rows that snap `refund_cents` from Stripe charge remaining balance inside the worker. */
+const HYDRATE_FULL_REMAINING_ACTION_TYPES = new Set(['dispute_refund_full']);
+
+/** Refunds executed with cents fixed when the row was enqueued (booking flows + dispute partial). */
+const FIXED_CENTS_PAYMENT_ACTION_TYPES = new Set([
+  'dispute_refund_partial',
+  'booking_cancel_refund',
+  'booking_coach_no_show_refund',
+  'booking_admin_refund',
+]);
+
+function stripeRefundIdempotencyKeyForPaymentAction(pa) {
+  return `refund_${pa.booking_id}_${pa.id}`;
+}
+
 /**
- * Stripe refund when an admin resolves a dispute with approved_refund (full remaining balance)
- * or partial_refund (explicit amount). Skips when the action does not require payout adjustment.
- * Uses stable Stripe idempotency keys per dispute/payment/refund size so retries do not double-refund.
- *
- * @param {object} params
- * @param {number} params.bookingId
- * @param {number} params.disputeId
- * @param {{ code: string, requires_payout_adjustment: boolean }} params.action
- * @param {number|null|undefined} params.refundAmountDollars — required for partial_refund (US dollars, not cents)
- * @returns {Promise<{ payment: object, refund: object, refundCents: number }|null>}
+ * Persist a stable Stripe refund idempotency key per row (`refund_<bookingId>_<paymentActionId>`) when absent.
+ * Mirrors between `stripe_idempotency_key` and `idempotency_key` without overwriting Stripe keys from older rows.
  */
-export const initiateBookingRefundForDisputeResolution = async ({
+async function ensureStripeIdempotencyPersistedForPaymentAction(pa) {
+  const desired = stripeRefundIdempotencyKeyForPaymentAction(pa);
+  const hasStripe = !!(pa.stripe_idempotency_key && String(pa.stripe_idempotency_key).trim());
+  const hasLegacy = !!(pa.idempotency_key && String(pa.idempotency_key).trim());
+
+  if (!hasStripe && !hasLegacy) {
+    await PaymentAction.update(
+      { stripe_idempotency_key: desired, idempotency_key: desired },
+      { where: { id: pa.id, stripe_idempotency_key: null, idempotency_key: null } },
+    );
+    return;
+  }
+  if (hasStripe && !hasLegacy) {
+    await PaymentAction.update(
+      { idempotency_key: pa.stripe_idempotency_key },
+      { where: { id: pa.id } },
+    );
+    return;
+  }
+  if (!hasStripe && hasLegacy) {
+    await PaymentAction.update(
+      { stripe_idempotency_key: pa.idempotency_key },
+      { where: { id: pa.id } },
+    );
+  }
+}
+
+/**
+ * Build row attributes only (insert in same DB txn as dispute resolution).
+ * Stripe is **not** called here — `dispute_refund_full` snaps **refund_cents** from the Stripe charge in the worker; Stripe idempotency keys are assigned there.
+ */
+export const buildDisputeRefundPaymentActionAttrs = async ({
   bookingId,
   disputeId,
-  action,
+  resolutionAction,
   refundAmountDollars,
 }) => {
-  if (!action?.requires_payout_adjustment) {
-    return null;
-  }
+  if (!resolutionAction?.requires_payout_adjustment) return null;
 
   const payment = await Payment.findOne({
     where: { booking_id: bookingId },
     order: [['id', 'DESC']],
   });
-  if (!payment) {
-    throw new Error('Payment not found for this booking');
-  }
-  if (!payment.charge_id) {
-    throw new Error('Payment has no Stripe charge to refund');
+  if (!payment) throw new Error('Payment not found for this booking');
+  if (!payment.charge_id) throw new Error('Payment has no Stripe charge to refund');
+
+  if (resolutionAction.code === 'approved_refund') {
+    return {
+      booking_id: bookingId,
+      payment_id: payment.id,
+      dispute_id: disputeId,
+      action_type: 'dispute_refund_full',
+      status: 'pending',
+      refund_cents: null,
+      idempotency_key: null,
+      stripe_idempotency_key: null,
+      attempts: 0,
+    };
   }
 
-  if (action.code === 'approved_refund') {
-    const charge = await stripeService.retrieveCharge(payment.charge_id);
-    const chargeAmount = Math.round(charge.amount || 0);
-    const alreadyRefunded = Math.round(charge.amount_refunded || 0);
-    const refundCents = chargeAmount - alreadyRefunded;
-    if (refundCents < 1) {
-      throw new Error('No refundable balance remaining on Stripe charge');
-    }
-    // Includes refundCents so a changed remaining balance (e.g. after another partial) gets a new key.
-    const idempotencyKey = `dispute-resolve-${disputeId}-payment-${payment.id}-full-${refundCents}`;
-    const result = await processRefund(payment.id, {
-      refundCents,
-      reason: 'requested_by_customer',
-      idempotencyKey,
-    });
-    return { ...result, refundCents };
-  }
-
-  if (action.code === 'partial_refund') {
-    if (refundAmountDollars == null) {
-      throw new Error('refund_amount is required when resolving with partial_refund');
-    }
+  if (resolutionAction.code === 'partial_refund') {
+    if (refundAmountDollars == null) throw new Error('refund_amount is required when resolving with partial_refund');
     const refundCents = dollarsToCents(refundAmountDollars);
-    if (refundCents < 1) {
-      throw new Error('refund_amount must be at least 0.01');
-    }
-    // Includes refundCents so different partial amounts never share the same idempotency key.
-    const idempotencyKey = `dispute-resolve-${disputeId}-payment-${payment.id}-partial-${refundCents}`;
-    const result = await processRefund(payment.id, {
-      refundCents,
-      reason: 'requested_by_customer',
-      idempotencyKey,
-    });
-    return { ...result, refundCents };
+    if (refundCents < 1) throw new Error('refund_amount must be at least 0.01');
+    return {
+      booking_id: bookingId,
+      payment_id: payment.id,
+      dispute_id: disputeId,
+      action_type: 'dispute_refund_partial',
+      status: 'pending',
+      refund_cents: refundCents,
+      idempotency_key: null,
+      stripe_idempotency_key: null,
+      attempts: 0,
+    };
   }
 
   throw new Error(
-    `Resolution action "${action.code}" cannot be processed automatically; choose approved_refund, partial_refund, or no_action`,
+    `Resolution action "${resolutionAction.code}" cannot enqueue automatic refund`,
   );
+};
+
+/**
+ * Deferred full refunds: Stripe charge snapshot + deterministic idempotency key (runs in worker).
+ */
+async function hydrateFullRemainingRefundPaymentAction(pa) {
+  if (!HYDRATE_FULL_REMAINING_ACTION_TYPES.has(pa.action_type) || pa.refund_cents != null)
+    return pa.reload();
+
+  const payment = await Payment.findByPk(pa.payment_id);
+  if (!payment?.charge_id) {
+    throw new Error('Payment has no Stripe charge');
+  }
+
+  const charge = await stripeService.retrieveCharge(payment.charge_id);
+  const chargeAmount = Math.round(charge.amount || 0);
+  const alreadyRefunded = Math.round(charge.amount_refunded || 0);
+  const refundCents = chargeAmount - alreadyRefunded;
+  if (refundCents < 1) {
+    throw new Error('No refundable balance remaining on Stripe charge');
+  }
+
+  await PaymentAction.update(
+    { refund_cents: refundCents },
+    {
+      where: {
+        id: pa.id,
+        refund_cents: null,
+        action_type: { [Op.in]: [...HYDRATE_FULL_REMAINING_ACTION_TYPES] },
+      },
+    },
+  );
+  return pa.reload();
+}
+
+/**
+ * Execute pending `payment_actions` rows (dispute + booking admin/cancel/coach-auto paths).
+ */
+export const processPendingRefundPaymentActions = async ({ batchLimit = 14 } = {}) => {
+  const rows = await PaymentAction.findAll({
+    where: {
+      status: 'pending',
+      attempts: { [Op.lt]: PAYMENT_ACTION_MAX_FAILURE_ATTEMPTS },
+    },
+    order: [['id', 'ASC']],
+    limit: batchLimit,
+  });
+
+  let processed = 0;
+  let succeeded = 0;
+  let failed = 0;
+
+  for (const snapshot of rows) {
+    const paymentActionId = snapshot.id;
+    try {
+      let row = await PaymentAction.findByPk(paymentActionId);
+      if (!row) continue;
+      row = await hydrateFullRemainingRefundPaymentAction(row);
+      await ensureStripeIdempotencyPersistedForPaymentAction(row);
+      row = await PaymentAction.findByPk(paymentActionId);
+      const stripeIk = row.stripe_idempotency_key || row.idempotency_key;
+      if (row.refund_cents == null || !stripeIk) {
+        logger.warn({
+          component: 'payments',
+          event: 'payment_action_not_ready_skip',
+          paymentActionId: row.id,
+          action_type: row.action_type,
+        });
+        continue;
+      }
+
+      const result = await processRefund(row.payment_id, {
+        refundCents: row.refund_cents,
+        idempotencyKey: stripeIk,
+        reason: 'requested_by_customer',
+        paymentActionExecution: true,
+        refundMetadata: {
+          payment_action_id: String(row.id),
+          booking_id: String(row.booking_id),
+        },
+      });
+
+      processed += 1;
+      succeeded += 1;
+
+      const refundId =
+        (typeof result?.refund?.id === 'string' && result.refund.id) ||
+        result?.payment?.stripe_refund_id ||
+        null;
+
+      await row.reload();
+      await row.update({
+        status: 'succeeded',
+        stripe_refund_id: refundId,
+        error_message: null,
+      });
+
+      logger.info({
+        component: 'payments',
+        event: 'payment_action_refund_completed',
+        paymentActionId: row.id,
+        paymentId: row.payment_id,
+        bookingId: row.booking_id,
+        disputeId: row.dispute_id,
+        stripeRefundId: refundId,
+      });
+    } catch (err) {
+      processed += 1;
+      failed += 1;
+      const cur = await PaymentAction.findByPk(paymentActionId);
+      if (!cur) continue;
+      const msg = err?.message || String(err);
+      const nextAttempts = (cur.attempts || 0) + 1;
+      const terminal = nextAttempts >= PAYMENT_ACTION_MAX_FAILURE_ATTEMPTS;
+      await cur.update({
+        status: terminal ? 'failed' : 'pending',
+        attempts: nextAttempts,
+        error_message: msg.slice(0, 900),
+      });
+      logger.error({
+        component: 'payments',
+        event: terminal ? 'payment_action_refund_failed_terminal' : 'payment_action_refund_retry',
+        paymentActionId: cur.id,
+        paymentId: cur.payment_id,
+        bookingId: cur.booking_id,
+        disputeId: cur.dispute_id,
+        attempts: nextAttempts,
+        message: msg,
+      });
+    }
+  }
+
+  if (processed > 0) {
+    logger.info({
+      component: 'payments',
+      event: 'payment_actions_batch_finished',
+      examined: rows.length,
+      processed,
+      succeeded,
+      failed,
+    });
+  }
+
+  return { examined: rows.length, processed, succeeded, failed };
+};
+
+/**
+ * Stripe → DB truth alignment for deferred refunds (`payment_actions`).
+ * Heals Stripe-succeeded-but-DB-stuck rows via refund metadata lookup and idempotent `refunds.create` replay.
+ */
+export const reconcileRefundPaymentActionsWithStripe = async ({
+  batchLimit = 40,
+  autoHeal = true,
+} = {}) => {
+  const rows = await PaymentAction.findAll({
+    where: {
+      [Op.or]: [{ status: 'pending' }, { status: 'failed' }, { status: 'succeeded' }],
+    },
+    order: [['id', 'ASC']],
+    limit: batchLimit,
+  });
+
+  let scanned = 0;
+  let healedMeta = 0;
+  let healedReplay = 0;
+  let mismatches = 0;
+
+  for (const snapshot of rows) {
+    scanned += 1;
+    let pa = await PaymentAction.findByPk(snapshot.id);
+    if (!pa) continue;
+
+    const payment = await Payment.findByPk(pa.payment_id);
+    if (!payment?.charge_id) {
+      logger.warn({
+        component: 'payments',
+        event: 'payment_action_reconcile_missing_charge',
+        paymentActionId: pa.id,
+        paymentId: pa.payment_id,
+      });
+      continue;
+    }
+
+    if (pa.status === 'succeeded' && pa.stripe_refund_id) {
+      try {
+        await stripeService.retrieveRefund(pa.stripe_refund_id);
+      } catch (err) {
+        mismatches += 1;
+        logger.error({
+          component: 'payments',
+          event: 'payment_action_db_succeeded_stripe_missing',
+          paymentActionId: pa.id,
+          stripeRefundId: pa.stripe_refund_id,
+          message: err?.message || String(err),
+        });
+      }
+      continue;
+    }
+
+    if (pa.status === 'succeeded' && !pa.stripe_refund_id) {
+      mismatches += 1;
+      logger.warn({
+        component: 'payments',
+        event: 'payment_action_succeeded_missing_refund_fk',
+        paymentActionId: pa.id,
+      });
+      let list = [];
+      try {
+        list = await stripeService.listRefundsForCharge(payment.charge_id);
+      } catch (err) {
+        logger.error({
+          component: 'payments',
+          event: 'payment_action_reconcile_list_failed',
+          paymentActionId: pa.id,
+          message: err?.message || String(err),
+        });
+        continue;
+      }
+      const matches = list.filter((r) => r.metadata?.payment_action_id === String(pa.id));
+      if (matches.length > 1) {
+        mismatches += 1;
+        logger.error({
+          component: 'payments',
+          event: 'payment_action_reconcile_multiple_refunds_ambiguous',
+          paymentActionId: pa.id,
+          count: matches.length,
+        });
+        continue;
+      }
+      if (matches.length === 1 && autoHeal) {
+        await pa.update({ stripe_refund_id: matches[0].id });
+        healedMeta += 1;
+        logger.info({
+          component: 'payments',
+          event: 'payment_action_reconcile_backfilled_refund_id',
+          paymentActionId: pa.id,
+          stripeRefundId: matches[0].id,
+        });
+      }
+      continue;
+    }
+
+    if (
+      (pa.status === 'pending' || pa.status === 'failed') &&
+      (pa.refund_cents == null || pa.refund_cents < 1)
+    ) {
+      continue;
+    }
+
+    if (!(pa.status === 'pending' || pa.status === 'failed')) continue;
+
+    await ensureStripeIdempotencyPersistedForPaymentAction(pa);
+    pa = await PaymentAction.findByPk(pa.id);
+    const stripeIk = pa.stripe_idempotency_key || pa.idempotency_key;
+    if (!stripeIk) continue;
+
+    let list = [];
+    try {
+      list = await stripeService.listRefundsForCharge(payment.charge_id);
+    } catch (err) {
+      logger.error({
+        component: 'payments',
+        event: 'payment_action_reconcile_list_failed',
+        paymentActionId: pa.id,
+        message: err?.message || String(err),
+      });
+      continue;
+    }
+
+    const byMeta = list.filter((r) => r.metadata?.payment_action_id === String(pa.id));
+    if (byMeta.length > 1) {
+      mismatches += 1;
+      logger.error({
+        component: 'payments',
+        event: 'payment_action_reconcile_multiple_refunds_ambiguous',
+        paymentActionId: pa.id,
+        count: byMeta.length,
+      });
+      continue;
+    }
+
+    if (byMeta.length === 1 && autoHeal) {
+      await pa.update({
+        status: 'succeeded',
+        stripe_refund_id: byMeta[0].id,
+        error_message: null,
+      });
+      healedMeta += 1;
+      logger.info({
+        component: 'payments',
+        event: 'payment_action_reconcile_healed_stripe_ahead_of_db',
+        paymentActionId: pa.id,
+        stripeRefundId: byMeta[0].id,
+      });
+      continue;
+    }
+
+    if (byMeta.length === 0 && autoHeal) {
+      try {
+        const partial = FIXED_CENTS_PAYMENT_ACTION_TYPES.has(pa.action_type);
+        const ref = await stripeService.createRefund(payment.charge_id, {
+          amountCents: partial ? pa.refund_cents : null,
+          reason: 'requested_by_customer',
+          idempotencyKey: stripeIk,
+          metadata: {
+            payment_action_id: String(pa.id),
+            booking_id: String(pa.booking_id),
+          },
+        });
+        await pa.update({
+          status: 'succeeded',
+          stripe_refund_id: ref.id,
+          error_message: null,
+        });
+        healedReplay += 1;
+        logger.info({
+          component: 'payments',
+          event: 'payment_action_reconcile_idempotent_refund_replay',
+          paymentActionId: pa.id,
+          stripeRefundId: ref.id,
+        });
+      } catch (replayErr) {
+        logger.warn({
+          component: 'payments',
+          event: 'payment_action_reconcile_idempotent_replay_failed',
+          paymentActionId: pa.id,
+          message: replayErr?.message || String(replayErr),
+        });
+      }
+    }
+  }
+
+  return { scanned, healedMeta, healedReplay, mismatches };
+};
+
+/**
+ * SAFETY NET: Pending rows stuck for a while are visible in logs — manual follow-up via Stripe dashboards / admins.
+ */
+export const logStalePendingPaymentActions = async ({ staleMs = 60 * 60 * 1000 } = {}) => {
+  const threshold = new Date(Date.now() - staleMs);
+  const staleCount = await PaymentAction.count({
+    where: {
+      status: 'pending',
+      attempts: { [Op.lt]: PAYMENT_ACTION_MAX_FAILURE_ATTEMPTS },
+      created_at: { [Op.lt]: threshold },
+    },
+  });
+
+  if (staleCount > 0) {
+    logger.warn({
+      component: 'payments',
+      event: 'stale_payment_actions_pending_review',
+      count: staleCount,
+      staleMs,
+    });
+  }
+  return staleCount;
 };
 
 /**
@@ -1068,6 +1470,14 @@ export const initiateBookingRefundForDisputeResolution = async ({
  * Used by controllers to prevent mixed refund paths (manual + dispute).
  */
 export const getLatestBookingRefundState = async (bookingId) => {
+  const queuedPipeline = await PaymentAction.count({
+    where: {
+      booking_id: bookingId,
+      status: 'pending',
+      attempts: { [Op.lt]: PAYMENT_ACTION_MAX_FAILURE_ATTEMPTS },
+    },
+  });
+
   const payment = await Payment.findOne({
     where: { booking_id: bookingId },
     order: [['id', 'DESC']],
@@ -1077,8 +1487,9 @@ export const getLatestBookingRefundState = async (bookingId) => {
       payment: null,
       chargeAmountCents: 0,
       refundedSoFarCents: 0,
-      hasAnyRefund: false,
-      hasPendingRefund: false,
+      hasAnyRefund: queuedPipeline > 0,
+      hasPendingRefund: queuedPipeline > 0,
+      hasQueuedPaymentActionRefund: queuedPipeline > 0,
     };
   }
   if (!payment.charge_id) {
@@ -1087,8 +1498,9 @@ export const getLatestBookingRefundState = async (bookingId) => {
       payment,
       chargeAmountCents: 0,
       refundedSoFarCents: 0,
-      hasAnyRefund: hasPendingRefund,
-      hasPendingRefund,
+      hasAnyRefund: hasPendingRefund || queuedPipeline > 0,
+      hasPendingRefund: hasPendingRefund || queuedPipeline > 0,
+      hasQueuedPaymentActionRefund: queuedPipeline > 0,
     };
   }
 
@@ -1101,8 +1513,9 @@ export const getLatestBookingRefundState = async (bookingId) => {
     payment,
     chargeAmountCents,
     refundedSoFarCents,
-    hasAnyRefund: refundedSoFarCents > 0 || hasPendingRefund,
-    hasPendingRefund,
+    hasAnyRefund: refundedSoFarCents > 0 || hasPendingRefund || queuedPipeline > 0,
+    hasPendingRefund: hasPendingRefund || queuedPipeline > 0,
+    hasQueuedPaymentActionRefund: queuedPipeline > 0,
   };
 };
 

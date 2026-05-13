@@ -2,7 +2,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import { Op } from 'sequelize';
-import { User, UserRole, CoachProfile } from '../models/index.js';
+import { User, UserRole, CoachProfile, UserReliability } from '../models/index.js';
 import { successResponse, errorResponse } from '../utils/response.js';
 import { logAudit } from '../utils/audit.js';
 import { logger } from '../config/logger.js';
@@ -153,6 +153,7 @@ export const getProfile = async (req, res) => {
       include: [
         { model: UserRole, as: 'userRoles', attributes: ['role'] },
         { model: CoachProfile, as: 'coachProfile' },
+        { model: UserReliability, as: 'reliabilities', required: false },
       ],
     });
 
@@ -164,6 +165,17 @@ export const getProfile = async (req, res) => {
     const profile = user.toJSON();
     profile.roles = roles;
     delete profile.userRoles;
+
+    const relRows = user.reliabilities || [];
+    delete profile.reliabilities;
+    const coachRel = relRows.find((r) => r.role === 'coach');
+    const studentRel = relRows.find((r) => r.role === 'student');
+    if (roles.includes('coach') && coachRel) {
+      profile.reliability = coachRel;
+    }
+    if (roles.includes('student') && studentRel) {
+      profile.reliability_student = studentRel;
+    }
 
     return successResponse(res, profile, 'Profile retrieved successfully');
   } catch (error) {

@@ -29,9 +29,16 @@ const CoachProfile = sequelize.define('coach_profiles', {
     type: DataTypes.INTEGER,
     defaultValue: 0,
   },
-  skill_level: {
-    type: DataTypes.ENUM('beginner', 'intermediate', 'advanced', 'pro'),
-    defaultValue: 'intermediate',
+  /** Self-reported pickleball numeric level (standard-style scale), 2.0–6.0 in 0.5 steps; nullable until set. */
+  skill_rating: {
+    type: DataTypes.DECIMAL(3, 1),
+    allowNull: true,
+  },
+  /** e.g. `self` (MVP; no DUPR/API verification). */
+  rating_system: {
+    type: DataTypes.STRING(32),
+    allowNull: false,
+    defaultValue: 'self',
   },
   certifications: {
     type: DataTypes.JSON,
@@ -67,7 +74,7 @@ const CoachProfile = sequelize.define('coach_profiles', {
   createdAt: 'created_at',
   updatedAt: false,
   indexes: [
-    { fields: ['skill_level', 'location', 'rating_average'] },
+    { fields: ['skill_rating', 'location', 'rating_average'] },
     { fields: ['stripe_account_id'] },
   ],
 });

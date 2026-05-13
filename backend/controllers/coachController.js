@@ -1,4 +1,15 @@
-import { User, UserRole, CoachProfile, CoachAvailability, Lesson, Booking, Review, CoachCourtLocation, CourtLocation } from '../models/index.js';
+import {
+  User,
+  UserRole,
+  CoachProfile,
+  CoachAvailability,
+  Lesson,
+  Booking,
+  Review,
+  CoachCourtLocation,
+  CourtLocation,
+  UserReliability,
+} from '../models/index.js';
 import { successResponse, errorResponse, paginatedResponse } from '../utils/response.js';
 import { getPagination, getPagingData } from '../utils/pagination.js';
 import { Op } from 'sequelize';
@@ -23,6 +34,25 @@ const calculateDistance = (lat1, lng1, lat2, lng2) => {
 const MAX_LIST_ALL_COACHES = 10000;
 const MAX_LIST_ALL_AVAILABILITY = 10000;
 
+const slimCoachReliabilityFromRows = (reliabilityRows) => {
+  const rel = (reliabilityRows || []).find((r) => r.role === 'coach');
+  if (!rel) {
+    return { reliability_score: 100, last_updated: null };
+  }
+  return {
+    reliability_score: parseFloat(rel.reliability_score),
+    last_updated: rel.last_updated,
+  };
+};
+
+const shapeCoachForListing = (coachInstance) => {
+  const json = coachInstance.toJSON();
+  const relRows = json.reliabilities;
+  delete json.reliabilities;
+  json.reliability = slimCoachReliabilityFromRows(relRows);
+  return json;
+};
+
 export const getCoaches = async (req, res) => {
   try {
     // Only students and admins can search/list coaches (e.g. to find someone to book). Coaches don't use this to find other coaches.
@@ -30,25 +60,48 @@ export const getCoaches = async (req, res) => {
       return errorResponse(res, 'Only students and admins can search for coaches', 403);
     }
 
-    const { page, limit, lat, lng, radius, skill_level, min_rating } = req.validated;
+    const { page, limit, lat, lng, radius, min_skill_rating, max_skill_rating, min_rating } = req.validated;
     const isPaginated = page != null || limit != null;
     const { limit: queryLimit, offset } = isPaginated
       ? getPagination(page, limit)
       : { limit: MAX_LIST_ALL_COACHES, offset: 0 };
 
     const where = { is_active: true };
-    const profileWhere = {};
 
-    if (skill_level) profileWhere.skill_level = skill_level;
-    if (min_rating) profileWhere.rating_average = { [Op.gte]: parseFloat(min_rating) };
+    const profileWhereParts = [];
+    if (min_rating) {
+      profileWhereParts.push({ rating_average: { [Op.gte]: parseFloat(min_rating) } });
+    }
+    if (min_skill_rating != null || max_skill_rating != null) {
+      profileWhereParts.push({ skill_rating: { [Op.ne]: null } });
+      if (min_skill_rating != null) {
+        profileWhereParts.push({ skill_rating: { [Op.gte]: min_skill_rating } });
+      }
+      if (max_skill_rating != null) {
+        profileWhereParts.push({ skill_rating: { [Op.lte]: max_skill_rating } });
+      }
+    }
+    const profileWhere =
+      profileWhereParts.length === 0
+        ? {}
+        : profileWhereParts.length === 1
+          ? profileWhereParts[0]
+          : { [Op.and]: profileWhereParts };
 
     const includes = [
       { model: UserRole, as: 'userRoles', where: { role: 'coach' }, required: true, attributes: [] },
       {
         model: CoachProfile,
         as: 'coachProfile',
-        where: Object.keys(profileWhere).length > 0 ? profileWhere : undefined,
+        where: profileWhereParts.length > 0 ? profileWhere : undefined,
         required: true,
+      },
+      {
+        model: UserReliability,
+        as: 'reliabilities',
+        where: { role: 'coach' },
+        required: false,
+        attributes: ['role', 'reliability_score', 'last_updated'],
       },
     ];
 
@@ -83,13 +136,15 @@ export const getCoaches = async (req, res) => {
       });
     }
 
+    // Avoid Sequelize DISTINCT-subquery + ORDER BY on included CoachProfile (MySQL: unknown column in order clause).
     const coaches = await User.findAndCountAll({
       where,
+      subQuery: false,
       include: includes,
       limit: queryLimit,
       offset,
       order: [['coachProfile', 'rating_average', 'DESC']],
-      distinct: true, // Important for joins that create duplicates
+      distinct: true, // Count query still uses COUNT(DISTINCT User.id); row query needs accurate ordering
     });
 
     // If GPS search, filter by exact distance (post-query filtering for accuracy)
@@ -115,12 +170,14 @@ export const getCoaches = async (req, res) => {
       coaches.count = filteredCoaches.length;
     }
 
+    const shaped = filteredCoaches.map((c) => shapeCoachForListing(c));
+
     if (!isPaginated) {
-      return successResponse(res, filteredCoaches, 'Coaches retrieved successfully');
+      return successResponse(res, shaped, 'Coaches retrieved successfully');
     }
 
     const response = getPagingData(
-      { count: coaches.count, rows: filteredCoaches },
+      { count: coaches.count, rows: shaped },
       page,
       queryLimit
     );
@@ -142,6 +199,13 @@ export const getCoachById = async (req, res) => {
         { model: CoachAvailability, as: 'availabilities' },
         { model: Lesson, as: 'lessons', where: { is_active: true, deleted_at: null }, required: false },
         { model: Review, as: 'reviewsReceived', limit: 10, order: [['created_at', 'DESC']] },
+        {
+          model: UserReliability,
+          as: 'reliabilities',
+          where: { role: 'coach' },
+          required: false,
+          attributes: ['role', 'reliability_score', 'last_updated'],
+        },
       ],
     });
 
@@ -149,7 +213,11 @@ export const getCoachById = async (req, res) => {
       return errorResponse(res, 'Coach not found', 404);
     }
 
-    return successResponse(res, coach, 'Coach retrieved successfully');
+    const payload = coach.toJSON();
+    payload.reliability = slimCoachReliabilityFromRows(payload.reliabilities);
+    delete payload.reliabilities;
+
+    return successResponse(res, payload, 'Coach retrieved successfully');
   } catch (error) {
     logger.error('Get coach error:', error);
     return errorResponse(res, 'Failed to retrieve coach', 500);
@@ -158,7 +226,16 @@ export const getCoachById = async (req, res) => {
 
 export const createCoachProfile = async (req, res) => {
   try {
-    const { headline, bio, hourly_rate, experience_years, skill_level, certifications, location } = req.body;
+    const {
+      headline,
+      bio,
+      hourly_rate,
+      experience_years,
+      skill_rating,
+      rating_system,
+      certifications,
+      location,
+    } = req.validated;
     const targetUserId = req.user.id;
 
     const existingProfile = await CoachProfile.findOne({ where: { user_id: targetUserId } });
@@ -172,7 +249,8 @@ export const createCoachProfile = async (req, res) => {
       bio,
       hourly_rate: hourly_rate || 0,
       experience_years: experience_years ?? 0,
-      skill_level: skill_level || 'intermediate',
+      skill_rating: skill_rating ?? null,
+      rating_system: rating_system ?? 'self',
       certifications,
       location,
     });
@@ -199,14 +277,24 @@ export const updateCoachProfile = async (req, res) => {
       return errorResponse(res, 'Unauthorized', 403);
     }
 
-    const { headline, bio, hourly_rate, experience_years, skill_level, certifications, location } = req.validated;
+    const {
+      headline,
+      bio,
+      hourly_rate,
+      experience_years,
+      skill_rating,
+      rating_system,
+      certifications,
+      location,
+    } = req.validated;
 
     await profile.update({
       headline: headline !== undefined ? headline : profile.headline,
       bio: bio !== undefined ? bio : profile.bio,
       hourly_rate: hourly_rate !== undefined ? hourly_rate : profile.hourly_rate,
       experience_years: experience_years !== undefined ? experience_years : profile.experience_years,
-      skill_level: skill_level || profile.skill_level,
+      skill_rating: skill_rating !== undefined ? skill_rating : profile.skill_rating,
+      rating_system: rating_system !== undefined ? rating_system : profile.rating_system,
       certifications: certifications !== undefined ? certifications : profile.certifications,
       location: location !== undefined ? location : profile.location,
     });

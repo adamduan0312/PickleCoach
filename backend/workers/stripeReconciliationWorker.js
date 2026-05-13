@@ -1,7 +1,11 @@
 import { Op } from 'sequelize';
 import { Payment } from '../models/index.js';
 import { logger } from '../config/logger.js';
-import { assertStripePaymentConsistency } from '../services/paymentService.js';
+import {
+  assertStripePaymentConsistency,
+  logStalePendingPaymentActions,
+  reconcileRefundPaymentActionsWithStripe,
+} from '../services/paymentService.js';
 
 const BATCH = 40;
 
@@ -47,6 +51,40 @@ export const reconcileStripePayments = async () => {
       event: 'reconcile_batch_complete',
       scanned: payments.length,
       mismatchesRemaining: mismatches,
+    });
+  }
+
+  try {
+    const paRec = await reconcileRefundPaymentActionsWithStripe({ batchLimit: 45, autoHeal: true });
+    if (paRec.healedMeta + paRec.healedReplay > 0) {
+      logger.info({
+        component: 'payments',
+        event: 'cron_payment_actions_repaired',
+        ...paRec,
+      });
+    }
+  } catch (e) {
+    logger.error({
+      component: 'payments',
+      event: 'payment_action_refund_reconcile_failed',
+      message: e?.message || String(e),
+    });
+  }
+
+  try {
+    const staleRefundActions = await logStalePendingPaymentActions({ staleMs: 60 * 60 * 1000 });
+    if (Number(staleRefundActions) > 0) {
+      logger.info({
+        component: 'stripe',
+        event: 'reconcile_includes_stale_refund_payment_actions',
+        stale_pending_count: staleRefundActions,
+      });
+    }
+  } catch (e) {
+    logger.error({
+      component: 'stripe',
+      event: 'stale_payment_actions_probe_failed',
+      message: e?.message || String(e),
     });
   }
 };

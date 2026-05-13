@@ -1,6 +1,7 @@
 import Joi from 'joi';
 import { getValidReasons } from '../services/reliabilityPenaltyService.js';
 import { MIN_LESSON_PRICE_USD } from '../services/paymentService.js';
+import { validateDisputeResolutionPayload } from '../utils/disputeResolutionAlignment.js';
 
 // Environment variable validation
 export const envSchema = Joi.object({
@@ -178,6 +179,11 @@ export const adminAdjustReliabilitySchema = Joi.object({
   explanation: Joi.string().max(2000).allow('').optional(),
 });
 
+/** GET /api/admin/users/:id/reliability — which role row to read (omit: coach if user coaches, else student). */
+export const adminGetUserReliabilityQuerySchema = Joi.object({
+  role: Joi.string().valid('coach', 'student').optional(),
+});
+
 export const adminBookingRefundSchema = Joi.object({
   refund_amount: Joi.number().positive().min(0.01).optional(),
   reason: Joi.string().valid('requested_by_customer', 'duplicate', 'fraudulent').default('requested_by_customer'),
@@ -191,12 +197,30 @@ export const updateReviewSchema = Joi.object({
   visibility: Joi.string().valid('public', 'private', 'semi_public').optional(),
 });
 
+/** Pickleball-style self-reported level: 2.0–6.0 inclusive, half-point steps only. */
+const coachSkillRatingValueSchema = Joi.number()
+  .min(2)
+  .max(6)
+  .custom((value, helpers) => {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return helpers.error('any.invalid');
+    const doubled = n * 2;
+    if (Math.abs(doubled - Math.round(doubled)) > 1e-9) {
+      return helpers.error('any.custom', {
+        message: 'skill_rating must use 0.5 increments between 2.0 and 6.0 (e.g. 3.0, 3.5, 4.0)',
+      });
+    }
+    return Math.round(n * 10) / 10;
+  });
+
 export const createCoachProfileSchema = Joi.object({
   headline: Joi.string().max(255).allow('').optional(),
   bio: Joi.string().allow('').optional(),
   hourly_rate: Joi.number().positive().optional(),
   experience_years: Joi.number().integer().min(0).max(100).optional(),
-  skill_level: Joi.string().valid('beginner', 'intermediate', 'advanced', 'professional').optional(),
+  skill_rating: coachSkillRatingValueSchema.optional().allow(null),
+  /** Defaults to `self` when omitted (MVP self-report only). */
+  rating_system: Joi.string().max(32).optional(),
   certifications: Joi.string().allow('').optional(),
   location: Joi.string().max(255).allow('').optional(),
 });
@@ -206,7 +230,8 @@ export const updateCoachProfileSchema = Joi.object({
   bio: Joi.string().allow('').optional(),
   hourly_rate: Joi.number().positive().optional(),
   experience_years: Joi.number().integer().min(0).max(100).optional(),
-  skill_level: Joi.string().valid('beginner', 'intermediate', 'advanced', 'professional').optional(),
+  skill_rating: coachSkillRatingValueSchema.optional().allow(null),
+  rating_system: Joi.string().max(32).optional(),
   certifications: Joi.string().allow('').optional(),
   location: Joi.string().max(255).allow('').optional(),
 });
@@ -271,18 +296,24 @@ export const resolveDisputeSchema = Joi.object({
   /** Canonical admin ruling for all dispute types. */
   decision: Joi.string().valid('upheld', 'rejected', 'partial').required(),
   /**
-   * Explicit attendance resolve (with `financial_action`): who actually missed the lesson.
-   * Booking status is derived from this only — not from resolution action codes.
-   * Neutral rejected path: attendance claims may omit `outcome` when `decision = rejected`.
+   * Factual attendance determination for attendance dispute types only (required whenever
+   * `dispute_type_code` is an attendance claim). Booking status follows `outcome`. For
+   * `rejected`, alignment requires the contradicting outcome per claim type. For all attendance
+   * decisions, `financial_action` must match `outcome` (`coach_no_show` → refund path;
+   * `student_no_show` → `no_change`) — see `disputeResolutionAlignment.js`.
    */
   outcome: Joi.string()
     .valid('student_no_show', 'coach_no_show')
     .when('dispute_type_code', {
       is: Joi.valid('coach_no_show_claim', 'student_no_show_claim'),
-      then: Joi.optional(),
+      then: Joi.required(),
       otherwise: Joi.forbidden(),
     }),
-  /** Behavior disputes only: which party should receive reliability penalty. */
+  /**
+   * Behavior disputes only: which party should receive reliability penalty.
+   * `decision` determines whether a behavior claim is sustained; `penalize_role`
+   * determines whose reliability is affected.
+   */
   penalize_role: Joi.string()
     .valid('coach', 'student', 'none')
     .when('dispute_type_code', {
@@ -291,8 +322,9 @@ export const resolveDisputeSchema = Joi.object({
       otherwise: Joi.forbidden(),
     }),
   /**
-   * Explicit money decision: `refund_student` = full remaining on charge; `refund_student_partial` needs `refund_amount`;
-   * `no_change` = no Stripe refund here (coach payout still follows booking status elsewhere).
+   * Money on resolve: for attendance disputes, valid combinations are constrained by `outcome`
+   * (see alignment). For behavior disputes, `rejected` requires `no_change`.
+   * `refund_student` = full remaining on charge; `refund_student_partial` needs `refund_amount`.
    */
   financial_action: Joi.string()
     .valid('no_change', 'refund_student', 'refund_student_partial')
@@ -302,13 +334,6 @@ export const resolveDisputeSchema = Joi.object({
   refund_amount: Joi.number().positive().min(0.01).optional(),
 })
   .custom((value, helpers) => {
-    const isAttendanceClaim = ['coach_no_show_claim', 'student_no_show_claim'].includes(
-      value.dispute_type_code,
-    );
-    const isBehaviorDispute = ['late_arrival', 'misconduct', 'lesson_not_completed'].includes(
-      value.dispute_type_code,
-    );
-
     if (value.resolution_action_id != null) {
       return helpers.error('any.custom', {
         message: 'resolution_action_id is no longer accepted. Use decision + financial_action (and outcome for attendance claims).',
@@ -319,35 +344,22 @@ export const resolveDisputeSchema = Joi.object({
         message: 'refund_amount is required when financial_action is refund_student_partial',
       });
     }
-    if (isAttendanceClaim && value.decision !== 'rejected' && value.outcome == null) {
-      return helpers.error('any.custom', {
-        message: 'outcome is required for attendance claims unless decision is rejected',
-      });
+
+    // `dispute_type_code` uses `.strip()` so it is omitted from `value` here; alignment still needs it.
+    const disputeTypeCode = value.dispute_type_code ?? helpers.original?.dispute_type_code;
+
+    const logical = validateDisputeResolutionPayload({
+      disputeTypeCode,
+      decision: value.decision,
+      outcome: value.outcome,
+      financialAction: value.financial_action,
+      penalizeRole: value.penalize_role,
+      openedBy: undefined,
+    });
+    if (!logical.ok) {
+      return helpers.error('any.custom', { message: logical.message });
     }
-    if (isAttendanceClaim && value.decision === 'rejected' && value.outcome != null) {
-      return helpers.error('any.custom', {
-        message: 'outcome must be omitted when rejecting an attendance claim',
-      });
-    }
-    if (
-      isAttendanceClaim &&
-      value.decision === 'rejected' &&
-      value.financial_action !== 'no_change'
-    ) {
-      return helpers.error('any.custom', {
-        message: 'financial_action must be no_change when rejecting an attendance claim',
-      });
-    }
-    if (isBehaviorDispute && ['upheld', 'partial'].includes(value.decision) && value.penalize_role === 'none') {
-      return helpers.error('any.custom', {
-        message: 'penalize_role must be coach or student for upheld/partial behavior disputes',
-      });
-    }
-    if (isBehaviorDispute && value.decision === 'rejected' && value.penalize_role !== 'none') {
-      return helpers.error('any.custom', {
-        message: 'penalize_role must be none when rejecting a behavior dispute',
-      });
-    }
+
     return value;
   });
 
@@ -398,8 +410,22 @@ export const getCoachesQuerySchema = Joi.object({
   lat: Joi.number().min(-90).max(90).optional(),
   lng: Joi.number().min(-180).max(180).optional(),
   radius: Joi.number().positive().max(500).default(10), // miles, cap 500
-  skill_level: Joi.string().valid('beginner', 'intermediate', 'advanced', 'professional').optional(),
+  /** Filter coaches whose `skill_rating` is >= this (excludes coaches with null skill_rating). */
+  min_skill_rating: coachSkillRatingValueSchema.optional(),
+  /** Filter coaches whose `skill_rating` is <= this (excludes coaches with null skill_rating). */
+  max_skill_rating: coachSkillRatingValueSchema.optional(),
   min_rating: Joi.number().min(0).max(5).optional(),
+}).custom((value, helpers) => {
+  if (
+    value.min_skill_rating != null
+    && value.max_skill_rating != null
+    && value.min_skill_rating > value.max_skill_rating
+  ) {
+    return helpers.error('any.custom', {
+      message: 'min_skill_rating cannot be greater than max_skill_rating',
+    });
+  }
+  return value;
 });
 
 export const getLessonsQuerySchema = Joi.object({

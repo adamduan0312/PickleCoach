@@ -90,7 +90,8 @@ module.exports = {
           bio: `Experienced pickleball coach with ${5 + i} years of teaching. Specializing in ${i % 2 === 0 ? 'beginner' : 'advanced'} players.`,
           hourly_rate: 50 + (i * 5),
           experience_years: 3 + i,
-          skill_level: ['beginner', 'intermediate', 'advanced', 'pro'][i % 4],
+          skill_rating: [3.0, 3.5, 4.5, 5.5][i % 4],
+          rating_system: 'self',
           rating_average: 4.0 + (Math.random() * 1.0),
           rating_count: Math.floor(Math.random() * 50),
           location: city.name,
@@ -177,8 +178,7 @@ module.exports = {
           description: `Comprehensive pickleball lesson covering fundamentals and advanced techniques.`,
           price: 60 + (i * 5) + (j * 10),
           duration_minutes: 60,
-          skill_level: ['beginner', 'intermediate', 'advanced'][j % 3],
-          max_participants: 4,
+          max_students: 4,
           is_active: true,
         });
         lessons.push(lesson);

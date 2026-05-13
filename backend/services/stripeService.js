@@ -104,6 +104,7 @@ export const createRefund = async (
     amountCents = null,
     reason = 'requested_by_customer',
     idempotencyKey = null,
+    metadata = null,
   } = {}
 ) => {
   try {
@@ -115,6 +116,15 @@ export const createRefund = async (
 
     if (amountCents != null) {
       params.amount = Math.round(amountCents);
+    }
+
+    if (metadata && typeof metadata === 'object') {
+      const flat = {};
+      for (const [k, v] of Object.entries(metadata)) {
+        if (v == null) continue;
+        flat[String(k).slice(0, 40)] = String(v).slice(0, 500);
+      }
+      if (Object.keys(flat).length) params.metadata = flat;
     }
 
     const requestOptions = idempotencyKey ? { idempotencyKey } : {};
@@ -132,6 +142,34 @@ export const createRefund = async (
     logStripeApiError('createRefund', error, { chargeId });
     throw error;
   }
+};
+
+export const retrieveRefund = async (refundId) => {
+  try {
+    return await stripe.refunds.retrieve(refundId);
+  } catch (error) {
+    logStripeApiError('retrieveRefund', error, { refundId });
+    throw error;
+  }
+};
+
+/**
+ * Refunds for a charge (paginated; most charges have few refunds).
+ */
+export const listRefundsForCharge = async (chargeId, { limitPerPage = 100, maxPages = 5 } = {}) => {
+  const all = [];
+  let startingAfter = null;
+  for (let page = 0; page < maxPages; page += 1) {
+    const res = await stripe.refunds.list({
+      charge: chargeId,
+      limit: limitPerPage,
+      ...(startingAfter ? { starting_after: startingAfter } : {}),
+    });
+    all.push(...res.data);
+    if (!res.has_more || res.data.length === 0) break;
+    startingAfter = res.data[res.data.length - 1].id;
+  }
+  return all;
 };
 
 /**

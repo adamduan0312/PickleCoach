@@ -56,6 +56,52 @@ After Phase 1 is passing:
 
 So: **Phase 1** = test everything that doesn’t touch Stripe (auth, coaches, courts, lessons, admin, and booking *read/cancel/reschedule* if you have data). **Then** set up Stripe (and optionally SendGrid/Twilio). **Phase 2** = test **Create Booking**, Stripe Connect, webhook, and email/SMS flows. In practice, the full “student books a lesson” flow needs Stripe from the start.
 
+### Stripe — endpoints that need Stripe to test (reference)
+
+Use this when deciding **Phase 1** (no keys / DB-only) vs **Phase 2** (`STRIPE_SECRET_KEY`, test mode, often **`STRIPE_WEBHOOK_SECRET`** + Stripe CLI for webhooks, and **workers** running if money must actually move).
+
+**Legend**
+
+- **Sync Stripe** — This HTTP handler calls the Stripe API during the request (will fail or misbehave without `STRIPE_SECRET_KEY` and valid test objects when the code path runs).
+- **Queued refund / PI** — Handler mainly updates DB and/or enqueues `payment_actions`; **Stripe executes later** via `processPendingRefundPaymentActions` (included in your worker schedule). You still need **`STRIPE_SECRET_KEY`** for the queued step to succeed, and a real **`charge_id` / PaymentIntent** from test mode for money to move.
+- **Webhook** — Needs **`STRIPE_WEBHOOK_SECRET`** matching how events are delivered (e.g. Stripe CLI `stripe listen`).
+
+| Method | Path | Why Stripe is required for a real test | Typical phase |
+|--------|------|----------------------------------------|---------------|
+| `POST` | `/api/bookings` | Creates **PaymentIntent** (paid bookings). | **Phase 2** |
+| `PUT` | `/api/bookings/:id/accept` | **Captures** the PaymentIntent when the booking is pending and a payment row exists. | **Phase 2** (needs booking created with Stripe in MVP) |
+| `PUT` | `/api/bookings/:id/decline` | **Cancels** the PaymentIntent for pending bookings with a payment. | **Phase 2** |
+| `POST` | `/api/bookings/:id/cancel` | **Authorized/captured** flows may **cancel PI, refund charge, or read charge** — uses Stripe when there is a real `payment_intent_id` / `charge_id`. **Admin:** `POST /api/admin/bookings/:id/cancel` is the same handler. | **Phase 2** for paid-path cancel; **Phase 1** ok if you only have seed bookings **without** real Stripe IDs (e.g. `npm run seed:bookings-no-charge`). |
+| `POST` | `/api/bookings/:id/reschedule` | **Paid reschedule** branch creates a new **PaymentIntent** (after free reschedule limit). Free reschedule path is DB-only. | **Phase 2** for paid path |
+| `POST` | `/api/coaches/me/stripe-connect/onboard` | **Stripe Connect** AccountLink. | **Phase 2** |
+| `GET` | `/api/coaches/me/stripe-connect/status` | Reads **Connect account** from Stripe. | **Phase 2** |
+| `POST` | `/api/admin/bookings/:id/refund` | If `refund_amount` is **omitted**, calls **`charges.retrieve`** to size the refund; always creates a **`payment_actions`** row; Stripe refund runs in the **worker**. Needs payment with **`charge_id`**. | **Phase 2** |
+| `POST` | `/api/admin/bookings/:id/coach-no-show` | May enqueue **`booking_coach_no_show_refund`** on `payment_actions` when a captured charge is refundable (otherwise skips). **Worker** performs Stripe refund. | **Phase 2** for auto-refund happy path |
+| `PUT` | `/api/disputes/:id/resolve` | **`financial_action`** is **`no_change`** (or otherwise **not** `refund_student` / `refund_student_partial`). Updates dispute (+ booking status when applicable); **does not** enqueue `payment_actions` or call Stripe. | **Phase 1** |
+| `PUT` | `/api/disputes/:id/resolve` | **`financial_action`** is **`refund_student`** or **`refund_student_partial`** (partial requires **`refund_amount`**). Enqueues **`payment_actions`**; **worker** runs Stripe refund (handler still does not call Stripe synchronously). Needs capturable/refundable payment row as elsewhere. | **Phase 2** |
+| `POST` | `/api/webhooks/stripe` | Verifies **`Stripe-Signature`** with **`STRIPE_WEBHOOK_SECRET`**; processes events. | **Phase 2** |
+| `GET` | `/api/payment-methods` | Lists methods from **Stripe Customer** when `stripe_customer_id` is set. | **Phase 2** for live Stripe data (empty/minimal without customer setup) |
+| `POST` | `/api/payment-methods` | **Attaches** payment method to customer in Stripe. | **Phase 2** |
+| `PUT` | `/api/payment-methods/:id/default` | Updates **default** PM on Stripe Customer. | **Phase 2** |
+| `DELETE` | `/api/payment-methods/:id` | **Detaches** payment method in Stripe. | **Phase 2** |
+
+**Not Stripe endpoints (for this guide’s meaning): read-only payment rows**
+
+| Method | Path | Note |
+|--------|------|------|
+| `GET` | `/api/payments` | Reads DB only. |
+| `GET` | `/api/payments/:id` | Reads DB only. |
+
+**Register and Stripe**
+
+| Method | Path | Note |
+|--------|------|------|
+| `POST` | `/api/auth/register` | **Best-effort** Stripe Customer create; **registration still returns 201** if Stripe is unset or fails. Not treated as a Phase 2 gate for “can I register?” |
+
+**Workers (not HTTP, but required for refunds / queued actions)**
+
+Refund-related `payment_actions` (admin refund, dispute refund, some cancels, coach-no-show auto-refund) are processed by **`processPendingRefundPaymentActions`** — ensure your **worker / cron** that runs `paymentActionWorker` (or equivalent) is enabled when testing that money actually moves in Stripe Dashboard.
+
 ---
 
 ## 2. Postman setup
@@ -243,7 +289,7 @@ Use this as a living checklist. Check off each line as you verify it (happy path
 - [ ] Get User By ID — 200; 403 non-admin
 - [ ] Update User — 200; 403 non-admin
 - [ ] Delete User — 200; 403 non-admin
-- [ ] Resolve Dispute — 200; 403 non-admin; body always requires `decision` + `financial_action` (`refund_amount` required for `refund_student_partial`; `outcome` required only for attendance claims and forbidden otherwise)
+- [ ] Resolve Dispute — 200; 403 non-admin; body always requires `decision` + `financial_action` (`refund_amount` required for `refund_student_partial`). For **attendance** claims: `outcome` required; **`financial_action` must match `outcome`** (coach_no_show → refund path; student_no_show → no_change), including when `decision` is `rejected` (with contradicting `outcome` per claim type). `outcome` forbidden on behavior disputes.
 - [ ] Create Notification — 200/201; 403 non-admin
 - [ ] Get Coach Courts (Admin) / Delete Coach Court (Admin) / Delete Coach Availability (Admin) — 200; 403 non-admin
 - [ ] Adjust User Reliability — `PUT /api/admin/users/:id/reliability`; body requires `new_score`; optional `role` defaults to **`coach`**. Send **`"role": "student"`** to adjust student reliability (required for student-only users). Dual-role users: call twice to set coach and student scores. Target user must have the role you select.
@@ -290,6 +336,7 @@ These fit into testing as follows: **set them up after Phase 1** (see §1). Then
 
 ### Stripe
 
+- **Full endpoint list (which routes need keys / workers):** see **§1 — *Stripe — endpoints that need Stripe to test (reference)***.
 - **Setup:** `.env.development`: `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, Connect return/refresh URLs. Use Stripe **test** keys.
 - **In Postman:**
   - **Initiate Stripe Connect Onboarding** — expect 200 and a URL; open it in the browser and complete test onboarding.
@@ -329,7 +376,7 @@ Use `API_ENDPOINTS.md` for full request/response specs. Minimal examples for flo
 
 - **Register:** `{ "full_name", "email", "password", "role": "student" | "coach", "phone?", "timezone?" }`
 - **Login:** `{ "email", "password" }`
-- **Create Coach Profile:** `{ "headline?", "bio?", "hourly_rate?", "experience_years?", "skill_level?", "certifications?", "location?" }`
+- **Create Coach Profile:** `{ "headline?", "bio?", "hourly_rate?", "experience_years?", "skill_rating?" (2.0–6.0, 0.5 steps), "rating_system?" (default `"self"`), "certifications?", "location?" }`
 - **Create Court:** name, address, etc. (see API_ENDPOINTS).
 - **Create Availability:** `weekday` (0–6 or "monday"), optional `start_time`/`end_time` (e.g. "09:00", "17:00") or `start_datetime`/`end_datetime`.
 - **Create Lesson:** title, duration_minutes, price, coach_id, etc.
@@ -342,7 +389,7 @@ For “missing required” and “invalid data” tests, remove or corrupt one f
 
 ## 8. Summary
 
-1. **Phase 1:** Test most endpoints without Stripe/Twilio/SendGrid (§1). Then set up the three services. **Phase 2:** Test payment, Connect, webhook, and email/SMS flows.
+1. **Phase 1:** Test most endpoints without Stripe/Twilio/SendGrid (§1). Then set up the three services. **Phase 2:** Test payment, Connect, webhook, and email/SMS flows. Use **§1’s Stripe endpoint table** to see exactly which routes require Stripe for a real test.
 2. **Think in flows** (Admin, Coach, Student). Use the **flow folders** at the top of the collection (§3) and run each flow start-to-finish.
 3. **Use the checklist** in §4 and tick off as you go.
 4. **For each endpoint**, run the 5 cases: happy path, missing required, invalid data, no token, wrong role (§5).

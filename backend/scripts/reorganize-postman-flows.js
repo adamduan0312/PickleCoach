@@ -44,17 +44,60 @@ function getRequest(folderName, requestName) {
   return JSON.parse(JSON.stringify(found));
 }
 
+/**
+ * Each ORDER entry is a tuple:
+ *   [folderName, requestName]                                  → auto-numbered
+ *   [folderName, requestName, prefixOverride]                  → custom prefix (e.g. "10b")
+ *   [folderName, requestName, prefixOverride, displayName]     → custom prefix + rename
+ *
+ * Custom-prefix entries do NOT consume a sequential counter slot, so the
+ * surrounding items keep their natural numbering (e.g. "10", "10b", "11").
+ */
 function buildFlowFolder(name, description, order) {
   const items = [];
-  order.forEach(([folderName, requestName], index) => {
+  let counter = 0;
+  for (const entry of order) {
+    const [folderName, requestName, prefixOverride, displayName] = entry;
     const req = getRequest(folderName, requestName);
-    if (req) {
-      req.name = `${index + 1}. ${requestName}`;
-      items.push(req);
+    if (!req) continue;
+    let prefix;
+    if (prefixOverride) {
+      prefix = prefixOverride;
+    } else {
+      counter += 1;
+      prefix = String(counter);
     }
-  });
+    req.name = `${prefix}. ${displayName || requestName}`;
+    items.push(req);
+  }
   return { name, description, item: items };
 }
+
+/**
+ * Build the top-level "Reference (Not for Manual Run)" folder for ByFlow.
+ *
+ * Pulls the documentation-only Stripe webhook from the ByType source
+ * (folder: "Webhooks (Reference Only)" / request: "[DO NOT RUN] Stripe Webhook (POST /api/webhooks/stripe)")
+ * and preserves its full name (no "1. " prefix) so the [DO NOT RUN] label
+ * shows in the Postman sidebar.
+ */
+function buildReferenceFolder() {
+  const items = [];
+  for (const [sourceFolder, sourceName] of REFERENCE_ITEMS) {
+    const req = getRequest(sourceFolder, sourceName);
+    if (req) items.push(req); // keep original name (no renumbering)
+  }
+  return {
+    name: 'Reference (Not for Manual Run)',
+    description:
+      "Endpoints documented here for visibility, but **not** part of any Postman flow. They cannot be exercised meaningfully from Postman (e.g. signed webhooks). See each request's description for how to trigger them via the appropriate tooling (Stripe CLI, Dashboard resend, etc.).",
+    item: items,
+  };
+}
+
+const REFERENCE_ITEMS = [
+  ['Webhooks (Reference Only)', '[DO NOT RUN] Stripe Webhook (POST /api/webhooks/stripe)'],
+];
 
 // Order: [sourceFolderName, sourceRequestName]
 const ADMIN_ORDER = [
@@ -68,6 +111,7 @@ const ADMIN_ORDER = [
   ['Admin', 'Get All Users (Admin)'],
   ['Admin', 'Get User By ID (Admin)'],
   ['Admin', 'Update User (Admin)'],
+  ['Admin', 'Get User Reliability (Admin Full Breakdown)', '10b', 'Get User Reliability (Admin)'],
   ['Admin', 'Adjust User Reliability'],
   ['Notifications', 'Create Notification (Admin)'],
   ['Admin', 'Get My Notifications'],
@@ -95,13 +139,17 @@ const ADMIN_ORDER = [
   ['Admin', 'Get Bookings (Admin)'],
   ['Admin', 'Get Booking By ID (Admin)'],
   ['Admin', 'Cancel Booking (Admin)'],
+  ['Admin', 'Create Dispute (Admin)'],
   ['Admin', 'Mark Student No-Show (Admin)'],
   ['Admin', 'Mark Coach No-Show (Admin)'],
   ['Admin', 'Refund Booking (Admin)'],
   ['Disputes', 'Resolve Dispute (Admin)'],
   ['Payments', 'Get My Payments'],
   ['Payments', 'Get Payment By ID'],
-  ['Webhooks', 'Stripe Webhook'],
+  // Note: Stripe Webhook is intentionally excluded from the Admin flow.
+  // It lives in the top-level "Reference (Not for Manual Run)" folder
+  // (built by buildReferenceFolder below) and cannot be tested from Postman
+  // — use `stripe listen` or Dashboard "Resend" instead.
 ];
 
 const COACH_ORDER = [
@@ -109,6 +157,7 @@ const COACH_ORDER = [
   ['Authentication', 'Register'],
   ['Authentication', 'Login'],
   ['Authentication', 'Get Profile'],
+  ['Coaches', 'Get Coach Reliability (Me - Full Breakdown)', '4b', 'Get My Coach Reliability'],
   ['Authentication', 'Update Profile'],
   ['Authentication', 'Request Email Verification'],
   ['Authentication', 'Confirm Email Verification'],
@@ -172,6 +221,7 @@ const STUDENT_ORDER = [
   ['Authentication', 'Register'],
   ['Authentication', 'Login'],
   ['Authentication', 'Get Profile'],
+  ['Students', 'Get Student Reliability (Me - Full Breakdown)', '4b', 'Get My Student Reliability'],
   ['Authentication', 'Update Profile'],
   ['Authentication', 'Request Email Verification'],
   ['Authentication', 'Confirm Email Verification'],
@@ -181,6 +231,7 @@ const STUDENT_ORDER = [
   ['Authentication', 'Switch Role (Student ↔ Coach)'],
   ['Coaches', 'List Coaches (Search)'],
   ['Coaches', 'Get Coach By ID'],
+  ['Coaches', 'Get Coach Reliability (Score Only)', '13b', 'Get Coach Reliability (Student \u2014 detail)'],
   ['Coaches', 'Get Coach Courts'],
   ['Coaches', 'Get Coach Availability'],
   ['Courts', 'List/Search Courts'],
@@ -218,21 +269,25 @@ const STUDENT_ORDER = [
 
 const adminFolder = buildFlowFolder(
   '1 – Flow: Admin',
-  'All admin endpoints in user-flow order. Run in sequence: Health → Login (admin) → Profile → Dashboard → Users → Payments → Disputes → Notifications → Coach support → Auth extras → Webhook. See backend/POSTMAN_TESTING_GUIDE.md.',
+  'All admin endpoints in user-flow order. Run in sequence: Health → Login (admin) → Profile → Dashboard → Users → Payments → Disputes → Notifications → Coach support → Auth extras. See backend/POSTMAN_TESTING_GUIDE.md.\n\nNote: The Stripe webhook (`POST /api/webhooks/stripe`) is documentation-only and lives under the top-level **Reference (Not for Manual Run)** folder. It is intentionally excluded from this flow so the runner stays green end-to-end.',
   ADMIN_ORDER
 );
 
 const coachFolder = buildFlowFolder(
   '2 – Flow: Coach',
-  'All coach endpoints in user-flow order. Run in sequence: Health → Register/Login → Profile → Coach profile → Courts → Availability → Stripe Connect → Lessons → Bookings → Payments → Reviews → Messages → Disputes → Notifications → Auth extras. See backend/POSTMAN_TESTING_GUIDE.md.\n\nBooking MVP: student uses POST /bookings; coach uses PUT .../accept or PUT .../decline only for pending requests (coach on that booking only).',
+  'All coach endpoints in user-flow order. Run in sequence: Health → Register/Login → Profile → **GET /coaches/me/reliability** → Coach profile → Courts → Availability → Stripe Connect → Lessons → Bookings → Payments → Reviews → Messages → Disputes → Notifications → Auth extras. See backend/POSTMAN_TESTING_GUIDE.md.\n\nBooking MVP: student uses POST /bookings; coach uses PUT .../accept or PUT .../decline only for pending requests (coach on that booking only).',
   COACH_ORDER
 );
 
 const studentFolder = buildFlowFolder(
   '3 – Flow: Student',
-  'All student endpoints in user-flow order. Run in sequence: Health → Register/Login → Profile → Search coaches → Open coach (GET /coaches/:id) → Get coach courts (GET /coaches/:id/courts) → Check availability (GET /coaches/:id/availability) → Create Booking → Bookings → Payments → Reviews → Messages → Disputes → Notifications → Auth extras. See backend/POSTMAN_TESTING_GUIDE.md.\n\nBooking MVP: POST /bookings creates a pending request; the coach accepts or declines with PUT .../accept | PUT .../decline.',
+  'All student endpoints in user-flow order. Run in sequence: Health → Register/Login → Profile → **GET /students/me/reliability** → Search coaches (each result includes **reliability** score) → Open coach (GET /coaches/:id, includes **reliability**) → Optional GET /coaches/:id/reliability → Get coach courts → Check availability → Create Booking → Bookings → Payments → Reviews → Messages → Disputes → Notifications → Auth extras. See backend/POSTMAN_TESTING_GUIDE.md.\n\nBooking MVP: POST /bookings creates a pending request; the coach accepts or declines with PUT .../accept | PUT .../decline.',
   STUDENT_ORDER
 );
+
+function stripFlowPrefix(name) {
+  return name.replace(/^\d+[a-zA-Z]?\.\s+/, '');
+}
 
 function applySeededLoginExample(flowFolder, email, password) {
   const loginReq = flowFolder.item.find((it) => /\. Login$/.test(it.name));
@@ -252,9 +307,42 @@ function applySeededRegisterExample(flowFolder, payload) {
   };
 }
 
-applySeededLoginExample(adminFolder, 'admin@picklecoach.com', 'admin123');
+/**
+ * Override request.description for a single item inside a flow folder,
+ * matched by its display name (with or without the "N. " / "Nb. " prefix).
+ *
+ * Use for requests that are shared across multiple flows but need different
+ * per-flow descriptions (e.g. `Get Profile` reads different reliability fields
+ * depending on the caller's role).
+ */
+function applyDescriptionOverride(flowFolder, baseName, description) {
+  const item = flowFolder.item.find((it) => stripFlowPrefix(it.name) === baseName);
+  if (!item?.request) return;
+  item.request.description = description;
+}
+
+applySeededLoginExample(adminFolder, 'adamduan0312@gmail.com', '03122003');
 applySeededLoginExample(coachFolder, 'coach1@example.com', 'password123');
 applySeededLoginExample(studentFolder, 'student1@example.com', 'password123');
+
+// Per-flow `Get Profile` descriptions. The single source request in the
+// `Authentication` folder holds the general description; each flow tweaks it
+// to mention the role-specific reliability fields visible in the response.
+applyDescriptionOverride(
+  adminFolder,
+  'Get Profile',
+  "Roles: Student, Coach, Admin. Get current authenticated user's profile."
+);
+applyDescriptionOverride(
+  coachFolder,
+  'Get Profile',
+  "Roles: Student, Coach, Admin. Get current authenticated user's profile. Coaches may see `data.reliability`; users with both roles may also see `data.reliability_student`."
+);
+applyDescriptionOverride(
+  studentFolder,
+  'Get Profile',
+  "Roles: Student, Coach, Admin. Get current authenticated user's profile. Students may see `data.reliability_student` when a student reliability row exists; dual-role users may also see coach `data.reliability`."
+);
 applySeededRegisterExample(adminFolder, {
   full_name: 'Adam Duan',
   email: 'adamduan0312@gmail.com',
@@ -283,6 +371,8 @@ applySeededRegisterExample(studentFolder, {
   avatar_url: '',
 });
 
+const referenceFolder = buildReferenceFolder();
+
 const flowCollection = {
   ...collection,
   info: {
@@ -290,11 +380,23 @@ const flowCollection = {
     name: 'PickleCoach API (By Flow)',
     description: 'Endpoints grouped by user flow (Admin, Coach, Student). Run requests in order. See backend/POSTMAN_TESTING_GUIDE.md.',
   },
-  item: [adminFolder, coachFolder, studentFolder],
+  item: [adminFolder, coachFolder, studentFolder, referenceFolder],
 };
 
-fs.writeFileSync(byFlowPath, JSON.stringify(flowCollection, null, '\t'), 'utf8');
-console.log('Reorganized ByFlow collection from ByType: only 3 flow folders, all endpoints inside in order.');
+/**
+ * Match canonical formatting: escape all non-ASCII chars as \uXXXX. Postman
+ * itself reads either form transparently, but keeping the on-disk format
+ * consistent makes git diffs reflect only intentional changes.
+ */
+function escapeNonAscii(json) {
+  return json.replace(/[\u0080-\uffff]/g, (ch) =>
+    '\\u' + ch.charCodeAt(0).toString(16).padStart(4, '0')
+  );
+}
+
+fs.writeFileSync(byFlowPath, escapeNonAscii(JSON.stringify(flowCollection, null, '\t')) + '\n', 'utf8');
+console.log('Reorganized ByFlow collection from ByType: 3 flow folders + 1 reference folder.');
 console.log('Admin:', adminFolder.item.length, 'requests');
 console.log('Coach:', coachFolder.item.length, 'requests');
 console.log('Student:', studentFolder.item.length, 'requests');
+console.log('Reference (Not for Manual Run):', referenceFolder.item.length, 'requests');

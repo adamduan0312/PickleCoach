@@ -8,6 +8,7 @@ import * as chargePaidRescheduleWorker from './chargePaidRescheduleWorker.js';
 import * as retryFailedPaymentsWorker from './retryFailedPaymentsWorker.js';
 import * as stripeReconciliationWorker from './stripeReconciliationWorker.js';
 import * as pendingBookingExpiryWorker from './pendingBookingExpiryWorker.js';
+import * as paymentActionWorker from './paymentActionWorker.js';
 
 let workersRunning = false;
 
@@ -85,6 +86,24 @@ export const startWorkers = () => {
     }
   });
 
+  // Deferred dispute refunds (`payment_actions` → Stripe): every 2 minutes
+  cron.schedule('*/2 * * * *', async () => {
+    try {
+      await paymentActionWorker.runRefundPaymentActions();
+    } catch (error) {
+      logger.error('Error in refund payment action worker:', error);
+    }
+  });
+
+  // Stripe charge/payment parity + stale deferred-refund probes: hourly
+  cron.schedule('0 * * * *', async () => {
+    try {
+      await stripeReconciliationWorker.reconcileStripePayments();
+    } catch (error) {
+      logger.error('Error in Stripe reconciliation worker:', error);
+    }
+  });
+
   // V2 reliability uses rolling window + decay, so hard monthly resets are disabled.
 
   workersRunning = true;
@@ -95,7 +114,8 @@ export const startWorkers = () => {
   logger.info('   - Process paid reschedules: every 10 minutes');
   logger.info('   - Retry failed payments: every 10 minutes');
   logger.info('   - Pending booking expiry: every 15 minutes (PENDING_BOOKING_EXPIRY_HOURS, default 24)');
-  logger.info('   - Stripe reconciliation: hourly');
+  logger.info('   - Deferred dispute refunds (`payment_actions`): every 2 minutes');
+  logger.info('   - Stripe reconciliation + stale refund-action probe: hourly');
   logger.info('   - Recalculate reliability: daily at 2 AM');
   logger.info('   - Monthly coach reliability reset: disabled (V2 decay model)');
 };

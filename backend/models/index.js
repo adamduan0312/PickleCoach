@@ -17,6 +17,7 @@ const DisputeTypeModule = await import('./DisputeType.js');
 const DisputeResolutionActionModule = await import('./DisputeResolutionAction.js');
 const DisputeModule = await import('./Dispute.js');
 const PaymentModule = await import('./Payment.js');
+const PaymentActionModule = await import('./PaymentAction.js');
 const RescheduleHistoryModule = await import('./RescheduleHistory.js');
 const CancellationHistoryModule = await import('./CancellationHistory.js');
 const PayoutModule = await import('./Payout.js');
@@ -46,6 +47,7 @@ const DisputeType = DisputeTypeModule.default;
 const DisputeResolutionAction = DisputeResolutionActionModule.default;
 const Dispute = DisputeModule.default;
 const Payment = PaymentModule.default;
+const PaymentAction = PaymentActionModule.default;
 const RescheduleHistory = RescheduleHistoryModule.default;
 const CancellationHistory = CancellationHistoryModule.default;
 const Payout = PayoutModule.default;
@@ -117,6 +119,7 @@ Booking.hasMany(Payment, { foreignKey: 'booking_id', as: 'payments' });
 Booking.hasMany(RescheduleHistory, { foreignKey: 'booking_id', as: 'rescheduleHistory' });
 Booking.hasMany(CancellationHistory, { foreignKey: 'booking_id', as: 'cancellationHistory' });
 Booking.hasMany(Dispute, { foreignKey: 'booking_id', as: 'disputes' });
+Booking.hasMany(PaymentAction, { foreignKey: 'booking_id', as: 'paymentActions' });
 Booking.hasOne(Conversation, { foreignKey: 'booking_id', as: 'conversation' });
 Booking.hasMany(Review, { foreignKey: 'booking_id', as: 'reviews' });
 Booking.hasMany(StudentFeedback, { foreignKey: 'booking_id', as: 'feedback' });
@@ -132,6 +135,7 @@ Dispute.belongsTo(DisputeResolutionAction, { foreignKey: 'resolution_action_id',
 Dispute.belongsTo(User, { foreignKey: 'admin_id', as: 'admin' });
 Dispute.belongsTo(User, { foreignKey: 'escalated_to', as: 'escalatedTo' });
 Dispute.hasOne(Payment, { foreignKey: 'dispute_id', as: 'payment' });
+Dispute.hasMany(PaymentAction, { foreignKey: 'dispute_id', as: 'paymentActions' });
 
 // Payment associations
 Payment.belongsTo(Booking, { foreignKey: 'booking_id', as: 'booking' });
@@ -139,6 +143,12 @@ Payment.belongsTo(User, { foreignKey: 'coach_id', as: 'coach' });
 Payment.belongsTo(User, { foreignKey: 'student_id', as: 'student' });
 Payment.belongsTo(Dispute, { foreignKey: 'dispute_id', as: 'dispute' });
 Payment.hasMany(Payout, { foreignKey: 'payment_id', as: 'payouts' });
+Payment.hasMany(PaymentAction, { foreignKey: 'payment_id', as: 'paymentActions' });
+
+// Deferred Stripe execution log (booking state commits first; workers reconcile money movement)
+PaymentAction.belongsTo(Booking, { foreignKey: 'booking_id', as: 'booking' });
+PaymentAction.belongsTo(Payment, { foreignKey: 'payment_id', as: 'payment' });
+PaymentAction.belongsTo(Dispute, { foreignKey: 'dispute_id', as: 'dispute' });
 Payment.hasMany(RescheduleHistory, { foreignKey: 'transaction_id', as: 'rescheduleTransactions' });
 Payment.hasMany(CancellationHistory, { foreignKey: 'refund_payment_id', as: 'refundPayments' });
 
@@ -199,6 +209,7 @@ export {
   DisputeResolutionAction,
   Dispute,
   Payment,
+  PaymentAction,
   RescheduleHistory,
   CancellationHistory,
   Payout,

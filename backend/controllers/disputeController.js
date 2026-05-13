@@ -1,4 +1,13 @@
-import { Dispute, Booking, DisputeType, DisputeResolutionAction, User, Payment } from '../models/index.js';
+import {
+  Dispute,
+  Booking,
+  DisputeType,
+  DisputeResolutionAction,
+  User,
+  Payment,
+  PaymentAction,
+  sequelize,
+} from '../models/index.js';
 import { successResponse, errorResponse, paginatedResponse } from '../utils/response.js';
 import { getPagination, getPagingData } from '../utils/pagination.js';
 import { logAudit } from '../utils/audit.js';
@@ -6,6 +15,16 @@ import { Op } from 'sequelize';
 import { logger } from '../config/logger.js';
 import { updateUserReliability } from '../services/reliabilityService.js';
 import * as paymentService from '../services/paymentService.js';
+import {
+  validateAttendanceOutcomeTransition,
+  DISPUTE_RESOLVE_ATTENDANCE_SOURCE_STATUSES,
+} from '../utils/bookingAttendanceStatus.js';
+import {
+  getBehaviorResolutionDirectionWarning,
+  getAttendanceClaimReversalWarning,
+  getBehaviorClaimReversalWarning,
+} from '../utils/disputeResolutionWarnings.js';
+import { validateDisputeResolutionPayload } from '../utils/disputeResolutionAlignment.js';
 
 const MAX_LIST_ALL_DISPUTES = 10000;
 
@@ -251,36 +270,38 @@ export const resolveDispute = async (req, res) => {
     const typeCode = disputeType?.code;
     const isAttendanceClaim = typeCode === 'coach_no_show_claim' || typeCode === 'student_no_show_claim';
     const isBehaviorDispute = ['late_arrival', 'misconduct', 'lesson_not_completed'].includes(typeCode);
-    if (isAttendanceClaim && decision === 'rejected') {
-      if (outcome != null) {
-        return errorResponse(
-          res,
-          'outcome must be omitted when rejecting an attendance claim',
-          400,
-        );
-      }
-      if (financialAction !== 'no_change') {
-        return errorResponse(
-          res,
-          'financial_action must be no_change when rejecting an attendance claim',
-          400,
-        );
-      }
+
+    const alignment = validateDisputeResolutionPayload({
+      disputeTypeCode: typeCode,
+      decision,
+      outcome,
+      financialAction,
+      penalizeRole,
+      openedBy: dispute.opened_by,
+    });
+    if (!alignment.ok) {
+      return errorResponse(res, alignment.message, 400, null, { code: alignment.code });
     }
-    if (isBehaviorDispute && ['upheld', 'partial'].includes(decision) && penalizeRole === 'none') {
-      return errorResponse(
-        res,
-        'penalize_role must be coach or student for upheld/partial behavior disputes',
-        400,
-      );
-    }
-    if (isBehaviorDispute && decision === 'rejected' && penalizeRole !== 'none') {
-      return errorResponse(
-        res,
-        'penalize_role must be none when rejecting a behavior dispute',
-        400,
-      );
-    }
+
+    // Advisory for admin-opened behavior disputes (claimant direction not inferred).
+    const behaviorDirectionWarning = getBehaviorResolutionDirectionWarning({
+      disputeTypeCode: typeCode,
+      decision,
+      penalizeRole,
+      openedBy: dispute.opened_by,
+    });
+    const behaviorClaimReversalWarning = getBehaviorClaimReversalWarning({
+      disputeTypeCode: typeCode,
+      decision,
+      penalizeRole,
+      openedBy: dispute.opened_by,
+    });
+    const attendanceReversalWarning = getAttendanceClaimReversalWarning({
+      disputeTypeCode: typeCode,
+      decision,
+      outcome,
+      openedBy: dispute.opened_by,
+    });
 
     let resolutionAction;
     if (financialAction === 'refund_student') {
@@ -299,19 +320,42 @@ export const resolveDispute = async (req, res) => {
     }
 
     // Dispute resolution is the final authority for adjudication and refund intent.
-    // Attendance claims only set booking status when the claim is upheld/partial.
-    // Rejected attendance claims support a neutral path with no attendance outcome change.
+    // Attendance disputes always carry a factual `outcome`; booking status follows it.
     let resolvedBookingStatus = booking.status;
-    const shouldApplyAttendanceOutcome = isAttendanceClaim && decision !== 'rejected';
+    const shouldApplyAttendanceOutcome = isAttendanceClaim;
     if (isAttendanceClaim) {
       if (shouldApplyAttendanceOutcome) {
         resolvedBookingStatus = outcome === 'student_no_show' ? 'student_no_show' : 'coach_no_show';
       }
     }
 
+    if (shouldApplyAttendanceOutcome) {
+      const transition = validateAttendanceOutcomeTransition(
+        booking.status,
+        resolvedBookingStatus,
+        new Set(DISPUTE_RESOLVE_ATTENDANCE_SOURCE_STATUSES),
+      );
+      if (!transition.ok) {
+        logger.warn({
+          component: 'disputes',
+          event: 'resolve_attendance_transition_rejected',
+          disputeId: dispute.id,
+          bookingId: dispute.booking_id,
+          from_status: booking.status,
+          to_status: resolvedBookingStatus,
+          code: transition.code,
+        });
+        return errorResponse(res, transition.message, 400, null, { code: transition.code });
+      }
+    }
+
     const needsRefund = financialAction === 'refund_student' || financialAction === 'refund_student_partial';
 
-    /** Money back to student (Stripe) before persisting resolution when the financial path requires it. */
+    /**
+     * Refunds enqueue `payment_actions` + worker calls Stripe later (Stripe cannot share a DB txn).
+     * Guardrails still prevent mixed refund paths before we commit dispute resolution.
+     */
+    let queuedRefundAttrs = null;
     let refundSummary = null;
     if (needsRefund) {
       const refundState = await paymentService.getLatestBookingRefundState(dispute.booking_id);
@@ -336,69 +380,96 @@ export const resolveDispute = async (req, res) => {
 
       try {
         const refundDollars = financialAction === 'refund_student_partial' ? refund_amount : null;
-        const initiated = await paymentService.initiateBookingRefundForDisputeResolution({
+        queuedRefundAttrs = await paymentService.buildDisputeRefundPaymentActionAttrs({
           bookingId: dispute.booking_id,
           disputeId: dispute.id,
-          action: resolutionAction,
+          resolutionAction,
           refundAmountDollars: refundDollars,
         });
-        if (initiated) {
-          refundSummary = {
-            payment_id: initiated.payment.id,
-            refund_amount: paymentService.centsToDecimalString(initiated.refundCents),
-            refund_status: initiated.payment.refund_status || 'pending',
-            stripe_refund_id: initiated.refund?.id ?? null,
-          };
-          await logAudit(
-            req.user.id,
-            'dispute_resolution_refund_initiated',
-            'bookings',
-            dispute.booking_id,
-            null,
-            {
-              dispute_id: dispute.id,
-              resolution_action_id: resolutionAction.id,
-              resolution_action_code: resolutionAction.code,
-              decision,
-              explicit_outcome: outcome ?? null,
-              explicit_financial_action: financialAction,
-              payment_id: initiated.payment.id,
-              refund_cents: initiated.refundCents,
-            },
-            req,
-          );
-        }
-      } catch (refundErr) {
-        logger.error('Dispute resolution refund failed:', refundErr);
-        const msg = refundErr.message || 'Refund failed';
+      } catch (planErr) {
+        logger.error('Dispute resolution refund enqueue plan failed:', planErr);
+        const msg = planErr.message || 'Refund could not be enqueued';
         const clientError =
-          /required|not found|no Stripe charge|No refundable|must be at least|exceeds remaining balance/i.test(
-            msg,
-          );
+          /required|not found|no Stripe charge|No refundable|must be at least|exceeds remaining balance/i.test(msg);
         return errorResponse(res, msg, clientError ? 400 : 502);
       }
     }
 
     const beforeState = dispute.toJSON();
-    await dispute.update({
-      status: 'resolved',
-      resolution_action_id: resolutionAction.id,
-      decision,
-      penalize_role: isBehaviorDispute ? penalizeRole : 'none',
-      resolution_notes,
-      admin_id: req.user.id,
-      resolved_at: new Date(),
+    const bookingBeforeForAudit =
+      resolvedBookingStatus !== booking.status ? booking.toJSON() : null;
+
+    let createdPaymentAction = null;
+    await sequelize.transaction(async (transaction) => {
+      await dispute.update(
+        {
+          status: 'resolved',
+          resolution_action_id: resolutionAction.id,
+          decision,
+          penalize_role: isBehaviorDispute ? penalizeRole : 'none',
+          resolution_notes,
+          admin_id: req.user.id,
+          resolved_at: new Date(),
+        },
+        { transaction },
+      );
+
+      if (resolvedBookingStatus !== booking.status) {
+        await booking.update(
+          { status: resolvedBookingStatus, messaging_locked: true },
+          { transaction },
+        );
+      }
+
+      if (queuedRefundAttrs) {
+        createdPaymentAction = await PaymentAction.create(queuedRefundAttrs, { transaction });
+      }
     });
 
-    if (resolvedBookingStatus !== booking.status) {
-      const bookingBefore = booking.toJSON();
-      await booking.update({ status: resolvedBookingStatus, messaging_locked: true });
+    if (createdPaymentAction) {
+      const pa = createdPaymentAction;
+      refundSummary = {
+        queued: true,
+        payment_action_id: pa.id,
+        payment_id: pa.payment_id,
+        refund_amount:
+          pa.refund_cents != null ? paymentService.centsToDecimalString(pa.refund_cents) : null,
+        refund_status: 'pending_stripe_execution',
+        stripe_refund_id: null,
+      };
+      await logAudit(
+        req.user.id,
+        'dispute_resolution_refund_queued',
+        'bookings',
+        dispute.booking_id,
+        null,
+        {
+          dispute_id: dispute.id,
+          payment_action_id: pa.id,
+          resolution_action_code: resolutionAction.code,
+          decision,
+          explicit_outcome: outcome ?? null,
+          explicit_financial_action: financialAction,
+          refund_cents: pa.refund_cents,
+        },
+        req,
+      );
+    }
+
+    await dispute.reload({
+      include: [{ model: User, as: 'admin', attributes: ['id', 'full_name'] }],
+    });
+
+    if (bookingBeforeForAudit) {
+      await booking.reload({
+        attributes: ['id', 'status', 'coach_id', 'primary_student_id', 'messaging_locked'],
+      });
       await logAudit(
         req.user.id,
         'booking_status_set_from_dispute_resolution',
         'bookings',
         booking.id,
-        bookingBefore,
+        bookingBeforeForAudit,
         booking.toJSON(),
         req,
       );
@@ -445,13 +516,15 @@ export const resolveDispute = async (req, res) => {
       }
     }
 
-    await dispute.reload({
-      include: [{ model: User, as: 'admin', attributes: ['id', 'full_name'] }],
-    });
+    const resolutionWarnings = [];
+    if (behaviorDirectionWarning) resolutionWarnings.push(behaviorDirectionWarning);
+    if (behaviorClaimReversalWarning) resolutionWarnings.push(behaviorClaimReversalWarning);
+    if (attendanceReversalWarning) resolutionWarnings.push(attendanceReversalWarning);
 
     const payload = {
       dispute: formatDisputeResponse(dispute),
       ...(refundSummary && { refund: refundSummary }),
+      ...(resolutionWarnings.length > 0 && { warnings: resolutionWarnings }),
       resolution: {
         decision,
         financial_action: financialAction,

@@ -12,6 +12,7 @@ import {
   CoachCourtLocation,
   Dispute,
   DisputeResolutionAction,
+  PaymentAction,
 } from '../models/index.js';
 import { successResponse, errorResponse, paginatedResponse } from '../utils/response.js';
 import { getPagination, getPagingData } from '../utils/pagination.js';
@@ -25,6 +26,7 @@ import * as notificationService from '../services/notificationService.js';
 import { checkBookingAvailability } from '../services/bookingService.js';
 import { logger } from '../config/logger.js';
 import crypto from 'crypto';
+import { ADMIN_MARK_NO_SHOW_SOURCE_STATUSES } from '../utils/bookingAttendanceStatus.js';
 
 /** In dev, return clear error detail; if Stripe API key error, clarify it's server-side STRIPE_SECRET_KEY. */
 function getCreateBookingErrorDetail(error, isDev) {
@@ -445,8 +447,6 @@ const lessonHasEnded = (booking) => {
   return Date.now() >= lessonEndMs;
 };
 
-const ADMIN_ATTENDANCE_MUTABLE_STATUSES = ['confirmed', 'awaiting_verification', 'student_no_show', 'coach_no_show'];
-
 const isRefundFinalizedForAttendanceLock = (payment) => {
   if (!payment) return false;
   if (['refunded', 'partially_refunded'].includes(String(payment.payment_status || ''))) return true;
@@ -799,10 +799,11 @@ export const cancelBooking = async (req, res) => {
     let stripeRemainingCents = null;
     let paymentForAudit = null;
     let isLateCancel = false;
+    let queuedCancelRefundPaymentActionId = null;
 
     /**
-     * Lock booking row first (`SELECT ... FOR UPDATE`), re-check status, then Stripe refund/void, then persist.
-     * Prevents two concurrent cancels from both calling Stripe before either row shows `cancelled`.
+     * Lock booking row first (`SELECT ... FOR UPDATE`), re-check status, then enqueue refund / void PI, then persist.
+     * Prevents concurrent cancels; Stripe execution runs via `payment_actions` worker.
      */
     await sequelize.transaction(async (t) => {
       const booking = await Booking.findByPk(id, { transaction: t, lock: t.LOCK.UPDATE });
@@ -960,22 +961,22 @@ export const cancelBooking = async (req, res) => {
             payment.payment_status === 'partially_refunded' ||
             payment.payment_status === 'pending_capture')
         ) {
-          try {
-            await paymentService.processRefund(payment.id, {
-              refundCents,
-              reason: 'requested_by_customer',
-              idempotencyKey: `cancel-booking-${booking.id}-payment-${payment.id}`,
-              transaction: t,
-            });
-            refundPaymentId = payment.id;
-          } catch (refundErr) {
-            logger.error('Stripe refund failed during cancellation; booking not cancelled:', refundErr);
-            const e = new Error(
-              refundErr.message || 'Refund failed. Booking was not cancelled. Try again or contact support.',
-            );
-            e.statusCode = 502;
-            throw e;
-          }
+          const queued = await PaymentAction.create(
+            {
+              booking_id: booking.id,
+              payment_id: payment.id,
+              dispute_id: null,
+              action_type: 'booking_cancel_refund',
+              status: 'pending',
+              refund_cents: refundCents,
+              idempotency_key: null,
+              stripe_idempotency_key: null,
+              attempts: 0,
+            },
+            { transaction: t },
+          );
+          queuedCancelRefundPaymentActionId = queued.id;
+          refundPaymentId = payment.id;
         }
       }
       if (!payment?.charge_id && payment?.payment_intent_id && payment.payment_status === 'pending') {
@@ -1035,6 +1036,7 @@ export const cancelBooking = async (req, res) => {
         cancellation_history_id: cancellationHistory.id,
         payment_id: paymentForAudit?.id ?? null,
         payment_voided_id: voidedPaymentId,
+        queued_refund_payment_action_id: queuedCancelRefundPaymentActionId,
         total_charge_cents: totalChargeCents,
         refund_cents: refundCents,
         retained_penalty_cents: penaltyCents,
@@ -1065,10 +1067,24 @@ export const cancelBooking = async (req, res) => {
 
     const sanitizedCancellation = sanitizeResponse(cancellationHistory);
 
-    return successResponse(res, {
-      booking: afterBooking.toJSON(),
-      cancellation: sanitizedCancellation,
-    }, 'Booking cancelled successfully');
+    return successResponse(
+      res,
+      {
+        booking: afterBooking.toJSON(),
+        cancellation: sanitizedCancellation,
+        ...(queuedCancelRefundPaymentActionId
+          ? {
+              refund: {
+                queued: true,
+                payment_action_id: queuedCancelRefundPaymentActionId,
+                refund_amount: paymentService.centsToDecimalString(refundCents),
+                refund_status: 'pending_stripe_execution',
+              },
+            }
+          : {}),
+      },
+      'Booking cancelled successfully',
+    );
   } catch (error) {
     if (error.statusCode === 404) {
       return errorResponse(res, error.message, 404);
@@ -1119,10 +1135,10 @@ export const adminMarkCoachNoShow = async (req, res) => {
         { code: 'booking_already_coach_no_show', booking_status: booking.status },
       );
     }
-    if (!ADMIN_ATTENDANCE_MUTABLE_STATUSES.includes(booking.status)) {
+    if (!ADMIN_MARK_NO_SHOW_SOURCE_STATUSES.includes(booking.status)) {
       return errorResponse(
         res,
-        `Cannot mark coach_no_show from status ${booking.status}. Allowed: ${ADMIN_ATTENDANCE_MUTABLE_STATUSES.join(', ')}.`,
+        `Cannot mark coach_no_show from status ${booking.status}. Allowed: ${ADMIN_MARK_NO_SHOW_SOURCE_STATUSES.join(', ')}.`,
         400,
         null,
         { booking_status: booking.status },
@@ -1156,7 +1172,86 @@ export const adminMarkCoachNoShow = async (req, res) => {
 
     const beforeState = booking.toJSON();
     const fromStatus = booking.status;
-    await booking.update({ status: 'coach_no_show', messaging_locked: true });
+
+    const scheduledCoachRefund = {
+      enqueue: false,
+      paymentId: null,
+      refundCents: 0,
+      skipReason: 'no_refundable_payment',
+    };
+    const refundStatePreTxn = await paymentService.getLatestBookingRefundState(booking.id);
+    const payPre = refundStatePreTxn.payment;
+    if (!payPre) {
+      scheduledCoachRefund.skipReason = 'payment_missing';
+    } else if (!payPre.charge_id) {
+      scheduledCoachRefund.paymentId = payPre.id;
+      scheduledCoachRefund.skipReason = 'charge_missing';
+    } else {
+      scheduledCoachRefund.paymentId = payPre.id;
+      const remainingCents = Math.max(
+        0,
+        refundStatePreTxn.chargeAmountCents - refundStatePreTxn.refundedSoFarCents,
+      );
+      if (payPre.refund_status === 'pending') {
+        scheduledCoachRefund.skipReason = 'refund_pending';
+      } else if (refundStatePreTxn.hasQueuedPaymentActionRefund) {
+        scheduledCoachRefund.skipReason = 'refund_pipeline_pending';
+      } else if (remainingCents < 1) {
+        scheduledCoachRefund.skipReason = 'already_fully_refunded';
+      } else if (!['captured', 'partially_refunded'].includes(payPre.payment_status)) {
+        scheduledCoachRefund.skipReason = `payment_status_not_refundable:${payPre.payment_status}`;
+      } else {
+        scheduledCoachRefund.enqueue = true;
+        scheduledCoachRefund.refundCents = remainingCents;
+        scheduledCoachRefund.skipReason = null;
+      }
+    }
+
+    let coachRefundPaymentActionId = null;
+
+    await sequelize.transaction(async (tx) => {
+      const locked = await Booking.findByPk(id, { transaction: tx, lock: tx.LOCK.UPDATE });
+      if (!locked) {
+        const err = new Error('Booking not found');
+        err.statusCode = 404;
+        throw err;
+      }
+      if (locked.status !== fromStatus) {
+        const err = new Error('Booking changed while processing. Refresh and retry.');
+        err.statusCode = 409;
+        err.code = 'booking_concurrent_update';
+        err.booking_status = locked.status;
+        throw err;
+      }
+      if (!ADMIN_MARK_NO_SHOW_SOURCE_STATUSES.includes(locked.status)) {
+        const err = new Error(
+          `Cannot mark coach_no_show from status ${locked.status}. Allowed: ${ADMIN_MARK_NO_SHOW_SOURCE_STATUSES.join(', ')}.`,
+        );
+        err.statusCode = 400;
+        err.booking_status = locked.status;
+        throw err;
+      }
+
+      await locked.update({ status: 'coach_no_show', messaging_locked: true }, { transaction: tx });
+
+      if (scheduledCoachRefund.enqueue && scheduledCoachRefund.paymentId) {
+        const created = await PaymentAction.create(
+          {
+            booking_id: locked.id,
+            payment_id: scheduledCoachRefund.paymentId,
+            dispute_id: null,
+            action_type: 'booking_coach_no_show_refund',
+            status: 'pending',
+            refund_cents: scheduledCoachRefund.refundCents,
+            idempotency_key: null,
+            stripe_idempotency_key: null,
+            attempts: 0,
+          },
+          { transaction: tx },
+        );
+        coachRefundPaymentActionId = created.id;
+      }
+    });
 
     const updated = await Booking.findByPk(id, {
       include: [
@@ -1198,52 +1293,15 @@ export const adminMarkCoachNoShow = async (req, res) => {
       }
     }
 
-    // Status-driven money path: coach_no_show should refund the student when refundable payment exists.
     const autoRefund = {
-      status: 'skipped',
-      reason: 'no_refundable_payment',
-      payment_id: null,
-      refund_cents: 0,
+      status: coachRefundPaymentActionId ? 'queued' : 'skipped',
+      reason: coachRefundPaymentActionId ? null : scheduledCoachRefund.skipReason,
+      payment_id: scheduledCoachRefund.paymentId,
+      refund_cents: coachRefundPaymentActionId ? scheduledCoachRefund.refundCents : 0,
       stripe_refund_id: null,
+      payment_action_id: coachRefundPaymentActionId,
+      refund_status: coachRefundPaymentActionId ? 'pending_stripe_execution' : null,
     };
-    const hasOpenDispute = await Dispute.count({
-      where: {
-        booking_id: booking.id,
-        status: { [Op.in]: ['open', 'under_review'] },
-      },
-    });
-    if (hasOpenDispute > 0) {
-      autoRefund.reason = 'open_dispute_present';
-    } else {
-      const refundState = await paymentService.getLatestBookingRefundState(booking.id);
-      const payment = refundState.payment;
-      if (!payment) {
-        autoRefund.reason = 'payment_missing';
-      } else if (!payment.charge_id) {
-        autoRefund.payment_id = payment.id;
-        autoRefund.reason = 'charge_missing';
-      } else {
-        autoRefund.payment_id = payment.id;
-        const remainingCents = Math.max(0, refundState.chargeAmountCents - refundState.refundedSoFarCents);
-        if (payment.refund_status === 'pending') {
-          autoRefund.reason = 'refund_pending';
-        } else if (remainingCents < 1) {
-          autoRefund.reason = 'already_fully_refunded';
-        } else if (!['captured', 'partially_refunded'].includes(payment.payment_status)) {
-          autoRefund.reason = `payment_status_not_refundable:${payment.payment_status}`;
-        } else {
-          const result = await paymentService.processRefund(payment.id, {
-            refundCents: remainingCents,
-            reason: 'requested_by_customer',
-            idempotencyKey: `admin-coach-no-show-${booking.id}-payment-${payment.id}-full-${remainingCents}`,
-          });
-          autoRefund.status = 'initiated';
-          autoRefund.reason = null;
-          autoRefund.refund_cents = remainingCents;
-          autoRefund.stripe_refund_id = result?.refund?.id || null;
-        }
-      }
-    }
 
     const responseData = {
       ...updated.toJSON(),
@@ -1264,7 +1322,14 @@ export const adminMarkCoachNoShow = async (req, res) => {
       return errorResponse(res, error.message, 400, null, extra);
     }
     if (error.statusCode === 409) {
-      return errorResponse(res, error.message, 409);
+      const extra =
+        error.code && typeof error.code === 'string'
+          ? {
+              code: error.code,
+              ...(error.booking_status && { booking_status: error.booking_status }),
+            }
+          : null;
+      return errorResponse(res, error.message, 409, null, extra);
     }
     if (error.statusCode === 500) {
       return errorResponse(res, error.message, 500);
@@ -1274,9 +1339,6 @@ export const adminMarkCoachNoShow = async (req, res) => {
     }
     if (error.message?.includes('Refund (') && error.message?.includes('exceeds remaining Stripe balance')) {
       return errorResponse(res, error.message, 400);
-    }
-    if (error.message?.includes('Stripe')) {
-      return errorResponse(res, error.message, 502);
     }
     logger.error('Admin mark coach no-show error:', error);
     return errorResponse(res, 'Failed to mark coach_no_show', 500);
@@ -1303,10 +1365,10 @@ export const adminMarkBookingNoShow = async (req, res) => {
         { code: 'booking_already_student_no_show', booking_status: booking.status },
       );
     }
-    if (!ADMIN_ATTENDANCE_MUTABLE_STATUSES.includes(booking.status)) {
+    if (!ADMIN_MARK_NO_SHOW_SOURCE_STATUSES.includes(booking.status)) {
       return errorResponse(
         res,
-        `Cannot mark student_no_show from status ${booking.status}. Allowed: ${ADMIN_ATTENDANCE_MUTABLE_STATUSES.join(', ')}.`,
+        `Cannot mark student_no_show from status ${booking.status}. Allowed: ${ADMIN_MARK_NO_SHOW_SOURCE_STATUSES.join(', ')}.`,
         400,
         null,
         { booking_status: booking.status },
@@ -1508,39 +1570,48 @@ export const adminRefundBooking = async (req, res) => {
       }
     }
 
-    const initiated = await paymentService.processRefund(payment.id, {
-      refundCents,
-      reason: reason || 'requested_by_customer',
-      idempotencyKey: `admin-booking-refund-${booking.id}-${payment.id}-${refundCents}`,
+    const pa = await PaymentAction.create({
+      booking_id: booking.id,
+      payment_id: payment.id,
+      dispute_id: null,
+      action_type: 'booking_admin_refund',
+      status: 'pending',
+      refund_cents: refundCents,
+      idempotency_key: null,
+      stripe_idempotency_key: null,
+      attempts: 0,
     });
 
     await logAudit(
       req.user.id,
-      'admin_booking_refund_initiated',
+      'admin_booking_refund_queued',
       'bookings',
       booking.id,
       null,
       {
         payment_id: payment.id,
+        payment_action_id: pa.id,
         refund_cents: refundCents,
         reason: reason || 'requested_by_customer',
         reason_notes: reason_notes || null,
-        refund_status: initiated?.payment?.refund_status || 'pending',
+        refund_status: 'pending_stripe_execution',
       },
-      req
+      req,
     );
 
     return successResponse(
       res,
       {
+        queued: true,
         booking_id: booking.id,
         payment_id: payment.id,
+        payment_action_id: pa.id,
         refund_amount: paymentService.centsToDecimalString(refundCents),
-        refund_status: initiated?.payment?.refund_status || 'pending',
-        stripe_refund_id: initiated?.refund?.id || null,
+        refund_status: 'pending_stripe_execution',
+        stripe_refund_id: null,
         reason: reason || 'requested_by_customer',
       },
-      'Booking refund initiated by admin'
+      'Booking refund queued; Stripe executes via worker',
     );
   } catch (error) {
     logger.error('Admin refund booking error:', error);

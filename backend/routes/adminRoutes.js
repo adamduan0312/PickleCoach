@@ -12,6 +12,7 @@ import {
   noShowBookingSchema,
   adminCoachNoShowBookingSchema,
   adminAdjustReliabilitySchema,
+  adminGetUserReliabilityQuerySchema,
   getBookingsQuerySchema,
   createDisputeSchema,
 } from '../config/validation.js';
@@ -27,7 +28,13 @@ router.put(
   validateRequest(adminAdjustReliabilitySchema),
   adminController.adjustUserReliability,
 );
-router.get('/users/:id/reliability', authenticate, authorize('admin'), reliabilityController.getCoachReliabilityForAdmin);
+router.get(
+  '/users/:id/reliability',
+  authenticate,
+  authorize('admin'),
+  validateQuery(adminGetUserReliabilityQuerySchema),
+  reliabilityController.getUserReliabilityForAdmin,
+);
 
 // Audit logs
 router.get('/audit-logs', authenticate, authorize('admin'), validateQuery(getAuditLogsQuerySchema), adminController.getAuditLogs);

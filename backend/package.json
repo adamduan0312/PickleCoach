@@ -4,6 +4,7 @@
   "type": "module",
   "main": "server.js",
   "scripts": {
+    "test": "node --test tests/reliability-scoring.test.mjs tests/bookingAttendanceStatus.test.mjs tests/dispute-resolution-warnings.test.mjs tests/dispute-resolution-alignment.test.mjs tests/validator-joi-message.test.mjs",
     "dev": "nodemon server.js",
     "start": "node server.js",
     "db:reset:test": "node scripts/reset-and-seed-for-tests.mjs",
@@ -13,6 +14,7 @@
     "seed:confirmed-ended-booking": "node scripts/seed-confirmed-ended-booking.js",
     "seed:confirmed-ended-bookings": "node scripts/seed-confirmed-ended-booking.js --count=5",
     "seed:more-disputes": "node scripts/seed-more-disputes.js",
+    "seed:test-flows": "node scripts/seed-test-flows.js",
     "seed:first-admin": "node scripts/create-first-admin.js",
     "seed:all:dev": "npm run seed:test-booking && npm run seed:bookings-no-charge && npm run seed:bookings-statuses && npm run seed:more-disputes",
     "postman:collection-by-type": "node scripts/create-by-type-collection.js",

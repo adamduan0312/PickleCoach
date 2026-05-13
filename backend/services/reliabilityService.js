@@ -10,31 +10,15 @@ import {
   sequelize,
 } from '../models/index.js';
 import { Op } from 'sequelize';
+import {
+  getReliabilityConfig,
+  RELIABILITY_WINDOW_DAYS,
+  RELIABILITY_DECAY_LAMBDA,
+  calculateCoachReliabilityScore,
+  calculateStudentReliabilityScore,
+} from './reliabilityScoring.js';
 
-const parseEnvInt = (key, defaultValue) => {
-  const raw = process.env[key];
-  if (raw == null || raw === '') return defaultValue;
-  const n = Number.parseInt(String(raw), 10);
-  return Number.isFinite(n) && n > 0 ? n : defaultValue;
-};
-
-const parseEnvFloat = (key, defaultValue) => {
-  const raw = process.env[key];
-  if (raw == null || raw === '') return defaultValue;
-  const n = Number.parseFloat(String(raw));
-  return Number.isFinite(n) && n > 0 ? n : defaultValue;
-};
-
-/** Tunable via env without deploy (defaults match Reliability V2 spec). */
-const RELIABILITY_WINDOW_DAYS = parseEnvInt('RELIABILITY_WINDOW_DAYS', 90);
-const RELIABILITY_DECAY_LAMBDA = parseEnvFloat('RELIABILITY_DECAY_LAMBDA', 0.03);
-const RELIABILITY_SMOOTHING_K = parseEnvFloat('RELIABILITY_SMOOTHING_K', 5);
-
-export const getReliabilityConfig = () => ({
-  windowDays: RELIABILITY_WINDOW_DAYS,
-  decayLambda: RELIABILITY_DECAY_LAMBDA,
-  smoothingK: RELIABILITY_SMOOTHING_K,
-});
+export { getReliabilityConfig };
 
 const daysBetween = (a, b) => Math.max(0, (a.getTime() - b.getTime()) / (1000 * 60 * 60 * 24));
 const getWindowStart = (now = new Date()) =>
@@ -57,127 +41,12 @@ const splitRecencyWeight = (eventDate, now = new Date(), windowStart = getWindow
   if (d >= windowStart) return { recent: 1, decayed: 0 };
   return { recent: 0, decayed: getDecayWeight(d, now) };
 };
-const metricTotalWithDecay = (metrics, key) =>
-  (Number(metrics?.[key]) || 0) + (Number(metrics?._decayed?.[key]) || 0);
-/**
- * Denominator aligns with numerators: booking baseline = recent booking count + sum(decay weights for older bookings).
- * Same scheduled_at anchor as booking-based metrics; event metrics use their own timestamps with the same split.
- */
-const reliabilityDenominator = (metrics) =>
-  Math.max(
-    1,
-    (Number(metrics?._booking_baseline) || Number(metrics?.total_bookings) || 0) + RELIABILITY_SMOOTHING_K,
-  );
-
 const hasReliabilitySignal = (m) =>
   (Number(m?.total_bookings) || 0) > 0 || (Number(m?._booking_baseline) || 0) > 0;
 
 /** Sustained behavior claims only: upheld/partial decisions count; rejected does not. */
 const sustainedBehaviorDecisionLiteral = () =>
   sequelize.literal(`disputes.decision IN ('upheld', 'partial')`);
-
-const DISPUTE_PENALTY_WEIGHTS = {
-  late_arrival: 5,
-  lesson_not_completed: 10,
-  // Keep coach_no_show aligned with no_show severity so incident impact is consistent
-  // whether represented by booking status or a resolved coach_no_show dispute.
-  coach_no_show: 35,
-  misconduct: 25,
-};
-
-/**
- * Calculate reliability score for COACHES
- * Only penalizes events where affects_reliability = true
- * Penalizes: coach cancellations, reschedules, late arrivals, no-shows
- */
-const calculateCoachReliabilityScore = (metrics) => {
-  const total_bookings = Number(metrics.total_bookings) || 0;
-  if (total_bookings === 0 && (Number(metrics._booking_baseline) || 0) === 0) return 100.00;
-
-  let score = 100.00;
-  const denom = reliabilityDenominator(metrics);
-  const penalized_reschedules = metricTotalWithDecay(metrics, 'reschedules');
-  const late_cancels = metricTotalWithDecay(metrics, 'late_cancels');
-  const late_arrival_disputes = metricTotalWithDecay(metrics, 'late_arrival_disputes');
-  const no_shows = metricTotalWithDecay(metrics, 'no_shows');
-  const coach_no_show_disputes = metricTotalWithDecay(metrics, 'coach_no_show_disputes');
-  const misconduct_disputes = metricTotalWithDecay(metrics, 'misconduct_disputes');
-  const lesson_not_completed_disputes = metricTotalWithDecay(metrics, 'lesson_not_completed_disputes');
-  const coach_cancels_non_late = metricTotalWithDecay(metrics, 'coach_cancels');
-
-  // Deduct points for negative behaviors specific to coaches
-  // V2: rolling window + exponential decay + smoothing denominator.
-  const penalizedReschedulePenalty = (penalized_reschedules / denom) * 5;
-  const lateCancelPenalty = (late_cancels / denom) * 20;
-  const lateArrivalPenalty = (late_arrival_disputes / denom) * 5;
-  const noShowPenalty = (no_shows / denom) * 35;
-  const coachCancelNonLatePenalty = (coach_cancels_non_late / denom) * 10;
-  const coachNoShowDisputePenalty =
-    (coach_no_show_disputes / denom) * DISPUTE_PENALTY_WEIGHTS.coach_no_show;
-  const misconductDisputePenalty =
-    (misconduct_disputes / denom) * DISPUTE_PENALTY_WEIGHTS.misconduct;
-  const lessonNotCompletedDisputePenalty =
-    (lesson_not_completed_disputes / denom) * DISPUTE_PENALTY_WEIGHTS.lesson_not_completed;
-
-  score -= penalizedReschedulePenalty;
-  score -= lateCancelPenalty;
-  score -= lateArrivalPenalty;
-  score -= noShowPenalty;
-  score -= coachCancelNonLatePenalty;
-  score -= coachNoShowDisputePenalty;
-  score -= misconductDisputePenalty;
-  score -= lessonNotCompletedDisputePenalty;
-
-  // Ensure score is between 0 and 100
-  return Math.max(0, Math.min(100, score));
-};
-
-/**
- * Calculate reliability score for STUDENTS
- * Only penalizes events where affects_reliability = true
- * Penalizes: student reschedules, late cancellations, late arrivals, no-shows, student cancellations
- */
-const calculateStudentReliabilityScore = (metrics) => {
-  const total_bookings = Number(metrics.total_bookings) || 0;
-  if (total_bookings === 0 && (Number(metrics._booking_baseline) || 0) === 0) return 100.00;
-
-  let score = 100.00;
-  const denom = reliabilityDenominator(metrics);
-  const reschedules = metricTotalWithDecay(metrics, 'reschedules');
-  const late_cancels = metricTotalWithDecay(metrics, 'late_cancels');
-  const late_arrival_disputes = metricTotalWithDecay(metrics, 'late_arrival_disputes');
-  const no_shows = metricTotalWithDecay(metrics, 'no_shows');
-  const student_cancels = metricTotalWithDecay(metrics, 'student_cancels');
-  const student_no_show_disputes = metricTotalWithDecay(metrics, 'student_no_show_disputes');
-  const misconduct_disputes = metricTotalWithDecay(metrics, 'misconduct_disputes');
-  const lesson_not_completed_disputes = metricTotalWithDecay(metrics, 'lesson_not_completed_disputes');
-
-  // Penalize behaviors that students control
-  // V2: rolling window + exponential decay + smoothing denominator.
-  const reschedulePenalty = (reschedules / denom) * 8;
-  const lateCancelPenalty = (late_cancels / denom) * 15;
-  const lateArrivalPenalty = (late_arrival_disputes / denom) * 5;
-  const noShowPenalty = (no_shows / denom) * 12;
-  const studentCancelPenalty = (student_cancels / denom) * 12;
-  const studentNoShowDisputePenalty =
-    (student_no_show_disputes / denom) * DISPUTE_PENALTY_WEIGHTS.coach_no_show;
-  const misconductDisputePenalty =
-    (misconduct_disputes / denom) * DISPUTE_PENALTY_WEIGHTS.misconduct;
-  const lessonNotCompletedDisputePenalty =
-    (lesson_not_completed_disputes / denom) * DISPUTE_PENALTY_WEIGHTS.lesson_not_completed;
-
-  score -= reschedulePenalty;
-  score -= lateCancelPenalty;
-  score -= lateArrivalPenalty;
-  score -= noShowPenalty;
-  score -= studentCancelPenalty;
-  score -= studentNoShowDisputePenalty;
-  score -= misconductDisputePenalty;
-  score -= lessonNotCompletedDisputePenalty;
-
-  // Ensure score is between 0 and 100
-  return Math.max(0, Math.min(100, score));
-};
 
 /**
  * Calculate coach-specific reliability metrics
@@ -208,10 +77,9 @@ const calculateCoachMetrics = async (userId) => {
       reschedules: 0,
       paid_reschedules: 0,
       late_cancels: 0,
-      late_arrival_disputes: 0,
-      coach_no_show_disputes: 0,
-      misconduct_disputes: 0,
-      lesson_not_completed_disputes: 0,
+      late_arrival_penalties: 0,
+      misconduct_penalties: 0,
+      lesson_not_completed_penalties: 0,
       no_shows: 0,
       coach_cancels: 0,
     };
@@ -270,8 +138,8 @@ const calculateCoachMetrics = async (userId) => {
     attributes: ['id'],
     where: { code: 'late_arrival', affects_reliability_score: true },
   });
-  let late_arrival_disputes = 0;
-  let decayed_late_arrival_disputes = 0;
+  let late_arrival_penalties = 0;
+  let decayed_late_arrival_penalties = 0;
   if (lateArrivalDisputeType && coachBookingIds.length) {
     const rows = await Dispute.findAll({
       where: {
@@ -293,8 +161,8 @@ const calculateCoachMetrics = async (userId) => {
     }
     for (const at of latestByBooking.values()) {
       const split = splitRecencyWeight(at, now, windowStart);
-      late_arrival_disputes += split.recent;
-      decayed_late_arrival_disputes += split.decayed;
+      late_arrival_penalties += split.recent;
+      decayed_late_arrival_penalties += split.decayed;
     }
   }
 
@@ -305,25 +173,12 @@ const calculateCoachMetrics = async (userId) => {
       affects_reliability_score: true,
     },
   });
-  const coachNoShowClaimType = await DisputeType.findOne({
-    attributes: ['id'],
-    where: {
-      code: 'coach_no_show_claim',
-      affects_reliability_score: true,
-    },
-  });
   const behaviorDisputeTypeIds = Object.fromEntries(
     behaviorDisputeTypes.map((t) => [t.code, t.id]),
   );
-  /**
-   * When `skipIfBookingCoachNoShow`: do not count a resolved coach no-show **claim** dispute if the booking is
-   * already `coach_no_show` — the booking outcome is counted under `no_shows` (admin endpoint / status).
-   * Avoids double-penalizing the same incident via dispute + booking-status paths.
-   *
-   * Include admin-opened disputes so support-created disputes are reflected in reliability.
-   */
-  const countResolvedBehaviorDisputes = async (disputeTypeIds, options = {}) => {
-    const { skipIfBookingCoachNoShow = false } = options;
+
+  /** Sustained behavior disputes (`penalize_role` targeting this party); dedupe = latest per booking. */
+  const countResolvedBehaviorPenalties = async (disputeTypeIds) => {
     const ids = (Array.isArray(disputeTypeIds) ? disputeTypeIds : [disputeTypeIds]).filter(Boolean);
     if (!ids.length) return { recent: 0, decayed: 0 };
     const rows = await Dispute.findAll({
@@ -337,17 +192,9 @@ const calculateCoachMetrics = async (userId) => {
         ],
       },
       attributes: ['booking_id', 'resolved_at', 'opened_at'],
-      ...(skipIfBookingCoachNoShow
-        ? {
-            include: [{ model: Booking, as: 'booking', attributes: ['status'], required: true }],
-          }
-        : {}),
     });
     const latestByBooking = new Map();
     for (const row of rows) {
-      if (skipIfBookingCoachNoShow && row.booking?.status === 'coach_no_show') {
-        continue;
-      }
       const prev = latestByBooking.get(row.booking_id);
       const at = new Date(row.resolved_at || row.opened_at || now);
       if (!prev || at > prev) latestByBooking.set(row.booking_id, at);
@@ -361,42 +208,10 @@ const calculateCoachMetrics = async (userId) => {
     }
     return { recent, decayed };
   };
-  const countResolvedCoachNoShowClaimDisputes = async () => {
-    if (!coachNoShowClaimType?.id) return { recent: 0, decayed: 0 };
-    const rows = await Dispute.findAll({
-      where: {
-        [Op.and]: [
-          { booking_id: { [Op.in]: coachBookingIds } },
-          { dispute_type_id: coachNoShowClaimType.id },
-          { opened_by: { [Op.in]: ['student', 'admin'] } },
-          { status: 'resolved' },
-          sustainedBehaviorDecisionLiteral(),
-        ],
-      },
-      attributes: ['booking_id', 'resolved_at', 'opened_at'],
-      include: [{ model: Booking, as: 'booking', attributes: ['status'], required: true }],
-    });
-    const latestByBooking = new Map();
-    for (const row of rows) {
-      if (row.booking?.status === 'coach_no_show') continue;
-      const prev = latestByBooking.get(row.booking_id);
-      const at = new Date(row.resolved_at || row.opened_at || now);
-      if (!prev || at > prev) latestByBooking.set(row.booking_id, at);
-    }
-    let recent = 0;
-    let decayed = 0;
-    for (const at of latestByBooking.values()) {
-      const split = splitRecencyWeight(at, now, windowStart);
-      recent += split.recent;
-      decayed += split.decayed;
-    }
-    return { recent, decayed };
-  };
-  const coachNoShowDisputes = await countResolvedCoachNoShowClaimDisputes();
-  const misconductDisputes = await countResolvedBehaviorDisputes(
+  const misconductPenaltiesAgg = await countResolvedBehaviorPenalties(
     behaviorDisputeTypeIds.misconduct,
   );
-  const lessonNotCompletedDisputes = await countResolvedBehaviorDisputes(
+  const lessonNotCompletedPenaltiesAgg = await countResolvedBehaviorPenalties(
     behaviorDisputeTypeIds.lesson_not_completed,
   );
 
@@ -431,10 +246,9 @@ const calculateCoachMetrics = async (userId) => {
     _decayed: {
       reschedules: decayed_penalized_reschedules,
       late_cancels: decayed_late_cancels,
-      late_arrival_disputes: decayed_late_arrival_disputes,
-      coach_no_show_disputes: coachNoShowDisputes.decayed,
-      misconduct_disputes: misconductDisputes.decayed,
-      lesson_not_completed_disputes: lessonNotCompletedDisputes.decayed,
+      late_arrival_penalties: decayed_late_arrival_penalties,
+      misconduct_penalties: misconductPenaltiesAgg.decayed,
+      lesson_not_completed_penalties: lessonNotCompletedPenaltiesAgg.decayed,
       no_shows: decayed_no_shows,
       coach_cancels: decayed_coach_cancels_non_late,
     },
@@ -442,10 +256,9 @@ const calculateCoachMetrics = async (userId) => {
     reschedules: penalized_reschedules,
     paid_reschedules: paidReschedules,
     late_cancels,
-    late_arrival_disputes,
-    coach_no_show_disputes: coachNoShowDisputes.recent,
-    misconduct_disputes: misconductDisputes.recent,
-    lesson_not_completed_disputes: lessonNotCompletedDisputes.recent,
+    late_arrival_penalties,
+    misconduct_penalties: misconductPenaltiesAgg.recent,
+    lesson_not_completed_penalties: lessonNotCompletedPenaltiesAgg.recent,
     no_shows,
     // Persist under existing schema key; semantic meaning is non-late only.
     coach_cancels: coach_cancels_non_late,
@@ -480,10 +293,9 @@ const calculateStudentMetrics = async (userId) => {
       _decayed: {},
       reschedules: 0,
       late_cancels: 0,
-      late_arrival_disputes: 0,
-      student_no_show_disputes: 0,
-      misconduct_disputes: 0,
-      lesson_not_completed_disputes: 0,
+      late_arrival_penalties: 0,
+      misconduct_penalties: 0,
+      lesson_not_completed_penalties: 0,
       no_shows: 0,
       student_cancels: 0,
     };
@@ -542,8 +354,8 @@ const calculateStudentMetrics = async (userId) => {
     attributes: ['id'],
     where: { code: 'late_arrival', affects_reliability_score: true },
   });
-  let late_arrival_disputes = 0;
-  let decayed_late_arrival_disputes = 0;
+  let late_arrival_penalties = 0;
+  let decayed_late_arrival_penalties = 0;
   if (lateArrivalDisputeType && studentBookingIds.length) {
     const rows = await Dispute.findAll({
       where: {
@@ -565,8 +377,8 @@ const calculateStudentMetrics = async (userId) => {
     }
     for (const at of latestByBooking.values()) {
       const split = splitRecencyWeight(at, now, windowStart);
-      late_arrival_disputes += split.recent;
-      decayed_late_arrival_disputes += split.decayed;
+      late_arrival_penalties += split.recent;
+      decayed_late_arrival_penalties += split.decayed;
     }
   }
 
@@ -577,24 +389,11 @@ const calculateStudentMetrics = async (userId) => {
       affects_reliability_score: true,
     },
   });
-  const studentNoShowClaimType = await DisputeType.findOne({
-    attributes: ['id'],
-    where: {
-      code: 'student_no_show_claim',
-      affects_reliability_score: true,
-    },
-  });
   const behaviorDisputeTypeIds = Object.fromEntries(
     behaviorDisputeTypes.map((t) => [t.code, t.id]),
   );
-  /**
-   * When `skipIfBookingStudentNoShow`: do not count a resolved student no-show **claim** dispute
-   * if the booking is already `student_no_show` — explicit student no-show is counted under `no_shows`.
-   *
-   * Include admin-opened disputes so support-created disputes are reflected in reliability.
-   */
-  const countResolvedBehaviorDisputes = async (disputeTypeIds, options = {}) => {
-    const { skipIfBookingStudentNoShow = false } = options;
+
+  const countResolvedBehaviorPenalties = async (disputeTypeIds) => {
     const ids = (Array.isArray(disputeTypeIds) ? disputeTypeIds : [disputeTypeIds]).filter(Boolean);
     if (!ids.length) return { recent: 0, decayed: 0 };
     const rows = await Dispute.findAll({
@@ -608,17 +407,9 @@ const calculateStudentMetrics = async (userId) => {
         ],
       },
       attributes: ['booking_id', 'resolved_at', 'opened_at'],
-      ...(skipIfBookingStudentNoShow
-        ? {
-            include: [{ model: Booking, as: 'booking', attributes: ['status'], required: true }],
-          }
-        : {}),
     });
     const latestByBooking = new Map();
     for (const row of rows) {
-      if (skipIfBookingStudentNoShow && row.booking?.status === 'student_no_show') {
-        continue;
-      }
       const prev = latestByBooking.get(row.booking_id);
       const at = new Date(row.resolved_at || row.opened_at || now);
       if (!prev || at > prev) latestByBooking.set(row.booking_id, at);
@@ -632,42 +423,10 @@ const calculateStudentMetrics = async (userId) => {
     }
     return { recent, decayed };
   };
-  const countResolvedStudentNoShowClaimDisputes = async () => {
-    if (!studentNoShowClaimType?.id) return { recent: 0, decayed: 0 };
-    const rows = await Dispute.findAll({
-      where: {
-        [Op.and]: [
-          { booking_id: { [Op.in]: studentBookingIds } },
-          { dispute_type_id: studentNoShowClaimType.id },
-          { opened_by: { [Op.in]: ['coach', 'admin'] } },
-          { status: 'resolved' },
-          sustainedBehaviorDecisionLiteral(),
-        ],
-      },
-      attributes: ['booking_id', 'resolved_at', 'opened_at'],
-      include: [{ model: Booking, as: 'booking', attributes: ['status'], required: true }],
-    });
-    const latestByBooking = new Map();
-    for (const row of rows) {
-      if (row.booking?.status === 'student_no_show') continue;
-      const prev = latestByBooking.get(row.booking_id);
-      const at = new Date(row.resolved_at || row.opened_at || now);
-      if (!prev || at > prev) latestByBooking.set(row.booking_id, at);
-    }
-    let recent = 0;
-    let decayed = 0;
-    for (const at of latestByBooking.values()) {
-      const split = splitRecencyWeight(at, now, windowStart);
-      recent += split.recent;
-      decayed += split.decayed;
-    }
-    return { recent, decayed };
-  };
-  const studentNoShowDisputes = await countResolvedStudentNoShowClaimDisputes();
-  const misconductDisputes = await countResolvedBehaviorDisputes(
+  const misconductPenaltiesAgg = await countResolvedBehaviorPenalties(
     behaviorDisputeTypeIds.misconduct,
   );
-  const lessonNotCompletedDisputes = await countResolvedBehaviorDisputes(
+  const lessonNotCompletedPenaltiesAgg = await countResolvedBehaviorPenalties(
     behaviorDisputeTypeIds.lesson_not_completed,
   );
 
@@ -693,19 +452,17 @@ const calculateStudentMetrics = async (userId) => {
     _decayed: {
       reschedules: decayed_reschedules,
       late_cancels: decayed_late_cancels,
-      late_arrival_disputes: decayed_late_arrival_disputes,
-      student_no_show_disputes: studentNoShowDisputes.decayed,
-      misconduct_disputes: misconductDisputes.decayed,
-      lesson_not_completed_disputes: lessonNotCompletedDisputes.decayed,
+      late_arrival_penalties: decayed_late_arrival_penalties,
+      misconduct_penalties: misconductPenaltiesAgg.decayed,
+      lesson_not_completed_penalties: lessonNotCompletedPenaltiesAgg.decayed,
       no_shows: decayed_no_shows,
       student_cancels: decayed_student_cancels,
     },
     reschedules,
     late_cancels,
-    late_arrival_disputes,
-    student_no_show_disputes: studentNoShowDisputes.recent,
-    misconduct_disputes: misconductDisputes.recent,
-    lesson_not_completed_disputes: lessonNotCompletedDisputes.recent,
+    late_arrival_penalties,
+    misconduct_penalties: misconductPenaltiesAgg.recent,
+    lesson_not_completed_penalties: lessonNotCompletedPenaltiesAgg.recent,
     no_shows,
     student_cancels,
   };
@@ -746,11 +503,9 @@ export const updateUserReliability = async (userId, role) => {
     reschedules: 0,
     paid_reschedules: 0,
     late_cancels: 0,
-    late_arrival_disputes: 0,
-    coach_no_show_disputes: 0,
-    student_no_show_disputes: 0,
-    misconduct_disputes: 0,
-    lesson_not_completed_disputes: 0,
+    late_arrival_penalties: 0,
+    misconduct_penalties: 0,
+    lesson_not_completed_penalties: 0,
     no_shows: 0,
     coach_cancels: 0,
     student_cancels: 0,
@@ -780,11 +535,9 @@ export const updateUserReliability = async (userId, role) => {
       reschedules: metrics.reschedules,
       paid_reschedules: metrics.paid_reschedules || 0,
       late_cancels: metrics.late_cancels,
-      late_arrival_disputes: metrics.late_arrival_disputes,
-      coach_no_show_disputes: metrics.coach_no_show_disputes || 0,
-      student_no_show_disputes: metrics.student_no_show_disputes || 0,
-      misconduct_disputes: metrics.misconduct_disputes || 0,
-      lesson_not_completed_disputes: metrics.lesson_not_completed_disputes || 0,
+      late_arrival_penalties: metrics.late_arrival_penalties,
+      misconduct_penalties: metrics.misconduct_penalties || 0,
+      lesson_not_completed_penalties: metrics.lesson_not_completed_penalties || 0,
       no_shows: metrics.no_shows,
       coach_cancels: metrics.coach_cancels || 0,
       reliability_score: score,
@@ -797,11 +550,9 @@ export const updateUserReliability = async (userId, role) => {
       reschedules: metrics.reschedules,
       paid_reschedules: metrics.paid_reschedules || 0,
       late_cancels: metrics.late_cancels,
-      late_arrival_disputes: metrics.late_arrival_disputes,
-      coach_no_show_disputes: metrics.coach_no_show_disputes || 0,
-      student_no_show_disputes: metrics.student_no_show_disputes || 0,
-      misconduct_disputes: metrics.misconduct_disputes || 0,
-      lesson_not_completed_disputes: metrics.lesson_not_completed_disputes || 0,
+      late_arrival_penalties: metrics.late_arrival_penalties,
+      misconduct_penalties: metrics.misconduct_penalties || 0,
+      lesson_not_completed_penalties: metrics.lesson_not_completed_penalties || 0,
       no_shows: metrics.no_shows,
       coach_cancels: metrics.coach_cancels || 0,
       reliability_score: score,

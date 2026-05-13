@@ -72,7 +72,7 @@ rating INT CHECK (rating BETWEEN 1 AND 5)
 All indexes from SQL schema are present in models:
 
 - ✅ `users`: role, is_active
-- ✅ `coach_profiles`: composite index (skill_level, location, rating_average)
+- ✅ `coach_profiles`: composite index (skill_rating, location, rating_average)
 - ✅ `coach_availabilities`: coach_id, weekday, start_date, end_date
 - ✅ `lessons`: (coach_id, is_active), price
 - ✅ `bookings`: All indexes including composite ones

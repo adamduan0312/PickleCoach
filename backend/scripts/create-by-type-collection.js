@@ -35,6 +35,7 @@ function pathToFolder(pathSegments) {
   if (first === 'health') return 'Health Check';
   if (first === 'auth') return 'Authentication';
   if (first === 'coaches') return 'Coaches';
+  if (first === 'students') return 'Students';
   if (first === 'courts') return 'Courts';
   if (first === 'lessons') return 'Lessons';
   if (first === 'bookings') return 'Bookings';
@@ -45,7 +46,7 @@ function pathToFolder(pathSegments) {
   if (first === 'disputes') return 'Disputes';
   if (first === 'notifications') return 'Notifications';
   if (first === 'admin' || first === 'users') return 'Admin';
-  if (first === 'webhooks') return 'Webhooks';
+  if (first === 'webhooks') return 'Webhooks (Reference Only)';
   return 'Other';
 }
 
@@ -53,6 +54,7 @@ const FOLDER_ORDER = [
   'Health Check',
   'Authentication',
   'Coaches',
+  'Students',
   'Courts',
   'Lessons',
   'Bookings',
@@ -63,9 +65,18 @@ const FOLDER_ORDER = [
   'Disputes',
   'Notifications',
   'Admin',
-  'Webhooks',
+  'Webhooks (Reference Only)',
   'Other',
 ];
+
+const FOLDER_DESCRIPTIONS = {
+  Authentication:
+    'Auth endpoints. Register/Login = no auth; Profile/Switch Role/Delete = authenticated.',
+  Bookings:
+    'MVP: POST /bookings (student) → POST .../accept and POST .../decline (assigned coach only). Below: list/detail and extended routes (complete, student-no-show, cancel, reschedule). Use the explicit student-no-show route.',
+  'Webhooks (Reference Only)':
+    'Reference-only folder. Stripe (and other signed webhooks) cannot be tested from Postman with a hand-crafted body because the server verifies `Stripe-Signature` against the raw request bytes using `STRIPE_WEBHOOK_SECRET`. Use `stripe listen` or the Stripe Dashboard to trigger events.',
+};
 
 const seen = new Map(); // key = method + path -> request item
 const byFolder = new Map(); // folderName -> [request items]
@@ -81,7 +92,7 @@ for (const folder of collection.item) {
     if (seen.has(key)) continue;
     seen.set(key, true);
     const typeFolder = pathToFolder(pathSegments);
-    const name = item.name.replace(/^\d+\.\s+/, ''); // strip "1. ", "2. " prefix
+    const name = item.name.replace(/^\d+[a-zA-Z]?\.\s+/, ''); // strip "1. ", "10b. ", etc.
     const clone = JSON.parse(JSON.stringify(item));
     clone.name = name;
     if (!byFolder.has(typeFolder)) byFolder.set(typeFolder, []);
@@ -95,7 +106,7 @@ for (const folderName of FOLDER_ORDER) {
   if (!items || items.length === 0) continue;
   typeFolders.push({
     name: folderName,
-    description: folderName === 'Authentication' ? 'Auth endpoints. Register/Login = no auth; Profile/Switch Role/Delete = authenticated.' : undefined,
+    description: FOLDER_DESCRIPTIONS[folderName],
     item: items,
   });
 }
@@ -110,6 +121,12 @@ const typeCollection = {
   item: typeFolders,
 };
 
-fs.writeFileSync(typePath, JSON.stringify(typeCollection, null, '\t'), 'utf8');
+function escapeNonAscii(json) {
+  return json.replace(/[\u0080-\uffff]/g, (ch) =>
+    '\\u' + ch.charCodeAt(0).toString(16).padStart(4, '0')
+  );
+}
+
+fs.writeFileSync(typePath, escapeNonAscii(JSON.stringify(typeCollection, null, '\t')) + '\n', 'utf8');
 console.log('Written:', typePath);
 console.log('Folders:', typeFolders.map(f => `${f.name} (${f.item.length})`).join(', '));
