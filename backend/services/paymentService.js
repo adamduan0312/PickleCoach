@@ -7,108 +7,50 @@ import {
   UserRole,
   CoachProfile,
   CancellationHistory,
+  Dispute,
   sequelize,
 } from '../models/index.js';
 import { Op } from 'sequelize';
 import * as stripeService from './stripeService.js';
 import { logger } from '../config/logger.js';
 import { createAuditLog } from '../utils/audit.js';
+import { PAID_RESCHEDULE_FEE_USD, MIN_CHARGE_USD } from './paymentConstants.js';
+import {
+  dollarsToCents,
+  centsToDecimalString,
+  parseTotalChargeCentsFromBooking,
+  computeCancellationSplitCents,
+  applyStripeRefundCap,
+  calculatePaymentAmounts,
+  MIN_LESSON_PRICE_USD,
+  normalizeStripeCurrencyCents,
+  remainingRefundableOnChargeCents,
+  computeEscrowCoachTransferCents,
+  splitNetRetainedCoachPlatformCents,
+  centsNearEqual,
+} from './paymentEngine.js';
+import {
+  classifyStripeChargeRefundMirrorUpdate,
+  shouldSkipProcessRefundForPendingDuplicate,
+  buildProcessRefundFallbackIdempotencyKey,
+  buildPaymentActionRefundIdempotencyKey,
+  hydrateFullRemainingActionTypeSet,
+  fixedCentsRefundActionTypeSet,
+} from './paymentStripeContract.js';
+import { applyBookingStatusTransition, BookingTransitionVia } from './bookingStateMachine.js';
 
-const PLATFORM_FEE_PERCENT = 8.00;
-const COACH_COMMISSION_PERCENT = 92.00; // Coach receives 92% of lesson price
-const PAID_RESCHEDULE_FEE = parseFloat(process.env.PAID_RESCHEDULE_FEE || '3.00'); // Default $3
-
-/**
- * Integer cents from decimal dollars string/number.
- * Uses Math.round(n * 100) so float edge cases (e.g. 12.34 * 100) land on whole cents before Stripe.
- */
-export const dollarsToCents = (value) => {
-  const n = Number.parseFloat(String(value ?? '0'), 10);
-  if (!Number.isFinite(n)) return 0;
-  return Math.round(n * 100);
+/** Re-export canonical math for controllers/services that imported from `paymentService`. */
+export {
+  dollarsToCents,
+  centsToDecimalString,
+  parseTotalChargeCentsFromBooking,
+  computeCancellationSplitCents,
+  applyStripeRefundCap,
+  calculatePaymentAmounts,
+  MIN_LESSON_PRICE_USD,
 };
 
-/** DECIMAL(12,2) / API-safe string from integer cents (avoids float artifacts). */
-export const centsToDecimalString = (cents) => {
-  const c = Math.max(0, Math.round(cents));
-  const whole = Math.floor(c / 100);
-  const frac = c % 100;
-  return `${whole}.${String(frac).padStart(2, '0')}`;
-};
-
-/**
- * Policy total for cancellations: always `payment.total_charge_to_student` when a payment row exists;
- * otherwise `booking.price` (never charged / no payment row).
- */
-export const parseTotalChargeCentsFromBooking = (payment, booking) => {
-  if (payment) {
-    const fromPayment = dollarsToCents(payment.total_charge_to_student);
-    if (fromPayment > 0) return fromPayment;
-  }
-  if (booking) {
-    return dollarsToCents(booking.price);
-  }
-  return 0;
-};
-
-/**
- * Split cancellation into refund vs penalty in whole cents; invariant refundCents + penaltyCents === totalChargeCents.
- */
-export const computeCancellationSplitCents = ({ totalChargeCents, isLateCancel, cancelledBy }) => {
-  const t = Math.round(totalChargeCents);
-  if (t < 1) {
-    return { refundCents: 0, penaltyCents: 0, penaltyReason: null };
-  }
-
-  if (isLateCancel && cancelledBy === 'student') {
-    const refundCents = Math.floor(t / 2);
-    const penaltyCents = t - refundCents;
-    return { refundCents, penaltyCents, penaltyReason: 'Late cancellation' };
-  }
-
-  if (cancelledBy === 'coach') {
-    return { refundCents: t, penaltyCents: 0, penaltyReason: 'Coach cancellation' };
-  }
-
-  return { refundCents: t, penaltyCents: 0, penaltyReason: null };
-};
-
-/**
- * Cap policy refund by Stripe remaining balance; keeps refundCents + penaltyCents === totalChargeCents.
- */
-export const applyStripeRefundCap = ({ policyRefundCents, totalChargeCents, remainingCents }) => {
-  const t = Math.round(totalChargeCents);
-  const r = Math.max(0, Math.round(remainingCents));
-  const policy = Math.min(Math.max(0, Math.round(policyRefundCents)), t);
-  const refundCents = Math.min(policy, r);
-  const penaltyCents = t - refundCents;
-  return { refundCents, penaltyCents, capped: refundCents < policy };
-};
-
-/**
- * Calculate payment amounts based on lesson price
- * Platform fee = 8%, Coach receives 92% (platform absorbs Stripe fees in MVP)
- */
-export const calculatePaymentAmounts = (lessonPrice) => {
-  const platformFeeAmount = (lessonPrice * PLATFORM_FEE_PERCENT) / 100;
-  const totalCharge = parseFloat(lessonPrice) + parseFloat(platformFeeAmount);
-  // Coach receives 92% of lesson price (platform absorbs Stripe fees)
-  const coachPayoutExpected = (lessonPrice * COACH_COMMISSION_PERCENT) / 100;
-
-  return {
-    lesson_price: lessonPrice,
-    platform_fee_percent: PLATFORM_FEE_PERCENT,
-    platform_fee_amount: platformFeeAmount,
-    total_charge_to_student: totalCharge,
-    coach_payout_expected: coachPayoutExpected,
-  };
-};
-
-// Stripe minimum charge (USD): $0.50. All bookings require payment; lessons below this are rejected.
-const MIN_CHARGE_USD = 0.5;
-
-/** Minimum lesson price (USD) so that total charge to student (price + platform fee) meets MIN_CHARGE_USD. Use for lesson create/update validation. */
-export const MIN_LESSON_PRICE_USD = MIN_CHARGE_USD / (1 + PLATFORM_FEE_PERCENT / 100);
+const PAID_RESCHEDULE_FEE = PAID_RESCHEDULE_FEE_USD;
 
 /**
  * Create payment and PaymentIntent for a booking.
@@ -268,9 +210,10 @@ export const handlePaymentCapture = async (paymentIntentId, chargeId) => {
       escrow_status: 'held',
     });
     if (payment.booking && payment.booking.status === 'pending') {
-      await payment.booking.update({
-        messaging_locked: false,
-        status: 'confirmed',
+      await applyBookingStatusTransition(payment.booking, {
+        toStatus: 'confirmed',
+        via: BookingTransitionVia.PAYMENT_CAPTURE_WEBHOOK,
+        patch: { messaging_locked: false },
       });
     }
     await createAuditLog({
@@ -465,10 +408,13 @@ export const cancelPaymentOnCoachDecline = async (paymentId) => {
       paymentIntentId: payment.payment_intent_id,
     });
   }
-  await payment.booking.update({
-    status: 'cancelled',
-    cancelled_by: 'coach',
-    cancelled_at: new Date(),
+  await applyBookingStatusTransition(payment.booking, {
+    toStatus: 'cancelled',
+    via: BookingTransitionVia.COACH_DECLINE,
+    patch: {
+      cancelled_by: 'coach',
+      cancelled_at: new Date(),
+    },
   });
   await createAuditLog({
     user_id: payment.coach_id,
@@ -528,15 +474,16 @@ export const expirePendingBookingNoCoachResponse = async (bookingId) => {
       }
     }
 
-    await booking.update(
-      {
-        status: 'cancelled',
+    await applyBookingStatusTransition(booking, {
+      toStatus: 'cancelled',
+      via: BookingTransitionVia.SYSTEM_EXPIRE_PENDING,
+      patch: {
         cancelled_by: 'system',
         cancelled_at: new Date(),
         messaging_locked: true,
       },
-      { transaction }
-    );
+      options: { transaction },
+    });
 
     await CancellationHistory.create(
       {
@@ -600,10 +547,12 @@ export const releaseEscrow = async (paymentId, coachStripeAccountId = null) => {
 
   const totalChargeCents = dollarsToCents(payment.total_charge_to_student);
   const refundedCents = dollarsToCents(payment.refunded_amount);
-  const netRetainedCents = Math.max(0, totalChargeCents - refundedCents);
   const originalCoachPayoutCents = dollarsToCents(payment.coach_payout_expected);
-  const coachShare = totalChargeCents > 0 ? originalCoachPayoutCents / totalChargeCents : 0;
-  const payoutCents = Math.round(netRetainedCents * coachShare);
+  const { payoutCents, netRetainedCents, coachShareRatio } = computeEscrowCoachTransferCents({
+    totalChargeCents,
+    refundedCents,
+    coachPayoutExpectedCents: originalCoachPayoutCents,
+  });
   const payoutAmountDollars = centsToDecimalString(payoutCents);
 
   // Create payout record
@@ -706,7 +655,7 @@ export const releaseEscrow = async (paymentId, coachStripeAccountId = null) => {
         total_charge_to_student: payment.total_charge_to_student,
         refunded_amount: payment.refunded_amount,
         net_retained_amount: centsToDecimalString(netRetainedCents),
-        coach_share_ratio: coachShare,
+        coach_share_ratio: coachShareRatio,
       },
       transfer_id: payment.transfer_id ?? null,
       stripe_connect_used: Boolean(coachStripeAccountId),
@@ -822,30 +771,25 @@ export const finalizeTransferFromStripe = async (transfer) => {
  * Single place so API-initiated refunds and webhooks stay consistent.
  */
 export const applyRefundStateFromStripeCharge = async (payment, charge, { stripeRefundId = null, transaction } = {}) => {
-  const chargeAmountCents = charge.amount ?? 0;
-  const refundedCents = charge.amount_refunded ?? 0;
-  const refundedDollars = centsToDecimalString(refundedCents);
-  const totalChargeCents = dollarsToCents(payment.total_charge_to_student);
-  const originalPlatformFeeCents = dollarsToCents(payment.platform_fee_amount);
-  const originalCoachPayoutCents = dollarsToCents(payment.coach_payout_expected);
-  const coachShare = totalChargeCents > 0 ? originalCoachPayoutCents / totalChargeCents : 0;
-  const netRetainedCents = Math.max(0, chargeAmountCents - refundedCents);
-  // Keep cent-level accounting exact: assign any rounding remainder to platform.
-  let adjustedCoachPayoutCents = Math.round(netRetainedCents * coachShare);
-  adjustedCoachPayoutCents = Math.min(netRetainedCents, Math.max(0, adjustedCoachPayoutCents));
-  const adjustedPlatformFeeCents = netRetainedCents - adjustedCoachPayoutCents;
-
-  let payment_status;
-  let escrow_status;
-  if (chargeAmountCents > 0 && refundedCents >= chargeAmountCents) {
-    payment_status = 'refunded';
-    escrow_status = 'refunded';
-  } else if (refundedCents > 0) {
-    payment_status = 'partially_refunded';
-    escrow_status = 'held';
-  } else {
+  const chargeAmountCents = normalizeStripeCurrencyCents(charge.amount ?? 0);
+  const refundedCents = normalizeStripeCurrencyCents(charge.amount_refunded ?? 0);
+  const cls = classifyStripeChargeRefundMirrorUpdate(chargeAmountCents, refundedCents);
+  if (!cls.shouldUpdate) {
     return payment;
   }
+
+  const refundedDollars = centsToDecimalString(refundedCents);
+  const totalChargeCents = dollarsToCents(payment.total_charge_to_student);
+  const originalCoachPayoutCents = dollarsToCents(payment.coach_payout_expected);
+  const netRetainedCents = Math.max(0, chargeAmountCents - refundedCents);
+  const { coachPayoutCents: adjustedCoachPayoutCents, platformFeeCents: adjustedPlatformFeeCents } =
+    splitNetRetainedCoachPlatformCents({
+      netRetainedCents,
+      totalChargeCents,
+      coachPayoutExpectedCents: originalCoachPayoutCents,
+    });
+
+  const { payment_status, escrow_status } = cls;
 
   const updates = {
     refunded_amount: refundedDollars,
@@ -895,7 +839,12 @@ export const processRefund = async (paymentId, opts = {}) => {
     if (!p) {
       throw new Error('Payment not found');
     }
-    if (p.refund_status === 'pending' && !opts.paymentActionExecution) {
+    if (
+      shouldSkipProcessRefundForPendingDuplicate({
+        refundStatus: p.refund_status,
+        paymentActionExecution: opts.paymentActionExecution,
+      })
+    ) {
       logger.warn({
         component: 'stripe',
         event: 'refund_skipped_duplicate_pending',
@@ -921,9 +870,9 @@ export const processRefund = async (paymentId, opts = {}) => {
   const p = lockResult.payment;
 
   const chargeBefore = await stripeService.retrieveCharge(p.charge_id);
-  const chargeAmountCents = Math.round(chargeBefore.amount || 0);
-  const refundedSoFar = Math.round(chargeBefore.amount_refunded || 0);
-  const remainingCents = chargeAmountCents - refundedSoFar;
+  const chargeAmountCents = normalizeStripeCurrencyCents(chargeBefore.amount || 0);
+  const refundedSoFar = normalizeStripeCurrencyCents(chargeBefore.amount_refunded || 0);
+  const remainingCents = remainingRefundableOnChargeCents(chargeAmountCents, refundedSoFar);
 
   logger.info({
     component: 'stripe',
@@ -948,7 +897,11 @@ export const processRefund = async (paymentId, opts = {}) => {
   const partial = refundCents < remainingCents;
   const key =
     idempotencyKey ||
-    `refund-payment-${p.id}-${refundCents}-${chargeBefore.id}`;
+    buildProcessRefundFallbackIdempotencyKey({
+      paymentId: p.id,
+      refundCents,
+      stripeChargeId: chargeBefore.id,
+    });
 
   const refund = await stripeService.createRefund(p.charge_id, {
     amountCents: partial ? refundCents : null,
@@ -1007,27 +960,11 @@ export const processRefund = async (paymentId, opts = {}) => {
 /** Max Stripe execution failures per `payment_actions` row before status `failed`. */
 export const PAYMENT_ACTION_MAX_FAILURE_ATTEMPTS = 8;
 
-/** Rows that snap `refund_cents` from Stripe charge remaining balance inside the worker. */
-const HYDRATE_FULL_REMAINING_ACTION_TYPES = new Set(['dispute_refund_full']);
-
-/** Refunds executed with cents fixed when the row was enqueued (booking flows + dispute partial). */
-const FIXED_CENTS_PAYMENT_ACTION_TYPES = new Set([
-  'dispute_refund_partial',
-  'booking_cancel_refund',
-  'booking_coach_no_show_refund',
-  'booking_admin_refund',
-]);
-
-function stripeRefundIdempotencyKeyForPaymentAction(pa) {
-  return `refund_${pa.booking_id}_${pa.id}`;
-}
-
-/**
- * Persist a stable Stripe refund idempotency key per row (`refund_<bookingId>_<paymentActionId>`) when absent.
- * Mirrors between `stripe_idempotency_key` and `idempotency_key` without overwriting Stripe keys from older rows.
- */
 async function ensureStripeIdempotencyPersistedForPaymentAction(pa) {
-  const desired = stripeRefundIdempotencyKeyForPaymentAction(pa);
+  const desired = buildPaymentActionRefundIdempotencyKey({
+    bookingId: pa.booking_id,
+    paymentActionId: pa.id,
+  });
   const hasStripe = !!(pa.stripe_idempotency_key && String(pa.stripe_idempotency_key).trim());
   const hasLegacy = !!(pa.idempotency_key && String(pa.idempotency_key).trim());
 
@@ -1110,9 +1047,16 @@ export const buildDisputeRefundPaymentActionAttrs = async ({
 
 /**
  * Deferred full refunds: Stripe charge snapshot + deterministic idempotency key (runs in worker).
+ *
+ * Side-effect: when the payment_action is linked to a dispute and the dispute
+ * row does not yet have a `refund_cents` value, propagate the freshly-snapped
+ * cents back onto `disputes.refund_cents` so admin reads of the dispute can
+ * surface the executed full-refund amount without joining `payment_actions`.
+ * The write is guarded with `refund_cents IS NULL` to keep it idempotent and
+ * to avoid clobbering any value an operator has explicitly set.
  */
 async function hydrateFullRemainingRefundPaymentAction(pa) {
-  if (!HYDRATE_FULL_REMAINING_ACTION_TYPES.has(pa.action_type) || pa.refund_cents != null)
+  if (!hydrateFullRemainingActionTypeSet.has(pa.action_type) || pa.refund_cents != null)
     return pa.reload();
 
   const payment = await Payment.findByPk(pa.payment_id);
@@ -1121,9 +1065,9 @@ async function hydrateFullRemainingRefundPaymentAction(pa) {
   }
 
   const charge = await stripeService.retrieveCharge(payment.charge_id);
-  const chargeAmount = Math.round(charge.amount || 0);
-  const alreadyRefunded = Math.round(charge.amount_refunded || 0);
-  const refundCents = chargeAmount - alreadyRefunded;
+  const chargeAmount = normalizeStripeCurrencyCents(charge.amount || 0);
+  const alreadyRefunded = normalizeStripeCurrencyCents(charge.amount_refunded || 0);
+  const refundCents = remainingRefundableOnChargeCents(chargeAmount, alreadyRefunded);
   if (refundCents < 1) {
     throw new Error('No refundable balance remaining on Stripe charge');
   }
@@ -1134,10 +1078,18 @@ async function hydrateFullRemainingRefundPaymentAction(pa) {
       where: {
         id: pa.id,
         refund_cents: null,
-        action_type: { [Op.in]: [...HYDRATE_FULL_REMAINING_ACTION_TYPES] },
+        action_type: { [Op.in]: [...hydrateFullRemainingActionTypeSet] },
       },
     },
   );
+
+  if (pa.dispute_id != null) {
+    await Dispute.update(
+      { refund_cents: refundCents },
+      { where: { id: pa.dispute_id, refund_cents: null } },
+    );
+  }
+
   return pa.reload();
 }
 
@@ -1259,11 +1211,17 @@ export const processPendingRefundPaymentActions = async ({ batchLimit = 14 } = {
 export const reconcileRefundPaymentActionsWithStripe = async ({
   batchLimit = 40,
   autoHeal = true,
+  /** When set, only actions for this booking (deterministic batches for tests / targeted jobs). */
+  bookingId = null,
 } = {}) => {
+  const where = {
+    [Op.or]: [{ status: 'pending' }, { status: 'failed' }, { status: 'succeeded' }],
+  };
+  if (bookingId != null) {
+    where.booking_id = bookingId;
+  }
   const rows = await PaymentAction.findAll({
-    where: {
-      [Op.or]: [{ status: 'pending' }, { status: 'failed' }, { status: 'succeeded' }],
-    },
+    where,
     order: [['id', 'ASC']],
     limit: batchLimit,
   });
@@ -1405,7 +1363,7 @@ export const reconcileRefundPaymentActionsWithStripe = async ({
 
     if (byMeta.length === 0 && autoHeal) {
       try {
-        const partial = FIXED_CENTS_PAYMENT_ACTION_TYPES.has(pa.action_type);
+        const partial = fixedCentsRefundActionTypeSet.has(pa.action_type);
         const ref = await stripeService.createRefund(payment.charge_id, {
           amountCents: partial ? pa.refund_cents : null,
           reason: 'requested_by_customer',
@@ -1505,8 +1463,8 @@ export const getLatestBookingRefundState = async (bookingId) => {
   }
 
   const charge = await stripeService.retrieveCharge(payment.charge_id);
-  const chargeAmountCents = Math.round(charge.amount || 0);
-  const refundedSoFarCents = Math.round(charge.amount_refunded || 0);
+  const chargeAmountCents = normalizeStripeCurrencyCents(charge.amount || 0);
+  const refundedSoFarCents = normalizeStripeCurrencyCents(charge.amount_refunded || 0);
   const hasPendingRefund = payment.refund_status === 'pending';
 
   return {
@@ -1581,17 +1539,15 @@ export const assertStripePaymentConsistency = async (payment, { autoHeal = false
     return { ok: false, error: err.message };
   }
 
-  const stripeRefundedCents = charge.amount_refunded ?? 0;
-  const localCents = Math.round(Number.parseFloat(String(pay.refunded_amount || 0), 10) * 100);
-  const refundMismatch = Math.abs(stripeRefundedCents - localCents) > 1;
+  const stripeRefundedCents = normalizeStripeCurrencyCents(charge.amount_refunded ?? 0);
+  const localCents = dollarsToCents(pay.refunded_amount);
+  const refundMismatch = !centsNearEqual(stripeRefundedCents, localCents);
 
-  const chargeAmountCents = charge.amount ?? 0;
-  const expectedTotalCents = Math.round(
-    Number.parseFloat(String(pay.total_charge_to_student || 0), 10) * 100
-  );
+  const chargeAmountCents = normalizeStripeCurrencyCents(charge.amount ?? 0);
+  const expectedTotalCents = dollarsToCents(pay.total_charge_to_student);
   const amountMismatch =
     expectedTotalCents > 0 &&
-    Math.abs(chargeAmountCents - expectedTotalCents) > 1 &&
+    !centsNearEqual(chargeAmountCents, expectedTotalCents) &&
     !['refunded', 'partially_refunded'].includes(pay.payment_status);
 
   let expectedRefundPaymentStatus;
@@ -1652,7 +1608,11 @@ export const assertStripePaymentConsistency = async (payment, { autoHeal = false
       if (pi?.status === 'succeeded' && reloaded.payment_status === 'pending_capture') {
         await reloaded.update({ payment_status: 'captured' });
         if (reloaded.booking?.status === 'pending') {
-          await reloaded.booking.update({ status: 'confirmed', messaging_locked: false });
+          await applyBookingStatusTransition(reloaded.booking, {
+            toStatus: 'confirmed',
+            via: BookingTransitionVia.PAYMENT_CAPTURE_WEBHOOK,
+            patch: { messaging_locked: false },
+          });
         }
       }
       logger.warn({

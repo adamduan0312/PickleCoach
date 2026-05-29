@@ -1,6 +1,6 @@
 import Joi from 'joi';
 import { getValidReasons } from '../services/reliabilityPenaltyService.js';
-import { MIN_LESSON_PRICE_USD } from '../services/paymentService.js';
+import { MIN_LESSON_PRICE_USD } from '../services/paymentEngine.js';
 import { validateDisputeResolutionPayload } from '../utils/disputeResolutionAlignment.js';
 
 // Environment variable validation
@@ -296,6 +296,10 @@ export const resolveDisputeSchema = Joi.object({
   /** Canonical admin ruling for all dispute types. */
   decision: Joi.string().valid('upheld', 'rejected', 'partial').required(),
   /**
+   * Payload validation only. Successful resolve also sets `bookings.attendance_finalized`
+   * for **all** dispute types (attendance + behavior) — see `disputeController.resolveDispute`
+   * and `backend/docs/dispute-finalization.md`. That DB flag is not inferred from this schema.
+   *
    * Factual attendance determination for attendance dispute types only (required whenever
    * `dispute_type_code` is an attendance claim). Booking status follows `outcome`. For
    * `rejected`, alignment requires the contradicting outcome per claim type. For all attendance

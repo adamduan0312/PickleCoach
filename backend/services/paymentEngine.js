@@ -1,0 +1,185 @@
+/**
+ * Canonical payment math — single source of truth for fees, splits, cents, and payout/refund proportions.
+ * Side-effecting Stripe/DB code stays in `paymentService.js`; all pure money logic belongs here.
+ */
+
+import {
+  PLATFORM_FEE_PERCENT,
+  COACH_COMMISSION_PERCENT,
+  MIN_CHARGE_USD,
+} from './paymentConstants.js';
+
+// ---------------------------------------------------------------------------
+// Normalization & cents
+// ---------------------------------------------------------------------------
+
+/**
+ * Integer cents from decimal dollars string/number.
+ * Uses Math.round(n * 100) so float edge cases (e.g. 12.34 * 100) land on whole cents before Stripe.
+ */
+export const dollarsToCents = (value) => {
+  const n = Number.parseFloat(String(value ?? '0'), 10);
+  if (!Number.isFinite(n)) return 0;
+  return Math.round(n * 100);
+};
+
+/** DECIMAL(12,2) / API-safe string from integer cents (avoids float artifacts). */
+export const centsToDecimalString = (cents) => {
+  const c = Math.max(0, Math.round(cents));
+  const whole = Math.floor(c / 100);
+  const frac = c % 100;
+  return `${whole}.${String(frac).padStart(2, '0')}`;
+};
+
+/** Stripe amounts are integer currency units (cents for USD). */
+export const normalizeStripeCurrencyCents = (value) => {
+  const n = Number(value);
+  return Number.isFinite(n) ? Math.round(n) : 0;
+};
+
+/** Minimum lesson price (USD) so lesson + platform fee meets MIN_CHARGE_USD. */
+export const minLessonPriceUsd = () => MIN_CHARGE_USD / (1 + PLATFORM_FEE_PERCENT / 100);
+
+/** Exported for Joi validation (`config/validation.js`). */
+export const MIN_LESSON_PRICE_USD = minLessonPriceUsd();
+
+// ---------------------------------------------------------------------------
+// Initial charge breakdown (capture-time payment row)
+// ---------------------------------------------------------------------------
+
+/**
+ * Deterministic lesson → platform fee, total to student, coach expected payout.
+ * Uses integer-cent intermediates so DB DECIMAL fields stay stable vs float-only math.
+ */
+export const calculatePaymentAmounts = (lessonPrice) => {
+  const lessonCents = dollarsToCents(lessonPrice);
+  const platformFeeCents = Math.round((lessonCents * PLATFORM_FEE_PERCENT) / 100);
+  const totalChargeCents = lessonCents + platformFeeCents;
+  const coachPayoutCents = Math.round((lessonCents * COACH_COMMISSION_PERCENT) / 100);
+
+  return {
+    lesson_price: Number.parseFloat(centsToDecimalString(lessonCents)),
+    platform_fee_percent: PLATFORM_FEE_PERCENT,
+    platform_fee_amount: Number.parseFloat(centsToDecimalString(platformFeeCents)),
+    total_charge_to_student: Number.parseFloat(centsToDecimalString(totalChargeCents)),
+    coach_payout_expected: Number.parseFloat(centsToDecimalString(coachPayoutCents)),
+  };
+};
+
+// ---------------------------------------------------------------------------
+// Cancellation / refund policy (whole cents)
+// ---------------------------------------------------------------------------
+
+/**
+ * Policy total for cancellations: `payment.total_charge_to_student` when a payment row exists;
+ * otherwise `booking.price` (never charged / no payment row).
+ */
+export const parseTotalChargeCentsFromBooking = (payment, booking) => {
+  if (payment) {
+    const fromPayment = dollarsToCents(payment.total_charge_to_student);
+    if (fromPayment > 0) return fromPayment;
+  }
+  if (booking) {
+    return dollarsToCents(booking.price);
+  }
+  return 0;
+};
+
+/**
+ * Split cancellation into refund vs penalty in whole cents; invariant refundCents + penaltyCents === totalChargeCents.
+ */
+export const computeCancellationSplitCents = ({ totalChargeCents, isLateCancel, cancelledBy }) => {
+  const t = Math.round(totalChargeCents);
+  if (t < 1) {
+    return { refundCents: 0, penaltyCents: 0, penaltyReason: null };
+  }
+
+  if (isLateCancel && cancelledBy === 'student') {
+    const refundCents = Math.floor(t / 2);
+    const penaltyCents = t - refundCents;
+    return { refundCents, penaltyCents, penaltyReason: 'Late cancellation' };
+  }
+
+  if (cancelledBy === 'coach') {
+    return { refundCents: t, penaltyCents: 0, penaltyReason: 'Coach cancellation' };
+  }
+
+  return { refundCents: t, penaltyCents: 0, penaltyReason: null };
+};
+
+/**
+ * Cap policy refund by Stripe remaining balance; invariant refundCents + penaltyCents === totalChargeCents.
+ */
+export const applyStripeRefundCap = ({ policyRefundCents, totalChargeCents, remainingCents }) => {
+  const t = Math.round(totalChargeCents);
+  const r = Math.max(0, Math.round(remainingCents));
+  const policy = Math.min(Math.max(0, Math.round(policyRefundCents)), t);
+  const refundCents = Math.min(policy, r);
+  const penaltyCents = t - refundCents;
+  return { refundCents, penaltyCents, capped: refundCents < policy };
+};
+
+// ---------------------------------------------------------------------------
+// Coach vs platform split on net retained (post-refund escrow / mirrored state)
+// ---------------------------------------------------------------------------
+
+export const computeCoachShareRatio = (totalChargeCents, coachPayoutExpectedCents) => {
+  const tt = Math.max(0, Math.round(totalChargeCents));
+  if (tt < 1) return 0;
+  return Math.max(0, Math.round(coachPayoutExpectedCents)) / tt;
+};
+
+/**
+ * Split net retained charge (after refunds) into coach vs platform using the same ratio as at capture:
+ * coachPortion = round(net * coachShare), capped to net; platform = net - coach (remainder absorbs rounding).
+ */
+export const splitNetRetainedCoachPlatformCents = ({
+  netRetainedCents,
+  totalChargeCents,
+  coachPayoutExpectedCents,
+}) => {
+  const net = Math.max(0, Math.round(netRetainedCents));
+  const tt = Math.max(0, Math.round(totalChargeCents));
+  const coachOrig = Math.max(0, Math.round(coachPayoutExpectedCents));
+  const share = computeCoachShareRatio(tt, coachOrig);
+  let coachPayoutCents = Math.round(net * share);
+  coachPayoutCents = Math.min(net, Math.max(0, coachPayoutCents));
+  const platformFeeCents = net - coachPayoutCents;
+  return {
+    coachPayoutCents,
+    platformFeeCents,
+    coachShareRatio: share,
+  };
+};
+
+/** Escrow payout to coach (whole cents) before Stripe transfer — same ratio as `splitNetRetainedCoachPlatformCents`. */
+export const computeEscrowCoachTransferCents = ({
+  totalChargeCents,
+  refundedCents,
+  coachPayoutExpectedCents,
+}) => {
+  const total = Math.max(0, Math.round(totalChargeCents));
+  const refunded = Math.max(0, Math.round(refundedCents));
+  const netRetainedCents = Math.max(0, total - refunded);
+  const { coachPayoutCents, coachShareRatio } = splitNetRetainedCoachPlatformCents({
+    netRetainedCents,
+    totalChargeCents: total,
+    coachPayoutExpectedCents,
+  });
+  return { payoutCents: coachPayoutCents, netRetainedCents, coachShareRatio };
+};
+
+/** Remaining refundable balance on a Stripe Charge (cents). */
+export const remainingRefundableOnChargeCents = (chargeAmountCents, amountRefundedCents) => {
+  const gross = normalizeStripeCurrencyCents(chargeAmountCents);
+  const refunded = Math.max(0, normalizeStripeCurrencyCents(amountRefundedCents));
+  return Math.max(0, gross - refunded);
+};
+
+// ---------------------------------------------------------------------------
+// Reconciliation helpers
+// ---------------------------------------------------------------------------
+
+/** True if two cent amounts match within tolerance (Stripe vs local float noise). */
+export const centsNearEqual = (a, b, toleranceCents = 1) =>
+  Math.abs(Math.round(a) - Math.round(b)) <= toleranceCents;

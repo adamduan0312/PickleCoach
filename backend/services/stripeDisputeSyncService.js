@@ -1,6 +1,11 @@
 import { UniqueConstraintError } from 'sequelize';
 import { Payment, Booking, Dispute, DisputeType } from '../models/index.js';
 import { logger } from '../config/logger.js';
+import {
+  applyBookingStatusTransition,
+  BookingTransitionVia,
+} from './bookingStateMachine.js';
+import { applyDisputeStatusTransition, DisputeTransitionVia } from './disputeStateMachine.js';
 
 /**
  * Map Stripe Dispute.status to in-app disputes.status enum.
@@ -49,7 +54,20 @@ export async function syncStripeDisputeToDatabase(stripeDispute, { eventType } =
   });
 
   if (payment.booking && !isTerminal) {
-    await payment.booking.update({ status: 'disputed' });
+    try {
+      await applyBookingStatusTransition(payment.booking, {
+        toStatus: 'disputed',
+        via: BookingTransitionVia.STRIPE_DISPUTE_OPEN,
+      });
+    } catch (err) {
+      logger.warn({
+        component: 'stripe',
+        event: 'booking_disputed_transition_rejected',
+        bookingId: payment.booking_id,
+        message: err?.message || String(err),
+        code: err?.code,
+      });
+    }
   }
 
   let dispute = await Dispute.findOne({ where: { stripe_dispute_id: stripeDispute.id } });
@@ -90,9 +108,12 @@ export async function syncStripeDisputeToDatabase(stripeDispute, { eventType } =
 
     if (dispute) await payment.update({ dispute_id: dispute.id });
   } else {
-    await dispute.update({
-      status: localStatus,
-      stripe_dispute_status: stripeDispute.status,
+    await applyDisputeStatusTransition(dispute, {
+      toStatus: localStatus,
+      via: DisputeTransitionVia.STRIPE_SYNC,
+      patch: {
+        stripe_dispute_status: stripeDispute.status,
+      },
     });
   }
 

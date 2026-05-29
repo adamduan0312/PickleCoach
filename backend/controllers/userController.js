@@ -1,5 +1,6 @@
 import { Op } from 'sequelize';
 import { User, UserRole, CoachProfile, UserReliability, sequelize } from '../models/index.js';
+import { attachLegacyReliabilityAliases } from '../services/reliabilityEngine.js';
 import { successResponse, errorResponse, paginatedResponse } from '../utils/response.js';
 import { getPagination, getPagingData } from '../utils/pagination.js';
 import { logger } from '../config/logger.js';
@@ -109,10 +110,10 @@ export const getUserById = async (req, res) => {
     const coachRel = relRows.find((r) => r.role === 'coach');
     const studentRel = relRows.find((r) => r.role === 'student');
     if (roles.includes('coach') && coachRel) {
-      payload.reliability = coachRel;
+      payload.reliability = attachLegacyReliabilityAliases(coachRel.toJSON());
     }
     if (roles.includes('student') && studentRel) {
-      payload.reliability_student = studentRel;
+      payload.reliability_student = attachLegacyReliabilityAliases(studentRel.toJSON());
     }
 
     logger.info(`User ${req.user.id} (roles: ${(req.user.roles || []).join(',')}) retrieved user ${userId}`);

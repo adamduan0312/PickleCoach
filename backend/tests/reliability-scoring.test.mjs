@@ -11,6 +11,7 @@ import {
   STUDENT_ATTENDANCE_NO_SHOW_WEIGHT,
   RELIABILITY_SMOOTHING_K,
 } from '../services/reliabilityScoring.js';
+import { roundReliabilityScoreValue } from '../services/reliabilityEngine.js';
 
 const baseCoachMetrics = (overrides = {}) => ({
   total_bookings: 10,
@@ -30,8 +31,8 @@ describe('reliability scoring (pure)', () => {
   it('coach: no_shows affects score; no separate attendance dispute metrics', () => {
     const denom = 10 + RELIABILITY_SMOOTHING_K;
     const withShow = calculateCoachReliabilityScore(baseCoachMetrics({ no_shows: 1 }));
-    const expected = 100 - (1 / denom) * COACH_ATTENDANCE_NO_SHOW_WEIGHT;
-    assert.equal(withShow, Math.max(0, Math.min(100, expected)));
+    const raw = 100 - (1 / denom) * COACH_ATTENDANCE_NO_SHOW_WEIGHT;
+    assert.equal(withShow, roundReliabilityScoreValue(raw));
   });
 
   it('coach: behavior penalties use BEHAVIOR_DISPUTE_PENALTY_WEIGHTS', () => {
@@ -39,8 +40,8 @@ describe('reliability scoring (pure)', () => {
     const score = calculateCoachReliabilityScore(
       baseCoachMetrics({ misconduct_penalties: 1 }),
     );
-    const expected = 100 - (1 / denom) * BEHAVIOR_DISPUTE_PENALTY_WEIGHTS.misconduct;
-    assert.equal(score, Math.max(0, Math.min(100, expected)));
+    const raw = 100 - (1 / denom) * BEHAVIOR_DISPUTE_PENALTY_WEIGHTS.misconduct;
+    assert.equal(score, roundReliabilityScoreValue(raw));
   });
 
   it('student: no_shows use STUDENT_ATTENDANCE_NO_SHOW_WEIGHT', () => {
@@ -58,8 +59,8 @@ describe('reliability scoring (pure)', () => {
     };
     const denom = 8 + RELIABILITY_SMOOTHING_K;
     const score = calculateStudentReliabilityScore(m);
-    const expected = 100 - (2 / denom) * STUDENT_ATTENDANCE_NO_SHOW_WEIGHT;
-    assert.equal(score, Math.max(0, Math.min(100, expected)));
+    const raw = 100 - (2 / denom) * STUDENT_ATTENDANCE_NO_SHOW_WEIGHT;
+    assert.equal(score, roundReliabilityScoreValue(raw));
   });
 
   it('student: late_arrival_penalties use behavior late_arrival weight', () => {
@@ -77,7 +78,7 @@ describe('reliability scoring (pure)', () => {
     };
     const denom = 10 + RELIABILITY_SMOOTHING_K;
     const score = calculateStudentReliabilityScore(m);
-    const expected = 100 - (1 / denom) * BEHAVIOR_DISPUTE_PENALTY_WEIGHTS.late_arrival;
-    assert.equal(score, Math.max(0, Math.min(100, expected)));
+    const raw = 100 - (1 / denom) * BEHAVIOR_DISPUTE_PENALTY_WEIGHTS.late_arrival;
+    assert.equal(score, roundReliabilityScoreValue(raw));
   });
 });

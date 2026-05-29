@@ -4,7 +4,8 @@
   "type": "module",
   "main": "server.js",
   "scripts": {
-    "test": "node --test tests/reliability-scoring.test.mjs tests/bookingAttendanceStatus.test.mjs tests/dispute-resolution-warnings.test.mjs tests/dispute-resolution-alignment.test.mjs tests/validator-joi-message.test.mjs",
+    "test": "node --test tests/reliability-scoring.test.mjs tests/reliability-engine.test.mjs tests/user-reliability-model-persistence-parity.test.mjs tests/payment-engine.test.mjs tests/payment-stripe-contract.test.mjs tests/bookingAttendanceStatus.test.mjs tests/booking-state-machine.test.mjs tests/dispute-state-machine.test.mjs tests/booking-dispute-state-crossflow.test.mjs tests/dispute-finalization-contract.test.mjs tests/dispute-resolution-warnings.test.mjs tests/dispute-resolution-alignment.test.mjs tests/validator-joi-message.test.mjs tests/dispute-response-format.test.mjs",
+    "test:payment:integration": "RUN_PAYMENT_INTEGRATION=1 node --test tests/payment-stripe-integration.test.mjs",
     "dev": "nodemon server.js",
     "start": "node server.js",
     "db:reset:test": "node scripts/reset-and-seed-for-tests.mjs",
@@ -14,6 +15,7 @@
     "seed:confirmed-ended-booking": "node scripts/seed-confirmed-ended-booking.js",
     "seed:confirmed-ended-bookings": "node scripts/seed-confirmed-ended-booking.js --count=5",
     "seed:more-disputes": "node scripts/seed-more-disputes.js",
+    "seed:dedupe-disputes": "node scripts/dedupe-seeded-disputes.js",
     "seed:test-flows": "node scripts/seed-test-flows.js",
     "seed:first-admin": "node scripts/create-first-admin.js",
     "seed:all:dev": "npm run seed:test-booking && npm run seed:bookings-no-charge && npm run seed:bookings-statuses && npm run seed:more-disputes",
@@ -26,7 +28,10 @@
     "db:migrate": "sequelize-cli db:migrate",
     "db:migrate:undo": "sequelize-cli db:migrate:undo",
     "db:seed": "sequelize-cli db:seed:all",
-    "db:seed:undo": "sequelize-cli db:seed:undo"
+    "db:seed:undo": "sequelize-cli db:seed:undo",
+    "schema:drift": "node scripts/schema-drift-check.js",
+    "model:usage": "node scripts/model-field-usage-check.js",
+    "ci:schema-check": "npm run schema:drift && npm run model:usage"
   },
   "keywords": [],
   "author": "",

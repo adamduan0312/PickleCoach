@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Noise control for schema-drift-check + model-field-usage-check. DB remains source of truth; ignores only suppress reporting.",
+  "ignoreTables": ["SequelizeMeta"],
+  "ignoreColumns": {
+    "users": [],
+    "user_reliability": ["id"]
+  },
+  "ignoreGlobalColumnNames": [],
+  "ignoreFieldUsagePatterns": []
+}

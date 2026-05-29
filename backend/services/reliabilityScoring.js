@@ -1,104 +1,128 @@
 /**
- * Pure reliability scoring (no DB). Attendance penalties use booking-status metrics only;
- * behavior penalties use sustained dispute rollup fields.
+ * Reliability scoring — re-exports constants and legacy metric-shape adapters.
+ *
+ * New code should prefer `reliabilityEngine.js` + persisted canonical rows.
  */
 
-const parseEnvInt = (key, defaultValue) => {
-  const raw = process.env[key];
-  if (raw == null || raw === '') return defaultValue;
-  const n = Number.parseInt(String(raw), 10);
-  return Number.isFinite(n) && n > 0 ? n : defaultValue;
-};
+export {
+  RELIABILITY_WINDOW_DAYS,
+  RELIABILITY_DECAY_LAMBDA,
+  RELIABILITY_SMOOTHING_K,
+  RELIABILITY_METRIC_DECIMAL_PLACES,
+  SCORE_FORMULA_VERSION,
+  getReliabilityConfig,
+  getScoringFormulaSnapshot,
+  BEHAVIOR_DISPUTE_PENALTY_WEIGHTS,
+  COACH_ATTENDANCE_NO_SHOW_WEIGHT,
+  STUDENT_ATTENDANCE_NO_SHOW_WEIGHT,
+} from './reliabilityConstants.js';
 
-const parseEnvFloat = (key, defaultValue) => {
-  const raw = process.env[key];
-  if (raw == null || raw === '') return defaultValue;
-  const n = Number.parseFloat(String(raw));
-  return Number.isFinite(n) && n > 0 ? n : defaultValue;
-};
+import {
+  buildCanonicalReliabilityMetrics,
+  calculateReliabilityDenominator,
+  calculateReliabilityScoreFromCanonical,
+} from './reliabilityEngine.js';
 
-export const RELIABILITY_WINDOW_DAYS = parseEnvInt('RELIABILITY_WINDOW_DAYS', 90);
-export const RELIABILITY_DECAY_LAMBDA = parseEnvFloat('RELIABILITY_DECAY_LAMBDA', 0.03);
-export const RELIABILITY_SMOOTHING_K = parseEnvFloat('RELIABILITY_SMOOTHING_K', 5);
-
-export const getReliabilityConfig = () => ({
-  windowDays: RELIABILITY_WINDOW_DAYS,
-  decayLambda: RELIABILITY_DECAY_LAMBDA,
-  smoothingK: RELIABILITY_SMOOTHING_K,
-});
-
-/** Weights for behavior types only (sustained disputes: late_arrival, misconduct, lesson_not_completed). */
-export const BEHAVIOR_DISPUTE_PENALTY_WEIGHTS = {
-  late_arrival: 5,
-  lesson_not_completed: 10,
-  misconduct: 25,
-};
-
-/** Attendance no-show via `bookings.status` only (coach_no_show / student_no_show). */
-export const COACH_ATTENDANCE_NO_SHOW_WEIGHT = 35;
-export const STUDENT_ATTENDANCE_NO_SHOW_WEIGHT = 12;
-
+/** @deprecated Prefer canonical metrics; used by tests and transitional callers. */
 export const metricTotalWithDecay = (metrics, key) =>
   (Number(metrics?.[key]) || 0) + (Number(metrics?._decayed?.[key]) || 0);
 
+/** @deprecated Prefer calculateReliabilityDenominator(buildCanonicalReliabilityMetrics(...)). */
 export const reliabilityDenominator = (metrics) =>
-  Math.max(
-    1,
-    (Number(metrics?._booking_baseline) || Number(metrics?.total_bookings) || 0) + RELIABILITY_SMOOTHING_K,
+  calculateReliabilityDenominator(
+    buildCanonicalReliabilityMetrics({
+      booking_baseline_recent: Number(metrics?.total_bookings) || 0,
+      booking_baseline_decayed:
+        Math.max(0, (Number(metrics?._booking_baseline) || 0) - (Number(metrics?.total_bookings) || 0)),
+      penalized_reschedules_recent: Number(metrics?.reschedules) || 0,
+      penalized_reschedules_decayed: Number(metrics?._decayed?.reschedules) || 0,
+      late_cancels_recent: Number(metrics?.late_cancels) || 0,
+      late_cancels_decayed: Number(metrics?._decayed?.late_cancels) || 0,
+      coach_cancels_non_late_recent: Number(metrics?.coach_cancels) || 0,
+      coach_cancels_non_late_decayed: Number(metrics?._decayed?.coach_cancels) || 0,
+      student_cancels_non_late_recent: Number(metrics?.student_cancels) || 0,
+      student_cancels_non_late_decayed: Number(metrics?._decayed?.student_cancels) || 0,
+      no_shows_recent: Number(metrics?.no_shows) || 0,
+      no_shows_decayed: Number(metrics?._decayed?.no_shows) || 0,
+      late_arrival_penalties_recent: Number(metrics?.late_arrival_penalties) || 0,
+      late_arrival_penalties_decayed: Number(metrics?._decayed?.late_arrival_penalties) || 0,
+      misconduct_penalties_recent: Number(metrics?.misconduct_penalties) || 0,
+      misconduct_penalties_decayed: Number(metrics?._decayed?.misconduct_penalties) || 0,
+      lesson_not_completed_penalties_recent: Number(metrics?.lesson_not_completed_penalties) || 0,
+      lesson_not_completed_penalties_decayed:
+        Number(metrics?._decayed?.lesson_not_completed_penalties) || 0,
+      paid_reschedules: Number(metrics?.paid_reschedules) || 0,
+    }),
   );
 
 /**
- * @param {object} metrics — aggregation output from reliabilityService (coach)
+ * Legacy coach aggregate shape from reliabilityService aggregation.
+ * @deprecated Prefer reliabilityEngine.calculateReliabilityScoreFromCanonical('coach', canonical).
  */
 export const calculateCoachReliabilityScore = (metrics) => {
   const total_bookings = Number(metrics.total_bookings) || 0;
   if (total_bookings === 0 && (Number(metrics._booking_baseline) || 0) === 0) return 100.0;
 
-  let score = 100.0;
-  const denom = reliabilityDenominator(metrics);
-  const penalized_reschedules = metricTotalWithDecay(metrics, 'reschedules');
-  const late_cancels = metricTotalWithDecay(metrics, 'late_cancels');
-  const late_arrival_penalties = metricTotalWithDecay(metrics, 'late_arrival_penalties');
-  const no_shows = metricTotalWithDecay(metrics, 'no_shows');
-  const misconduct_penalties = metricTotalWithDecay(metrics, 'misconduct_penalties');
-  const lesson_not_completed_penalties = metricTotalWithDecay(metrics, 'lesson_not_completed_penalties');
-  const coach_cancels_non_late = metricTotalWithDecay(metrics, 'coach_cancels');
-
-  score -= (penalized_reschedules / denom) * 5;
-  score -= (late_cancels / denom) * 20;
-  score -= (late_arrival_penalties / denom) * BEHAVIOR_DISPUTE_PENALTY_WEIGHTS.late_arrival;
-  score -= (no_shows / denom) * COACH_ATTENDANCE_NO_SHOW_WEIGHT;
-  score -= (coach_cancels_non_late / denom) * 10;
-  score -= (misconduct_penalties / denom) * BEHAVIOR_DISPUTE_PENALTY_WEIGHTS.misconduct;
-  score -= (lesson_not_completed_penalties / denom) * BEHAVIOR_DISPUTE_PENALTY_WEIGHTS.lesson_not_completed;
-
-  return Math.max(0, Math.min(100, score));
+  const canonical = buildCanonicalReliabilityMetrics({
+    booking_baseline_recent: total_bookings,
+    booking_baseline_decayed: Math.max(
+      0,
+      (Number(metrics._booking_baseline) || 0) - total_bookings,
+    ),
+    penalized_reschedules_recent: Number(metrics.reschedules) || 0,
+    penalized_reschedules_decayed: Number(metrics._decayed?.reschedules) || 0,
+    late_cancels_recent: Number(metrics.late_cancels) || 0,
+    late_cancels_decayed: Number(metrics._decayed?.late_cancels) || 0,
+    coach_cancels_non_late_recent: Number(metrics.coach_cancels) || 0,
+    coach_cancels_non_late_decayed: Number(metrics._decayed?.coach_cancels) || 0,
+    student_cancels_non_late_recent: 0,
+    student_cancels_non_late_decayed: 0,
+    no_shows_recent: Number(metrics.no_shows) || 0,
+    no_shows_decayed: Number(metrics._decayed?.no_shows) || 0,
+    late_arrival_penalties_recent: Number(metrics.late_arrival_penalties) || 0,
+    late_arrival_penalties_decayed: Number(metrics._decayed?.late_arrival_penalties) || 0,
+    misconduct_penalties_recent: Number(metrics.misconduct_penalties) || 0,
+    misconduct_penalties_decayed: Number(metrics._decayed?.misconduct_penalties) || 0,
+    lesson_not_completed_penalties_recent: Number(metrics.lesson_not_completed_penalties) || 0,
+    lesson_not_completed_penalties_decayed:
+      Number(metrics._decayed?.lesson_not_completed_penalties) || 0,
+    paid_reschedules: Number(metrics.paid_reschedules) || 0,
+  });
+  return calculateReliabilityScoreFromCanonical('coach', canonical);
 };
 
 /**
- * @param {object} metrics — aggregation output from reliabilityService (student)
+ * Legacy student aggregate shape from reliabilityService aggregation.
+ * @deprecated Prefer reliabilityEngine.calculateReliabilityScoreFromCanonical('student', canonical).
  */
 export const calculateStudentReliabilityScore = (metrics) => {
   const total_bookings = Number(metrics.total_bookings) || 0;
   if (total_bookings === 0 && (Number(metrics._booking_baseline) || 0) === 0) return 100.0;
 
-  let score = 100.0;
-  const denom = reliabilityDenominator(metrics);
-  const reschedules = metricTotalWithDecay(metrics, 'reschedules');
-  const late_cancels = metricTotalWithDecay(metrics, 'late_cancels');
-  const late_arrival_penalties = metricTotalWithDecay(metrics, 'late_arrival_penalties');
-  const no_shows = metricTotalWithDecay(metrics, 'no_shows');
-  const student_cancels = metricTotalWithDecay(metrics, 'student_cancels');
-  const misconduct_penalties = metricTotalWithDecay(metrics, 'misconduct_penalties');
-  const lesson_not_completed_penalties = metricTotalWithDecay(metrics, 'lesson_not_completed_penalties');
-
-  score -= (reschedules / denom) * 8;
-  score -= (late_cancels / denom) * 15;
-  score -= (late_arrival_penalties / denom) * BEHAVIOR_DISPUTE_PENALTY_WEIGHTS.late_arrival;
-  score -= (no_shows / denom) * STUDENT_ATTENDANCE_NO_SHOW_WEIGHT;
-  score -= (student_cancels / denom) * 12;
-  score -= (misconduct_penalties / denom) * BEHAVIOR_DISPUTE_PENALTY_WEIGHTS.misconduct;
-  score -= (lesson_not_completed_penalties / denom) * BEHAVIOR_DISPUTE_PENALTY_WEIGHTS.lesson_not_completed;
-
-  return Math.max(0, Math.min(100, score));
+  const canonical = buildCanonicalReliabilityMetrics({
+    booking_baseline_recent: total_bookings,
+    booking_baseline_decayed: Math.max(
+      0,
+      (Number(metrics._booking_baseline) || 0) - total_bookings,
+    ),
+    penalized_reschedules_recent: Number(metrics.reschedules) || 0,
+    penalized_reschedules_decayed: Number(metrics._decayed?.reschedules) || 0,
+    late_cancels_recent: Number(metrics.late_cancels) || 0,
+    late_cancels_decayed: Number(metrics._decayed?.late_cancels) || 0,
+    coach_cancels_non_late_recent: 0,
+    coach_cancels_non_late_decayed: 0,
+    student_cancels_non_late_recent: Number(metrics.student_cancels) || 0,
+    student_cancels_non_late_decayed: Number(metrics._decayed?.student_cancels) || 0,
+    no_shows_recent: Number(metrics.no_shows) || 0,
+    no_shows_decayed: Number(metrics._decayed?.no_shows) || 0,
+    late_arrival_penalties_recent: Number(metrics.late_arrival_penalties) || 0,
+    late_arrival_penalties_decayed: Number(metrics._decayed?.late_arrival_penalties) || 0,
+    misconduct_penalties_recent: Number(metrics.misconduct_penalties) || 0,
+    misconduct_penalties_decayed: Number(metrics._decayed?.misconduct_penalties) || 0,
+    lesson_not_completed_penalties_recent: Number(metrics.lesson_not_completed_penalties) || 0,
+    lesson_not_completed_penalties_decayed:
+      Number(metrics._decayed?.lesson_not_completed_penalties) || 0,
+    paid_reschedules: 0,
+  });
+  return calculateReliabilityScoreFromCanonical('student', canonical);
 };

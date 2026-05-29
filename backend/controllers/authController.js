@@ -3,6 +3,7 @@ import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import { Op } from 'sequelize';
 import { User, UserRole, CoachProfile, UserReliability } from '../models/index.js';
+import { attachLegacyReliabilityAliases } from '../services/reliabilityEngine.js';
 import { successResponse, errorResponse } from '../utils/response.js';
 import { logAudit } from '../utils/audit.js';
 import { logger } from '../config/logger.js';
@@ -171,10 +172,10 @@ export const getProfile = async (req, res) => {
     const coachRel = relRows.find((r) => r.role === 'coach');
     const studentRel = relRows.find((r) => r.role === 'student');
     if (roles.includes('coach') && coachRel) {
-      profile.reliability = coachRel;
+      profile.reliability = attachLegacyReliabilityAliases(coachRel.toJSON());
     }
     if (roles.includes('student') && studentRel) {
-      profile.reliability_student = studentRel;
+      profile.reliability_student = attachLegacyReliabilityAliases(studentRel.toJSON());
     }
 
     return successResponse(res, profile, 'Profile retrieved successfully');

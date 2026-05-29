@@ -1,5 +1,6 @@
 import bcrypt from 'bcryptjs';
 import { User, UserRole, Booking, Payment, Dispute, UserReliability, CoachCourtLocation, CourtLocation, CoachAvailability, AuditLog } from '../models/index.js';
+import { SCORE_FORMULA_VERSION } from '../services/reliabilityConstants.js';
 import { successResponse, errorResponse, paginatedResponse } from '../utils/response.js';
 import { logAudit } from '../utils/audit.js';
 import { Op } from 'sequelize';
@@ -108,9 +109,9 @@ export const createAdmin = async (req, res) => {
 };
 
 /**
- * Manually adjust a user's reliability score
- * This is a SEPARATE action from dispute resolution
- * Allows admins to make explicit reliability adjustments with justification
+ * Manually adjust a user's reliability score (separate from dispute resolution).
+ * Sets `score_source` to **admin_override**; the next `updateUserReliability` run resets it to **computed**
+ * and realigns counters with the recomputed score.
  *
  * Reliability is stored per role (`user_reliability`: one row per user_id + role).
  * Request body `role` defaults to **coach** — send `"role": "student"` to adjust the student row.
@@ -163,12 +164,14 @@ export const adjustUserReliability = async (req, res) => {
         user_id: userId,
         role: reliabilityRole,
         reliability_score: 100.0,
+        score_version: SCORE_FORMULA_VERSION,
       },
     });
 
     const beforeState = reliability.toJSON();
     await reliability.update({
       reliability_score: scoreValue,
+      score_source: 'admin_override',
     });
 
     // Log this as a manual admin adjustment with full audit trail

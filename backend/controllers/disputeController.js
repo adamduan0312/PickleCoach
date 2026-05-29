@@ -20,6 +20,15 @@ import {
   DISPUTE_RESOLVE_ATTENDANCE_SOURCE_STATUSES,
 } from '../utils/bookingAttendanceStatus.js';
 import {
+  applyBookingStatusTransition,
+  BookingTransitionVia,
+} from '../services/bookingStateMachine.js';
+import {
+  applyDisputeStatusTransition,
+  assertInitialInAppDisputeStatus,
+  DisputeTransitionVia,
+} from '../services/disputeStateMachine.js';
+import {
   getBehaviorResolutionDirectionWarning,
   getAttendanceClaimReversalWarning,
   getBehaviorClaimReversalWarning,
@@ -28,13 +37,22 @@ import { validateDisputeResolutionPayload } from '../utils/disputeResolutionAlig
 
 const MAX_LIST_ALL_DISPUTES = 10000;
 
-/** Public dispute JSON: resolver is only `resolved_by_admin` (id + full_name); DB `admin_id` / `admin` are not exposed. */
-function formatDisputeResponse(dispute) {
+/**
+ * Public dispute JSON:
+ *   - Resolver is only `resolved_by_admin` (id + full_name); DB `admin_id` /
+ *     `admin` are not exposed.
+ *   - `refund_cents` (internal, integer cents) is replaced with `refund_amount`
+ *     (US dollars decimal string, e.g. "12.34") so the API surface stays in the
+ *     same units admins type into the resolve endpoint.
+ */
+export function formatDisputeResponse(dispute) {
   if (!dispute) return dispute;
   const json = typeof dispute.toJSON === 'function' ? dispute.toJSON() : dispute;
-  const { admin, admin_id, ...rest } = json;
+  const { admin, admin_id, refund_cents, ...rest } = json;
   return {
     ...rest,
+    refund_amount:
+      refund_cents != null ? paymentService.centsToDecimalString(refund_cents) : null,
     resolved_by_admin: admin ?? null,
   };
 }
@@ -201,6 +219,11 @@ export const createDispute = async (req, res) => {
 
     const openedBy = isAdmin ? 'admin' : uid === coachId ? 'coach' : 'student';
 
+    const initial = assertInitialInAppDisputeStatus('open');
+    if (!initial.ok) {
+      return errorResponse(res, initial.message, 500, null, { code: initial.code });
+    }
+
     const dispute = await Dispute.create({
       booking_id,
       dispute_type_id,
@@ -313,7 +336,13 @@ export const resolveDispute = async (req, res) => {
     }
 
     const booking = await Booking.findByPk(dispute.booking_id, {
-      attributes: ['id', 'status', 'coach_id', 'primary_student_id'],
+      attributes: [
+        'id',
+        'status',
+        'coach_id',
+        'primary_student_id',
+        'attendance_finalized',
+      ],
     });
     if (!booking) {
       return errorResponse(res, 'Booking not found for dispute', 404);
@@ -321,12 +350,18 @@ export const resolveDispute = async (req, res) => {
 
     // Dispute resolution is the final authority for adjudication and refund intent.
     // Attendance disputes always carry a factual `outcome`; booking status follows it.
+    // Behavior disputes don't change the attendance outcome — but if the booking was
+    // parked in `disputed` (Stripe chargeback path or seed data; in-app `createDispute`
+    // never sets it), resolving the dispute should release it back to `completed` so
+    // the booking stops looking "in flight" forever.
     let resolvedBookingStatus = booking.status;
     const shouldApplyAttendanceOutcome = isAttendanceClaim;
     if (isAttendanceClaim) {
       if (shouldApplyAttendanceOutcome) {
         resolvedBookingStatus = outcome === 'student_no_show' ? 'student_no_show' : 'coach_no_show';
       }
+    } else if (isBehaviorDispute && booking.status === 'disputed') {
+      resolvedBookingStatus = 'completed';
     }
 
     if (shouldApplyAttendanceOutcome) {
@@ -396,29 +431,59 @@ export const resolveDispute = async (req, res) => {
     }
 
     const beforeState = dispute.toJSON();
+    // `attendance_finalized` always flips to true on every resolve — attendance
+    // claims AND behavior disputes (`misconduct`, `late_arrival`,
+    // `lesson_not_completed`). Semantics: lock direct admin/coach attendance
+    // mutations outside dispute adjudication; it does NOT freeze unrelated
+    // booking columns. Behavior resolves intentionally participate so dispute
+    // resolution is the single authoritative boundary for the incident.
+    const bookingStatusChanging = resolvedBookingStatus !== booking.status;
+    const bookingFinalizationChanging = !booking.attendance_finalized;
     const bookingBeforeForAudit =
-      resolvedBookingStatus !== booking.status ? booking.toJSON() : null;
+      bookingStatusChanging || bookingFinalizationChanging ? booking.toJSON() : null;
+
+    // Persist the resolution `outcome` and `refund_cents` directly on the
+    // dispute row so it is self-describing for later reads (admin lists, audits,
+    // disputes UI). `outcome` is only meaningful for attendance disputes;
+    // `refund_cents` is only known up-front for partial refunds — for full
+    // refunds the worker fills in `payment_actions.refund_cents` once Stripe
+    // executes, and callers can read that row by `dispute_id` if needed.
+    const persistedOutcome = isAttendanceClaim && shouldApplyAttendanceOutcome ? outcome : null;
+    const persistedRefundCents = queuedRefundAttrs?.refund_cents ?? null;
 
     let createdPaymentAction = null;
     await sequelize.transaction(async (transaction) => {
-      await dispute.update(
-        {
-          status: 'resolved',
+      await applyDisputeStatusTransition(dispute, {
+        toStatus: 'resolved',
+        via: DisputeTransitionVia.ADMIN_RESOLVE,
+        patch: {
           resolution_action_id: resolutionAction.id,
           decision,
+          outcome: persistedOutcome,
+          refund_cents: persistedRefundCents,
           penalize_role: isBehaviorDispute ? penalizeRole : 'none',
           resolution_notes,
           admin_id: req.user.id,
           resolved_at: new Date(),
         },
-        { transaction },
-      );
+        options: { transaction },
+      });
 
-      if (resolvedBookingStatus !== booking.status) {
-        await booking.update(
-          { status: resolvedBookingStatus, messaging_locked: true },
-          { transaction },
-        );
+      if (bookingStatusChanging || bookingFinalizationChanging) {
+        if (bookingStatusChanging) {
+          const via =
+            isBehaviorDispute && resolvedBookingStatus === 'completed'
+              ? BookingTransitionVia.DISPUTE_RESOLVE_BEHAVIOR_ON_DISPUTED_BOOKING
+              : BookingTransitionVia.DISPUTE_RESOLVE_ATTENDANCE;
+          await applyBookingStatusTransition(booking, {
+            toStatus: resolvedBookingStatus,
+            via,
+            patch: { attendance_finalized: true, messaging_locked: true },
+            options: { transaction },
+          });
+        } else {
+          await booking.update({ attendance_finalized: true }, { transaction });
+        }
       }
 
       if (queuedRefundAttrs) {
@@ -462,7 +527,14 @@ export const resolveDispute = async (req, res) => {
 
     if (bookingBeforeForAudit) {
       await booking.reload({
-        attributes: ['id', 'status', 'coach_id', 'primary_student_id', 'messaging_locked'],
+        attributes: [
+          'id',
+          'status',
+          'coach_id',
+          'primary_student_id',
+          'messaging_locked',
+          'attendance_finalized',
+        ],
       });
       await logAudit(
         req.user.id,
@@ -537,6 +609,9 @@ export const resolveDispute = async (req, res) => {
     return successResponse(res, payload, 'Dispute resolved successfully');
   } catch (error) {
     logger.error('Resolve dispute error:', error);
+    if (error.statusCode === 400 && error.code) {
+      return errorResponse(res, error.message, 400, null, { code: error.code });
+    }
     // MySQL often surfaces child-row FK failures as SequelizeDatabaseError (errno 1452), not ForeignKeyConstraintError.
     const mysqlFkChildRow =
       error.name === 'SequelizeForeignKeyConstraintError' ||

@@ -1,6 +1,21 @@
 import Stripe from 'stripe';
 import { logger } from '../config/logger.js';
 
+/**
+ * Integration tests only (`RUN_PAYMENT_INTEGRATION=1`): when set, matching methods delegate here instead of Stripe.
+ * Production must never call `setStripeTestDouble`.
+ */
+let stripeTestDouble = null;
+
+/** @param {null | Record<string, Function>} impl */
+export const setStripeTestDouble = (impl) => {
+  stripeTestDouble = impl && typeof impl === 'object' ? impl : null;
+};
+
+export const clearStripeTestDouble = () => {
+  stripeTestDouble = null;
+};
+
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || '', {
   apiVersion: '2024-11-20.acacia',
 });
@@ -107,6 +122,14 @@ export const createRefund = async (
     metadata = null,
   } = {}
 ) => {
+  if (stripeTestDouble?.createRefund) {
+    return stripeTestDouble.createRefund(chargeId, {
+      amountCents,
+      reason,
+      idempotencyKey,
+      metadata,
+    });
+  }
   try {
     const stripeReason = STRIPE_REFUND_REASONS.has(reason) ? reason : 'requested_by_customer';
     const params = {
@@ -145,6 +168,9 @@ export const createRefund = async (
 };
 
 export const retrieveRefund = async (refundId) => {
+  if (stripeTestDouble?.retrieveRefund) {
+    return stripeTestDouble.retrieveRefund(refundId);
+  }
   try {
     return await stripe.refunds.retrieve(refundId);
   } catch (error) {
@@ -157,6 +183,9 @@ export const retrieveRefund = async (refundId) => {
  * Refunds for a charge (paginated; most charges have few refunds).
  */
 export const listRefundsForCharge = async (chargeId, { limitPerPage = 100, maxPages = 5 } = {}) => {
+  if (stripeTestDouble?.listRefundsForCharge) {
+    return stripeTestDouble.listRefundsForCharge(chargeId, { limitPerPage, maxPages });
+  }
   const all = [];
   let startingAfter = null;
   for (let page = 0; page < maxPages; page += 1) {
@@ -271,6 +300,9 @@ export const verifyWebhookSignature = (payload, signature) => {
  * @returns {Promise<Object>} PaymentIntent object
  */
 export const getPaymentIntent = async (paymentIntentId) => {
+  if (stripeTestDouble?.getPaymentIntent) {
+    return stripeTestDouble.getPaymentIntent(paymentIntentId);
+  }
   try {
     const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
     return paymentIntent;
@@ -364,6 +396,9 @@ export const detachPaymentMethod = async (paymentMethodId) => {
  * Retrieve Charge (source of truth for amount captured vs refunded)
  */
 export const retrieveCharge = async (chargeId) => {
+  if (stripeTestDouble?.retrieveCharge) {
+    return stripeTestDouble.retrieveCharge(chargeId);
+  }
   try {
     return await stripe.charges.retrieve(chargeId, { expand: ['refunds'] });
   } catch (error) {

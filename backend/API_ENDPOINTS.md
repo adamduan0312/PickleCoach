@@ -354,7 +354,7 @@ Authorization: Bearer <token>
 - **Reliability** (optional): When a matching `user_reliability` row exists, the response may also include:
   - **`reliability`** — full **`user_reliability`** object for **`role: "coach"`** (present when the user has the coach role and a coach row exists).
   - **`reliability_student`** — full **`user_reliability`** object for **`role: "student"`** (present when the user has the student role and a student row exists). Dual-role users may receive both.
-- **Notes**: The profile includes `email_verified_at` (ISO date or `null`) for verification status. For dedicated breakdowns with paid-reschedule overrides, coaches use **`GET /api/coaches/me/reliability`** and students **`GET /api/students/me/reliability`**.
+- **Notes**: The profile includes `email_verified_at` (ISO date or `null`) for verification status. For dedicated reliability breakdowns (including persisted `paid_reschedules`), coaches use **`GET /api/coaches/me/reliability`** and students **`GET /api/students/me/reliability`**.
 - **Error responses**: `401` (missing or invalid token), `500` (server error).
 
 ### `PUT /api/auth/profile`
@@ -667,7 +667,7 @@ Authorization: Bearer <token>
 
 ### `GET /api/coaches/me/reliability`
 - **Auth**: Required (coach role only)
-- **Description**: Get the authenticated coach's reliability breakdown + score (raw `user_reliability` coach row). Includes penalized-impact counters: **`no_shows`** from **`bookings.status`**, and behavior penalty counts from sustained behavior disputes (**`late_arrival_penalties`**, **`misconduct_penalties`**, **`lesson_not_completed_penalties`**).
+- **Description**: Get the authenticated coach's reliability breakdown + score (raw `user_reliability` coach row). Includes penalized-impact counters: **`no_shows`** from **`bookings.status`**, and behavior penalty counts from sustained behavior disputes (**`late_arrival_penalties`**, **`misconduct_penalties`**, **`lesson_not_completed_penalties`**). **`paid_reschedules`** is the persisted informational count (paid + penalized + captured/partially_refunded payment), same value after `updateUserReliability` as in this response (not a second in-memory calculation).
 - **Response** (Status: 200):
   ```json
   {
@@ -1071,7 +1071,7 @@ Authorization: Bearer <token>
 
 ### `GET /api/students/me/reliability`
 - **Auth**: Required (**student** role only).
-- **Description**: Same purpose as **`GET /api/coaches/me/reliability`**, for the authenticated **student**: full penalized-impact reliability breakdown + score (`user_reliability` row with `role: student`). **`paid_reschedules`** is overridden to count **student-requested**, **penalized**, **paid** reschedules whose linked payment is **captured** or **partially_refunded** (parity with coach endpoint semantics).
+- **Description**: Same purpose as **`GET /api/coaches/me/reliability`**, for the authenticated **student**: full penalized-impact reliability breakdown + score (`user_reliability` row with `role: student`). **`paid_reschedules`** is read from persistence (recomputed with the same definition as coach rows: student-requested, penalized, captured/partially_refunded payment).
 - **Response** (Status: 200):
   ```json
   {
@@ -1553,7 +1553,7 @@ The sections below document the **MVP write flow** first, then **beyond MVP** (l
 
 ### `POST /api/admin/bookings/:id/student-no-show`
 - **Auth**: Required (`admin`)
-- **Description**: Admin override for **student** no-show. Lesson must have ended; allowed source statuses are `confirmed`, `awaiting_verification`, `student_no_show`, or `coach_no_show` **when there is no active dispute**. This endpoint sets `bookings.status` → `student_no_show` and can be used to correct an earlier admin attendance mark (including `coach_no_show` → `student_no_show`) while the booking is still financially mutable. If disputed (or any open/under_review dispute exists), this endpoint returns conflict and you should resolve through **`PUT /api/disputes/:id/resolve`** so final status + financial outcome are decided in one path. Coach payout is handled by the payout worker as a payable attendance outcome: once eligible (no open dispute, no pending refund, escrow still `held`), payout proceeds on the next worker cycle (`~10 minutes`); the 24-hour hold applies to `awaiting_verification`, not `student_no_show`.
+- **Description**: Admin override for **student** no-show. Lesson must have ended; allowed source statuses are `confirmed`, `awaiting_verification`, `student_no_show`, or `coach_no_show` **when there is no active dispute** and **`bookings.attendance_finalized` is false**. After any dispute has been resolved on the booking, this endpoint returns **`409`** with **`code: attendance_finalized_locked`** — attendance changes must go through a **new** dispute + **`PUT /api/disputes/:id/resolve`**. While the booking is not finalized, this endpoint sets `bookings.status` → `student_no_show` and can correct an earlier admin attendance mark (including `coach_no_show` → `student_no_show`) subject to payment/attendance-lock guards. If disputed (or any open/under_review dispute exists), this endpoint returns conflict and you should resolve through **`PUT /api/disputes/:id/resolve`** so final status + financial outcome are decided in one path. Coach payout is handled by the payout worker as a payable attendance outcome: once eligible (no open dispute, no pending refund, escrow still `held`), payout proceeds on the next worker cycle (`~10 minutes`); the 24-hour hold applies to `awaiting_verification`, not `student_no_show`.
 
 - **Side effects — reliability & payments (read this carefully)**:
   - **Reliability — YES, student only.** After the status flip, the controller calls `updateUserReliability(primary_student_id, 'student')`. The new `student_no_show` row is picked up by `calculateStudentMetrics` → `calculateStudentReliabilityScore`, so the **student's** score recomputes (a no-show is a negative signal). **Coach reliability is not touched** by this endpoint. Recalculation is skipped only when the student user also has the `admin` role.
@@ -1573,7 +1573,7 @@ The sections below document the **MVP write flow** first, then **beyond MVP** (l
 
 ### `POST /api/admin/bookings/:id/coach-no-show`
 - **Auth**: Required (`admin`)
-- **Description**: Sets `bookings.status` → **`coach_no_show`** (coach did not attend). Allowed source statuses are `confirmed`, `awaiting_verification`, `student_no_show`, or `coach_no_show`, and the lesson end time has passed, **with no active dispute**. This endpoint can be used to correct an earlier admin attendance mark (including `student_no_show` → `coach_no_show`) while the booking is still financially mutable. If disputed (or any open/under_review dispute exists), this endpoint returns conflict and you should resolve through **`PUT /api/disputes/:id/resolve`** as the final authority path. **`409`** with **`booking_concurrent_update`** if another process changed the booking between read and transactional update. Coach attendance penalties in reliability come from **`bookings.status` only** (see dispute resolve **Reliability** notes).
+- **Description**: Sets `bookings.status` → **`coach_no_show`** (coach did not attend). Allowed source statuses are `confirmed`, `awaiting_verification`, `student_no_show`, or `coach_no_show`, and the lesson end time has passed, **with no active dispute** and **`bookings.attendance_finalized` false**. After any dispute has been resolved on the booking, returns **`409`** **`attendance_finalized_locked`** (same as student no-show admin route). While not finalized, this endpoint can correct an earlier admin attendance mark (including `student_no_show` → `coach_no_show`) subject to payment/attendance-lock guards. If disputed (or any open/under_review dispute exists), this endpoint returns conflict and you should resolve through **`PUT /api/disputes/:id/resolve`** as the final authority path. **`409`** with **`booking_concurrent_update`** if another process changed the booking between read and transactional update. Coach attendance penalties in reliability come from **`bookings.status` only** (see dispute resolve **Reliability** notes).
 
 - **Side effects — reliability & payments (read this carefully)**:
   - **Reliability — YES, coach only.** After the status flip, the controller calls `updateUserReliability(coach_id, 'coach')`. The new `coach_no_show` row is picked up by `calculateCoachMetrics` → `calculateCoachReliabilityScore`, so the **coach's** score recomputes (a no-show is a negative signal). **Student reliability is not touched** by this endpoint. Recalculation is skipped only when the coach user also has the `admin` role.
@@ -1599,6 +1599,7 @@ The sections below document the **MVP write flow** first, then **beyond MVP** (l
 - **Attendance correction lock (both admin no-show endpoints)**:
   - Admin attendance corrections are allowed only while the booking is financially mutable.
   - Attendance changes are blocked once payout/refund settlement is finalized (for example payout already finalized, escrow already released, or refund finalized).
+  - After **any** dispute on the booking has been **resolved** via **`PUT /api/disputes/:id/resolve`**, **`bookings.attendance_finalized`** is **`true`** and both endpoints return **`409`** with **`code: attendance_finalized_locked`**. Further attendance changes require a **new** dispute + resolve (see **Attendance finalization** under **`PUT /api/disputes/:id/resolve`**).
 
 - **Response** (coach-no-show; **`data`** is the booking plus attendance fields):
 
@@ -2073,12 +2074,20 @@ Older `service_issue` / `billing` labels are replaced in place by this migration
         "notes": "Optional context from the reporter",
         "opened_by": "student",
         "status": "open",
+        "decision": null,
+        "outcome": null,
+        "refund_amount": null,
         "resolved_by_admin": null,
         "opened_at": "2026-01-01T00:00:00.000Z"
       }
     ]
   }
   ```
+
+  **Resolution fields surfaced on every dispute row** (populated on resolve, null otherwise):
+  - **`decision`**: `upheld` | `rejected` | `partial` | `null`. Admin ruling.
+  - **`outcome`**: `coach_no_show` | `student_no_show` | `null`. Factual attendance result for attendance dispute types (`coach_no_show_claim`, `student_no_show_claim`). Persisted on the dispute so the historical determination survives subsequent admin overrides of `bookings.status`. Always `null` for behavior disputes and unresolved disputes.
+  - **`refund_amount`**: US dollars decimal string (e.g. `"12.34"`) or `null`. Approved partial-refund amount recorded at resolve time for `financial_action = refund_student_partial`. **Always `null` for full refunds (`refund_student`) and for `no_change`.** For full refunds the executed cents are determined later by the payment-action worker from the remaining Stripe charge balance; read the linked `payment_actions` row (by `dispute_id`) for that value.
 
 ### `GET /api/disputes/:id`
 - **Auth**: Required
@@ -2096,6 +2105,9 @@ Older `service_issue` / `billing` labels are replaced in place by this migration
       "notes": "Optional context from the reporter",
       "opened_by": "student",
       "status": "resolved",
+      "decision": "partial",
+      "outcome": "coach_no_show",
+      "refund_amount": "20.00",
       "booking": {
         "id": 1,
         "scheduled_at": "2026-02-01T10:00:00.000Z"
@@ -2104,10 +2116,13 @@ Older `service_issue` / `billing` labels are replaced in place by this migration
         "id": 10,
         "full_name": "Admin User"
       },
-      "opened_at": "2026-01-01T00:00:00.000Z"
+      "opened_at": "2026-01-01T00:00:00.000Z",
+      "resolved_at": "2026-01-02T00:00:00.000Z"
     }
   }
   ```
+
+  See **`GET /api/disputes`** above for the meaning of `decision`, `outcome`, and `refund_amount`.
 
 ### `POST /api/disputes`
 - **Auth**: Required. **Students and coaches** must have **verified email**. **Admins** may create disputes without email verification; the row is stored with **`opened_by` → `admin`** (same as **`POST /api/admin/disputes`**).
@@ -2132,6 +2147,9 @@ Older `service_issue` / `billing` labels are replaced in place by this migration
       "notes": "Issue with the lesson - coach was late",
       "opened_by": "student",
       "status": "open",
+      "decision": null,
+      "outcome": null,
+      "refund_amount": null,
       "resolved_by_admin": null,
       "opened_at": "2026-01-01T00:00:00.000Z"
     }
@@ -2141,6 +2159,17 @@ Older `service_issue` / `billing` labels are replaced in place by this migration
 ### `PUT /api/disputes/:id/resolve`
 - **Auth**: Required (Admin only)
 - **Description**: Resolve a dispute (admin only). Sets `status` → `resolved`, records resolver and `resolved_at`.
+
+### Attendance finalization (`bookings.attendance_finalized`)
+
+Dispute resolution is the **authoritative adjudication boundary** for whether the booking’s attendance outcome may still be changed **outside** the dispute flow.
+
+- **On every successful resolve** (all dispute types: attendance claims **`coach_no_show_claim`**, **`student_no_show_claim`**, and behavior **`misconduct`**, **`late_arrival`**, **`lesson_not_completed`**), the server sets **`bookings.attendance_finalized` → `true`**. This is **intentional** for behavior disputes too: resolving any dispute finalizes that the incident has been adjudicated; it does **not** delete the booking, invalidate it, or imply mutable attendance via admin shortcuts afterward.
+- **What the flag means**: it does **not** freeze the entire booking row forever. It means **attendance outcome** cannot be mutated via **`POST /api/admin/bookings/:id/student-no-show`** or **`POST /api/admin/bookings/:id/coach-no-show`** — those return **`409`** with **`code: attendance_finalized_locked`** once the flag is true.
+- **Changing attendance after finalization**: open a **new** dispute on the same booking (when no dispute is active) and resolve it via this endpoint. Resolve may still update **`bookings.status`** from allowed source statuses (including `student_no_show`, `coach_no_show`, `completed`, `disputed` per `DISPUTE_RESOLVE_ATTENDANCE_SOURCE_STATUSES` for attendance outcomes) and always re-affirms **`attendance_finalized`**.
+- **Canonical records**: **`disputes.outcome`** is the historical attendance determination for that dispute row (attendance types only). **`bookings.status`** is the operational final state for product/UI. **`attendance_finalized`** is the guardrail preventing post-resolution drift from admin no-show endpoints.
+
+**`lesson_not_completed`**: this dispute type describes a quality/completion claim on a lesson that **occurred** in the product sense — it does **not** mean the booking is deleted or that attendance stays editable via admin no-show routes after a resolve. The booking remains a normal row with a finalized adjudication boundary.
 
   Canonical resolve contract:
   - **`decision`** (**required**, all dispute types): **`upheld`** | **`rejected`** | **`partial`**. This is the admin ruling and does not need to be inferred from attendance outcome.
@@ -2236,7 +2265,7 @@ Older `service_issue` / `billing` labels are replaced in place by this migration
   - **400** / **502** when a refund cannot be planned (no charge, nothing left to refund, partial amount > remaining balance). The dispute stays open.
   - **409** `refund_path_already_used` when another refund path already exists on the booking.
 
-- **Response** (Status: 200): `data` always includes **`dispute`**. When a Stripe refund applies, **`refund`** is included: it is **`queued`** (see below) unless you use a legacy path elsewhere. `resolution` is included with `{ "decision", "financial_action", "outcome?" , "derived_booking_status?" }` (for attendance claims, **`outcome`** and **`derived_booking_status`** are always included).
+- **Response** (Status: 200): `data` always includes **`dispute`**. The `dispute` object also persists the resolution on the row itself: **`decision`**, **`outcome`** (attendance only, otherwise `null`), and **`refund_amount`** (partial refunds only — US dollars decimal string; `null` for full refunds and `no_change`). When a Stripe refund applies, **`refund`** is included: it is **`queued`** (see below) unless you use a legacy path elsewhere. `resolution` is included with `{ "decision", "financial_action", "outcome?" , "derived_booking_status?" }` (for attendance claims, **`outcome`** and **`derived_booking_status`** are always included).
   For behavior disputes, `resolution` also includes `penalize_role`. When the resolution is allowed but worth confirming, `data.warnings` is present — advisory only, does not change HTTP status. Possible warning `code` values:
   - `behavior_claim_reversal` — sustained behavior dispute penalizes the very party who opened it (student↔student or coach↔coach).
   - `behavior_resolution_direction_ambiguous` — sustained behavior dispute opened by `admin`; claimant-vs-accused direction is not inferable from `opened_by`.
@@ -2253,6 +2282,9 @@ Older `service_issue` / `billing` labels are replaced in place by this migration
         "booking_id": 1,
         "dispute_type_id": 1,
         "status": "resolved",
+        "decision": "upheld",
+        "outcome": "coach_no_show",
+        "refund_amount": null,
         "resolution_notes": "Approved refund due to service issue",
         "resolved_by_admin": {
           "id": 10,
@@ -2262,6 +2294,7 @@ Older `service_issue` / `billing` labels are replaced in place by this migration
         "resolved_at": "2026-01-02T00:00:00.000Z"
       },
       "resolution": {
+        "decision": "upheld",
         "outcome": "coach_no_show",
         "financial_action": "refund_student",
         "derived_booking_status": "coach_no_show"
@@ -2515,15 +2548,13 @@ Older `service_issue` / `billing` labels are replaced in place by this migration
 - **Query parameters**:
   - **`role`** (optional): **`coach`** \| **`student`**. Selects which **`user_reliability`** row to return.
   - **Omitted**: defaults to **`coach`** if the target user has the coach role, otherwise **`student`** if they have the student role. Returns **`400`** if the requested **`role`** does not match the user’s roles, or if **`role`** is invalid.
-- **Description**: Full reliability breakdown for support. Response is always **`data.reliability`**, with a **`role`** field inside that object (**`"coach"`** or **`"student"`**) so clients know which dimension was returned. **`reliability_score`**, **`total_bookings`**, and stored penalty counts come from the corresponding **`user_reliability`** row; **`reschedules.*`** blocks are computed live from **`RescheduleHistory`** (**coach-requested** vs **student-requested** depending on **`role`**).
+- **Description**: Full reliability breakdown for support. Response is always **`data.reliability`**, with a **`role`** field (**`"coach"`** or **`"student"`**). **`reliability_score`**, canonical **`user_reliability`** metrics (recent / decayed / total per penalty bucket, booking baseline, smoothing metadata), and **`penalties.points`** are all derived from the **same** math as `reliabilityEngine.calculateReliabilityScoreFromPersistenceRow` (see **`docs/reliability-system.md`**). **`reschedules.*`** blocks remain computed live from **`RescheduleHistory`**. **`legacy_aliases`** mirrors older JSON field names (`total_bookings`, `reschedules`, `late_cancels`, …) for backward-compatible clients.
 - **Coach (`data.reliability.role` = `"coach"`)** — **`penalties`**:
-  - `late_cancels` = coach cancellations in the late window (within 24 hours before `scheduled_at`, with `affects_reliability`).
-  - `coach_cancels_non_late` = remaining penalized coach cancellations (same rules as `reliabilityService`: excludes the late-window bucket so each cancel is counted once).
-  - `no_shows` = coach no-show count used in scoring (from **`bookings.status` = `coach_no_show` only**—not from disputes).
-  - Behavior penalty buckets (resolved + behavior type + `affects_reliability_score` + sustained **`upheld`/`partial`** + **`penalize_role`**): **`late_arrival_penalties`**, **`misconduct_penalties`**, **`lesson_not_completed_penalties`** (stored on `user_reliability`; **no** attendance-claim dispute counters).
-  - `penalties.points` (coach): rough per-bucket contributions vs `total_bookings` denominator (the live scorer also uses `_booking_baseline` + smoothing — see **`reliabilityService`**): behavior: `late_arrival`, `misconduct`, `lesson_not_completed`; attendance: **`attendance_no_show`** from **`no_shows`** × coach attendance weight (**`35`**).
-  - **`reschedules`**: `total` = all **coach-requested** reschedules on that coach’s bookings; `penalized` / `non_penalized` split by `affects_reliability`. **`reschedules.paid`**: `count` = rows with `paid_reschedule` set; `with_captured_payment` uses captured / partially_refunded payments (per-type counts and dollar amounts).
-- **Student (`data.reliability.role` = `"student"`)** — same overall JSON shape; **`reschedules`** counts are **student-requested** reschedules on bookings where the user is **`primary_student`**. **`penalties.student_cancels_non_late`** uses the schema field persisted for the student row (**`user_reliability.coach_cancels`** when `role = student` — same column name as the coach row, different semantics). **`penalties.points`** includes **`attendance_no_show`** (student no-show weight **`12`**), **`student_cancels_non_late`** (weight **`12`**), and the behavior keys aligned with **`calculateStudentReliabilityScore`**.
+  - Each scored category is an object **`{ recent, decayed, total }`** matching persisted `user_reliability` columns (`penalized_reschedules_*`, `late_cancels_*`, `coach_cancels_non_late_*`, `no_shows_*`, behavior dispute buckets, etc.).
+  - **`penalties.points`** lists per-bucket **point deductions** (same weights as the scorer). Coach includes **`penalized_reschedules`**, **`late_cancels`**, **`late_arrival_penalties`**, **`no_shows`**, **`coach_cancels_non_late`**, **`misconduct_penalties`**, **`lesson_not_completed_penalties`**.
+  - **`scoring`**: **`denominator`** = `max(1, booking_baseline_total + smoothing_k)` as stored; **`reconstructed_from_metrics`** reproduces the score from persisted columns alone; **`score_matches_recomputed`** is true when **`score_source`** is **`computed`** and the persisted score matches reconstruction (within tolerance).
+  - **`reschedules`**: unchanged live block from **`RescheduleHistory`**.
+- **Student (`data.reliability.role` = `"student"`)** — same shape; **`penalties.student_cancels_non_late`** uses **`student_cancels_non_late_*`** columns (no overloaded coach column). Student **`penalties.points`** includes **`penalized_reschedules`**, **`late_cancels`**, behavior keys, **`attendance_no_show`**, and **`student_cancels_non_late`**.
 - **Response** (Status: 200): **`message`** is **`Reliability retrieved successfully`**. Example (**coach**):
   ```json
   {

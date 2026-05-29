@@ -3,124 +3,31 @@ import { Op } from 'sequelize';
 import { successResponse, errorResponse } from '../utils/response.js';
 import { logger } from '../config/logger.js';
 import {
-  BEHAVIOR_DISPUTE_PENALTY_WEIGHTS,
-  COACH_ATTENDANCE_NO_SHOW_WEIGHT,
-  STUDENT_ATTENDANCE_NO_SHOW_WEIGHT,
-} from '../services/reliabilityScoring.js';
-
-const getDefaultCoachReliability = (userId) => ({
-  user_id: userId,
-  role: 'coach',
-  total_bookings: 0,
-  // Penalized reschedules only (affects_reliability = true) comes from reliabilityService.
-  reschedules: 0,
-  // Penalized paid reschedules only (paid + affects_reliability=true + captured).
-  paid_reschedules: 0,
-  late_cancels: 0,
-  late_arrival_penalties: 0,
-  misconduct_penalties: 0,
-  lesson_not_completed_penalties: 0,
-  no_shows: 0,
-  coach_cancels: 0,
-  reliability_score: 100.00,
-  badges: null,
-  last_updated: null,
-});
+  attachLegacyReliabilityAliases,
+  calculatePenaltyBreakdown,
+  calculateReliabilityScoreFromPersistenceRow,
+  defaultCanonicalReliabilityRow,
+  persistenceRowToCanonical,
+} from '../services/reliabilityEngine.js';
 
 /**
- * Coach reliability payload (penalized-impact only).
- * - Returns full `UserReliability` row data
- * - Overrides `paid_reschedules` to mean penalized+captured paid reschedules only
- *   (so it can't be used to infer that paid/non-penalized reasons bypass penalties).
+ * Coach reliability payload (penalized-impact metrics + score).
+ * Returns full `UserReliability` row data (including `paid_reschedules` persisted by
+ * `updateUserReliability` — same semantics as the former API override).
  */
 const getCoachPenalizedReliabilityPayload = async (coachId) => {
   const reliability = await UserReliability.findOne({ where: { user_id: coachId, role: 'coach' } });
-  const payload = reliability ? reliability.toJSON() : getDefaultCoachReliability(coachId);
-
-  // Override `paid_reschedules` to mean:
-  // - paid_reschedule = true
-  // - affects_reliability = true (penalized)
-  // - payment_status = captured (payment confirmed)
-  const coachBookings = await Booking.findAll({
-    where: { coach_id: coachId },
-    attributes: ['id'],
-  });
-  const coachBookingIds = coachBookings.map((b) => b.id);
-
-  const paidPenalizedCapturedReschedules = coachBookingIds.length
-    ? await RescheduleHistory.count({
-        where: {
-          booking_id: { [Op.in]: coachBookingIds },
-          requested_by: 'coach',
-          paid_reschedule: true,
-          affects_reliability: true,
-        },
-        include: [{
-          model: Payment,
-          as: 'transaction',
-          where: { payment_status: { [Op.in]: ['captured', 'partially_refunded'] } },
-          required: true,
-          attributes: [],
-        }],
-      })
-    : 0;
-
-  payload.paid_reschedules = paidPenalizedCapturedReschedules;
-
-  return payload;
+  const base = reliability ? reliability.toJSON() : defaultCanonicalReliabilityRow(coachId, 'coach');
+  return attachLegacyReliabilityAliases(base);
 };
 
-const getDefaultStudentReliability = (userId) => ({
-  user_id: userId,
-  role: 'student',
-  total_bookings: 0,
-  reschedules: 0,
-  paid_reschedules: 0,
-  late_cancels: 0,
-  late_arrival_penalties: 0,
-  misconduct_penalties: 0,
-  lesson_not_completed_penalties: 0,
-  no_shows: 0,
-  coach_cancels: 0,
-  reliability_score: 100.0,
-  badges: null,
-  last_updated: null,
-});
-
 /**
- * Student self / admin: full student reliability row + paid penalized reschedule override (student-requested).
+ * Student self / admin: full student reliability row (same `paid_reschedules` persistence as coach).
  */
 const getStudentPenalizedReliabilityPayload = async (studentId) => {
   const reliability = await UserReliability.findOne({ where: { user_id: studentId, role: 'student' } });
-  const payload = reliability ? reliability.toJSON() : getDefaultStudentReliability(studentId);
-
-  const studentBookings = await Booking.findAll({
-    where: { primary_student_id: studentId },
-    attributes: ['id'],
-  });
-  const bookingIds = studentBookings.map((b) => b.id);
-
-  const paidPenalizedCapturedReschedules = bookingIds.length
-    ? await RescheduleHistory.count({
-        where: {
-          booking_id: { [Op.in]: bookingIds },
-          requested_by: 'student',
-          paid_reschedule: true,
-          affects_reliability: true,
-        },
-        include: [{
-          model: Payment,
-          as: 'transaction',
-          where: { payment_status: { [Op.in]: ['captured', 'partially_refunded'] } },
-          required: true,
-          attributes: [],
-        }],
-      })
-    : 0;
-
-  payload.paid_reschedules = paidPenalizedCapturedReschedules;
-
-  return payload;
+  const base = reliability ? reliability.toJSON() : defaultCanonicalReliabilityRow(studentId, 'student');
+  return attachLegacyReliabilityAliases(base);
 };
 
 /**
@@ -327,7 +234,90 @@ const buildAdminRescheduleBlock = async (bookingIds, requestedBy) => {
   };
 };
 
-const denomForPoints = (stored) => Math.max(1, stored.total_bookings || 0);
+const round6 = (x) => Math.round(Number(x) * 1e6) / 1e6;
+
+const penaltyTriplet = (stored, recentKey, decayedKey, totalKey) => ({
+  recent: Number(stored[recentKey]) || 0,
+  decayed: Number(stored[decayedKey]) || 0,
+  total: Number(stored[totalKey]) || 0,
+});
+
+const buildAdminReliabilityPayload = (role, userId, stored, reschedulesBlock) => {
+  const canonical = persistenceRowToCanonical(role, stored);
+  const breakdown = calculatePenaltyBreakdown(role, canonical);
+  const reconstructed = calculateReliabilityScoreFromPersistenceRow(role, stored);
+  const persisted = Number(stored.reliability_score);
+
+  const penalties = {
+    penalized_reschedules: penaltyTriplet(
+      stored,
+      'penalized_reschedules_recent',
+      'penalized_reschedules_decayed',
+      'penalized_reschedules_total',
+    ),
+    late_cancels: penaltyTriplet(stored, 'late_cancels_recent', 'late_cancels_decayed', 'late_cancels_total'),
+    late_arrival_penalties: penaltyTriplet(
+      stored,
+      'late_arrival_penalties_recent',
+      'late_arrival_penalties_decayed',
+      'late_arrival_penalties_total',
+    ),
+    misconduct_penalties: penaltyTriplet(
+      stored,
+      'misconduct_penalties_recent',
+      'misconduct_penalties_decayed',
+      'misconduct_penalties_total',
+    ),
+    lesson_not_completed_penalties: penaltyTriplet(
+      stored,
+      'lesson_not_completed_penalties_recent',
+      'lesson_not_completed_penalties_decayed',
+      'lesson_not_completed_penalties_total',
+    ),
+    no_shows: penaltyTriplet(stored, 'no_shows_recent', 'no_shows_decayed', 'no_shows_total'),
+    coach_cancels_non_late: penaltyTriplet(
+      stored,
+      'coach_cancels_non_late_recent',
+      'coach_cancels_non_late_decayed',
+      'coach_cancels_non_late_total',
+    ),
+    student_cancels_non_late: penaltyTriplet(
+      stored,
+      'student_cancels_non_late_recent',
+      'student_cancels_non_late_decayed',
+      'student_cancels_non_late_total',
+    ),
+    points: Object.fromEntries(
+      Object.entries(breakdown.deductions).map(([k, v]) => [k, round6(v)]),
+    ),
+    total_deduction_points: round6(breakdown.total_deduction),
+  };
+
+  return {
+    role,
+    user_id: userId,
+    reliability_score: round6(persisted),
+    last_updated: stored.last_updated,
+    last_recomputed_at: stored.last_recomputed_at,
+    total_bookings_recent: stored.total_bookings_recent,
+    scoring: {
+      denominator: round6(breakdown.denominator),
+      booking_baseline_total: round6(Number(canonical.booking_baseline_total)),
+      smoothing_k: round6(Number(stored.smoothing_k)),
+      decay_lambda: round6(Number(stored.decay_lambda)),
+      scoring_window_days: Number(stored.scoring_window_days) || 90,
+      reconstructed_from_metrics: round6(reconstructed),
+      score_source: stored.score_source || 'computed',
+      score_matches_recomputed:
+        (stored.score_source || 'computed') === 'computed' &&
+        Math.abs((Number.isFinite(persisted) ? persisted : 0) - reconstructed) < 0.02,
+    },
+    reschedules: reschedulesBlock,
+    penalties,
+    badges: stored.badges,
+    legacy_aliases: attachLegacyReliabilityAliases(stored),
+  };
+};
 
 /**
  * Admin: full reliability read for coach or student row (`?role=coach`|`?role=student`).
@@ -366,7 +356,7 @@ export const getUserReliabilityForAdmin = async (req, res) => {
 
     if (effectiveRole === 'coach') {
       const reliabilityRow = await UserReliability.findOne({ where: { user_id: userId, role: 'coach' } });
-      const stored = reliabilityRow ? reliabilityRow.toJSON() : getDefaultCoachReliability(userId);
+      const stored = reliabilityRow ? reliabilityRow.toJSON() : defaultCanonicalReliabilityRow(userId, 'coach');
 
       const coachBookings = await Booking.findAll({
         where: { coach_id: userId },
@@ -375,44 +365,12 @@ export const getUserReliabilityForAdmin = async (req, res) => {
       const coachBookingIds = coachBookings.map((b) => b.id);
       const reschedulesBlock = await buildAdminRescheduleBlock(coachBookingIds, 'coach');
 
-      const d = denomForPoints(stored);
-      const payload = {
-        role: 'coach',
-        user_id: userId,
-        reliability_score: stored.reliability_score,
-        last_updated: stored.last_updated,
-        total_bookings: stored.total_bookings,
-        reschedules: reschedulesBlock,
-        penalties: {
-          late_cancels: stored.late_cancels,
-          late_arrival_penalties: stored.late_arrival_penalties || 0,
-          misconduct_penalties: stored.misconduct_penalties || 0,
-          lesson_not_completed_penalties: stored.lesson_not_completed_penalties || 0,
-          no_shows: stored.no_shows,
-          coach_cancels_non_late: stored.coach_cancels,
-          points: {
-            late_arrival:
-              ((stored.late_arrival_penalties || 0) / d) *
-              BEHAVIOR_DISPUTE_PENALTY_WEIGHTS.late_arrival,
-            misconduct:
-              ((stored.misconduct_penalties || 0) / d) *
-              BEHAVIOR_DISPUTE_PENALTY_WEIGHTS.misconduct,
-            lesson_not_completed:
-              ((stored.lesson_not_completed_penalties || 0) / d) *
-              BEHAVIOR_DISPUTE_PENALTY_WEIGHTS.lesson_not_completed,
-            attendance_no_show:
-              ((stored.no_shows || 0) / d) *
-              COACH_ATTENDANCE_NO_SHOW_WEIGHT,
-          },
-        },
-        badges: stored.badges,
-      };
-
+      const payload = buildAdminReliabilityPayload('coach', userId, stored, reschedulesBlock);
       return successResponse(res, { reliability: payload }, 'Reliability retrieved successfully');
     }
 
     const reliabilityRow = await UserReliability.findOne({ where: { user_id: userId, role: 'student' } });
-    const stored = reliabilityRow ? reliabilityRow.toJSON() : getDefaultStudentReliability(userId);
+    const stored = reliabilityRow ? reliabilityRow.toJSON() : defaultCanonicalReliabilityRow(userId, 'student');
 
     const studentBookings = await Booking.findAll({
       where: { primary_student_id: userId },
@@ -421,42 +379,7 @@ export const getUserReliabilityForAdmin = async (req, res) => {
     const studentBookingIds = studentBookings.map((b) => b.id);
     const reschedulesBlock = await buildAdminRescheduleBlock(studentBookingIds, 'student');
 
-    const d = denomForPoints(stored);
-    const payload = {
-      role: 'student',
-      user_id: userId,
-      reliability_score: stored.reliability_score,
-      last_updated: stored.last_updated,
-      total_bookings: stored.total_bookings,
-      reschedules: reschedulesBlock,
-      penalties: {
-        late_cancels: stored.late_cancels,
-        late_arrival_penalties: stored.late_arrival_penalties || 0,
-        misconduct_penalties: stored.misconduct_penalties || 0,
-        lesson_not_completed_penalties: stored.lesson_not_completed_penalties || 0,
-        no_shows: stored.no_shows,
-        /** Non-late student cancels: stored in `user_reliability.coach_cancels` for role=student rows. */
-        student_cancels_non_late: stored.coach_cancels,
-        points: {
-          late_arrival:
-            ((stored.late_arrival_penalties || 0) / d) *
-            BEHAVIOR_DISPUTE_PENALTY_WEIGHTS.late_arrival,
-          misconduct:
-            ((stored.misconduct_penalties || 0) / d) *
-            BEHAVIOR_DISPUTE_PENALTY_WEIGHTS.misconduct,
-          lesson_not_completed:
-            ((stored.lesson_not_completed_penalties || 0) / d) *
-            BEHAVIOR_DISPUTE_PENALTY_WEIGHTS.lesson_not_completed,
-          attendance_no_show:
-            ((stored.no_shows || 0) / d) *
-            STUDENT_ATTENDANCE_NO_SHOW_WEIGHT,
-          student_cancels_non_late:
-            ((stored.coach_cancels || 0) / d) * 12,
-        },
-      },
-      badges: stored.badges,
-    };
-
+    const payload = buildAdminReliabilityPayload('student', userId, stored, reschedulesBlock);
     return successResponse(res, { reliability: payload }, 'Reliability retrieved successfully');
   } catch (error) {
     logger.error('Admin get user reliability error:', error);

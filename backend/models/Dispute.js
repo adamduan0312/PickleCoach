@@ -39,6 +39,27 @@ const Dispute = sequelize.define('disputes', {
     type: DataTypes.ENUM('upheld', 'rejected', 'partial'),
     allowNull: true,
   },
+  /**
+   * Factual attendance result recorded at resolve time for attendance dispute
+   * types (`coach_no_show_claim`, `student_no_show_claim`). Persisted on the
+   * dispute so the determination survives subsequent admin overrides of
+   * `bookings.status`. NULL for behavior disputes and unresolved disputes.
+   */
+  outcome: {
+    type: DataTypes.ENUM('coach_no_show', 'student_no_show'),
+    allowNull: true,
+  },
+  /**
+   * Approved refund amount in integer cents. Populated at resolve time for
+   * `refund_student_partial`. NULL for `refund_student` (full refund cents
+   * are computed by the payment-action worker from the remaining Stripe
+   * charge balance) and for `no_change`. Mirrors the
+   * `payment_actions.refund_cents` convention.
+   */
+  refund_cents: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+  },
   penalize_role: {
     type: DataTypes.ENUM('coach', 'student', 'none'),
     allowNull: false,

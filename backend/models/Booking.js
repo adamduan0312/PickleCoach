@@ -48,6 +48,30 @@ const Booking = sequelize.define('bookings', {
     type: DataTypes.ENUM('none', 'pending', 'awaiting_verification', 'processing', 'paid', 'forfeited'),
     defaultValue: 'none',
   },
+  /**
+   * Locks attendance outcome mutations outside dispute adjudication.
+   *
+   * Once true:
+   * - coach/admin no-show endpoints are blocked (409 `attendance_finalized_locked`)
+   * - attendance outcome may only change through a NEW dispute resolution
+   *
+   * This does NOT mean the booking row can never change again in any way —
+   * it does NOT freeze unrelated booking fields. It means the attendance
+   * outcome (`bookings.status` when it reflects attendance: `student_no_show`,
+   * `coach_no_show`, or post-lesson outcomes governed by disputes) cannot be
+   * mutated outside the dispute adjudication flow.
+   *
+   * Set exclusively by `PUT /api/disputes/:id/resolve` after any dispute
+   * resolution (attendance claims and behavior types: `misconduct`,
+   * `late_arrival`, `lesson_not_completed`). Behavior resolutions also set
+   * this flag intentionally: dispute resolution is the authoritative
+   * adjudication boundary for the booking incident.
+   */
+  attendance_finalized: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: false,
+  },
   cancelled_by: {
     type: DataTypes.ENUM('student', 'coach', 'admin', 'system'),
     allowNull: true,

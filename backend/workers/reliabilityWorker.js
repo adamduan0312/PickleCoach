@@ -1,4 +1,4 @@
-import { User, UserReliability, Booking, SystemJob, UserRole } from '../models/index.js';
+import { User, UserRole, SystemJob } from '../models/index.js';
 import { Op } from 'sequelize';
 import { logger } from '../config/logger.js';
 import { updateUserReliability } from '../services/reliabilityService.js';
@@ -21,13 +21,13 @@ export const recalculateReliability = async () => {
       const roles = user.userRoles?.map((r) => r.role) ?? [];
       if (roles.includes('admin')) continue;
       if (roles.includes('coach')) {
-        await updateUserReliability(user.id, 'coach').catch((err) => {
+        await updateUserReliability(user.id, 'coach', { skipIfAdminOverride: true }).catch((err) => {
           logger.error(`Coach reliability failed for user ${user.id}:`, err);
         });
         updates += 1;
       }
       if (roles.includes('student')) {
-        await updateUserReliability(user.id, 'student').catch((err) => {
+        await updateUserReliability(user.id, 'student', { skipIfAdminOverride: true }).catch((err) => {
           logger.error(`Student reliability failed for user ${user.id}:`, err);
         });
         updates += 1;
@@ -70,7 +70,8 @@ export const calculateUserReliability = async (userId) => {
 };
 
 /**
- * Monthly coach reliability reset — only the coach role row for users who coach.
+ * Monthly coach reliability job — full recompute from source data (metrics + score stay aligned).
+ * Previously this reset only `reliability_score` to 100, which contradicted persisted counters.
  */
 export const monthlyCoachReliabilityReset = async () => {
   const jobType = 'recalculate_reliability';
@@ -90,7 +91,7 @@ export const monthlyCoachReliabilityReset = async () => {
     });
 
     if (existingJob) {
-      logger.info('Monthly coach reliability reset already completed this month');
+      logger.info('Monthly coach reliability job already completed this month');
       return;
     }
 
@@ -98,7 +99,7 @@ export const monthlyCoachReliabilityReset = async () => {
       job_type: jobType,
       status: 'pending',
       scheduled_at: now,
-      payload: { action: 'monthly_coach_reset', month: now.getMonth() + 1, year: now.getFullYear() },
+      payload: { action: 'monthly_coach_recompute', month: now.getMonth() + 1, year: now.getFullYear() },
     });
 
     try {
@@ -115,7 +116,7 @@ export const monthlyCoachReliabilityReset = async () => {
         ],
       });
 
-      let resetCount = 0;
+      let recomputeCount = 0;
 
       for (const coach of coaches) {
         const fullUser = await User.findByPk(coach.id, {
@@ -124,28 +125,11 @@ export const monthlyCoachReliabilityReset = async () => {
         const roles = fullUser?.userRoles?.map((r) => r.role) ?? [];
         if (roles.includes('admin')) continue;
 
-        const coachBookings = await Booking.count({
-          where: { coach_id: coach.id },
+        await updateUserReliability(coach.id, 'coach', { skipIfAdminOverride: true }).catch((err) => {
+          logger.error(`Monthly coach reliability recompute failed for ${coach.id}:`, err);
         });
-
-        if (coachBookings > 0) {
-          const [reliability, created] = await UserReliability.findOrCreate({
-            where: { user_id: coach.id, role: 'coach' },
-            defaults: {
-              user_id: coach.id,
-              role: 'coach',
-              reliability_score: 100.0,
-            },
-          });
-
-          if (!created) {
-            await reliability.update({
-              reliability_score: 100.0,
-            });
-          }
-          resetCount += 1;
-          logger.info(`Reset coach reliability score for user ${coach.id} (${coach.full_name})`);
-        }
+        recomputeCount += 1;
+        logger.info(`Recomputed coach reliability for user ${coach.id} (${coach.full_name})`);
       }
 
       await systemJob.update({
@@ -153,7 +137,7 @@ export const monthlyCoachReliabilityReset = async () => {
         attempted_at: new Date(),
       });
 
-      logger.info(`Monthly coach reliability reset completed: ${resetCount} coaches reset`);
+      logger.info(`Monthly coach reliability job completed: ${recomputeCount} coaches recomputed`);
     } catch (error) {
       await systemJob.update({
         status: 'failed',
@@ -164,7 +148,7 @@ export const monthlyCoachReliabilityReset = async () => {
       throw error;
     }
   } catch (error) {
-    logger.error('Error in monthly coach reliability reset:', error);
+    logger.error('Error in monthly coach reliability job:', error);
     throw error;
   }
 };

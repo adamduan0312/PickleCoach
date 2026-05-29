@@ -26,7 +26,19 @@ import * as notificationService from '../services/notificationService.js';
 import { checkBookingAvailability } from '../services/bookingService.js';
 import { logger } from '../config/logger.js';
 import crypto from 'crypto';
-import { ADMIN_MARK_NO_SHOW_SOURCE_STATUSES } from '../utils/bookingAttendanceStatus.js';
+import {
+  ADMIN_MARK_NO_SHOW_SOURCE_STATUSES,
+  checkAttendanceFinalized,
+} from '../utils/bookingAttendanceStatus.js';
+import { applyBookingStatusTransition, BookingTransitionVia } from '../services/bookingStateMachine.js';
+import { ACTIVE_DISPUTE_STATUSES } from '../services/disputeStateMachine.js';
+
+function respondIfBookingStateMachineError(res, error) {
+  if (error?.statusCode === 400 && error?.code) {
+    return errorResponse(res, error.message, 400, null, { code: error.code });
+  }
+  return null;
+}
 
 /** In dev, return clear error detail; if Stripe API key error, clarify it's server-side STRIPE_SECRET_KEY. */
 function getCreateBookingErrorDetail(error, isDev) {
@@ -533,7 +545,11 @@ export const completeBooking = async (req, res) => {
     }
 
     const beforeState = booking.toJSON();
-    await booking.update({ status: 'completed', payout_status: 'pending', messaging_locked: true });
+    await applyBookingStatusTransition(booking, {
+      toStatus: 'completed',
+      via: BookingTransitionVia.MARK_COMPLETED,
+      patch: { payout_status: 'pending', messaging_locked: true },
+    });
     await logAudit(req.user.id, 'booking_completed', 'bookings', booking.id, beforeState, booking.toJSON(), req);
 
     const updated = await Booking.findByPk(id, {
@@ -545,6 +561,8 @@ export const completeBooking = async (req, res) => {
     });
     return successResponse(res, updated, 'Booking marked as completed');
   } catch (error) {
+    const sm = respondIfBookingStateMachineError(res, error);
+    if (sm) return sm;
     logger.error('Complete booking error:', error);
     return errorResponse(res, 'Failed to complete booking', 500);
   }
@@ -579,7 +597,7 @@ export const markBookingNoShow = async (req, res) => {
     const activeDispute = await Dispute.findOne({
       where: {
         booking_id: booking.id,
-        status: { [Op.in]: ['open', 'under_review'] },
+        status: { [Op.in]: [...ACTIVE_DISPUTE_STATUSES] },
       },
       attributes: ['id', 'status'],
     });
@@ -610,7 +628,11 @@ export const markBookingNoShow = async (req, res) => {
     }
 
     const beforeState = booking.toJSON();
-    await booking.update({ status: 'student_no_show', messaging_locked: true });
+    await applyBookingStatusTransition(booking, {
+      toStatus: 'student_no_show',
+      via: BookingTransitionVia.COACH_MARK_STUDENT_NO_SHOW,
+      patch: { messaging_locked: true },
+    });
     await logAudit(
       req.user.id,
       'booking_marked_student_no_show',
@@ -640,6 +662,8 @@ export const markBookingNoShow = async (req, res) => {
     };
     return successResponse(res, responseData, 'Booking marked as student_no_show');
   } catch (error) {
+    const sm = respondIfBookingStateMachineError(res, error);
+    if (sm) return sm;
     logger.error('No-show booking error:', error);
     return errorResponse(res, 'Failed to mark booking as student_no_show', 500);
   }
@@ -665,7 +689,11 @@ export const acceptBooking = async (req, res) => {
     if (payment) {
       await paymentService.capturePaymentOnCoachAccept(payment.id);
     } else {
-      await booking.update({ status: 'confirmed', messaging_locked: false });
+      await applyBookingStatusTransition(booking, {
+        toStatus: 'confirmed',
+        via: BookingTransitionVia.COACH_ACCEPT_WITHOUT_PAYMENT,
+        patch: { messaging_locked: false },
+      });
       await logAudit(req.user.id, 'booking_confirmed_by_coach', 'bookings', booking.id, null, { status: 'confirmed' }, req);
     }
 
@@ -682,6 +710,8 @@ export const acceptBooking = async (req, res) => {
       'Booking accepted. If payment was pending capture, confirmation completes when Stripe sends payment_intent.succeeded.'
     );
   } catch (error) {
+    const sm = respondIfBookingStateMachineError(res, error);
+    if (sm) return sm;
     logger.error('Accept booking error:', error);
     const message = error.message || 'Failed to accept booking';
     const code = message.includes('not pending') ? 400 : 500;
@@ -712,10 +742,13 @@ export const declineBooking = async (req, res) => {
     if (payment) {
       await paymentService.cancelPaymentOnCoachDecline(payment.id);
     } else {
-      await booking.update({
-        status: 'cancelled',
-        cancelled_by: 'coach',
-        cancelled_at: new Date(),
+      await applyBookingStatusTransition(booking, {
+        toStatus: 'cancelled',
+        via: BookingTransitionVia.COACH_DECLINE,
+        patch: {
+          cancelled_by: 'coach',
+          cancelled_at: new Date(),
+        },
       });
       await logAudit(req.user.id, 'booking_declined_by_coach', 'bookings', booking.id, null, { status: 'cancelled' }, req);
     }
@@ -752,6 +785,8 @@ export const declineBooking = async (req, res) => {
       system_note: 'You weren\'t charged. You can pick another time.',
     }, 'Booking declined');
   } catch (error) {
+    const sm = respondIfBookingStateMachineError(res, error);
+    if (sm) return sm;
     logger.error('Decline booking error:', error);
     const message = error.message || 'Failed to decline booking';
     const code = message.includes('not pending') ? 400 : 500;
@@ -1012,15 +1047,16 @@ export const cancelBooking = async (req, res) => {
         await cancellationHistory.update({ refund_payment_id: refundPaymentId }, { transaction: t });
       }
 
-      await booking.update(
-        {
-          status: 'cancelled',
+      await applyBookingStatusTransition(booking, {
+        toStatus: 'cancelled',
+        via: BookingTransitionVia.PRE_LESSON_CANCEL,
+        patch: {
           cancelled_by: cancelledBy,
           cancelled_at: new Date(),
           messaging_locked: true,
         },
-        { transaction: t },
-      );
+        options: { transaction: t },
+      });
     });
 
     afterBooking = await Booking.findByPk(id);
@@ -1147,7 +1183,7 @@ export const adminMarkCoachNoShow = async (req, res) => {
     const activeDispute = await Dispute.findOne({
       where: {
         booking_id: booking.id,
-        status: { [Op.in]: ['open', 'under_review'] },
+        status: { [Op.in]: [...ACTIVE_DISPUTE_STATUSES] },
       },
       attributes: ['id', 'status'],
     });
@@ -1159,6 +1195,13 @@ export const adminMarkCoachNoShow = async (req, res) => {
         null,
         { code: 'disputed_use_resolve_dispute', booking_status: booking.status },
       );
+    }
+    const finalizedCheck = checkAttendanceFinalized(booking);
+    if (!finalizedCheck.ok) {
+      return errorResponse(res, finalizedCheck.message, 409, null, {
+        code: finalizedCheck.code,
+        booking_status: booking.status,
+      });
     }
     if (!lessonHasEnded(booking)) {
       return errorResponse(res, 'Cannot mark coach_no_show before the lesson end time.', 400);
@@ -1232,7 +1275,12 @@ export const adminMarkCoachNoShow = async (req, res) => {
         throw err;
       }
 
-      await locked.update({ status: 'coach_no_show', messaging_locked: true }, { transaction: tx });
+      await applyBookingStatusTransition(locked, {
+        toStatus: 'coach_no_show',
+        via: BookingTransitionVia.ADMIN_MARK_COACH_NO_SHOW,
+        patch: { messaging_locked: true },
+        options: { transaction: tx },
+      });
 
       if (scheduledCoachRefund.enqueue && scheduledCoachRefund.paymentId) {
         const created = await PaymentAction.create(
@@ -1378,7 +1426,7 @@ export const adminMarkBookingNoShow = async (req, res) => {
     const activeDispute = await Dispute.findOne({
       where: {
         booking_id: booking.id,
-        status: { [Op.in]: ['open', 'under_review'] },
+        status: { [Op.in]: [...ACTIVE_DISPUTE_STATUSES] },
       },
       attributes: ['id', 'status'],
     });
@@ -1390,6 +1438,13 @@ export const adminMarkBookingNoShow = async (req, res) => {
         null,
         { code: 'disputed_use_resolve_dispute', booking_status: booking.status },
       );
+    }
+    const finalizedCheck = checkAttendanceFinalized(booking);
+    if (!finalizedCheck.ok) {
+      return errorResponse(res, finalizedCheck.message, 409, null, {
+        code: finalizedCheck.code,
+        booking_status: booking.status,
+      });
     }
     if (!lessonHasEnded(booking)) {
       return errorResponse(
@@ -1407,7 +1462,11 @@ export const adminMarkBookingNoShow = async (req, res) => {
 
     const beforeState = booking.toJSON();
     const fromStatus = booking.status;
-    await booking.update({ status: 'student_no_show', messaging_locked: true });
+    await applyBookingStatusTransition(booking, {
+      toStatus: 'student_no_show',
+      via: BookingTransitionVia.ADMIN_MARK_STUDENT_NO_SHOW,
+      patch: { messaging_locked: true },
+    });
     await logAudit(
       req.user.id,
       'booking_marked_student_no_show',
@@ -1455,6 +1514,8 @@ export const adminMarkBookingNoShow = async (req, res) => {
     };
     return successResponse(res, responseData, 'Booking marked as student_no_show');
   } catch (error) {
+    const sm = respondIfBookingStateMachineError(res, error);
+    if (sm) return sm;
     logger.error('Admin mark student no-show error:', error);
     return errorResponse(res, 'Failed to mark booking as student_no_show', 500);
   }
@@ -1525,7 +1586,7 @@ export const adminRefundBooking = async (req, res) => {
     const openDispute = await Dispute.findOne({
       where: {
         booking_id: booking.id,
-        status: { [Op.in]: ['open', 'under_review'] },
+        status: { [Op.in]: [...ACTIVE_DISPUTE_STATUSES] },
       },
       attributes: ['id', 'status'],
       order: [['opened_at', 'DESC']],

@@ -2,6 +2,7 @@ import { Booking, Payment, User, CoachProfile } from '../models/index.js';
 import { Op } from 'sequelize';
 import { logger } from '../config/logger.js';
 import * as paymentService from '../services/paymentService.js';
+import { ACTIVE_DISPUTE_STATUSES } from '../services/disputeStateMachine.js';
 
 /**
  * Process payouts for completed bookings
@@ -55,7 +56,7 @@ export const processPayouts = async () => {
         // Check for open disputes
         const disputes = await payment.booking.getDisputes({
           where: {
-            status: { [Op.in]: ['open', 'under_review'] },
+            status: { [Op.in]: [...ACTIVE_DISPUTE_STATUSES] },
           },
         });
 

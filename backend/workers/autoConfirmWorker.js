@@ -3,6 +3,12 @@ import { Op } from 'sequelize';
 import { sequelize } from '../models/sequelize.js';
 import { logger } from '../config/logger.js';
 import { createAuditLog } from '../utils/audit.js';
+import {
+  assertBulkBookingStatusTransition,
+  applyBookingStatusTransition,
+  BookingTransitionVia,
+} from '../services/bookingStateMachine.js';
+import { ACTIVE_DISPUTE_STATUSES } from '../services/disputeStateMachine.js';
 
 /**
  * Move confirmed → awaiting_verification when lesson end time has passed.
@@ -17,6 +23,11 @@ const moveConfirmedToAwaitingVerification = async () => {
         ? sequelize.literal("(scheduled_at + duration_minutes * interval '1 minute') <= NOW()")
         : sequelize.literal("datetime(scheduled_at, '+' || duration_minutes || ' minutes') <= datetime('now')");
 
+  assertBulkBookingStatusTransition(
+    'confirmed',
+    'awaiting_verification',
+    BookingTransitionVia.WORKER_LESSON_END_TO_AWAITING_VERIFICATION,
+  );
   const updated = await Booking.update(
     { status: 'awaiting_verification' },
     {
@@ -79,7 +90,7 @@ export const autoConfirmLessons = async () => {
       // Check if there's an open dispute
       const hasOpenDispute = await booking.getDisputes({
         where: {
-          status: { [Op.in]: ['open', 'under_review'] },
+          status: { [Op.in]: [...ACTIVE_DISPUTE_STATUSES] },
         },
       });
 
@@ -89,9 +100,10 @@ export const autoConfirmLessons = async () => {
       }
 
       // Auto-confirm the booking
-      await booking.update({
-        status: 'completed',
-        payout_status: 'pending', // Ready for payout processing
+      await applyBookingStatusTransition(booking, {
+        toStatus: 'completed',
+        via: BookingTransitionVia.MARK_COMPLETED,
+        patch: { payout_status: 'pending' },
       });
 
       await createAuditLog({

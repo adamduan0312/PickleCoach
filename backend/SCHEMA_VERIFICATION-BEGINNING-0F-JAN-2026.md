@@ -22,7 +22,7 @@ All models match the SQL schema exactly:
 12. ✅ **cancellation_history** - All fields match
 13. ✅ **payouts** - All fields match
 14. ✅ **reviews** - All fields match (nullable reviewer_id, target_user_id)
-15. ✅ **user_reliability** - All fields match
+15. ✅ **user_reliability** — canonical metrics columns (recent/decayed/total, baseline, `score_source`); see `docs/reliability-system.md`
 16. ✅ **prebooking_inquiries** - Unique constraint on (student_id, coach_id)
 17. ✅ **conversations** - All fields match
 18. ✅ **messages** - ✅ **sender_id and receiver_id are NULLABLE** (correct!)

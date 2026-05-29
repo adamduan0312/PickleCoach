@@ -1,6 +1,12 @@
 /**
- * Single place for attendance-outcome statuses on bookings (coach/student no-show).
- * Used by admin mark-no-show endpoints and attendance dispute resolve.
+ * Single place for attendance-outcome statuses on bookings (coach/student no-show)
+ * and the `attendance_finalized` guard used by admin mark-no-show endpoints.
+ *
+ * `bookings.attendance_finalized` (see Booking model) is set to `true` on
+ * **every** successful `PUT /api/disputes/:id/resolve`, including behavior
+ * disputes — not only attendance claims. That locks direct admin/coach
+ * attendance mutations; further attendance changes go through a new dispute
+ * + resolve. It does not freeze unrelated columns on the booking row.
  */
 
 /** Admin may toggle no-show amongst these lessons (lesson must have ended; other guards elsewhere). */
@@ -19,6 +25,38 @@ export const DISPUTE_RESOLVE_ATTENDANCE_SOURCE_STATUSES = [
 ];
 
 export const ATTENDANCE_OUTCOME_STATUSES = ['student_no_show', 'coach_no_show'];
+
+/**
+ * Hard-resolution guard for any code path that wants to mutate a booking's
+ * attendance outcome outside of `PUT /api/disputes/:id/resolve`.
+ *
+ * When `attendance_finalized === true` (after **any** dispute type has been
+ * resolved on this booking — attendance or behavior), direct admin no-show
+ * mutations are blocked. The attendance outcome may still change only by
+ * opening a **new** dispute on the same booking and resolving it (resolve
+ * is the only path that clears/advances adjudication and re-affirms this flag).
+ *
+ * Wired into `adminMarkBookingNoShow` and `adminMarkCoachNoShow`. The coach
+ * route (`markBookingNoShow`) is naturally guarded by its narrower source
+ * set (`confirmed` / `awaiting_verification` only), so a finalized booking
+ * — which is always in a terminal/completed status — can't reach the coach
+ * route either way.
+ *
+ * @param {{ attendance_finalized?: boolean } | null | undefined} booking
+ * @returns {{ ok: true } | { ok: false, code: string, message: string }}
+ */
+export function checkAttendanceFinalized(booking) {
+  if (booking && booking.attendance_finalized === true) {
+    return {
+      ok: false,
+      code: 'attendance_finalized_locked',
+      message:
+        'Attendance outcome is finalized via dispute resolution. ' +
+        'Open a new dispute to change it.',
+    };
+  }
+  return { ok: true };
+}
 
 /**
  * @param {string} toStatus — must be attendance outcome

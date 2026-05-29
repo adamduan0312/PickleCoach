@@ -5,6 +5,7 @@ import * as stripeService from '../services/stripeService.js';
 import * as paymentService from '../services/paymentService.js';
 import { syncStripeDisputeToDatabase } from '../services/stripeDisputeSyncService.js';
 import { logger } from '../config/logger.js';
+import { shouldStripeWebhookSkipAsDuplicate } from '../services/paymentStripeContract.js';
 
 async function assertConsistencyAfterWebhook(paymentId, context) {
   if (!paymentId) return;
@@ -57,7 +58,7 @@ export const handleStripeWebhook = async (req, res) => {
     where: { provider: 'stripe', event_id: event.id },
   });
 
-  if (processed?.success) {
+  if (shouldStripeWebhookSkipAsDuplicate(processed)) {
     logger.info({
       component: 'stripe',
       event: 'webhook_idempotent_skip',
@@ -83,7 +84,7 @@ export const handleStripeWebhook = async (req, res) => {
         webhookLog = await WebhookLog.findOne({
           where: { provider: 'stripe', event_id: event.id },
         });
-        if (webhookLog?.success) {
+        if (shouldStripeWebhookSkipAsDuplicate(webhookLog)) {
           return res.json({ received: true, duplicate: true });
         }
       }
