@@ -3506,9 +3506,58 @@
 								}
 							]
 						},
-						"description": "Roles: Admin. Superset body template; trim fields per dispute type. Attendance: required `outcome`; `rejected` uses contradicting outcome; `financial_action` must match outcome (coach_no_show \u2192 refund path, student_no_show \u2192 no_change). Behavior: omit `outcome`. `penalize_role` behavior only. `refund_amount` for `refund_student_partial`. See `backend/API_ENDPOINTS.md`."
+						"description": "Roles: Admin. Superset body template; trim fields per dispute type. Attendance: required `outcome`; `rejected` uses contradicting outcome; `financial_action` must match outcome (coach_no_show \u2192 refund path, student_no_show \u2192 no_change). Behavior: omit `outcome`. `penalize_role` behavior only. `refund_amount` for `refund_student_partial`. Response: `data.dispute` carries the resolution on the row itself \u2014 `decision`, `outcome` (attendance only, otherwise null), and `refund_amount` (US dollar decimal string; populated only for partial refunds, null for full refunds and `no_change`). For full refunds the executed amount is filled on the linked `payment_actions` row (by `dispute_id`) once the worker runs. See `backend/API_ENDPOINTS.md`."
 					},
-					"response": [],
+					"response": [
+						{
+							"name": "200 OK \u2014 Attendance partial refund",
+							"originalRequest": {
+								"method": "PUT",
+								"header": [
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									},
+									{
+										"key": "Authorization",
+										"value": "Bearer {{auth_token}}"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n  \"decision\": \"partial\",\n  \"outcome\": \"coach_no_show\",\n  \"financial_action\": \"refund_student_partial\",\n  \"refund_amount\": 20,\n  \"resolution_notes\": \"Coach was 35 minutes late; partial refund issued.\"\n}"
+								},
+								"url": {
+									"raw": "{{api_url}}/disputes/:id/resolve",
+									"host": [
+										"{{api_url}}"
+									],
+									"path": [
+										"disputes",
+										":id",
+										"resolve"
+									],
+									"variable": [
+										{
+											"key": "id",
+											"value": "1"
+										}
+									]
+								}
+							},
+							"status": "OK",
+							"code": 200,
+							"_postman_previewlanguage": "json",
+							"header": [
+								{
+									"key": "Content-Type",
+									"value": "application/json"
+								}
+							],
+							"cookie": [],
+							"body": "{\"success\":true,\"message\":\"Dispute resolved successfully\",\"data\":{\"dispute\":{\"id\":1,\"booking_id\":1,\"dispute_type_id\":1,\"notes\":\"Coach no-show \u2014 waited 20 min\",\"opened_by\":\"student\",\"status\":\"resolved\",\"resolution_action_id\":3,\"resolution_notes\":\"Coach was 35 minutes late; partial refund issued.\",\"decision\":\"partial\",\"outcome\":\"coach_no_show\",\"refund_amount\":\"20.00\",\"penalize_role\":\"none\",\"resolved_at\":\"2026-05-14T17:30:00.000Z\",\"escalated\":false,\"escalated_to\":null,\"escalation_triggered_at\":null,\"stripe_dispute_id\":null,\"stripe_dispute_status\":null,\"opened_at\":\"2026-05-14T16:00:00.000Z\",\"resolved_by_admin\":{\"id\":10,\"full_name\":\"Admin User\"}},\"resolution\":{\"decision\":\"partial\",\"financial_action\":\"refund_student_partial\",\"outcome\":\"coach_no_show\",\"derived_booking_status\":\"coach_no_show\"},\"refund\":{\"queued\":true,\"payment_action_id\":7,\"payment_id\":42,\"refund_amount\":\"20.00\",\"refund_status\":\"pending_stripe_execution\",\"stripe_refund_id\":null}}}"
+						}
+					],
 					"event": [
 						{
 							"listen": "test",
@@ -3559,7 +3608,7 @@
 								}
 							]
 						},
-						"description": "Roles: Student, Coach, Admin. Get disputes (own if student/coach; all if admin). Omit page/limit to return all matching disputes (server-capped), or enable page/limit to paginate."
+						"description": "Roles: Student, Coach, Admin. Get disputes (own if student/coach; all if admin). Omit page/limit to return all matching disputes (server-capped), or enable page/limit to paginate. Each row carries the resolution: `decision`, `outcome` (attendance only, otherwise null), and `refund_amount` (US dollar decimal string for partial refunds; null otherwise). Suitable as the data source for an admin disputes table without follow-up joins."
 					},
 					"response": [],
 					"event": [
@@ -3608,7 +3657,7 @@
 								}
 							]
 						},
-						"description": "Get dispute details by ID. Resolver: `data.resolved_by_admin` (`id`, `full_name`) or null. Use `resolved_by_admin.id` for the resolver user id."
+						"description": "Get dispute details by ID. Resolver: `data.resolved_by_admin` (`id`, `full_name`) or null. Use `resolved_by_admin.id` for the resolver user id. Resolution fields surfaced on the row: `decision`, `outcome` (attendance only, otherwise null), and `refund_amount` (US dollar decimal string for partial refunds; null for full refunds, `no_change`, and unresolved disputes)."
 					},
 					"response": [],
 					"event": [
