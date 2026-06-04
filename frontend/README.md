@@ -14,3 +14,11 @@ The React Compiler is not enabled on this template because of its impact on dev 
 ## Expanding the ESLint configuration
 
 If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+
+## Roles vs coach readiness
+
+PickleCoach separates **`user.roles`** (permissions) from **coach onboarding** (profile + Stripe). See **[ROLE_AND_READINESS.md](./ROLE_AND_READINESS.md)**. Use **`src/domain/userReadiness.js`** and **`src/hooks/useCoachReadiness.js`** instead of branching on `roles.includes('coach')` alone for coach UI.
+
+```bash
+npm test
+```

@@ -65,7 +65,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"email\": \"adamduan0312@gmail.com\",\n  \"password\": \"03122003\"\n}"
+							"raw": "{\n  \"email\": \"adamduan0312@gmail.com\",\n  \"password\": \"Adam03122003\"\n}"
 						},
 						"url": {
 							"raw": "{{api_url}}/auth/login",
@@ -519,7 +519,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"full_name\": \"John Doe\",\n  \"email\": \"user@example.com\",\n  \"phone\": \"+1234567890\",\n  \"timezone\": \"America/New_York\",\n  \"avatar_url\": \"\",\n  \"is_active\": true,\n  \"role\": \"coach\",\n  \"deleted_at\": null\n}"
+							"raw": "{\n  \"full_name\": \"John Doe\",\n  \"email\": \"user@example.com\",\n  \"phone\": \"+1234567890\",\n  \"timezone\": \"America/New_York\",\n  \"avatar_url\": \"\",\n  \"is_active\": true,\n  \"roles\": [\"student\", \"coach\"],\n  \"deleted_at\": null\n}"
 						},
 						"url": {
 							"raw": "{{api_url}}/users/:id",
@@ -537,7 +537,7 @@
 								}
 							]
 						},
-						"description": "Roles: Admin. Update user. Optional body fields: full_name, email (must be unique), phone, timezone, avatar_url (URI or \"\" to clear), is_active, role, deleted_at (null to undelete). Cannot activate a deleted user without also setting deleted_at: null."
+						"description": "Roles: Admin. Update user. Optional body fields: full_name, email (must be unique), phone, timezone, avatar_url (URI or \"\" to clear), is_active, roles (full set: e.g. [\"student\",\"coach\"] replaces all user_roles; omit to leave roles unchanged), deleted_at (null to undelete). Cannot activate a deleted user without also setting deleted_at: null."
 					},
 					"response": [],
 					"event": [
@@ -552,7 +552,7 @@
 									"pm.test(\"User updated successfully\", function () {",
 									"    var jsonData = pm.response.json();",
 									"    pm.expect(jsonData.success).to.be.true;",
-									"    pm.expect(jsonData.data).to.have.property('role');",
+									"    pm.expect(jsonData.data).to.have.property('roles');",
 									"    pm.expect(jsonData.data).to.have.property('is_active');",
 									"});"
 								],
@@ -878,6 +878,67 @@
 					]
 				},
 				{
+					"name": "14b. Get Coach Availability (Admin)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{api_url}}/coaches/:id/availability",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"coaches",
+								":id",
+								"availability"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "{{coach_id}}"
+								}
+							],
+							"query": [
+								{
+									"key": "page",
+									"value": "1",
+									"disabled": true
+								},
+								{
+									"key": "limit",
+									"value": "10",
+									"disabled": true
+								}
+							]
+						},
+						"description": "**Admin flow** \u2014 uses the **same** By Type request as **Coaches \u2192 Get Coach Availability** (`GET /api/coaches/:id/availability`). Use an **admin** JWT to inspect a coach\u2019s weekly windows (support). Effective roles must include **student** or **admin**; coach-only tokens get **403**. Path `:id` = coach user id (`{{coach_id}}`). Edit the canonical request under **Coaches** only so Student and Admin flows stay in sync."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Returns availability data\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('data');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
 					"name": "15. Delete Coach Court (Admin)",
 					"request": {
 						"method": "DELETE",
@@ -958,7 +1019,7 @@
 								{
 									"key": "id",
 									"value": "{{availability_id}}",
-									"description": "Availability record id from GET /coaches/:id/availability"
+									"description": "Availability record id from GET /api/coaches/:id/availability (student/admin token) or GET /api/coaches/me/availability (coach)"
 								}
 							]
 						},
@@ -1039,7 +1100,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"full_name\": \"Adam Duan\",\n  \"email\": \"adamduan0312@gmail.com\",\n  \"password\": \"03122003\",\n  \"role\": \"admin\",\n  \"phone\": \"+1234567890\",\n  \"timezone\": \"UTC\",\n  \"avatar_url\": \"\"\n}"
+							"raw": "{\n  \"full_name\": \"Adam Duan\",\n  \"email\": \"adamduan0312@gmail.com\",\n  \"password\": \"Adam03122003\",\n  \"role\": \"admin\",\n  \"phone\": \"+1234567890\",\n  \"timezone\": \"UTC\",\n  \"avatar_url\": \"\"\n}"
 						},
 						"url": {
 							"raw": "{{api_url}}/auth/register",
@@ -2538,7 +2599,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"full_name\": \"Coach One\",\n  \"email\": \"coach1@example.com\",\n  \"password\": \"password123\",\n  \"role\": \"coach\",\n  \"phone\": \"+1234567890\",\n  \"timezone\": \"UTC\",\n  \"avatar_url\": \"\"\n}"
+							"raw": "{\n  \"full_name\": \"Coach One\",\n  \"email\": \"coach1@example.com\",\n  \"password\": \"Password123xx\",\n  \"role\": \"coach\",\n  \"phone\": \"+1234567890\",\n  \"timezone\": \"UTC\",\n  \"avatar_url\": \"\"\n}"
 						},
 						"url": {
 							"raw": "{{api_url}}/auth/register",
@@ -2624,7 +2685,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"email\": \"coach1@example.com\",\n  \"password\": \"password123\"\n}"
+							"raw": "{\n  \"email\": \"coach1@example.com\",\n  \"password\": \"Password123xx\"\n}"
 						},
 						"url": {
 							"raw": "{{api_url}}/auth/login",
@@ -2748,7 +2809,7 @@
 								"reliability"
 							]
 						},
-						"description": "Roles: Coach. Full penalized-impact reliability breakdown for the authenticated coach (`data.reliability`)."
+						"description": "Roles: Coach. Coach-facing reliability detail DTO (`data.reliability`): score, score_source, recent-window counters, last_updated \u2014 not a raw DB row."
 					},
 					"response": [],
 					"event": [
@@ -3055,7 +3116,7 @@
 					]
 				},
 				{
-					"name": "11. Switch Role (Student \u2194 Coach)",
+					"name": "11. Add Role (Self-Service)",
 					"request": {
 						"method": "PUT",
 						"header": [
@@ -3083,7 +3144,7 @@
 								"role"
 							]
 						},
-						"description": "Roles: Student, Coach (not Admin). Switch account between student and coach without deleting. Body: role = 'student' or 'coach'. Response includes new token \u2014 save it (test script sets auth_token) for subsequent requests."
+						"description": "PUT /auth/me/role \u2014 add one capability per request (`student` or `coach`). Additive only (does not remove roles). Admins get 403; governance may block. Body: `{ \"role\": \"student\" | \"coach\" }`. Response may include a new JWT \u2014 save it (test script sets auth_token)."
 					},
 					"response": [],
 					"event": [
@@ -3128,7 +3189,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"headline\": \"Professional Pickleball Coach\",\n  \"bio\": \"Experienced pickleball coach with 10 years of teaching\",\n  \"hourly_rate\": 50.00,\n  \"experience_years\": 10,\n  \"skill_rating\": 4.5,\n  \"rating_system\": \"self\",\n  \"certifications\": \"USAPA Certified\",\n  \"location\": \"New York, NY\"\n}"
+							"raw": "{\n  \"headline\": \"Professional Pickleball Coach\",\n  \"bio\": \"Experienced pickleball coach with 10 years of teaching\",\n  \"experience_years\": 10,\n  \"skill_rating\": 4.5,\n  \"rating_system\": \"self\",\n  \"certifications\": \"USAPA Certified\",\n  \"location\": \"New York, NY\"\n}"
 						},
 						"url": {
 							"raw": "{{api_url}}/coaches/profile",
@@ -3168,7 +3229,7 @@
 					]
 				},
 				{
-					"name": "13. Update Coach Profile",
+					"name": "13. Update My Coach Profile",
 					"request": {
 						"method": "PUT",
 						"header": [
@@ -3183,26 +3244,20 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"headline\": \"Updated Headline\",\n  \"bio\": \"Updated bio with more experience\",\n  \"hourly_rate\": 60.00,\n  \"experience_years\": 12,\n  \"skill_rating\": 4.5,\n  \"rating_system\": \"self\",\n  \"certifications\": \"USAPA Certified, PPR Certified\",\n  \"location\": \"Los Angeles, CA\"\n}"
+							"raw": "{\n  \"headline\": \"Updated Headline\",\n  \"bio\": \"Updated bio with more experience\",\n  \"experience_years\": 12,\n  \"skill_rating\": 4.5,\n  \"rating_system\": \"self\",\n  \"certifications\": \"USAPA Certified, PPR Certified\",\n  \"location\": \"Los Angeles, CA\"\n}"
 						},
 						"url": {
-							"raw": "{{api_url}}/coaches/profile/:id",
+							"raw": "{{api_url}}/coaches/me/profile",
 							"host": [
 								"{{api_url}}"
 							],
 							"path": [
 								"coaches",
-								"profile",
-								":id"
-							],
-							"variable": [
-								{
-									"key": "id",
-									"value": "{{coach_id}}"
-								}
+								"me",
+								"profile"
 							]
 						},
-						"description": "Coach: own profile only (use your user id as :id). Admin: any coach profile. Path :id is the coach's user id (same as GET /coaches/:id)."
+						"description": "Coach-only. Updates the logged-in coach\u2019s profile (`PUT /api/coaches/me/profile`). No `:id` in the path."
 					},
 					"response": [],
 					"event": [
@@ -3225,63 +3280,7 @@
 					]
 				},
 				{
-					"name": "14. Get Coach Availability",
-					"request": {
-						"method": "GET",
-						"header": [],
-						"url": {
-							"raw": "{{api_url}}/coaches/:id/availability",
-							"host": [
-								"{{api_url}}"
-							],
-							"path": [
-								"coaches",
-								":id",
-								"availability"
-							],
-							"variable": [
-								{
-									"key": "id",
-									"value": "{{coach_id}}"
-								}
-							],
-							"query": [
-								{
-									"key": "page",
-									"value": "1",
-									"disabled": true
-								},
-								{
-									"key": "limit",
-									"value": "10",
-									"disabled": true
-								}
-							]
-						},
-						"description": "Roles: Any (no auth). Get coach availability. Omit page/limit to return all rows (server-capped), or enable page/limit for paged mode (data + pagination). Path :id is the coach's user id."
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Status code is 200\", function () {",
-									"    pm.response.to.have.status(200);",
-									"});",
-									"",
-									"pm.test(\"Returns availability data\", function () {",
-									"    var jsonData = pm.response.json();",
-									"    pm.expect(jsonData).to.have.property('data');",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "15. Create Availability",
+					"name": "14. Create Availability",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -3299,16 +3298,17 @@
 							"raw": "{\n  \"weekday\": \"monday\",\n  \"start_date\": \"2026-02-01\",\n  \"end_date\": \"2026-12-31\",\n  \"start_time\": \"09:00\",\n  \"end_time\": \"17:00\"\n}"
 						},
 						"url": {
-							"raw": "{{api_url}}/coaches/availability",
+							"raw": "{{api_url}}/coaches/me/availability",
 							"host": [
 								"{{api_url}}"
 							],
 							"path": [
 								"coaches",
+								"me",
 								"availability"
 							]
 						},
-						"description": "Roles: Coach. Create coach availability slot. Body `coach_id` is the coach's **user id**."
+						"description": "Roles: Coach. `POST /api/coaches/me/availability`. Creates a slot for the **authenticated coach only**; never send `coach_id` in the body."
 					},
 					"response": [],
 					"event": [
@@ -3323,6 +3323,9 @@
 									"pm.test(\"Availability created\", function () {",
 									"    var jsonData = pm.response.json();",
 									"    pm.expect(jsonData.success).to.be.true;",
+									"    if (jsonData.data && jsonData.data.id) {",
+									"        pm.environment.set(\"availability_id\", jsonData.data.id);",
+									"    }",
 									"});"
 								],
 								"type": "text/javascript"
@@ -3331,9 +3334,9 @@
 					]
 				},
 				{
-					"name": "16. Delete Availability",
+					"name": "15. Get My Coach Availability",
 					"request": {
-						"method": "DELETE",
+						"method": "GET",
 						"header": [
 							{
 								"key": "Authorization",
@@ -3341,12 +3344,63 @@
 							}
 						],
 						"url": {
-							"raw": "{{api_url}}/coaches/availability/:id",
+							"raw": "{{api_url}}/coaches/me/availability",
 							"host": [
 								"{{api_url}}"
 							],
 							"path": [
 								"coaches",
+								"me",
+								"availability"
+							]
+						},
+						"description": "Roles: Coach. `GET /api/coaches/me/availability` \u2014 list **your** slots only (owner-scoped)."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"pm.test(\"Returns availability data\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('data');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "16. Update My Availability",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"weekday\": \"tuesday\",\n  \"start_date\": \"2026-02-01\",\n  \"end_date\": \"2026-12-31\",\n  \"start_time\": \"10:00\",\n  \"end_time\": \"16:00\"\n}"
+						},
+						"url": {
+							"raw": "{{api_url}}/coaches/me/availability/:id",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"coaches",
+								"me",
 								"availability",
 								":id"
 							],
@@ -3357,7 +3411,7 @@
 								}
 							]
 						},
-						"description": "Roles: Coach. Delete own availability slot (hard delete). Set availability_id from Create Availability (data.id) or Get Coach Availability (data[0].id). For admin fix use DELETE /api/admin/coaches/:coachId/availability/:id."
+						"description": "Roles: Coach. `PUT /api/coaches/me/availability/:id` \u2014 update a row you own. `:id` = availability record id (from Create or Get My)."
 					},
 					"response": [],
 					"event": [
@@ -3375,7 +3429,52 @@
 					]
 				},
 				{
-					"name": "17. List/Search Courts",
+					"name": "17. Delete Availability",
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{api_url}}/coaches/me/availability/:id",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"coaches",
+								"me",
+								"availability",
+								":id"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "{{availability_id}}"
+								}
+							]
+						},
+						"description": "Roles: Coach. `DELETE /api/coaches/me/availability/:id` \u2014 hard delete **your** row only. Set `availability_id` from Create (data.id) or Get My Coach Availability. Admins: `DELETE /api/admin/coaches/:coachId/availability/:id`."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "18. List/Search Courts",
 					"request": {
 						"method": "GET",
 						"header": [],
@@ -3449,7 +3548,7 @@
 					]
 				},
 				{
-					"name": "18. Get Court By ID",
+					"name": "19. Get Court By ID",
 					"request": {
 						"method": "GET",
 						"header": [],
@@ -3493,7 +3592,7 @@
 					]
 				},
 				{
-					"name": "19. Create Court",
+					"name": "20. Create Court",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -3547,7 +3646,7 @@
 					]
 				},
 				{
-					"name": "20. Delete Court",
+					"name": "21. Delete Court",
 					"request": {
 						"method": "DELETE",
 						"header": [
@@ -3590,7 +3689,7 @@
 					]
 				},
 				{
-					"name": "21. Add Court to Coach",
+					"name": "22. Add Court to Coach",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -3641,7 +3740,7 @@
 					]
 				},
 				{
-					"name": "22. List My Courts",
+					"name": "23. List My Courts",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -3698,7 +3797,7 @@
 					]
 				},
 				{
-					"name": "23. Get My Lessons",
+					"name": "24. Get My Lessons",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -3757,7 +3856,7 @@
 					]
 				},
 				{
-					"name": "24. Remove Court from Coach",
+					"name": "25. Remove Court from Coach",
 					"request": {
 						"method": "DELETE",
 						"header": [
@@ -3808,7 +3907,7 @@
 					]
 				},
 				{
-					"name": "25. Initiate Stripe Connect Onboarding",
+					"name": "26. Initiate Stripe Connect Onboarding",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -3861,7 +3960,7 @@
 					]
 				},
 				{
-					"name": "26. Get Stripe Connect Status",
+					"name": "27. Get Stripe Connect Status",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -3905,7 +4004,7 @@
 					]
 				},
 				{
-					"name": "27. Get All Lessons (Filter by coach_id)",
+					"name": "28. Get All Lessons (Filter by coach_id)",
 					"request": {
 						"method": "GET",
 						"header": [],
@@ -3974,7 +4073,7 @@
 					]
 				},
 				{
-					"name": "28. Get Lesson By ID",
+					"name": "29. Get Lesson By ID",
 					"request": {
 						"method": "GET",
 						"header": [],
@@ -4018,7 +4117,7 @@
 					]
 				},
 				{
-					"name": "29. Create Lesson",
+					"name": "30. Create Lesson",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -4072,7 +4171,7 @@
 					]
 				},
 				{
-					"name": "30. Update Lesson",
+					"name": "31. Update Lesson",
 					"request": {
 						"method": "PUT",
 						"header": [
@@ -4128,7 +4227,7 @@
 					]
 				},
 				{
-					"name": "31. Delete Lesson",
+					"name": "32. Delete Lesson",
 					"request": {
 						"method": "DELETE",
 						"header": [
@@ -4176,7 +4275,7 @@
 					]
 				},
 				{
-					"name": "32. Get Coach Bookings",
+					"name": "33. Get Coach Bookings",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -4231,7 +4330,7 @@
 					]
 				},
 				{
-					"name": "33. Get Booking By ID",
+					"name": "34. Get Booking By ID",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -4280,7 +4379,7 @@
 					]
 				},
 				{
-					"name": "34. Accept Booking",
+					"name": "35. Accept Booking",
 					"request": {
 						"method": "PUT",
 						"header": [
@@ -4337,7 +4436,7 @@
 					]
 				},
 				{
-					"name": "35. Decline Booking",
+					"name": "36. Decline Booking",
 					"request": {
 						"method": "PUT",
 						"header": [
@@ -4394,7 +4493,7 @@
 					]
 				},
 				{
-					"name": "36. Cancel Booking",
+					"name": "37. Cancel Booking",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -4451,7 +4550,7 @@
 					]
 				},
 				{
-					"name": "37. Complete Booking",
+					"name": "38. Complete Booking",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -4508,7 +4607,7 @@
 					]
 				},
 				{
-					"name": "38. Mark Student No-Show",
+					"name": "39. Mark Student No-Show",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -4565,7 +4664,7 @@
 					]
 				},
 				{
-					"name": "39. Request Reschedule",
+					"name": "40. Request Reschedule",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -4622,7 +4721,7 @@
 					]
 				},
 				{
-					"name": "40. Get Reschedule History",
+					"name": "41. Get Reschedule History",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -4664,7 +4763,7 @@
 					]
 				},
 				{
-					"name": "41. Get My Payments",
+					"name": "42. Get My Payments",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -4718,7 +4817,7 @@
 					]
 				},
 				{
-					"name": "42. Get Payment By ID",
+					"name": "43. Get Payment By ID",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -4766,7 +4865,7 @@
 					]
 				},
 				{
-					"name": "43. Get All Reviews",
+					"name": "44. Get All Reviews",
 					"request": {
 						"method": "GET",
 						"header": [],
@@ -4815,7 +4914,7 @@
 					]
 				},
 				{
-					"name": "44. Create Review",
+					"name": "45. Create Review",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -4865,7 +4964,7 @@
 					]
 				},
 				{
-					"name": "45. Update Review",
+					"name": "46. Update Review",
 					"request": {
 						"method": "PUT",
 						"header": [
@@ -4921,7 +5020,7 @@
 					]
 				},
 				{
-					"name": "46. Delete Review",
+					"name": "47. Delete Review",
 					"request": {
 						"method": "DELETE",
 						"header": [
@@ -4969,7 +5068,7 @@
 					]
 				},
 				{
-					"name": "47. Get Conversations",
+					"name": "48. Get Conversations",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -5024,7 +5123,7 @@
 					]
 				},
 				{
-					"name": "48. Create Conversation",
+					"name": "49. Create Conversation",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -5079,7 +5178,7 @@
 					]
 				},
 				{
-					"name": "49. Get Conversation By ID",
+					"name": "50. Get Conversation By ID",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -5140,7 +5239,7 @@
 					]
 				},
 				{
-					"name": "50. Send Message",
+					"name": "51. Send Message",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -5191,7 +5290,7 @@
 					]
 				},
 				{
-					"name": "51. Mark Message As Read",
+					"name": "52. Mark Message As Read",
 					"request": {
 						"method": "PUT",
 						"header": [
@@ -5240,7 +5339,7 @@
 					]
 				},
 				{
-					"name": "52. Get All Disputes",
+					"name": "53. Get All Disputes",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -5294,7 +5393,7 @@
 					]
 				},
 				{
-					"name": "53. Get Dispute By ID",
+					"name": "54. Get Dispute By ID",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -5342,7 +5441,7 @@
 					]
 				},
 				{
-					"name": "54. Create Dispute",
+					"name": "55. Create Dispute",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -5391,7 +5490,7 @@
 					]
 				},
 				{
-					"name": "55. Get My Notifications",
+					"name": "56. Get My Notifications",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -5445,7 +5544,7 @@
 					]
 				},
 				{
-					"name": "56. Mark Notification As Read",
+					"name": "57. Mark Notification As Read",
 					"request": {
 						"method": "PUT",
 						"header": [
@@ -5494,7 +5593,7 @@
 					]
 				},
 				{
-					"name": "57. Forgot Password",
+					"name": "58. Forgot Password",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -5540,7 +5639,7 @@
 					]
 				},
 				{
-					"name": "58. Reset Password",
+					"name": "59. Reset Password",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -5586,7 +5685,7 @@
 					]
 				},
 				{
-					"name": "59. Logout",
+					"name": "60. Logout",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -5627,7 +5726,7 @@
 					]
 				},
 				{
-					"name": "60. Delete My Account",
+					"name": "61. Delete My Account",
 					"request": {
 						"method": "DELETE",
 						"header": [
@@ -5646,7 +5745,7 @@
 								"me"
 							]
 						},
-						"description": "Roles: Student, Coach (not Admin). Soft delete the current user's account. Sets deleted_at and is_active false; coach profile also soft-deleted."
+						"description": "Soft delete the current user's account (deleted_at, is_active false; coach profile soft-deleted). If the user has an admin role in user_roles, allowed only when at least one other live admin remains (409 last_admin_required otherwise). Same invariant as DELETE /api/users/:id."
 					},
 					"response": [],
 					"event": [
@@ -5724,7 +5823,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"full_name\": \"Student One\",\n  \"email\": \"student1@example.com\",\n  \"password\": \"password123\",\n  \"role\": \"student\",\n  \"phone\": \"+1234567890\",\n  \"timezone\": \"UTC\",\n  \"avatar_url\": \"\"\n}"
+							"raw": "{\n  \"full_name\": \"Student One\",\n  \"email\": \"student1@example.com\",\n  \"password\": \"Password123xx\",\n  \"role\": \"student\",\n  \"phone\": \"+1234567890\",\n  \"timezone\": \"UTC\",\n  \"avatar_url\": \"\"\n}"
 						},
 						"url": {
 							"raw": "{{api_url}}/auth/register",
@@ -5810,7 +5909,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"email\": \"student1@example.com\",\n  \"password\": \"password123\"\n}"
+							"raw": "{\n  \"email\": \"student1@example.com\",\n  \"password\": \"Password123xx\"\n}"
 						},
 						"url": {
 							"raw": "{{api_url}}/auth/login",
@@ -6241,7 +6340,7 @@
 					]
 				},
 				{
-					"name": "11. Switch Role (Student \u2194 Coach)",
+					"name": "11. Add Role (Self-Service)",
 					"request": {
 						"method": "PUT",
 						"header": [
@@ -6269,7 +6368,7 @@
 								"role"
 							]
 						},
-						"description": "Roles: Student, Coach (not Admin). Switch account between student and coach without deleting. Body: role = 'student' or 'coach'. Response includes new token \u2014 save it (test script sets auth_token) for subsequent requests."
+						"description": "PUT /auth/me/role \u2014 add one capability per request (`student` or `coach`). Additive only (does not remove roles). Admins get 403; governance may block. Body: `{ \"role\": \"student\" | \"coach\" }`. Response may include a new JWT \u2014 save it (test script sets auth_token)."
 					},
 					"response": [],
 					"event": [
@@ -6559,7 +6658,12 @@
 					"name": "15. Get Coach Availability",
 					"request": {
 						"method": "GET",
-						"header": [],
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
 						"url": {
 							"raw": "{{api_url}}/coaches/:id/availability",
 							"host": [
@@ -6589,7 +6693,7 @@
 								}
 							]
 						},
-						"description": "Roles: Any (no auth). Get coach availability. Omit page/limit to return all rows (server-capped), or enable page/limit for paged mode (data + pagination). Path :id is the coach's user id."
+						"description": "Roles: **student** or **admin** (JWT required). Student booking flow: load another coach\u2019s weekly windows. **Coach-only** tokens get **403** \u2014 add/switch to `student` role to browse. Anonymous: **401**. Path `:id` = coach user id. Omit page/limit for all rows (capped), or enable page/limit for paged mode.\n\n**Canonical By Type request** for `GET /api/coaches/:id/availability` \u2014 also pulled into **Admin** By Flow (same URL/tests); edit here only. Not in Coach flow."
 					},
 					"response": [],
 					"event": [
@@ -8138,7 +8242,7 @@
 								"me"
 							]
 						},
-						"description": "Roles: Student, Coach (not Admin). Soft delete the current user's account. Sets deleted_at and is_active false; coach profile also soft-deleted."
+						"description": "Soft delete the current user's account (deleted_at, is_active false; coach profile soft-deleted). If the user has an admin role in user_roles, allowed only when at least one other live admin remains (409 last_admin_required otherwise). Same invariant as DELETE /api/users/:id."
 					},
 					"response": [],
 					"event": [

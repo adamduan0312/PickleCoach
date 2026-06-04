@@ -56,7 +56,7 @@
 		},
 		{
 			"name": "Authentication",
-			"description": "Auth endpoints. Register/Login = no auth; Profile/Switch Role/Delete = authenticated.",
+			"description": "Auth endpoints. Register/Login = no auth; Profile/Add Role (self-service)/Delete = authenticated.",
 			"item": [
 				{
 					"name": "Login",
@@ -705,7 +705,7 @@
 					]
 				},
 				{
-					"name": "Switch Role (Student \u2194 Coach)",
+					"name": "Add Role (Self-Service)",
 					"request": {
 						"method": "PUT",
 						"header": [
@@ -733,7 +733,7 @@
 								"role"
 							]
 						},
-						"description": "Roles: Student, Coach (not Admin). Switch account between student and coach without deleting. Body: role = 'student' or 'coach'. Response includes new token \u2014 save it (test script sets auth_token) for subsequent requests."
+						"description": "PUT /auth/me/role \u2014 add one capability per request (`student` or `coach`). Additive only (does not remove roles). Admins get 403; governance may block. Body: `{ \"role\": \"student\" | \"coach\" }`. Response may include a new JWT \u2014 save it (test script sets auth_token)."
 					},
 					"response": [],
 					"event": [
@@ -823,7 +823,7 @@
 								"me"
 							]
 						},
-						"description": "Roles: Student, Coach (not Admin). Soft delete the current user's account. Sets deleted_at and is_active false; coach profile also soft-deleted."
+						"description": "Soft delete the current user's account (deleted_at, is_active false; coach profile soft-deleted). If the user has an admin role in user_roles, allowed only when at least one other live admin remains (409 last_admin_required otherwise). Same invariant as DELETE /api/users/:id."
 					},
 					"response": [],
 					"event": [
@@ -861,7 +861,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"headline\": \"Professional Pickleball Coach\",\n  \"bio\": \"Experienced pickleball coach with 10 years of teaching\",\n  \"hourly_rate\": 50.00,\n  \"experience_years\": 10,\n  \"skill_rating\": 4.5,\n  \"rating_system\": \"self\",\n  \"certifications\": \"USAPA Certified\",\n  \"location\": \"New York, NY\"\n}"
+							"raw": "{\n  \"headline\": \"Professional Pickleball Coach\",\n  \"bio\": \"Experienced pickleball coach with 10 years of teaching\",\n  \"experience_years\": 10,\n  \"skill_rating\": 4.5,\n  \"rating_system\": \"self\",\n  \"certifications\": \"USAPA Certified\",\n  \"location\": \"New York, NY\"\n}"
 						},
 						"url": {
 							"raw": "{{api_url}}/coaches/profile",
@@ -901,7 +901,7 @@
 					]
 				},
 				{
-					"name": "Update Coach Profile",
+					"name": "Update My Coach Profile",
 					"request": {
 						"method": "PUT",
 						"header": [
@@ -916,26 +916,20 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"headline\": \"Updated Headline\",\n  \"bio\": \"Updated bio with more experience\",\n  \"hourly_rate\": 60.00,\n  \"experience_years\": 12,\n  \"skill_rating\": 4.5,\n  \"rating_system\": \"self\",\n  \"certifications\": \"USAPA Certified, PPR Certified\",\n  \"location\": \"Los Angeles, CA\"\n}"
+							"raw": "{\n  \"headline\": \"Updated Headline\",\n  \"bio\": \"Updated bio with more experience\",\n  \"experience_years\": 12,\n  \"skill_rating\": 4.5,\n  \"rating_system\": \"self\",\n  \"certifications\": \"USAPA Certified, PPR Certified\",\n  \"location\": \"Los Angeles, CA\"\n}"
 						},
 						"url": {
-							"raw": "{{api_url}}/coaches/profile/:id",
+							"raw": "{{api_url}}/coaches/me/profile",
 							"host": [
 								"{{api_url}}"
 							],
 							"path": [
 								"coaches",
-								"profile",
-								":id"
-							],
-							"variable": [
-								{
-									"key": "id",
-									"value": "{{coach_id}}"
-								}
+								"me",
+								"profile"
 							]
 						},
-						"description": "Coach: own profile only (use your user id as :id). Admin: any coach profile. Path :id is the coach's user id (same as GET /coaches/:id)."
+						"description": "Coach-only. Updates the logged-in coach’s profile (`PUT /api/coaches/me/profile`). No `:id` in the path."
 					},
 					"response": [],
 					"event": [
@@ -961,7 +955,12 @@
 					"name": "Get Coach Availability",
 					"request": {
 						"method": "GET",
-						"header": [],
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
 						"url": {
 							"raw": "{{api_url}}/coaches/:id/availability",
 							"host": [
@@ -991,7 +990,7 @@
 								}
 							]
 						},
-						"description": "Roles: Any (no auth). Get coach availability. Omit page/limit to return all rows (server-capped), or enable page/limit for paged mode (data + pagination). Path :id is the coach's user id."
+						"description": "Roles: **student** or **admin** (JWT required). Student booking flow: load another coach’s weekly windows. **Coach-only** tokens get **403** — add/switch to `student` role to browse. Anonymous: **401**. Path `:id` = coach user id. Omit page/limit for all rows (capped), or enable page/limit for paged mode.\n\n**Canonical By Type request** for `GET /api/coaches/:id/availability` — also pulled into **Admin** By Flow (same URL/tests); edit here only. Not in Coach flow."
 					},
 					"response": [],
 					"event": [
@@ -1032,16 +1031,17 @@
 							"raw": "{\n  \"weekday\": \"monday\",\n  \"start_date\": \"2026-02-01\",\n  \"end_date\": \"2026-12-31\",\n  \"start_time\": \"09:00\",\n  \"end_time\": \"17:00\"\n}"
 						},
 						"url": {
-							"raw": "{{api_url}}/coaches/availability",
+							"raw": "{{api_url}}/coaches/me/availability",
 							"host": [
 								"{{api_url}}"
 							],
 							"path": [
 								"coaches",
+								"me",
 								"availability"
 							]
 						},
-						"description": "Roles: Coach. Create coach availability slot. Body `coach_id` is the coach's **user id**."
+						"description": "Roles: Coach. `POST /api/coaches/me/availability`. Creates a slot for the **authenticated coach only**; never send `coach_id` in the body."
 					},
 					"response": [],
 					"event": [
@@ -1056,6 +1056,104 @@
 									"pm.test(\"Availability created\", function () {",
 									"    var jsonData = pm.response.json();",
 									"    pm.expect(jsonData.success).to.be.true;",
+									"    if (jsonData.data && jsonData.data.id) {",
+									"        pm.environment.set(\"availability_id\", jsonData.data.id);",
+									"    }",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Get My Coach Availability",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{api_url}}/coaches/me/availability",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"coaches",
+								"me",
+								"availability"
+							]
+						},
+						"description": "Roles: Coach. `GET /api/coaches/me/availability` — list **your** slots only (owner-scoped)."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"pm.test(\"Returns availability data\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('data');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Update My Availability",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"weekday\": \"tuesday\",\n  \"start_date\": \"2026-02-01\",\n  \"end_date\": \"2026-12-31\",\n  \"start_time\": \"10:00\",\n  \"end_time\": \"16:00\"\n}"
+						},
+						"url": {
+							"raw": "{{api_url}}/coaches/me/availability/:id",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"coaches",
+								"me",
+								"availability",
+								":id"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "{{availability_id}}"
+								}
+							]
+						},
+						"description": "Roles: Coach. `PUT /api/coaches/me/availability/:id` — update a row you own. `:id` = availability record id (from Create or Get My)."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
 									"});"
 								],
 								"type": "text/javascript"
@@ -1074,12 +1172,13 @@
 							}
 						],
 						"url": {
-							"raw": "{{api_url}}/coaches/availability/:id",
+							"raw": "{{api_url}}/coaches/me/availability/:id",
 							"host": [
 								"{{api_url}}"
 							],
 							"path": [
 								"coaches",
+								"me",
 								"availability",
 								":id"
 							],
@@ -1090,7 +1189,7 @@
 								}
 							]
 						},
-						"description": "Roles: Coach. Delete own availability slot (hard delete). Set availability_id from Create Availability (data.id) or Get Coach Availability (data[0].id). For admin fix use DELETE /api/admin/coaches/:coachId/availability/:id."
+						"description": "Roles: Coach. `DELETE /api/coaches/me/availability/:id` — hard delete **your** row only. Set `availability_id` from Create (data.id) or Get My Coach Availability. Admins: `DELETE /api/admin/coaches/:coachId/availability/:id`."
 					},
 					"response": [],
 					"event": [
@@ -1643,7 +1742,7 @@
 								"reliability"
 							]
 						},
-						"description": "Roles: Coach. Full penalized-impact reliability breakdown for the authenticated coach (`data.reliability`)."
+						"description": "Roles: Coach. Coach-facing reliability detail DTO (`data.reliability`): score, score_source, recent-window counters, last_updated — not a raw DB row."
 					},
 					"response": [],
 					"event": [
@@ -4225,7 +4324,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"full_name\": \"John Doe\",\n  \"email\": \"user@example.com\",\n  \"phone\": \"+1234567890\",\n  \"timezone\": \"America/New_York\",\n  \"avatar_url\": \"\",\n  \"is_active\": true,\n  \"role\": \"coach\",\n  \"deleted_at\": null\n}"
+							"raw": "{\n  \"full_name\": \"John Doe\",\n  \"email\": \"user@example.com\",\n  \"phone\": \"+1234567890\",\n  \"timezone\": \"America/New_York\",\n  \"avatar_url\": \"\",\n  \"is_active\": true,\n  \"roles\": [\"student\", \"coach\"],\n  \"deleted_at\": null\n}"
 						},
 						"url": {
 							"raw": "{{api_url}}/users/:id",
@@ -4243,7 +4342,7 @@
 								}
 							]
 						},
-						"description": "Roles: Admin. Update user. Optional body fields: full_name, email (must be unique), phone, timezone, avatar_url (URI or \"\" to clear), is_active, role, deleted_at (null to undelete). Cannot activate a deleted user without also setting deleted_at: null."
+						"description": "Roles: Admin. Update user. Optional body fields: full_name, email (must be unique), phone, timezone, avatar_url (URI or \"\" to clear), is_active, roles (full set: e.g. [\"student\",\"coach\"] replaces all user_roles; omit to leave roles unchanged), deleted_at (null to undelete). Cannot activate a deleted user without also setting deleted_at: null."
 					},
 					"response": [],
 					"event": [
@@ -4258,7 +4357,7 @@
 									"pm.test(\"User updated successfully\", function () {",
 									"    var jsonData = pm.response.json();",
 									"    pm.expect(jsonData.success).to.be.true;",
-									"    pm.expect(jsonData.data).to.have.property('role');",
+									"    pm.expect(jsonData.data).to.have.property('roles');",
 									"    pm.expect(jsonData.data).to.have.property('is_active');",
 									"});"
 								],
@@ -4283,7 +4382,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"headline\": \"Updated Headline\",\n  \"bio\": \"Updated bio with more experience\",\n  \"hourly_rate\": 60.00,\n  \"experience_years\": 12,\n  \"skill_rating\": 4.5,\n  \"rating_system\": \"self\",\n  \"certifications\": \"USAPA Certified, PPR Certified\",\n  \"location\": \"Los Angeles, CA\"\n}"
+							"raw": "{\n  \"headline\": \"Updated Headline\",\n  \"bio\": \"Updated bio with more experience\",\n  \"experience_years\": 12,\n  \"skill_rating\": 4.5,\n  \"rating_system\": \"self\",\n  \"certifications\": \"USAPA Certified, PPR Certified\",\n  \"location\": \"Los Angeles, CA\"\n}"
 						},
 						"url": {
 							"raw": "{{api_url}}/coaches/profile/:id",
@@ -4302,7 +4401,7 @@
 								}
 							]
 						},
-						"description": "Same as PUT /coaches/profile/:id. Admin: set :id to any coach's user id to update that coach's profile. Coach: use the request in the Coaches folder to update your own."
+						"description": "**Admin only.** `PUT /api/coaches/profile/:id` — set `:id` to the coach’s **user id** (not the coach_profiles row id). Coaches update themselves with **`PUT /api/coaches/me/profile`** (Coaches folder)."
 					},
 					"response": [],
 					"event": [
@@ -4618,7 +4717,7 @@
 								{
 									"key": "id",
 									"value": "{{availability_id}}",
-									"description": "Availability record id from GET /coaches/:id/availability"
+									"description": "Availability record id from GET /api/coaches/:id/availability (student/admin token) or GET /api/coaches/me/availability (coach)"
 								}
 							]
 						},

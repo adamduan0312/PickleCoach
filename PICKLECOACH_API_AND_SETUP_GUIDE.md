@@ -731,9 +731,9 @@ Creating a coach involves **two separate steps**:
 
 2. **Then**: Create the Coach Profile (this endpoint)
    - This creates the CoachProfile record linked to your User account
-   - Contains coach-specific data: `bio`, `hourly_rate`, `skill_rating`, `rating_system`, `experience_years`, etc.
+   - Contains coach-specific data: `bio`, `skill_rating`, `rating_system` (when set: **`self`**, **`DUPR`**, or **`UTR-P`** only — API-enforced), `experience_years`, etc. (Pricing is per **lesson**: `price` + `duration_minutes`; lessons expose read-only `effective_hourly_rate`.)
 
-**Why two steps?** The User account (`full_name`, `email`, `password_hash`, `role`, etc.) is separate from the Coach Profile (`bio`, `hourly_rate`, `skill_rating`, etc.). This allows:
+**Why two steps?** The User account (`full_name`, `email`, `password_hash`, `role`, etc.) is separate from the Coach Profile (`bio`, `skill_rating`, etc.). This allows:
 - Users to exist without profiles (e.g., students)
 - Coaches to have additional profile information beyond basic user data
 - Better data organization and separation of concerns
@@ -748,7 +748,6 @@ Creating a coach involves **two separate steps**:
 ```json
 {
   "bio": "Experienced pickleball coach with 10 years of teaching",
-  "hourly_rate": 50.00,
   "skill_rating": 4.5,
   "rating_system": "self",
   "experience_years": 10
@@ -770,7 +769,6 @@ Creating a coach involves **two separate steps**:
 ```json
 {
   "bio": "Experienced pickleball coach with 10 years of teaching",
-  "hourly_rate": 50.00,
   "skill_rating": 4.5,
   "rating_system": "self",
   "experience_years": 10
@@ -782,7 +780,6 @@ Creating a coach involves **two separate steps**:
 {
   "user_id": 27,
   "bio": "Experienced pickleball coach with 10 years of teaching",
-  "hourly_rate": 50.00,
   "skill_rating": 4.5,
   "rating_system": "self",
   "experience_years": 10
@@ -808,11 +805,44 @@ pm.test("Coach profile created", function () {
 });
 ```
 
+#### Update My Coach Profile
+
+**Request:**
+- Method: `PUT`
+- URL: `{{api_url}}/coaches/me/profile` (no user id in the path — always updates the logged-in coach)
+- Headers: 
+  - `Authorization: Bearer {{auth_token}}` (coach token)
+  - `Content-Type: application/json`
+- Body (JSON) — all fields optional:
+```json
+{
+  "headline": "Updated Headline",
+  "bio": "Updated bio with more experience",
+  "experience_years": 12,
+  "skill_rating": 4.5,
+  "rating_system": "self",
+  "certifications": "USAPA Certified, PPR Certified",
+  "location": "Los Angeles, CA"
+}
+```
+
+**Test Script:**
+```javascript
+pm.test("Status code is 200", function () {
+    pm.response.to.have.status(200);
+});
+
+pm.test("Coach profile updated", function () {
+    var jsonData = pm.response.json();
+    pm.expect(jsonData.success).to.be.true;
+});
+```
+
 #### Create Availability
 
 **Request:**
 - Method: `POST`
-- URL: `{{api_url}}/coaches/availability`
+- URL: `{{api_url}}/coaches/me/availability`
 - Headers: 
   - `Authorization: Bearer {{auth_token}}`
   - `Content-Type: application/json`
@@ -1346,7 +1376,7 @@ VALUES (
 4. **Test Core Endpoints:**
    - Health check: `GET /health`
    - User profile: `GET /api/auth/profile` (with token)
-   - Coach endpoints: `GET /api/coaches`, `POST /api/coaches/profile`
+   - Coach endpoints: `GET /api/coaches`, `POST /api/coaches/profile`, `PUT /api/coaches/me/profile`
    - Lesson endpoints: `POST /api/lessons`, `GET /api/lessons`
    - Booking endpoints: `POST /api/bookings`, `GET /api/bookings`
 
@@ -1988,9 +2018,10 @@ Authorization: Bearer <token>
 
 ### `PUT /api/auth/me/role`
 - **Auth**: Required
-- **Description**: Switch your account between **student** and **coach** without deleting the account. Admins cannot use this. Response includes a new **token** (use it for subsequent requests so the app treats you as the new role). If you switch to coach and don't have a coach profile, create one with `POST /api/coaches/profile`. Existing coach profile is kept when switching to student so switching back restores your listing.
+- **Description**: **Add** the **student** or **coach** role (self-service). Does **not** remove roles — you can have both. Admins cannot use this. Response may include a new **token** when a role was added. Removing coach/admin access is admin-only via **`PUT /api/users/:id`** and explicit **`roles`**; coach profile and Stripe data stay for payouts/history. After adding coach, create a profile with `POST /api/coaches/profile` if needed.
+- **UI mode**: Server returns **`roles`** (all permissions). Use client-side **`activeRole`** / mode (`student` vs `coach`) to show one dashboard at a time — not stored by this API.
 - **Request Body**: `{ "role": "student" | "coach" }` (required).
-- **Response** (Status: 200): `{ "success": true, "message": "Role updated successfully...", "data": { "user": { id, full_name, email, role, ... }, "token": "..." } }`.
+- **Response** (Status: 200): `{ "success": true, "message": "Role added successfully...", "data": { "user": { id, full_name, email, roles: [...], ... }, "token": "..." } }`.
 - **Error responses**: `400` (invalid role), `403` (admin), `401` (missing or invalid token), `500` (server error).
 
 ### `DELETE /api/auth/me`
@@ -2025,7 +2056,8 @@ Authorization: Bearer <token>
         "id": 1,
         "full_name": "John Doe",
         "email": "john@example.com",
-        "role": "student",
+        "roles": ["student"],
+        "role_state": { "locked": false, "allowed_roles": null, "effective_roles": ["student"], "source": "open" },
         "is_active": true,
         "created_at": "2026-01-01T00:00:00.000Z"
       }
@@ -2046,7 +2078,8 @@ Authorization: Bearer <token>
       "id": 1,
       "full_name": "John Doe",
       "email": "john@example.com",
-      "role": "coach",
+      "roles": ["coach"],
+      "role_state": { "locked": false, "allowed_roles": null, "effective_roles": ["coach"], "source": "open" },
       "phone": "+1234567890",
       "timezone": "America/New_York",
       "avatar_url": null,
@@ -2055,7 +2088,6 @@ Authorization: Bearer <token>
         "id": 1,
         "user_id": 1,
         "bio": "Experienced coach",
-        "hourly_rate": 50.00,
         "skill_rating": 4.5,
         "rating_system": "self"
       },
@@ -2069,7 +2101,10 @@ Authorization: Bearer <token>
 
 ### `PUT /api/users/:id`
 - **Auth**: Required (Admin only)
-- **Description**: Update user (admin only - can update role, is_active, email, avatar_url, etc.)
+- **Description**: Update user (admin only - can update **roles** (full set), `is_active`, email, avatar_url, etc.)
+- **Roles**: Send **`roles`** as the **complete** set (e.g. `["student","coach"]` or `["admin","student","coach"]`). Omit to leave roles unchanged. Including **`roles`** replaces all `user_roles` for that user. Legacy **`role`** (singular) is rejected with **400** — use **`roles`** only. **Valid:** any **1–3** unique combination of `student`, `coach`, and `admin` (roles are independent capabilities, including admin+student and all three).
+- **Role governance**: Sending **`roles`** sets **`role_governance_locked`** and **`admin_allowed_roles`** so **`PUT /api/auth/me/role`** cannot bypass admin. Send **`role_governance_locked`: false** alone (no **`roles`** in same request) to unlock. See **`API_ENDPOINTS.md`**.
+- **Admin safeguards**: You cannot remove your **own** `admin` role (**400**, e.g. `["admin","coach"]` → `"roles": ["coach"]` on your own user). Another admin must update you, or include **`admin`** in the `roles` you send for yourself. You cannot remove `admin` from the **last** admin (**409**). Same **409** if you **delete** the last admin (`DELETE /api/users/:id`).
 - **Request Body** (all fields optional - omit fields you don't want to update):
   ```json
   {
@@ -2079,7 +2114,8 @@ Authorization: Bearer <token>
     "timezone": "string (optional)",
     "avatar_url": "string (optional, URI or empty string to clear)",
     "is_active": "boolean (optional, admin only)",
-    "role": "string (optional, admin only, 'student' | 'coach' | 'admin')"
+    "roles": ["optional: 1–3 unique entries from student, coach, admin"],
+    "role_governance_locked": "boolean optional — false alone clears lock (not with roles)"
   }
   ```
 - **Response** (Status: 200):
@@ -2091,7 +2127,8 @@ Authorization: Bearer <token>
       "id": 1,
       "full_name": "Updated Name",
       "email": "john@example.com",
-      "role": "coach",
+      "roles": ["coach", "student"],
+      "role_state": { "locked": true, "allowed_roles": ["coach", "student"], "effective_roles": ["coach", "student"], "source": "admin" },
       "is_active": true,
       "phone": "+1234567890",
       "timezone": "America/New_York",
@@ -2104,7 +2141,7 @@ Authorization: Bearer <token>
 - **Auth**: Required (Admin only)
 - **Description**: **Soft delete** user (admin only). Sets `deleted_at` and `is_active: false`; coach profile soft-deleted if present. Deleted users are excluded from list/get and cannot log in.
 - **Response** (Status: 200): `{ "success": true, "message": "User deleted successfully", "data": null }`.
-- **Error responses**: `400` (already deleted), `404` (not found), `500` (server error).
+- **Error responses**: `400` (already deleted), `404` (not found), `409` (last admin cannot be deleted), `500` (server error).
 
 ---
 
@@ -2125,7 +2162,6 @@ Authorization: Bearer <token>
         "user_id": 2,
         "full_name": "Jane Coach",
         "coachProfile": {
-          "hourly_rate": 50.00,
           "skill_rating": 4.5,
           "rating_system": "self",
           "rating_average": 4.8
@@ -2148,7 +2184,6 @@ Authorization: Bearer <token>
       "user_id": 2,
       "full_name": "Jane Coach",
       "coachProfile": {
-        "hourly_rate": 50.00,
         "skill_rating": 4.5,
         "rating_system": "self",
         "rating_average": 4.8
@@ -2169,10 +2204,9 @@ Authorization: Bearer <token>
     "user_id": "number (optional, admin only - defaults to authenticated user's ID)",
     "headline": "string (optional)",
     "bio": "string (optional)",
-    "hourly_rate": "number (optional, defaults to 0)",
     "experience_years": "number (optional, defaults to 0)",
     "skill_rating": "number (optional, 2.0–6.0, 0.5 steps) or null",
-    "rating_system": "string (optional, default self)",
+    "rating_system": "\"self\" | \"DUPR\" | \"UTR-P\" (optional; default self when omitted)",
     "certifications": "string (optional)",
     "location": "string (optional)"
   }
@@ -2187,7 +2221,6 @@ Authorization: Bearer <token>
       "user_id": 1,
       "headline": "Professional Pickleball Coach",
       "bio": "Experienced pickleball coach with 10 years of teaching",
-      "hourly_rate": 50.00,
       "experience_years": 10,
       "skill_rating": 4.5,
       "rating_system": "self",
@@ -2198,18 +2231,17 @@ Authorization: Bearer <token>
   }
   ```
 
-### `PUT /api/coaches/profile/:id`
-- **Auth**: Required
-- **Description**: Update coach profile. Path parameter `:id` is the coach's **user id** (same as GET /api/coaches/:id).
+### `PUT /api/coaches/me/profile`
+- **Auth**: Required (**coach** only)
+- **Description**: Update **your own** coach profile. No `:id` in the URL — always the logged-in coach.
 - **Request Body** (all fields optional - omit fields you don't want to update):
   ```json
   {
     "headline": "string (optional)",
     "bio": "string (optional)",
-    "hourly_rate": "number (optional)",
     "experience_years": "number (optional)",
     "skill_rating": "number (optional) or null",
-    "rating_system": "string (optional)",
+    "rating_system": "\"self\" | \"DUPR\" | \"UTR-P\" (optional)",
     "certifications": "string (optional)",
     "location": "string (optional)"
   }
@@ -2223,7 +2255,6 @@ Authorization: Bearer <token>
       "id": 1,
       "headline": "Updated Headline",
       "bio": "Updated bio with more experience",
-      "hourly_rate": 60.00,
       "experience_years": 12,
       "skill_rating": 4.5,
       "rating_system": "self"
@@ -2231,20 +2262,41 @@ Authorization: Bearer <token>
   }
   ```
 
-### `POST /api/coaches/availability`
-- **Auth**: Required
-- **Description**: Create coach availability slot
+### `PUT /api/coaches/profile/:id` (admin only)
+- **Auth**: Required (**admin** only)
+- **Description**: Update **another** coach’s profile. `:id` is that coach’s **user id**. Coaches must use **`PUT /api/coaches/me/profile`** instead.
+- **Request Body** (same as `PUT /api/coaches/me/profile`).
+- **Response** (Status: 200):
+  ```json
+  {
+    "success": true,
+    "message": "Coach profile updated successfully",
+    "data": {
+      "id": 1,
+      "headline": "Updated Headline",
+      "bio": "Updated bio with more experience",
+      "experience_years": 12,
+      "skill_rating": 4.5,
+      "rating_system": "self"
+    }
+  }
+  ```
+
+### `GET /api/coaches/me/availability`
+- **Auth**: Required (coach only)
+- **Description**: List **your** availability slots only (owner-scoped). Same pagination query params as `GET /api/coaches/:id/availability`.
+
+### `POST /api/coaches/me/availability`
+- **Auth**: Required (coach only)
+- **Description**: Create coach availability slot for the authenticated coach. Do **not** send `coach_id`; it is derived from the session. Slots are **recurrence-based**: `weekday` + **`start_time`** / **`end_time`** (required) + optional **`start_date`** / **`end_date`** as plain **`YYYY-MM-DD`** strings (not coerced through JS `Date` / `toISOString()`).
 - **Request Body**:
   ```json
   {
-    "coach_id": "number (optional, admin only - defaults to authenticated user's ID)",
-    "weekday": "string (optional)",
-    "start_datetime": "string (optional, ISO 8601 date-time)",
-    "end_datetime": "string (optional, ISO 8601 date-time)",
-    "start_date": "string (optional, ISO 8601 date)",
-    "end_date": "string (optional, ISO 8601 date)",
-    "recurrence_rule": "string (optional)",
-    "is_available": "boolean (optional, defaults to true)"
+    "weekday": "string or number (e.g. 'monday' or 1)",
+    "start_time": "string (required, e.g. '09:00' or '09:00:00')",
+    "end_time": "string (required, e.g. '17:00' or '17:00:00')",
+    "start_date": "string (optional, YYYY-MM-DD)",
+    "end_date": "string (optional, YYYY-MM-DD)"
   }
   ```
 - **Response** (Status: 201):
@@ -2255,18 +2307,23 @@ Authorization: Bearer <token>
     "data": {
       "id": 1,
       "coach_id": 1,
-      "weekday": "monday",
-      "start_datetime": "2026-02-01T09:00:00.000Z",
-      "end_datetime": "2026-02-01T17:00:00.000Z",
-      "is_available": true,
+      "weekday": 1,
+      "start_time": "09:00:00",
+      "end_time": "17:00:00",
+      "start_date": "2026-02-01",
+      "end_date": "2026-12-01",
       "created_at": "2026-01-01T00:00:00.000Z"
     }
   }
   ```
 
+### `PUT /api/coaches/me/availability/:id`
+- **Auth**: Required (coach only)
+- **Description**: Update one slot you own. Body same shape as POST (replace window fields). `:id` = availability row id.
+
 ### `GET /api/coaches/:id/availability`
-- **Auth**: None required
-- **Description**: Get coach availability (public)
+- **Auth**: Required — **student** or **admin** (effective roles). Coach-only: **403**. Anonymous: **401**.
+- **Description**: Get another coach’s availability for the student booking flow. Coaches who also hold the student role can call this when using a session with `student` in effective roles.
 - **Response** (Status: 200):
   ```json
   {
@@ -2276,18 +2333,20 @@ Authorization: Bearer <token>
       {
         "id": 1,
         "coach_id": 1,
-        "weekday": "monday",
-        "start_datetime": "2026-02-01T09:00:00.000Z",
-        "end_datetime": "2026-02-01T17:00:00.000Z",
-        "is_available": true
+        "weekday": 1,
+        "start_time": "09:00:00",
+        "end_time": "17:00:00",
+        "start_date": "2026-02-01",
+        "end_date": "2026-12-01",
+        "created_at": "2026-01-01T00:00:00.000Z"
       }
     ]
   }
   ```
 
-### `DELETE /api/coaches/availability/:id`
+### `DELETE /api/coaches/me/availability/:id`
 - **Auth**: Required (Coach only)
-- **Description**: Delete a coach availability slot (**hard delete**). Coaches can only delete their own. `:id` is the availability record id (from GET coach availability or POST create).
+- **Description**: Delete a coach availability slot (**hard delete**). Coaches can only delete their own. `:id` is the availability record id (from `GET /api/coaches/me/availability` or POST create).
 - **Response** (Status: 200): `{ "success": true, "message": "Availability deleted successfully", "data": null }`.
 - **Error responses**: `403` (not coach or not own), `404` (not found), `500` (server error).
 
