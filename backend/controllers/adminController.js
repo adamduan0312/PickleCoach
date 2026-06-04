@@ -6,6 +6,7 @@ import { logAudit } from '../utils/audit.js';
 import { Op } from 'sequelize';
 import { logger } from '../config/logger.js';
 import { getPagination, getPagingData } from '../utils/pagination.js';
+import { getDbRoleAssignments, getEffectiveRolesForUserRecord } from '../utils/roleGovernance.js';
 
 export const getDashboardStats = async (req, res) => {
   try {
@@ -138,21 +139,22 @@ export const adjustUserReliability = async (req, res) => {
       return errorResponse(res, 'User not found', 404);
     }
 
-    const targetRoles = targetUser.userRoles?.map((r) => r.role) ?? [];
-    if (targetRoles.includes('admin')) {
+    const dbAssignments = getDbRoleAssignments(targetUser);
+    const effectivePerms = getEffectiveRolesForUserRecord(targetUser);
+    if (effectivePerms.includes('admin')) {
       return errorResponse(res, 'Cannot adjust reliability for admin users', 400);
     }
 
-    if (reliabilityRole === 'coach' && !targetRoles.includes('coach')) {
+    if (reliabilityRole === 'coach' && !effectivePerms.includes('coach')) {
       const hint =
-        targetRoles.includes('student')
+        effectivePerms.includes('student')
           ? ' Omitting role defaults to coach; send "role": "student" to adjust student reliability.'
           : '';
       return errorResponse(res, `Target user does not have coach role.${hint}`, 400);
     }
-    if (reliabilityRole === 'student' && !targetRoles.includes('student')) {
+    if (reliabilityRole === 'student' && !effectivePerms.includes('student')) {
       const hint =
-        targetRoles.includes('coach')
+        effectivePerms.includes('coach')
           ? ' Send "role": "coach" (or omit role) to adjust coach reliability.'
           : '';
       return errorResponse(res, `Target user does not have student role.${hint}`, 400);
@@ -191,7 +193,8 @@ export const adjustUserReliability = async (req, res) => {
     return successResponse(res, {
       user_id: userId,
       role: reliabilityRole,
-      user_roles: targetRoles,
+      user_roles: dbAssignments,
+      effective_roles: effectivePerms,
       previous_score: beforeState.reliability_score,
       new_score: scoreValue,
       adjusted_by: req.user.id,
@@ -258,7 +261,7 @@ export const getCoachCourtsForAdmin = async (req, res) => {
     const coach = await User.findByPk(coachId, {
       include: [{ model: UserRole, as: 'userRoles', attributes: ['role'] }],
     });
-    const coachRoles = coach?.userRoles?.map((r) => r.role) ?? [];
+    const coachRoles = getEffectiveRolesForUserRecord(coach);
     if (!coach || !coachRoles.includes('coach')) {
       return errorResponse(res, 'Coach not found', 404);
     }

@@ -144,9 +144,10 @@ export const updateLesson = async (req, res) => {
     await lesson.update({
       title: title || lesson.title,
       description: description !== undefined ? description : lesson.description,
-      duration_minutes: duration_minutes || lesson.duration_minutes,
-      price: price || lesson.price,
-      max_students: max_students || lesson.max_students,
+      // Use explicit undefined checks (not `||`) so duration/price stay consistent with Joi min() and with effective_hourly_rate = price / (duration_minutes / 60).
+      duration_minutes: duration_minutes !== undefined ? duration_minutes : lesson.duration_minutes,
+      price: price !== undefined ? price : lesson.price,
+      max_students: max_students !== undefined ? max_students : lesson.max_students,
       is_active: is_active !== undefined ? is_active : lesson.is_active,
     });
 

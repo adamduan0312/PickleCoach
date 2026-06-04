@@ -21,11 +21,35 @@ export const envSchema = Joi.object({
   STRIPE_WEBHOOK_SECRET: Joi.string().optional(),
 }).unknown();
 
+/** MVP password policy: min 10 chars, one lowercase, one uppercase, one digit (no symbol requirement). */
+export const mvpPasswordSchema = Joi.string()
+  .min(10)
+  .max(128)
+  .custom((value, helpers) => {
+    if (!/[a-z]/.test(value)) {
+      return helpers.error('password.missingLowercase');
+    }
+    if (!/[A-Z]/.test(value)) {
+      return helpers.error('password.missingUppercase');
+    }
+    if (!/\d/.test(value)) {
+      return helpers.error('password.missingDigit');
+    }
+    return value;
+  })
+  .messages({
+    'string.min': 'Password must be at least 10 characters.',
+    'string.max': 'Password must be at most 128 characters.',
+    'password.missingLowercase': 'Password must contain at least one lowercase letter.',
+    'password.missingUppercase': 'Password must contain at least one uppercase letter.',
+    'password.missingDigit': 'Password must contain at least one number.',
+  });
+
 // Request validation schemas
 export const registerSchema = Joi.object({
   full_name: Joi.string().min(2).max(100).required(),
   email: Joi.string().email().max(150).required(),
-  password: Joi.string().min(8).required(),
+  password: mvpPasswordSchema.required(),
   role: Joi.string().valid('student', 'coach').required(), // Remove 'admin' and make required
   phone: Joi.string().max(30).optional(),
   timezone: Joi.string().default('UTC'),
@@ -37,6 +61,7 @@ export const loginSchema = Joi.object({
   password: Joi.string().required(),
 });
 
+/** Lesson `price` is total for the slot; `effective_hourly_rate` = price / (duration_minutes / 60). Duration must stay > 0 (enforced: min 15). */
 export const createLessonSchema = Joi.object({
   title: Joi.string().min(3).max(255).required(),
   description: Joi.string().optional(),
@@ -101,12 +126,12 @@ export const forgotPasswordSchema = Joi.object({
 
 export const resetPasswordSchema = Joi.object({
   token: Joi.string().required(),
-  password: Joi.string().min(8).required(),
+  password: mvpPasswordSchema.required(),
 });
 
 export const changePasswordSchema = Joi.object({
   current_password: Joi.string().required(),
-  new_password: Joi.string().min(8).required(),
+  new_password: mvpPasswordSchema.required(),
 });
 
 export const changeEmailRequestSchema = Joi.object({
@@ -132,7 +157,7 @@ export const updateProfileSchema = Joi.object({
   avatar_url: Joi.string().uri().max(255).allow('').optional(),
 });
 
-export const switchRoleSchema = Joi.object({
+export const addUserRoleSchema = Joi.object({
   role: Joi.string().valid('student', 'coach').required(),
 });
 
@@ -143,13 +168,34 @@ export const updateUserSchema = Joi.object({
   timezone: Joi.string().max(50).optional(),
   avatar_url: Joi.string().uri().max(255).allow('').optional(),
   is_active: Joi.boolean().valid(true).optional(), // Only allow true (reactivation); use DELETE /api/users/:id to soft-delete
-  role: Joi.string().valid('student', 'coach', 'admin').optional(),
+  /** Full role set to assign (replaces all `user_roles` rows). Omit to leave roles unchanged. Any non-empty subset of {student, coach, admin} with unique entries (1–3 roles). */
+  roles: Joi.array()
+    .items(Joi.string().valid('student', 'coach', 'admin'))
+    .min(1)
+    .max(3)
+    .unique()
+    .optional(),
+  /** Set `false` to re-open self-service `PUT /api/auth/me/role` (clears allow-list). Cannot be combined with `roles` in the same request. */
+  role_governance_locked: Joi.boolean().optional(),
   deleted_at: Joi.valid(null).optional(), // Allow setting to null to undelete; cannot set to a date (use DELETE endpoint)
+  /** @deprecated Use `roles` (full set). Sending this field returns 400. */
+  role: Joi.any().forbidden().messages({
+    'any.unknown': 'Use "roles" (array) to set user roles, not "role".',
+  }),
+}).custom((v, helpers) => {
+  if (v.roles !== undefined && v.role_governance_locked === false) {
+    return helpers.error('any.custom', {
+      message:
+        'Cannot set role_governance_locked to false in the same request as roles. Unlock self-service role adds in a separate request without the roles field.',
+    });
+  }
+  return v;
 });
 
 export const updateLessonSchema = Joi.object({
   title: Joi.string().min(3).max(255).optional(),
   description: Joi.string().allow('').optional(),
+  /** Omit to leave unchanged; when sent, must be ≥ 15 so hourly derivation never divides by zero. */
   duration_minutes: Joi.number().integer().min(15).max(480).optional(),
   price: Joi.number().positive().min(MIN_LESSON_PRICE_USD).optional()
     .messages({ 'number.min': `Price must be at least $${MIN_LESSON_PRICE_USD.toFixed(2)} USD (all bookings require payment).` }),
@@ -213,14 +259,23 @@ const coachSkillRatingValueSchema = Joi.number()
     return Math.round(n * 10) / 10;
   });
 
+/** MVP: allowed `coach_profiles.rating_system` values (self-report vs named external systems). */
+export const COACH_RATING_SYSTEM_VALUES = ['self', 'DUPR', 'UTR-P'];
+
+const coachRatingSystemSchema = Joi.string()
+  .valid(...COACH_RATING_SYSTEM_VALUES)
+  .optional()
+  .messages({
+    'any.only': `rating_system must be one of: ${COACH_RATING_SYSTEM_VALUES.join(', ')}`,
+  });
+
 export const createCoachProfileSchema = Joi.object({
   headline: Joi.string().max(255).allow('').optional(),
   bio: Joi.string().allow('').optional(),
-  hourly_rate: Joi.number().positive().optional(),
   experience_years: Joi.number().integer().min(0).max(100).optional(),
   skill_rating: coachSkillRatingValueSchema.optional().allow(null),
-  /** Defaults to `self` when omitted (MVP self-report only). */
-  rating_system: Joi.string().max(32).optional(),
+  /** Omit to default to `self` (MVP). Must be one of **COACH_RATING_SYSTEM_VALUES** when sent. */
+  rating_system: coachRatingSystemSchema,
   certifications: Joi.string().allow('').optional(),
   location: Joi.string().max(255).allow('').optional(),
 });
@@ -228,15 +283,20 @@ export const createCoachProfileSchema = Joi.object({
 export const updateCoachProfileSchema = Joi.object({
   headline: Joi.string().max(255).allow('').optional(),
   bio: Joi.string().allow('').optional(),
-  hourly_rate: Joi.number().positive().optional(),
   experience_years: Joi.number().integer().min(0).max(100).optional(),
   skill_rating: coachSkillRatingValueSchema.optional().allow(null),
-  rating_system: Joi.string().max(32).optional(),
+  rating_system: coachRatingSystemSchema,
   certifications: Joi.string().allow('').optional(),
   location: Joi.string().max(255).allow('').optional(),
 });
 
 const WEEKDAY_NAMES = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+
+/** Plain calendar YYYY-MM-DD (no Date coercion — avoids timezone off-by-one). */
+const dateOnlyYmdSchema = Joi.string()
+  .pattern(/^\d{4}-\d{2}-\d{2}$/)
+  .optional()
+  .allow('', null);
 
 export const createAvailabilitySchema = Joi.object({
   weekday: Joi.alternatives()
@@ -250,39 +310,38 @@ export const createAvailabilitySchema = Joi.object({
       if (typeof value === 'number') return value;
       return WEEKDAY_NAMES.indexOf(String(value).toLowerCase());
     }, 'weekday number or name'),
-  start_datetime: Joi.date().iso().optional(),
-  end_datetime: Joi.date().iso().optional(),
-  start_date: Joi.date().iso().optional(),
-  end_date: Joi.date().iso().optional(),
+  start_date: dateOnlyYmdSchema,
+  end_date: dateOnlyYmdSchema,
   /** Time-of-day only, e.g. "09:00" or "17:00:00". Interpreted in coach timezone for recurring slots. */
-  start_time: Joi.string().pattern(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9](:[0-5][0-9])?$/).optional().allow(''),
-  end_time: Joi.string().pattern(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9](:[0-5][0-9])?$/).optional().allow(''),
+  start_time: Joi.string().pattern(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9](:[0-5][0-9])?$/).required(),
+  end_time: Joi.string().pattern(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9](:[0-5][0-9])?$/).required(),
 })
-  .or('start_time', 'start_datetime')
-  .and('start_time', 'end_time')
   .messages({
-    'object.missing': 'Must provide either start_time and end_time, or start_datetime (and optionally end_datetime).',
-    'object.and': 'When using time-of-day, both start_time and end_time are required.',
+    'object.and': 'Both start_time and end_time are required.',
   })
   .custom((value, helpers) => {
-    const { start_time: st, end_time: et, start_datetime: sdt, end_datetime: edt } = value;
-    if (st && et) {
-      const normalize = (t) => {
-        const s = String(t).trim();
-        const parts = s.split(':');
-        if (parts.length === 2) return `${parts[0].padStart(2, '0')}:${parts[1].padStart(2, '0')}:00`;
-        return `${parts[0].padStart(2, '0')}:${parts[1].padStart(2, '0')}:${(parts[2] || '00').padStart(2, '0')}`;
-      };
-      const a = normalize(st);
-      const b = normalize(et);
-      if (a >= b) return helpers.error('any.invalid');
-    }
-    if (sdt && edt && new Date(sdt) >= new Date(edt)) return helpers.error('any.invalid');
-    return value;
-  }, 'start before end')
+    const { start_time: st, end_time: et, start_date: sd, end_date: ed } = value;
+    const normalize = (t) => {
+      const s = String(t).trim();
+      const parts = s.split(':');
+      if (parts.length === 2) return `${parts[0].padStart(2, '0')}:${parts[1].padStart(2, '0')}:00`;
+      return `${parts[0].padStart(2, '0')}:${parts[1].padStart(2, '0')}:${(parts[2] || '00').padStart(2, '0')}`;
+    };
+    const a = normalize(st);
+    const b = normalize(et);
+    if (a >= b) return helpers.error('any.invalid');
+    const sdx = sd && String(sd).trim() ? String(sd).trim() : null;
+    const edx = ed && String(ed).trim() ? String(ed).trim() : null;
+    if (sdx && edx && sdx > edx) return helpers.error('any.invalid');
+    return { ...value, start_date: sdx, end_date: edx };
+  }, 'start before end and date range')
   .messages({
-    'any.invalid': 'start_time must be before end_time; start_datetime must be before end_datetime when both provided.',
+    'any.invalid':
+      'start_time must be before end_time; when both start_date and end_date are set, start_date must be on or before end_date.',
   });
+
+/** PUT /api/coaches/me/availability/:id — same shape as create (replace slot fields). */
+export const updateAvailabilitySchema = createAvailabilitySchema;
 
 export const createDisputeSchema = Joi.object({
   booking_id: Joi.number().integer().positive().required(),

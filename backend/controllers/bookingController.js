@@ -32,6 +32,7 @@ import {
 } from '../utils/bookingAttendanceStatus.js';
 import { applyBookingStatusTransition, BookingTransitionVia } from '../services/bookingStateMachine.js';
 import { ACTIVE_DISPUTE_STATUSES } from '../services/disputeStateMachine.js';
+import { getEffectiveRolesForUserRecord } from '../utils/roleGovernance.js';
 
 function respondIfBookingStateMachineError(res, error) {
   if (error?.statusCode === 400 && error?.code) {
@@ -89,9 +90,12 @@ const buildReplayBookingPayload = async (booking) => {
 export const getBookings = async (req, res) => {
   try {
     const { page, limit, status, coach_id, student_id } = req.validated;
-    const isAdmin = (req.user.roles || []).includes('admin');
+    const roles = req.user.roles || [];
+    const isAdmin = roles.includes('admin');
+    const hasParticipantRole = roles.includes('student') || roles.includes('coach');
     const isAdminRoute = (req.baseUrl || '').includes('/admin');
-    if (isAdmin && !isAdminRoute) {
+    /** Pure admin (no student/coach capability) must use admin list API, not participant-scoped `/api/bookings`. */
+    if (isAdmin && !hasParticipantRole && !isAdminRoute) {
       return errorResponse(res, 'Use /api/admin/bookings for admin booking list access', 403);
     }
     const isPaginated = page != null || limit != null;
@@ -102,11 +106,11 @@ export const getBookings = async (req, res) => {
     const where = {};
     if (status) where.status = status;
 
-    if (!isAdmin) {
-      where[Op.or] = [{ coach_id: req.user.id }, { primary_student_id: req.user.id }];
-    } else {
+    if (isAdminRoute && isAdmin) {
       if (coach_id) where.coach_id = coach_id;
       if (student_id) where.primary_student_id = student_id;
+    } else {
+      where[Op.or] = [{ coach_id: req.user.id }, { primary_student_id: req.user.id }];
     }
 
     const bookings = await Booking.findAndCountAll({
@@ -203,10 +207,13 @@ export const getBookingById = async (req, res) => {
     const isParticipant = req.user.id === booking.coach_id || req.user.id === booking.primary_student_id;
     const isAdmin = (req.user.roles || []).includes('admin');
     const isAdminRoute = (req.baseUrl || '').includes('/admin');
-    if (isAdmin && !isAdminRoute) {
+    if (isParticipant) {
+      // allow — includes admin+student / admin+coach on participant routes
+    } else if (isAdmin && isAdminRoute) {
+      // allow — uninvolved admin on admin route
+    } else if (isAdmin && !isAdminRoute) {
       return errorResponse(res, 'Use /api/admin/bookings/:id for admin booking access', 403);
-    }
-    if (!isParticipant && !isAdmin) {
+    } else {
       return errorResponse(res, 'Unauthorized', 403);
     }
 
@@ -299,17 +306,15 @@ export const createBooking = async (req, res) => {
     }
 
     const roles = req.user.roles || [];
-    if (!roles.includes('student') || roles.includes('admin')) {
-      return errorResponse(res, 'Only non-admin students can create bookings', 403);
+    if (!roles.includes('student')) {
+      return errorResponse(res, 'Only users with the student role can create bookings', 403);
     }
 
-    const lessonCoachRole = await UserRole.findOne({
-      where: {
-        user_id: lesson.coach_id,
-        role: 'coach',
-      },
+    const lessonCoachUser = await User.findByPk(lesson.coach_id, {
+      include: [{ model: UserRole, as: 'userRoles', attributes: ['role'] }],
     });
-    if (!lessonCoachRole) {
+    const lessonCoachEffective = getEffectiveRolesForUserRecord(lessonCoachUser);
+    if (!lessonCoachUser || !lessonCoachEffective.includes('coach')) {
       return errorResponse(res, 'Lesson coach account is not a valid coach', 400);
     }
 
@@ -811,15 +816,16 @@ export const cancelBooking = async (req, res) => {
     const isAdmin = (req.user.roles || []).includes('admin');
     const isCoach = req.user.id === bookingPreview.coach_id;
     const isStudent = req.user.id === bookingPreview.primary_student_id;
+    const isParticipant = isCoach || isStudent;
     const isAdminRoute = (req.baseUrl || '').includes('/admin');
-    if (isAdmin && !isAdminRoute) {
+    if (isAdmin && !isAdminRoute && !isParticipant) {
       return errorResponse(res, 'Use /api/admin/bookings/:id/cancel for admin cancellation', 403);
     }
     if (!isAdmin && !isCoach && !isStudent) {
       return errorResponse(res, 'Unauthorized', 403);
     }
 
-    const cancelledBy = isAdmin ? 'admin' : isCoach ? 'coach' : 'student';
+    const cancelledBy = isCoach ? 'coach' : isStudent ? 'student' : 'admin';
     const willAffectReliability = cancelledBy === 'admin' ? false : affectsReliability(reason);
 
     let cancellationHistory;
@@ -1091,8 +1097,7 @@ export const cancelBooking = async (req, res) => {
         const userToUpdate = await User.findByPk(userIdToUpdate, {
           include: [{ model: UserRole, as: 'userRoles', attributes: ['role'] }],
         });
-        const updateRoles = userToUpdate?.userRoles?.map((r) => r.role) ?? [];
-        if (userToUpdate && !updateRoles.includes('admin')) {
+        if (userToUpdate) {
           const reliabilityRole = cancelledBy === 'coach' ? 'coach' : 'student';
           await updateUserReliability(userIdToUpdate, reliabilityRole).catch((err) => {
             logger.error('Failed to update reliability after cancellation:', err);
@@ -1333,8 +1338,7 @@ export const adminMarkCoachNoShow = async (req, res) => {
       const coachUser = await User.findByPk(booking.coach_id, {
         include: [{ model: UserRole, as: 'userRoles', attributes: ['role'] }],
       });
-      const roles = coachUser?.userRoles?.map((r) => r.role) ?? [];
-      if (coachUser && !roles.includes('admin')) {
+      if (coachUser) {
         await updateUserReliability(booking.coach_id, 'coach').catch((err) =>
           logger.error('Failed to update reliability after coach_no_show:', err),
         );

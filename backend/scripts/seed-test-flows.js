@@ -24,9 +24,9 @@
  *   `releaseEscrow` still needs Stripe + Connect to actually pay the coach.
  *
  * Test users (all email_verified):
- *   Admin   admin.testflow@picklecoach.test    / Test1234!
- *   Coach   coach.testflow@picklecoach.test    / Test1234!
- *   Student student.testflow@picklecoach.test  / Test1234!
+ *   Admin   admin.testflow@picklecoach.test    / Test1234!Ab
+ *   Coach   coach.testflow@picklecoach.test    / Test1234!Ab
+ *   Student student.testflow@picklecoach.test  / Test1234!Ab
  *
  * Run from `backend/`:
  *   npm run seed:test-flows
@@ -72,7 +72,7 @@ import {
 } from '../models/index.js';
 
 const TEST_EMAIL_DOMAIN = 'picklecoach.test';
-const PASSWORD = 'Test1234!';
+const PASSWORD = 'Test1234!Ab';
 const PASSWORD_HASH_ROUNDS = 10;
 
 const dayMs = 24 * 60 * 60 * 1000;
@@ -195,7 +195,6 @@ async function createCoachStack(coach) {
     user_id: coach.id,
     headline: 'Test Flow Coach Pro',
     bio: 'Seeded coach for endpoint testing. Skill 4.0, NY-based.',
-    hourly_rate: 80,
     experience_years: 6,
     skill_rating: 4.0,
     rating_system: 'self',
@@ -222,22 +221,13 @@ async function createCoachStack(coach) {
     preferred: true,
   });
 
-  // 14-day rolling weekday availability so future-dated bookings sit inside an availability window.
-  const today = new Date();
-  for (let i = 0; i < 14; i++) {
-    const day = new Date(today);
-    day.setDate(today.getDate() + i);
-    const dow = day.getDay();
-    if (dow === 0 || dow === 6) continue;
-    const start = new Date(day);
-    start.setHours(9, 0, 0, 0);
-    const end = new Date(day);
-    end.setHours(17, 0, 0, 0);
+  // Recurring weekday windows (no stored datetimes); bookings use coach timezone + weekday.
+  for (let weekday = 1; weekday <= 5; weekday++) {
     await CoachAvailability.create({
       coach_id: coach.id,
-      weekday: dow,
-      start_datetime: start,
-      end_datetime: end,
+      weekday,
+      start_time: '09:00:00',
+      end_time: '17:00:00',
     });
   }
 

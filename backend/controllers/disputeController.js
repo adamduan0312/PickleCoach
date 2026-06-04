@@ -189,7 +189,14 @@ export const createDispute = async (req, res) => {
       );
     }
 
-    const openerRole = isAdmin ? 'admin' : uid === coachId ? 'coach' : 'student';
+    const openerRole =
+      uid === coachId
+        ? 'coach'
+        : studentId != null && uid === studentId
+          ? 'student'
+          : isAdmin
+            ? 'admin'
+            : 'student';
     if (disputeType.code === 'coach_no_show_claim') {
       if (openerRole !== 'student' && openerRole !== 'admin') {
         return errorResponse(
@@ -217,7 +224,14 @@ export const createDispute = async (req, res) => {
       return errorResponse(res, 'Active dispute already exists for this booking', 409);
     }
 
-    const openedBy = isAdmin ? 'admin' : uid === coachId ? 'coach' : 'student';
+    const openedBy =
+      uid === coachId
+        ? 'coach'
+        : studentId != null && uid === studentId
+          ? 'student'
+          : isAdmin
+            ? 'admin'
+            : 'student';
 
     const initial = assertInitialInAppDisputeStatus('open');
     if (!initial.ok) {

@@ -184,7 +184,7 @@ See **`POSTMAN_TESTING_GUIDE.md`** for flow-based testing order, checklist, and 
 4. **Test Core Endpoints (after verifying email for the test account):**
    - Health check: `GET /health`
    - User profile: `GET /api/auth/profile` (with token)
-   - Coach endpoints: `GET /api/coaches`, `POST /api/coaches/profile`
+   - Coach endpoints: `GET /api/coaches`, `POST /api/coaches/profile`, `PUT /api/coaches/me/profile`
    - Lesson endpoints: `POST /api/lessons`, `GET /api/lessons`
    - Booking endpoints: `POST /api/bookings`, `GET /api/bookings`
 

@@ -20,11 +20,6 @@ const CoachProfile = sequelize.define('coach_profiles', {
     type: DataTypes.TEXT,
     allowNull: true,
   },
-  hourly_rate: {
-    type: DataTypes.DECIMAL(10, 2),
-    allowNull: false,
-    defaultValue: 0.00,
-  },
   experience_years: {
     type: DataTypes.INTEGER,
     defaultValue: 0,
@@ -34,7 +29,7 @@ const CoachProfile = sequelize.define('coach_profiles', {
     type: DataTypes.DECIMAL(3, 1),
     allowNull: true,
   },
-  /** e.g. `self` (MVP; no DUPR/API verification). */
+  /** MVP allow-list; not verified against external APIs. DB column VARCHAR(32). */
   rating_system: {
     type: DataTypes.STRING(32),
     allowNull: false,

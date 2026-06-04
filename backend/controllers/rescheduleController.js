@@ -23,10 +23,6 @@ export const requestReschedule = async (req, res) => {
       return errorResponse(res, 'Booking not found', 404);
     }
 
-    if (req.user.id !== booking.coach_id && req.user.id !== booking.primary_student_id && !(req.user.roles || []).includes('admin')) {
-      return errorResponse(res, 'Unauthorized', 403);
-    }
-
     if (['completed', 'cancelled', 'student_no_show', 'coach_no_show'].includes(booking.status)) {
       return errorResponse(res, 'Cannot reschedule completed, cancelled, or no-show booking', 400);
     }
@@ -36,11 +32,19 @@ export const requestReschedule = async (req, res) => {
       return errorResponse(res, 'Cannot reschedule to the past', 400);
     }
 
-    const requestedBy = (req.user.roles || []).includes('admin') ? 'admin' :
-                       req.user.id === booking.coach_id ? 'coach' : 'student';
+    // Participant first (Philosophy A): admin+student on their booking is still "student" for audit/reliability, not blanket "admin".
+    let requestedBy;
+    if (req.user.id === booking.coach_id) {
+      requestedBy = 'coach';
+    } else if (req.user.id === booking.primary_student_id) {
+      requestedBy = 'student';
+    } else if ((req.user.roles || []).includes('admin')) {
+      requestedBy = 'admin';
+    } else {
+      return errorResponse(res, 'Unauthorized', 403);
+    }
 
-    // Admin actions NEVER affect reliability
-    // Only marketplace participant actions (student/coach) can affect reliability
+    // Uninvolved admin actions do not affect reliability; student/coach on the booking do when the reason is penalized.
     const willAffectReliability = requestedBy === 'admin' ? false : affectsReliability(reason);
 
     // Enforce business rules server-side (never trust `paid_reschedule` from the client blindly):
@@ -79,7 +83,7 @@ export const requestReschedule = async (req, res) => {
       new_scheduled_at: newScheduledDate,
       reason,
       reason_notes: reason_notes || null,
-      affects_reliability: willAffectReliability, // Always false for admin
+      affects_reliability: willAffectReliability, // false when uninvolved admin requested the reschedule
       paid_reschedule: paidRescheduleEffective,
       approval_status: approvalStatus,
     });
@@ -129,12 +133,10 @@ export const requestReschedule = async (req, res) => {
     if (!paidRescheduleEffective && willAffectReliability && requestedBy !== 'admin') {
       const userIdToUpdate = requestedBy === 'coach' ? booking.coach_id : booking.primary_student_id;
       if (userIdToUpdate) {
-        // Double-check: ensure we're not updating an admin user
         const userToUpdate = await User.findByPk(userIdToUpdate, {
           include: [{ model: UserRole, as: 'userRoles', attributes: ['role'] }],
         });
-        const updateRoles = userToUpdate?.userRoles?.map((r) => r.role) ?? [];
-        if (userToUpdate && !updateRoles.includes('admin')) {
+        if (userToUpdate) {
           const reliabilityRole = requestedBy === 'coach' ? 'coach' : 'student';
           await updateUserReliability(userIdToUpdate, reliabilityRole).catch((err) => {
             logger.error('Failed to update reliability after reschedule:', err);

@@ -1,5 +1,6 @@
 import { Booking, Lesson, BookingPlayer, RescheduleHistory, CoachAvailability, User, sequelize } from '../models/index.js';
 import { Op } from 'sequelize';
+import { calendarDateInTimezone, toYmdApi } from '../utils/dateOnly.js';
 
 const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
@@ -64,24 +65,17 @@ export const checkCoachAvailability = async (coachId, scheduledAt, durationMinut
 
   // Check if any availability window covers the requested time slot
   for (const availability of availabilities) {
-    // Check date range if specified
-    if (availability.start_date) {
-      const startDate = new Date(availability.start_date);
-      startDate.setHours(0, 0, 0, 0);
-      if (scheduledDate < startDate) {
-        continue; // Scheduled date is before availability start
-      }
+    // DATEONLY range: compare calendar day in coach timezone to stored YYYY-MM-DD (no local Date parsing).
+    const calYmd = calendarDateInTimezone(scheduledDate, coachTimezone);
+    const slotStart = toYmdApi(availability.start_date);
+    if (slotStart && calYmd < slotStart) {
+      continue;
     }
-    
-    if (availability.end_date) {
-      const endDate = new Date(availability.end_date);
-      endDate.setHours(23, 59, 59, 999);
-      if (scheduledDate > endDate) {
-        continue; // Scheduled date is after availability end
-      }
+    const slotEnd = toYmdApi(availability.end_date);
+    if (slotEnd && calYmd > slotEnd) {
+      continue;
     }
 
-    // Prefer time-of-day window (start_time/end_time) for recurring weekly slots
     if (availability.start_time && availability.end_time) {
       const startBound = normalizeTime(availability.start_time);
       const endBound = normalizeTime(availability.end_time);
@@ -93,17 +87,8 @@ export const checkCoachAvailability = async (coachId, scheduledAt, durationMinut
       continue;
     }
 
-    // Legacy: full datetime window
-    if (availability.start_datetime && availability.end_datetime) {
-      const availabilityStart = new Date(availability.start_datetime);
-      const availabilityEnd = new Date(availability.end_datetime);
-      if (scheduledDate >= availabilityStart && endTime <= availabilityEnd) {
-        return { available: true };
-      }
-    } else if (!availability.start_datetime && !availability.end_datetime) {
-      // No time restrictions, available all day (if weekday and date range matched)
-      return { available: true };
-    }
+    // Weekday + date range matched; no time window → all day
+    return { available: true };
   }
 
   return { available: false, reason: 'Coach is not available during this time slot' };

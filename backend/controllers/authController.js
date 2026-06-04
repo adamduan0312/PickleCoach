@@ -3,19 +3,33 @@ import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import { Op } from 'sequelize';
 import { User, UserRole, CoachProfile, UserReliability } from '../models/index.js';
-import { attachLegacyReliabilityAliases } from '../services/reliabilityEngine.js';
 import { successResponse, errorResponse } from '../utils/response.js';
+import { serializeAuthProfileUser, serializeAuthSessionUser } from '../utils/userDto.js';
 import { logAudit } from '../utils/audit.js';
 import { logger } from '../config/logger.js';
 import * as notificationService from '../services/notificationService.js';
-import * as stripeService from '../services/stripeService.js';
+import { canSelfServiceAddRole } from '../utils/roleGovernance.js';
+import { countOtherLiveAdmins } from '../utils/userRoleChangeGuards.js';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
+/** Minimum interval between verification emails for the same user (spam / cost control). */
+const EMAIL_VERIFICATION_RESEND_COOLDOWN_MS = 60 * 1000;
+
+/** Same row graph as GET/PUT profile — single source for `serializeAuthProfileUser`. */
+async function loadUserForAuthProfile(userId) {
+  return User.findByPk(userId, {
+    attributes: { exclude: ['password_hash'] },
+    include: [
+      { model: UserRole, as: 'userRoles', attributes: ['role'] },
+      { model: CoachProfile, as: 'coachProfile' },
+      { model: UserReliability, as: 'reliabilities', required: false },
+    ],
+  });
+}
 
 /** Login-shaped `{ token, user }` for responses after sensitive self-service actions. */
 function buildAuthSessionPayload(user) {
-  const roles = user.userRoles && user.userRoles.length ? user.userRoles.map((r) => r.role) : [];
   const token = jwt.sign(
     { userId: user.id, tokenVersion: user.token_version ?? 0 },
     JWT_SECRET,
@@ -23,16 +37,7 @@ function buildAuthSessionPayload(user) {
   );
   return {
     token,
-    user: {
-      id: user.id,
-      full_name: user.full_name,
-      email: user.email,
-      roles,
-      phone: user.phone ?? null,
-      timezone: user.timezone ?? null,
-      avatar_url: user.avatar_url ?? null,
-      email_verified_at: user.email_verified_at ?? null,
-    },
+    user: serializeAuthSessionUser(user),
   };
 }
 
@@ -55,22 +60,14 @@ export const register = async (req, res) => {
       ...(avatar_url !== undefined && avatar_url !== '' && { avatar_url }),
     });
 
-    // Best effort: create Stripe Customer at signup; first booking also backfills if needed.
-    try {
-      const customer = await stripeService.createCustomer({
-        email: user.email,
-        name: user.full_name,
-        metadata: { user_id: String(user.id) },
-      });
-      await user.update({ stripe_customer_id: customer.id });
-    } catch (stripeError) {
-      logger.warn('Stripe customer creation skipped during signup', {
-        userId: user.id,
-        error: stripeError?.message || String(stripeError),
-      });
-    }
+    // Stripe Customer is created when the user completes a verified financial flow (e.g. booking payment),
+    // not at registration — avoids payment infrastructure for unverified accounts.
 
     await UserRole.create({ user_id: user.id, role });
+
+    await user.reload({
+      include: [{ model: UserRole, as: 'userRoles', attributes: ['role'] }],
+    });
 
     const token = jwt.sign({ userId: user.id, tokenVersion: user.token_version ?? 0 }, JWT_SECRET, {
       expiresIn: JWT_EXPIRES_IN,
@@ -78,18 +75,8 @@ export const register = async (req, res) => {
 
     await logAudit(user.id, 'user_registered', 'users', user.id, null, user.toJSON(), req);
 
-    // Return user data with roles array (user can have multiple roles: student, coach).
     return successResponse(res, {
-      user: {
-        id: user.id,
-        full_name: user.full_name,
-        email: user.email,
-        roles: [role],
-        phone: user.phone ?? null,
-        timezone: user.timezone ?? null,
-        avatar_url: user.avatar_url ?? null,
-        email_verified_at: user.email_verified_at ?? null,
-      },
+      user: serializeAuthSessionUser(user),
       token,
     }, 'User registered successfully', 201);
   } catch (error) {
@@ -107,38 +94,35 @@ export const login = async (req, res) => {
       include: [{ model: UserRole, as: 'userRoles', attributes: ['role'] }],
     });
     if (!user) {
+      await logAudit(null, 'login_failed', 'users', null, null, { reason: 'invalid_credentials' }, req);
       return errorResponse(res, 'Invalid credentials', 401);
     }
 
     if (!user.is_active) {
-      return errorResponse(res, 'Account is inactive', 403);
+      await logAudit(user.id, 'login_failed', 'users', user.id, null, { reason: 'account_inactive' }, req);
+      return errorResponse(res, 'Invalid credentials', 401);
     }
 
     const isValidPassword = await bcrypt.compare(password, user.password_hash);
     if (!isValidPassword) {
+      await logAudit(user.id, 'login_failed', 'users', user.id, null, { reason: 'invalid_credentials' }, req);
       return errorResponse(res, 'Invalid credentials', 401);
     }
 
     await user.update({ last_login: new Date() });
 
-    const roles = user.userRoles && user.userRoles.length ? user.userRoles.map((r) => r.role) : [];
     const token = jwt.sign({ userId: user.id, tokenVersion: user.token_version ?? 0 }, JWT_SECRET, {
       expiresIn: JWT_EXPIRES_IN,
+    });
+
+    await user.reload({
+      include: [{ model: UserRole, as: 'userRoles', attributes: ['role'] }],
     });
 
     await logAudit(user.id, 'user_login', 'users', user.id, null, user.toJSON(), req);
 
     return successResponse(res, {
-      user: {
-        id: user.id,
-        full_name: user.full_name,
-        email: user.email,
-        roles,
-        phone: user.phone ?? null,
-        timezone: user.timezone ?? null,
-        avatar_url: user.avatar_url ?? null,
-        email_verified_at: user.email_verified_at ?? null,
-      },
+      user: serializeAuthSessionUser(user),
       token,
     }, 'Login successful');
   } catch (error) {
@@ -149,36 +133,13 @@ export const login = async (req, res) => {
 
 export const getProfile = async (req, res) => {
   try {
-    const user = await User.findByPk(req.user.id, {
-      attributes: { exclude: ['password_hash'] },
-      include: [
-        { model: UserRole, as: 'userRoles', attributes: ['role'] },
-        { model: CoachProfile, as: 'coachProfile' },
-        { model: UserReliability, as: 'reliabilities', required: false },
-      ],
-    });
+    const user = await loadUserForAuthProfile(req.user.id);
 
     if (!user) {
       return errorResponse(res, 'User not found', 404);
     }
 
-    const roles = user.userRoles && user.userRoles.length ? user.userRoles.map((r) => r.role) : [];
-    const profile = user.toJSON();
-    profile.roles = roles;
-    delete profile.userRoles;
-
-    const relRows = user.reliabilities || [];
-    delete profile.reliabilities;
-    const coachRel = relRows.find((r) => r.role === 'coach');
-    const studentRel = relRows.find((r) => r.role === 'student');
-    if (roles.includes('coach') && coachRel) {
-      profile.reliability = attachLegacyReliabilityAliases(coachRel.toJSON());
-    }
-    if (roles.includes('student') && studentRel) {
-      profile.reliability_student = attachLegacyReliabilityAliases(studentRel.toJSON());
-    }
-
-    return successResponse(res, profile, 'Profile retrieved successfully');
+    return successResponse(res, serializeAuthProfileUser(user), 'Profile retrieved successfully');
   } catch (error) {
     logger.error('Get profile error:', error);
     return errorResponse(res, 'Failed to retrieve profile', 500);
@@ -190,6 +151,10 @@ export const updateProfile = async (req, res) => {
     const { full_name, phone, timezone, avatar_url } = req.validated;
     const user = await User.findByPk(req.user.id);
 
+    if (!user) {
+      return errorResponse(res, 'User not found', 404);
+    }
+
     const beforeState = user.toJSON();
     await user.update({
       full_name: full_name || user.full_name,
@@ -200,15 +165,12 @@ export const updateProfile = async (req, res) => {
 
     await logAudit(req.user.id, 'profile_updated', 'users', user.id, beforeState, user.toJSON(), req);
 
-    // Echo all safe request fields so response shape is predictable; optional as null.
-    return successResponse(res, {
-      id: user.id,
-      full_name: user.full_name,
-      email: user.email,
-      phone: user.phone ?? null,
-      timezone: user.timezone ?? null,
-      avatar_url: user.avatar_url ?? null,
-    }, 'Profile updated successfully');
+    const refreshed = await loadUserForAuthProfile(req.user.id);
+    if (!refreshed) {
+      return errorResponse(res, 'User not found', 404);
+    }
+
+    return successResponse(res, serializeAuthProfileUser(refreshed), 'Profile updated successfully');
   } catch (error) {
     logger.error('Update profile error:', error);
     return errorResponse(res, 'Failed to update profile', 500);
@@ -219,39 +181,61 @@ export const updateProfile = async (req, res) => {
  * Refresh JWT token
  * POST /api/auth/refresh
  * Body: { token: string }
+ *
+ * Requires a valid JWT signature. Expired tokens may refresh only if signature verifies and
+ * tokenVersion matches the user (same rules as authenticate middleware).
  */
 export const refreshToken = async (req, res) => {
   try {
     const { token } = req.body;
 
-    if (!token) {
+    if (!token || typeof token !== 'string' || !token.trim()) {
       return errorResponse(res, 'Token is required', 400);
     }
 
-    // Verify the existing token (even if expired, we can decode it)
+    const trimmed = token.trim();
     let decoded;
     try {
-      decoded = jwt.verify(token, JWT_SECRET);
+      decoded = jwt.verify(trimmed, JWT_SECRET);
     } catch (error) {
-      // If token is expired, try to decode without verification
       if (error.name === 'TokenExpiredError') {
-        decoded = jwt.decode(token);
-        if (!decoded) {
-          return errorResponse(res, 'Invalid token', 401);
+        try {
+          // Signature must still verify — never use jwt.decode alone for refresh.
+          decoded = jwt.verify(trimmed, JWT_SECRET, { ignoreExpiration: true });
+        } catch (inner) {
+          await logAudit(null, 'token_refresh_invalid', null, null, null, { reason: 'expired_bad_signature' }, req);
+          return errorResponse(res, 'Authentication failed', 401);
         }
       } else {
-        return errorResponse(res, 'Invalid token', 401);
+        await logAudit(null, 'token_refresh_invalid', null, null, null, { reason: 'jwt_verify_failed' }, req);
+        return errorResponse(res, 'Authentication failed', 401);
       }
     }
 
-    const user = await User.findByPk(decoded.userId, {
-      include: [{ model: UserRole, as: 'userRoles', attributes: ['role'] }],
-    });
-    if (!user || !user.is_active) {
-      return errorResponse(res, 'User not found or inactive', 401);
+    const userId = decoded?.userId;
+    if (userId == null || Number.isNaN(Number(userId))) {
+      await logAudit(null, 'token_refresh_invalid', null, null, null, { reason: 'missing_user_id_claim' }, req);
+      return errorResponse(res, 'Authentication failed', 401);
     }
 
-    const roles = user.userRoles && user.userRoles.length ? user.userRoles.map((r) => r.role) : [];
+    const user = await User.findByPk(Number(userId), {
+      include: [{ model: UserRole, as: 'userRoles', attributes: ['role'] }],
+    });
+    if (!user || !user.is_active || user.deleted_at) {
+      await logAudit(user?.id ?? null, 'token_refresh_denied', 'users', user?.id ?? null, null, { reason: 'inactive_or_missing_user' }, req);
+      return errorResponse(res, 'Authentication failed', 401);
+    }
+
+    const tokenVersionFromToken = decoded.tokenVersion ?? 0;
+    const currentTokenVersion = user.token_version ?? 0;
+    if (currentTokenVersion !== tokenVersionFromToken) {
+      await logAudit(user.id, 'token_refresh_denied_version_mismatch', 'users', user.id, null, {
+        token_version_claim: tokenVersionFromToken,
+        token_version_current: currentTokenVersion,
+      }, req);
+      return errorResponse(res, 'Authentication failed', 401);
+    }
+
     const newToken = jwt.sign({ userId: user.id, tokenVersion: user.token_version ?? 0 }, JWT_SECRET, {
       expiresIn: JWT_EXPIRES_IN,
     });
@@ -260,16 +244,7 @@ export const refreshToken = async (req, res) => {
 
     return successResponse(res, {
       token: newToken,
-      user: {
-        id: user.id,
-        full_name: user.full_name,
-        email: user.email,
-        roles,
-        phone: user.phone ?? null,
-        timezone: user.timezone ?? null,
-        avatar_url: user.avatar_url ?? null,
-        email_verified_at: user.email_verified_at ?? null,
-      },
+      user: serializeAuthSessionUser(user),
     }, 'Token refreshed successfully');
   } catch (error) {
     logger.error('Refresh token error:', error);
@@ -380,7 +355,8 @@ export const resetPassword = async (req, res) => {
 /**
  * Delete my account (soft delete)
  * DELETE /api/auth/me
- * Authenticated user only. Admins cannot use this (use admin user management instead).
+ * Same invariant as `DELETE /api/users/:id`: if this user has an **`admin`** `user_roles` row,
+ * self-delete is allowed only when **≥1 other live admin** remains (`countOtherLiveAdmins`).
  */
 export const deleteMyAccount = async (req, res) => {
   try {
@@ -389,8 +365,20 @@ export const deleteMyAccount = async (req, res) => {
       return errorResponse(res, 'User not found', 404);
     }
 
-    if ((req.user.roles || []).includes('admin')) {
-      return errorResponse(res, 'Admins cannot delete their account via this endpoint', 403);
+    const hasAdminAssignment = await UserRole.findOne({
+      where: { user_id: user.id, role: 'admin' },
+    });
+    if (hasAdminAssignment) {
+      const otherLiveAdminCount = await countOtherLiveAdmins(user.id);
+      if (otherLiveAdminCount < 1) {
+        return errorResponse(
+          res,
+          'Cannot delete your account: you are an admin and no other active admin exists. Assign or restore another admin first.',
+          409,
+          null,
+          { code: 'last_admin_required' },
+        );
+      }
     }
 
     const beforeState = user.toJSON();
@@ -438,12 +426,14 @@ export const logout = async (req, res) => {
 };
 
 /**
- * Add student or coach role (self-service). User can have both roles.
- * PUT /api/auth/me/role
+ * Add student or coach capability (self-service). **Does not remove** roles — users can hold both.
+ * Route: **PUT /api/auth/me/role** (path unchanged for clients).
  * Body: { role: 'student' | 'coach' }
- * Admins cannot use this. If user already has the role, returns current user and token unchanged.
+ * **Permissions** come from **`user.roles`** in the response (and DB). **Which dashboard to show** (student vs coach)
+ * is a **frontend `activeRole` / mode** concern only — this API does not store an active mode server-side.
+ * Admins cannot use this. If the user already has the role, returns current user and token unchanged.
  */
-export const switchRole = async (req, res) => {
+export const addUserRole = async (req, res) => {
   try {
     const user = await User.findByPk(req.user.id, {
       include: [{ model: UserRole, as: 'userRoles', attributes: ['role'] }],
@@ -453,26 +443,21 @@ export const switchRole = async (req, res) => {
     }
 
     if ((req.user.roles || []).includes('admin')) {
-      return errorResponse(res, 'Admins cannot switch role via this endpoint', 403);
+      return errorResponse(res, 'Admins cannot add roles via this endpoint; use admin user management.', 403);
     }
 
     const { role } = req.validated;
     const currentRoles = user.userRoles && user.userRoles.length ? user.userRoles.map((r) => r.role) : [];
 
+    if (!canSelfServiceAddRole(user, role, currentRoles)) {
+      return errorResponse(res, 'This role has been restricted by an administrator', 403);
+    }
+
     if (currentRoles.includes(role)) {
       return successResponse(res, {
-        user: {
-          id: user.id,
-          full_name: user.full_name,
-          email: user.email,
-          roles: currentRoles,
-          phone: user.phone ?? null,
-          timezone: user.timezone ?? null,
-          avatar_url: user.avatar_url ?? null,
-          email_verified_at: user.email_verified_at ?? null,
-        },
+        user: serializeAuthSessionUser(user),
         token: req.headers.authorization?.split(' ')[1],
-      }, 'Role unchanged (already have ' + role + ')');
+      }, 'Capability unchanged (you already have the ' + role + ' role).');
     }
 
     await UserRole.findOrCreate({
@@ -481,28 +466,23 @@ export const switchRole = async (req, res) => {
     });
 
     const updatedRoles = [...currentRoles, role].sort();
-    await logAudit(req.user.id, 'user_switched_role', 'users', user.id, { roles: currentRoles }, { roles: updatedRoles }, req);
+    await logAudit(req.user.id, 'user_self_service_role_added', 'users', user.id, { roles: currentRoles }, { roles: updatedRoles }, req);
+
+    await user.reload({
+      include: [{ model: UserRole, as: 'userRoles', attributes: ['role'] }],
+    });
 
     const newToken = jwt.sign({ userId: user.id, tokenVersion: user.token_version ?? 0 }, JWT_SECRET, {
       expiresIn: JWT_EXPIRES_IN,
     });
 
     return successResponse(res, {
-      user: {
-        id: user.id,
-        full_name: user.full_name,
-        email: user.email,
-        roles: updatedRoles,
-        phone: user.phone ?? null,
-        timezone: user.timezone ?? null,
-        avatar_url: user.avatar_url ?? null,
-        email_verified_at: user.email_verified_at ?? null,
-      },
+      user: serializeAuthSessionUser(user),
       token: newToken,
     }, 'Role added successfully. Use the new token for subsequent requests.');
   } catch (error) {
-    logger.error('Switch role error:', error);
-    return errorResponse(res, 'Failed to switch role', 500);
+    logger.error('Add role (PUT /api/auth/me/role) error:', error);
+    return errorResponse(res, 'Failed to add role', 500);
   }
 };
 
@@ -704,12 +684,29 @@ export const requestEmailVerification = async (req, res) => {
       return successResponse(res, null, 'Email is already verified');
     }
 
+    const lastSent = user.email_verification_last_sent_at
+      ? new Date(user.email_verification_last_sent_at).getTime()
+      : 0;
+    if (lastSent && Date.now() - lastSent < EMAIL_VERIFICATION_RESEND_COOLDOWN_MS) {
+      const retryAfterSec = Math.ceil(
+        (EMAIL_VERIFICATION_RESEND_COOLDOWN_MS - (Date.now() - lastSent)) / 1000,
+      );
+      return errorResponse(
+        res,
+        'Please wait before requesting another verification email.',
+        429,
+        null,
+        { retryAfterSec },
+      );
+    }
+
     const verificationToken = crypto.randomBytes(32).toString('hex');
     const verificationExpires = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
 
     await user.update({
       email_verification_token: verificationToken,
       email_verification_expires: verificationExpires,
+      email_verification_last_sent_at: new Date(),
     });
 
     const verifyUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/verify-email?token=${verificationToken}`;
@@ -768,6 +765,7 @@ export const confirmEmailVerification = async (req, res) => {
       email_verified_at: user.email_verified_at || new Date(),
       email_verification_token: null,
       email_verification_expires: null,
+      email_verification_last_sent_at: null,
     });
 
     await logAudit(user.id, 'email_verified', 'users', user.id, beforeState, {

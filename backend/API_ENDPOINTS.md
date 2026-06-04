@@ -11,7 +11,7 @@ Authorization: Bearer <token>
 
 **Response convention**: For create/update endpoints, the response body echoes all **safe** request-body fields (same keys, with `null` when optional and unset) so clients see a consistent shape and can easily compare request vs response in Postman. Sensitive fields (e.g. password) are never returned.
 
-**Delete behavior**: **Soft delete** (set `deleted_at` / `is_active: false`, row kept): users (self-delete `DELETE /api/auth/me`, admin `DELETE /api/users/:id`), coach profile (when user is deleted), courts (`DELETE /api/courts/:id`), lessons (`DELETE /api/lessons/:id`). **Hard delete** (row removed): coach availability (`DELETE /api/coaches/availability/:id` coach-only, or `DELETE /api/admin/coaches/:coachId/availability/:id` admin), coach–court link (`DELETE /api/coaches/me/courts/:id` coach-only, or `DELETE /api/admin/coaches/:coachId/courts/:courtId` admin), reviews (`DELETE /api/reviews/:id`). Bookings are cancelled via `POST /api/bookings/:id/cancel`, not deleted.
+**Delete behavior**: **Soft delete** (set `deleted_at` / `is_active: false`, row kept): users (self-delete `DELETE /api/auth/me`, admin `DELETE /api/users/:id`), coach profile (when user is deleted), courts (`DELETE /api/courts/:id`), lessons (`DELETE /api/lessons/:id`). **Hard delete** (row removed): coach availability (`DELETE /api/coaches/me/availability/:id` coach-only, or `DELETE /api/admin/coaches/:coachId/availability/:id` admin), coach–court link (`DELETE /api/coaches/me/courts/:id` coach-only, or `DELETE /api/admin/coaches/:coachId/courts/:courtId` admin), reviews (`DELETE /api/reviews/:id`). Bookings are cancelled via `POST /api/bookings/:id/cancel`, not deleted.
 
 ---
 
@@ -42,7 +42,7 @@ Authorization: Bearer <token>
   {
     "full_name": "string (required, 2-100 chars)",
     "email": "string (required, valid email, max 150 chars)",
-    "password": "string (required, min 8 chars)",
+    "password": "string (required, min 10 chars, at least one lowercase, one uppercase, one number; symbols optional)",
     "role": "string (required, 'student' | 'coach')",
     "phone": "string (optional, max 30 chars)",
     "timezone": "string (optional, defaults to 'UTC')",
@@ -59,17 +59,19 @@ Authorization: Bearer <token>
         "id": 1,
         "full_name": "John Doe",
         "email": "john@example.com",
-        "role": "student",
+        "roles": ["student"],
         "phone": null,
+        "phone_verified": false,
         "timezone": "UTC",
         "avatar_url": null,
-        "email_verified_at": null
+        "email_verified_at": null,
+        "is_active": true
       },
       "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
     }
   }
   ```
-- **Note**: All safe request fields (full_name, email, role, phone, timezone, avatar_url) are echoed in the response; optional ones are `null` when not sent. `email_verified_at` is included so the client can show verification status. Avatar can also be set or changed later via `PUT /api/auth/profile`.
+- **Note**: All safe request fields (full_name, email, role, phone, timezone, avatar_url) are echoed in the response; optional ones are `null` when not sent. `email_verified_at` is included so the client can show verification status. Avatar can also be set or changed later via `PUT /api/auth/profile`. **Stripe Customer** is not created at registration; it is created when the user completes a verified financial flow (e.g. paid booking).
 - **Error responses**: `400` (validation failed – invalid body), `409` (email already registered), `500` (server error).
 
 ### `POST /api/auth/login`
@@ -92,20 +94,24 @@ Authorization: Bearer <token>
         "id": 1,
         "full_name": "John Doe",
         "email": "john@example.com",
-        "role": "student",
+        "roles": ["student"],
+        "phone": null,
+        "phone_verified": false,
+        "timezone": "America/New_York",
         "avatar_url": null,
-        "email_verified_at": "2026-01-15T10:00:00.000Z"
+        "email_verified_at": "2026-01-15T10:00:00.000Z",
+        "is_active": true
       },
       "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
     }
   }
   ```
 - **Note**: The `user` object includes `email_verified_at` (ISO date or `null`) so the client can show verification status and avoid unnecessary verify-email calls.
-- **Error responses**: `400` (validation failed – invalid body), `401` (invalid credentials), `403` (account inactive), `500` (server error).
+- **Error responses**: `400` (validation failed – invalid body), `401` (invalid credentials — same message for unknown email, wrong password, or inactive account), `500` (server error).
 
 ### `POST /api/auth/refresh`
-- **Auth**: Bearer token (can be expired)
-- **Description**: Refresh an expired JWT token. The submitted token’s `tokenVersion` must match the user’s current `token_version` in the database (otherwise the token was revoked, e.g. after password reset or admin email change).
+- **Auth**: None (body carries the JWT)
+- **Description**: Refresh a JWT. The token must have a **valid signature** (including expired tokens: expiry is ignored only after signature verification). The submitted token’s `tokenVersion` must match the user’s current `token_version` (same rule as `authenticate`); otherwise the request is rejected — e.g. after logout, password reset, or email change.
 - **Request Body**:
   ```json
   {
@@ -123,14 +129,18 @@ Authorization: Bearer <token>
         "id": 1,
         "full_name": "John Doe",
         "email": "john@example.com",
-        "role": "student",
+        "roles": ["student"],
+        "phone": null,
+        "phone_verified": false,
+        "timezone": "America/New_York",
         "avatar_url": null,
-        "email_verified_at": null
+        "email_verified_at": null,
+        "is_active": true
       }
     }
   }
   ```
-- **Error responses**: `401` (invalid token, user inactive, or **token revoked** — `tokenVersion` in the JWT no longer matches the user; use login to obtain a new token).
+- **Error responses**: `400` (missing body token), `401` (**Authentication failed** — invalid signature, malformed token, **token revoked** / version mismatch, unknown user id, or account unusable). For unusable accounts the `error` string is more specific: **deleted** (`This account has been deleted…`) vs **inactive** (`This account is inactive…`) vs **unknown user** (`Invalid or inactive user`). Use login to obtain a new token.
 
 ### `POST /api/auth/forgot-password`
 - **Auth**: None required
@@ -159,7 +169,7 @@ Authorization: Bearer <token>
   ```json
   {
     "token": "string (required, password reset token from email)",
-    "password": "string (required, min 8 chars)"
+    "password": "string (required, min 10 chars + upper, lower, number per password policy)"
   }
   ```
 - **Response** (Status: 200):
@@ -183,7 +193,7 @@ Authorization: Bearer <token>
     {
       "success": false,
       "error": "Validation failed",
-      "details": [ { "field": "password", "message": "\"password\" length must be at least 8 characters long" } ],
+      "details": [ { "field": "password", "message": "Password must be at least 10 characters and include lowercase, uppercase, and a number." } ],
       "requestId": "..."
     }
     ```
@@ -204,7 +214,7 @@ Authorization: Bearer <token>
   ```json
   {
     "current_password": "string (required, existing password)",
-    "new_password": "string (required, min 8 chars)"
+    "new_password": "string (required, min 10 chars + upper, lower, number per password policy)"
   }
   ```
 - **Response** (Status: 200):
@@ -227,7 +237,7 @@ Authorization: Bearer <token>
     }
   }
   ```
-- **Error responses**: `400` (missing fields, new_password too short, or current_password incorrect), `401` (missing or invalid token), `500` (server error).
+- **Error responses**: `400` (missing fields, new_password fails policy, or current_password incorrect), `401` (missing or invalid token), `500` (server error).
 
 ### `POST /api/auth/change-email/request`
 - **Auth**: Required
@@ -305,9 +315,10 @@ Authorization: Bearer <token>
   ```
 - **Behavior**:
   - If `email_verified_at` is already set, returns success with message `"Email is already verified"` and does not send a new email.
-  - Otherwise generates an `email_verification_token` and `email_verification_expires` (24h) and sends an `email_verification` email with a link like:
+  - Otherwise generates an `email_verification_token` and `email_verification_expires` (24h), records `email_verification_last_sent_at`, and sends an `email_verification` email with a link like:
     `https://frontend/verify-email?token=...`.
-- **Error responses**: `401` (missing or invalid token), `500` (server error).
+  - **Resend cooldown**: at most one send per **60 seconds** per user; otherwise `429` with `retryAfterSec` in the JSON body.
+- **Error responses**: `401` (missing or invalid token), `429` (resend cooldown), `500` (server error).
 
 ### `POST /api/auth/verify-email/confirm`
 - **Auth**: None required (token-based)
@@ -328,12 +339,12 @@ Authorization: Bearer <token>
   ```
 - **Behavior**:
   - Finds a user with the matching `email_verification_token` and a non-expired `email_verification_expires`.
-  - Sets `email_verified_at` if not already set, and clears the verification token/expiry.
+  - Sets `email_verified_at` if not already set, and clears the verification token/expiry and last-sent timestamp.
 - **Error responses**: `400` (invalid or expired verification token), `500` (server error).
 
 ### `GET /api/auth/profile`
 - **Auth**: Required
-- **Description**: Get current authenticated user's profile.
+- **Description**: Get current authenticated user's profile. Response is a **DTO** (explicit whitelist): no `token_version`, password-reset, email-verification/change tokens, or other auth internals.
 - **Response** (Status: 200):
   ```json
   {
@@ -343,23 +354,40 @@ Authorization: Bearer <token>
       "id": 1,
       "full_name": "John Doe",
       "email": "john@example.com",
-      "roles": ["coach"],
-      "phone": "+1234567890",
-      "timezone": "America/New_York",
       "avatar_url": "https://example.com/avatar.jpg",
-      "coachProfile": { }
+      "phone": "+1234567890",
+      "phone_verified": false,
+      "timezone": "America/New_York",
+      "is_active": true,
+      "email_verified_at": "2026-01-15T10:00:00.000Z",
+      "created_at": "2026-01-01T00:00:00.000Z",
+      "last_login": "2026-01-20T12:00:00.000Z",
+      "roles": ["coach"],
+      "role_state": {
+        "locked": false,
+        "allowed_roles": null,
+        "effective_roles": ["coach"],
+        "source": "open"
+      },
+      "coachProfile": { },
+      "reliability": {
+        "reliability_score": 95.5,
+        "total_bookings": 12,
+        "late_cancels": 0,
+        "no_shows": 0,
+        "misconduct_penalties": 0,
+        "late_arrival_penalties": 0
+      }
     }
   }
   ```
-- **Reliability** (optional): When a matching `user_reliability` row exists, the response may also include:
-  - **`reliability`** — full **`user_reliability`** object for **`role: "coach"`** (present when the user has the coach role and a coach row exists).
-  - **`reliability_student`** — full **`user_reliability`** object for **`role: "student"`** (present when the user has the student role and a student row exists). Dual-role users may receive both.
-- **Notes**: The profile includes `email_verified_at` (ISO date or `null`) for verification status. For dedicated reliability breakdowns (including persisted `paid_reschedules`), coaches use **`GET /api/coaches/me/reliability`** and students **`GET /api/students/me/reliability`**.
+- **Reliability** (optional): When a matching `user_reliability` row exists, **`reliability`** (coach role) and/or **`reliability_student`** (student role) include only a **lightweight summary** for session/profile state (`reliability_score`, `total_bookings`, `late_cancels`, `no_shows`, `misconduct_penalties`, `late_arrival_penalties`). **Coach-facing detail** (more counters, `score_source`, no engine internals): **`GET /api/coaches/me/reliability`**. **Student self** (full persisted coach-equivalent row for that role): **`GET /api/students/me/reliability`**. **Admin audit** (decay breakdowns, diagnostics, reschedule analysis, legacy aliases): **`GET /api/admin/users/:id/reliability`**.
+- **Notes**: `email_verified_at` supports verification UX. `coachProfile` is whitelisted public coach fields (or `null`). **`roles`** are **effective** (after admin governance filter when locked). **`role_state`** documents lock source and allow-list.
 - **Error responses**: `401` (missing or invalid token), `500` (server error).
 
 ### `PUT /api/auth/profile`
 - **Auth**: Required
-- **Description**: Update current authenticated user's profile
+- **Description**: Update current authenticated user's profile. **Response `data` uses the same DTO as `GET /api/auth/profile`** (`serializeAuthProfileUser`) so clients can replace local profile state without a second schema.
 - **Request Body** (all fields optional - omit fields you don't want to update):
   ```json
   {
@@ -369,26 +397,14 @@ Authorization: Bearer <token>
     "avatar_url": "string (optional, max 255 chars)"
   }
   ```
-- **Response** (Status: 200):
-  ```json
-  {
-    "success": true,
-    "message": "Profile updated successfully",
-    "data": {
-      "id": 1,
-      "full_name": "John Updated",
-      "email": "john@example.com",
-      "phone": "+1234567890",
-      "timezone": "America/New_York",
-      "avatar_url": "https://example.com/avatar.jpg"
-    }
-  }
-  ```
+- **Response** (Status: 200): Same shape as **`GET /api/auth/profile`** — see that section (`data` includes `id`, `full_name`, `email`, `avatar_url`, `phone`, `phone_verified`, `timezone`, `is_active`, `email_verified_at`, `created_at`, `last_login`, **`roles`** (effective for authorization when admin governance is locked), **`role_state`**, `coachProfile`, optional `reliability` / `reliability_student`).
 - **Error responses**: `400` (validation failed – invalid body), `401` (missing or invalid token), `500` (server error).
 
 ### `PUT /api/auth/me/role`
 - **Auth**: Required
-- **Description**: Switch your account between **student** and **coach** without deleting the account. Admins cannot use this (use admin user management). If you switch to coach and don't have a coach profile yet, create one with `POST /api/coaches/profile`. If you had a coach profile before switching to student, it is kept so switching back to coach restores your listing.
+- **Description**: **Add** the **student** or **coach** role to your account (self-service). This endpoint **does not remove** roles or “switch” you to a single role — you can hold **both** student and coach **when permitted**. Admins cannot use this (use admin user management). To **remove** coach or admin access, an admin must use **`PUT /api/users/:id`** with an explicit **`roles`** array; coach profile and Stripe Connect data **persist** for billing/history. After adding **coach**, create a coach profile with `POST /api/coaches/profile` if you do not have one yet.
+- **Role governance**: After an admin has sent **`roles`** on **`PUT /api/users/:id`** for your account, **`role_governance_locked`** is **true** and **`admin_allowed_roles`** is the allow-list. **`PUT /api/auth/me/role`** then returns **403** with message *This role has been restricted by an administrator* if you try to add a role not in that list (e.g. admin left you `["student"]` and you request **`coach`**). **`GET /api/auth/profile`** and session **`user`** include **`role_state`**: `{ locked, allowed_roles, effective_roles, source }` so the UI can disable self-service adds when locked. **Design reference:** [`docs/ROLE_AUTHORIZATION.md`](docs/ROLE_AUTHORIZATION.md) (effective roles are the only permission source for access control).
+- **Active mode (recommended UX)**: The API does **not** store which dashboard the user is “in”. Use client **`activeRole`** for navigation; **`data.user.roles`** reflects **effective** permissions (same as `authorize()` after governance).
 - **Request Body**:
   ```json
   {
@@ -399,13 +415,19 @@ Authorization: Bearer <token>
   ```json
   {
     "success": true,
-    "message": "Role updated successfully. Use the new token for subsequent requests.",
+    "message": "Role added successfully. Use the new token for subsequent requests.",
     "data": {
       "user": {
         "id": 1,
         "full_name": "Jane Doe",
         "email": "jane@example.com",
-        "role": "coach",
+        "roles": ["coach", "student"],
+        "role_state": {
+          "locked": false,
+          "allowed_roles": null,
+          "effective_roles": ["coach", "student"],
+          "source": "open"
+        },
         "phone": "+1234567890",
         "timezone": "America/New_York",
         "avatar_url": null
@@ -414,11 +436,11 @@ Authorization: Bearer <token>
     }
   }
   ```
-- **Error responses**: `400` (invalid role), `403` (admin cannot use this endpoint), `401` (missing or invalid token), `500` (server error).
+- **Error responses**: `400` (invalid role), `403` (admin cannot use this endpoint; **or** requested role **restricted by administrator** when governance is locked), `401` (missing or invalid token), `500` (server error).
 
 ### `DELETE /api/auth/me`
 - **Auth**: Required
-- **Description**: Delete the current user's account (**soft delete**). Sets `deleted_at` and `is_active: false` on the user; if the user has a coach profile, it is also soft-deleted. The user can no longer log in. **Not available to admins** (admins must use admin user management).
+- **Description**: Delete the current user's account (**soft delete**). Sets `deleted_at` and `is_active: false` on the user; if the user has a coach profile, it is also soft-deleted. The user can no longer log in. **Admin rows:** if the account has an **`admin`** assignment in **`user_roles`**, deletion is allowed only when **at least one other live admin** remains (same rule as **`DELETE /api/users/:id`** — `deleted_at` / inactive users do not count). Non-admin accounts may always self-delete.
 - **Response** (Status: 200):
   ```json
   {
@@ -427,7 +449,7 @@ Authorization: Bearer <token>
     "data": null
   }
   ```
-- **Error responses**: `403` (admin cannot use this endpoint), `401` (missing or invalid token), `500` (server error).
+- **Error responses**: `409` (last live admin — same `message` / `code: "last_admin_required"` as admin user delete when no other active admin exists), `401` (missing or invalid token), `500` (server error).
 
 ### `POST /api/auth/logout`
 - **Auth**: Required
@@ -452,9 +474,12 @@ Authorization: Bearer <token>
   - Unverified users receive `403` with a message instructing them to verify their email.
 - **Endpoints requiring verified email**:
   - `POST /api/bookings` (create booking)
-  - `POST /api/disputes` (create dispute)
+  - `POST /api/disputes` (create dispute — non-admin; admins exempt where noted)
   - `POST /api/reviews` (create review)
   - `POST /api/messages/conversations` and `POST /api/messages/send` (booking-scoped messaging)
+  - `GET /api/payments`, `GET /api/payments/:id` (payment history)
+  - `GET|POST|PUT|DELETE /api/payment-methods/...` (saved payment methods)
+  - `POST /api/coaches/me/stripe-connect/onboard`, `GET /api/coaches/me/stripe-connect/status` (Stripe Connect — admins exempt)
   - The frontend should:
     - Show a non-blocking banner after signup/first login prompting verification.
     - Automatically call `POST /api/auth/verify-email/request` when the user asks to resend.
@@ -478,7 +503,7 @@ Authorization: Bearer <token>
   - `role`: string (optional, filter by role: 'student' | 'coach' | 'admin')
   - `include_deleted`: string `'true'` | `'false'` (optional). If `'true'`, includes soft-deleted users; default is non-deleted only.
   - `search`: string (optional). Filters users by **full name** or **email** (case-insensitive, partial match). Use for admin "find user" without scrolling the full list.
-- **Note**: Response items include `is_active`; use client-side filtering or display by active/inactive as needed.
+- **Note**: Response items are a **whitelist** of admin fields (`id`, `full_name`, `email`, `avatar_url`, `phone`, `phone_verified`, `timezone`, `roles`, `is_active`, `deleted_at`, `email_verified_at`, `created_at`, `last_login`). **Omitted** from the list contract: `password_hash`, `token_version`, password-reset / email-verification / email-change tokens, `stripe_customer_id`, and other persistence-only columns.
 - **Pagination contract**: Paged mode includes `pagination` (`page`, `limit`, `total`, `totalPages`). All-results mode returns only `data`.
 - **Response** (Status: 200):
   ```json
@@ -490,9 +515,16 @@ Authorization: Bearer <token>
         "id": 1,
         "full_name": "John Doe",
         "email": "john@example.com",
+        "avatar_url": null,
+        "phone": "+1234567890",
+        "phone_verified": false,
+        "timezone": "America/New_York",
         "roles": ["student"],
         "is_active": true,
-        "created_at": "2026-01-01T00:00:00.000Z"
+        "deleted_at": null,
+        "email_verified_at": null,
+        "created_at": "2026-01-01T00:00:00.000Z",
+        "last_login": null
       }
     ]
   }
@@ -502,7 +534,8 @@ Authorization: Bearer <token>
 ### `GET /api/users/:id`
 - **Auth**: Required (Admin only)
 - **Description**: Get user by ID (admin only). Non-admins should use `GET /api/auth/profile` for their own profile.
-- **Reliability**: Users with the **coach** role may include **`reliability`** (the `user_reliability` row with `role: "coach"`). Users with the **student** role may include **`reliability_student`** (row with `role: "student"`). Dual-role users can have both.
+- **Response shape**: Whitelisted user fields plus `stripe_customer_id` (Stripe Customer id for payment/support lookup), `coachProfile` (when present), and **`reliability` / `reliability_student`** as **six-field summaries** only (`reliability_score`, `total_bookings`, `late_cancels`, `no_shows`, `misconduct_penalties`, `late_arrival_penalties`). **Not** included: auth/recovery tokens, `token_version`, `score_source`, timestamps on reliability blobs, decay/smoothing internals. Coaches who need more than that summary should use **`GET /api/coaches/me/reliability`** (curated coach detail). For persisted-row audit, decay/reconstruct diagnostics, and engine parameters use **`GET /api/admin/users/:id/reliability`**.
+- **Reliability**: Users with the **coach** role may include **`reliability`**. Users with the **student** role may include **`reliability_student`**. Dual-role users can have both.
 - **Response** (Status: 200):
   ```json
   {
@@ -512,23 +545,41 @@ Authorization: Bearer <token>
       "id": 1,
       "full_name": "John Doe",
       "email": "john@example.com",
-      "roles": ["coach"],
-      "phone": "+1234567890",
-      "timezone": "America/New_York",
       "avatar_url": null,
+      "phone": "+1234567890",
+      "phone_verified": false,
+      "timezone": "America/New_York",
       "is_active": true,
+      "deleted_at": null,
+      "email_verified_at": null,
+      "created_at": "2026-01-01T00:00:00.000Z",
+      "last_login": null,
+      "stripe_customer_id": "cus_xxx",
+      "roles": ["coach"],
       "coachProfile": {
         "id": 1,
         "user_id": 1,
+        "headline": null,
         "bio": "Experienced coach",
-        "hourly_rate": 50.00,
+        "experience_years": 0,
         "skill_rating": 4.5,
-        "rating_system": "self"
+        "rating_system": "self",
+        "certifications": null,
+        "location": null,
+        "rating_average": 0,
+        "rating_count": 0,
+        "coach_commission_percent": 92,
+        "stripe_account_id": null,
+        "deleted_at": null,
+        "created_at": "2026-01-01T00:00:00.000Z"
       },
       "reliability": {
-        "user_id": 1,
-        "role": "coach",
-        "reliability_score": 95.5
+        "reliability_score": 95.5,
+        "total_bookings": 12,
+        "late_cancels": 0,
+        "no_shows": 0,
+        "misconduct_penalties": 0,
+        "late_arrival_penalties": 0
       }
     }
   }
@@ -536,7 +587,11 @@ Authorization: Bearer <token>
 
 ### `PUT /api/users/:id`
 - **Auth**: Required (Admin only)
-- **Description**: Update user (admin only - can update role, is_active, email, avatar_url, etc.). If **`email`** is changed to a new value, **`token_version`** is incremented so **all** of that user’s sessions (every device) are invalidated — the user must log in again.
+- **Description**: Update user (admin only - can update **roles** (full set), `is_active`, email, avatar_url, etc.). If **`email`** is changed to a new value, **`token_version`** is incremented so **all** of that user’s sessions (every device) are invalidated — the user must log in again.
+- **Roles**: Send **`roles`** as the **complete** set to assign (e.g. `["student","coach"]` or `["admin","student","coach"]`). Omit **`roles`** to leave existing roles unchanged. Sending **`roles`** **replaces** all `user_roles` rows for that user (avoids accidentally dropping a role when editing other fields). Duplicates in the array are rejected by validation; use each of `student`, `coach`, `admin` at most once (1–3 roles). **Independent capabilities:** any non-empty subset is allowed — including **`admin`** with **`student`**, and all three together. The legacy field **`role`** is **not** accepted (returns **400** with a validation hint — use **`roles`**).
+- **Admin safeguards**: You **cannot** remove your **own** `admin` role via this endpoint (**400**, *You cannot remove your own admin role.*) — including when you still keep another role (e.g. you have `["admin","coach"]` and send `"roles": ["coach"]` on **your own** `PUT /api/users/:id`). Another admin must change your roles, or you must include **`admin`** in the array you submit for yourself. You **cannot** remove `admin` from the **last** admin user in the system when editing **someone else** (**409**, *At least one admin must remain in the system.*).
+- **Coach vs `user_roles`**: Stripping **`coach`** from **`roles`** revokes **coach API access** only; **`coach_profiles`**, **`stripe_account_id`**, bookings, payments, and payouts **are not deleted**. Clients should explain that to users (e.g. coach access removed by admin while marketplace/financial history remains).
+- **Role governance (admin authority)**: Whenever an admin sends **`roles`** in the body, the server sets **`role_governance_locked: true`** and **`admin_allowed_roles`** to that exact array. Self-service **`PUT /api/auth/me/role`** may only add **`student`** / **`coach`** that keep the user’s roles within **`admin_allowed_roles`**; **`authorize()`** and **`req.user.roles`** use **effective roles** (assignments filtered by the allow-list when locked — see [`docs/ROLE_AUTHORIZATION.md`](docs/ROLE_AUTHORIZATION.md)). To **re-open** self-service without changing role rows, send **`"role_governance_locked": false`** in a **separate** request **without** **`roles`** (**400** if combined with **`roles`**). Users who have **never** had an admin **`roles`** update remain **open** (legacy behavior).
 - **Request Body** (all fields optional - omit fields you don't want to update):
   ```json
   {
@@ -546,7 +601,8 @@ Authorization: Bearer <token>
     "timezone": "string (optional)",
     "avatar_url": "string (optional, URI or empty string to clear)",
     "is_active": "boolean (optional, admin only)",
-    "role": "string (optional, admin only, 'student' | 'coach' | 'admin')"
+    "roles": ["optional: 1–3 unique entries: student | coach | admin"],
+    "role_governance_locked": "boolean (optional): false alone clears lock + allow-list (must not be sent together with roles)"
   }
   ```
 - **Response** (Status: 200):
@@ -558,7 +614,13 @@ Authorization: Bearer <token>
       "id": 1,
       "full_name": "Updated Name",
       "email": "john@example.com",
-      "role": "coach",
+      "roles": ["coach", "student"],
+      "role_state": {
+        "locked": true,
+        "allowed_roles": ["coach", "student"],
+        "effective_roles": ["coach", "student"],
+        "source": "admin"
+      },
       "is_active": true,
       "phone": "+1234567890",
       "timezone": "America/New_York",
@@ -566,10 +628,13 @@ Authorization: Bearer <token>
     }
   }
   ```
+- **`data.roles` vs `data.role_state`**: **`roles`** is the **persisted `user_roles`** set after the update (assignment / audit). **`role_state.effective_roles`** is the **permission view** (same formula as `authorize()` / `GET /api/auth/profile` for a user with governance). They match when unlocked or when assignments ⊆ allow-list. See **`docs/ROLE_SYSTEM_REFERENCE.md`**.
+- **Error responses**: `400` (validation, email in use, cannot activate deleted user without undelete, **cannot remove your own admin role**), `404` (user not found), `409` (**last live admin** — cannot strip `admin` when no other **active, non-deleted** admin exists), `500` (server error).
 
 ### `DELETE /api/users/:id`
 - **Auth**: Required (Admin only)
 - **Description**: **Soft delete** user (admin only). Sets `deleted_at` and `is_active: false` on the user; if the user has a coach profile, it is also soft-deleted. Deleted users are excluded from list/get and cannot log in.
+- **Admin safeguard**: Cannot delete a user who still has the **`admin`** role in `user_roles` unless at least one **other live** admin remains (`users.deleted_at` is null, `is_active` is true, and that user has an `admin` row). Soft-deleted admins do **not** count — otherwise the guard could see “ghost” admin rows and allow wiping the last real admin. **409** response: `success: false`, `message` explains the rule, and **`code`: `"last_admin_required"`** for programmatic handling. (If you see **`401`** with `{ "error": "…" }` and no `success` field, that is **`authenticate`** — e.g. token for a **deleted** user — not this safeguard.)
 - **Response** (Status: 200):
   ```json
   {
@@ -578,7 +643,7 @@ Authorization: Bearer <token>
     "data": null
   }
   ```
-- **Error responses**: `400` (user already deleted), `404` (user not found), `500` (server error).
+- **Error responses**: `400` (user already deleted), `404` (user not found), `409` (last live admin cannot be deleted — see `message` and `code: "last_admin_required"`), `500` (server error).
 
 ---
 
@@ -609,7 +674,6 @@ Authorization: Bearer <token>
         "email": "jane@example.com",
         "coachProfile": {
           "headline": "CPR certified",
-          "hourly_rate": 50.00,
           "skill_rating": 4.5,
           "rating_system": "self",
           "rating_average": 4.8
@@ -667,7 +731,17 @@ Authorization: Bearer <token>
 
 ### `GET /api/coaches/me/reliability`
 - **Auth**: Required (coach role only)
-- **Description**: Get the authenticated coach's reliability breakdown + score (raw `user_reliability` coach row). Includes penalized-impact counters: **`no_shows`** from **`bookings.status`**, and behavior penalty counts from sustained behavior disputes (**`late_arrival_penalties`**, **`misconduct_penalties`**, **`lesson_not_completed_penalties`**). **`paid_reschedules`** is the persisted informational count (paid + penalized + captured/partially_refunded payment), same value after `updateUserReliability` as in this response (not a second in-memory calculation).
+- **Description**: **Coach-facing detailed reliability view** for the authenticated coach. Returns a **curated DTO** (meaningful counters + `score_source` + `last_updated`) suitable for a coach dashboard — **not** a raw `user_reliability` row and **not** the same shape as **`GET /api/auth/profile`** (which embeds only a **six-field reliability summary** on the user object).
+
+**How this differs from other reliability reads**
+
+| Endpoint | Audience | Purpose |
+|----------|----------|---------|
+| **`GET /api/auth/profile`** | Authenticated user | Session/profile; optional **`reliability`** / **`reliability_student`** = **summary only** (`reliability_score`, `total_bookings`, `late_cancels`, `no_shows`, `misconduct_penalties`, `late_arrival_penalties`). |
+| **`GET /api/coaches/me/reliability`** | Coach | **Detail view**: adds `score_source`, reschedules, lesson-not-completed count, coach/student non-late cancel counts, etc. **Omits** persistence/engine internals (decayed totals, baselines, smoothing, `paid_reschedules`, badges, …). |
+| **`GET /api/admin/users/:id/reliability`** | Admin | **Full audit**: decay triplets, reconstructed score, reschedule payment analysis, `legacy_aliases`, scoring parameters. |
+
+- **Counters** (all **recent-window** values aligned with scoring impact, same semantics as before this DTO): penalized **reschedules**, **late_cancels**, **no_shows**, behavior dispute penalties (**`late_arrival_penalties`**, **`misconduct_penalties`**, **`lesson_not_completed_penalties`**), **`coach_cancels`** (coach-initiated non-late cancels), **`student_cancels_non_late`**, **`total_bookings`**. **`score_source`**: `computed` vs `admin_override` (see model / admin override flow).
 - **Response** (Status: 200):
   ```json
   {
@@ -675,37 +749,39 @@ Authorization: Bearer <token>
     "message": "Coach reliability retrieved successfully",
     "data": {
       "reliability": {
-        "user_id": 2,
+        "reliability_score": 85.5,
+        "score_source": "computed",
         "total_bookings": 10,
         "reschedules": 2,
-        "paid_reschedules": 1,
         "late_cancels": 0,
+        "no_shows": 0,
         "late_arrival_penalties": 1,
         "misconduct_penalties": 1,
         "lesson_not_completed_penalties": 0,
-        "no_shows": 0,
         "coach_cancels": 1,
-        "reliability_score": 85.5,
-        "badges": null,
+        "student_cancels_non_late": 0,
         "last_updated": "2026-03-16T18:42:26.000Z"
       }
     }
   }
   ```
+- **`last_updated`**: ISO 8601 string from the row’s `last_updated` timestamp, or **`null`** if no row has been written yet (defaults are still returned for numeric fields).
+- **Error responses**: `400` (user is not a coach), `401`, `404`, `500`.
 
 ### `POST /api/coaches/profile`
 - **Auth**: Required (coach role only)
 - **Description**: Create your own coach profile. Coach-only: only the authenticated coach can create a profile; profile is always for the logged-in user. Admins cannot use this endpoint.
-- **Skill rating**: Self-reported pickleball level on a **2.0–6.0** scale, **half-point** steps only (e.g. 3.0, 3.5, 4.0). Optional; leave unset until the coach enters it. **`rating_system`** defaults to **`"self"`** (MVP; not verified / not DUPR).
+- **Skill rating**: Self-reported pickleball level on a **2.0–6.0** scale, **half-point** steps only (e.g. 3.0, 3.5, 4.0). Optional; leave unset until the coach enters it.
+- **`rating_system`**: Optional; omit to default to **`"self"`**. When sent, must be exactly one of: **`"self"`**, **`"DUPR"`**, **`"UTR-P"`** (MVP allow-list; values are not verified against external APIs yet).
+- **Pricing**: Coach profiles do **not** store an hourly rate. Listings and checkout use each **lesson’s** `price` and `duration_minutes`; see **`effective_hourly_rate`** on lesson JSON (derived: `price / (duration_minutes / 60)`).
 - **Request Body**:
   ```json
   {
     "headline": "string (optional)",
     "bio": "string (optional)",
-    "hourly_rate": "number (optional, defaults to 0)",
     "experience_years": "number (optional, defaults to 0)",
     "skill_rating": "number | null (optional, 2.0–6.0 in 0.5 steps)",
-    "rating_system": "string (optional, default: self)",
+    "rating_system": "\"self\" | \"DUPR\" | \"UTR-P\" (optional; default self when omitted)",
     "certifications": "string (optional)",
     "location": "string (optional)"
   }
@@ -720,7 +796,6 @@ Authorization: Bearer <token>
       "user_id": 1,
       "headline": "Former tournament player",
       "bio": "Experienced pickleball coach with 10 years of teaching",
-      "hourly_rate": 50.00,
       "experience_years": 10,
       "skill_rating": 4.5,
       "rating_system": "self",
@@ -731,18 +806,18 @@ Authorization: Bearer <token>
   }
   ```
 
-### `PUT /api/coaches/profile/:id`
-- **Auth**: Required
-- **Description**: Update coach profile. Path parameter `:id` is the coach's **user id** (same as GET /api/coaches/:id).
-- **Request Body** (all fields optional - omit fields you don't want to update):
+### `PUT /api/coaches/me/profile`
+- **Auth**: Required (**coach** role only)
+- **Description**: Update **your own** coach profile. No path parameter — the server always uses the authenticated user’s id (same pattern as `GET /api/coaches/me/reliability`, `POST /api/coaches/me/courts`, etc.).
+- **`rating_system`**: When sent, must be one of **`"self"`**, **`"DUPR"`**, **`"UTR-P"`** (same allow-list as profile create).
+- **Request Body** (all fields optional — omit fields you do not want to change):
   ```json
   {
     "headline": "string (optional)",
     "bio": "string (optional)",
-    "hourly_rate": "number (optional)",
     "experience_years": "number (optional)",
     "skill_rating": "number | null (optional, clear with null)",
-    "rating_system": "string (optional)",
+    "rating_system": "\"self\" | \"DUPR\" | \"UTR-P\" (optional)",
     "certifications": "string (optional)",
     "location": "string (optional)"
   }
@@ -756,7 +831,28 @@ Authorization: Bearer <token>
       "id": 1,
       "headline": "Updated Headline",
       "bio": "Updated bio with more experience",
-      "hourly_rate": 60.00,
+      "experience_years": 12,
+      "skill_rating": 4.5,
+      "rating_system": "self"
+    }
+  }
+  ```
+- **Error responses**: `403` (not a coach), `404` (no coach profile for this user yet), `401`, `500`.
+
+### `PUT /api/coaches/profile/:id` (admin only)
+- **Auth**: Required (**admin** role only)
+- **Description**: Update **another** user’s coach profile (support / corrections). Path `:id` is that coach’s **user id** (same id used in `GET /api/coaches/:id`). Coaches **cannot** use this route — use **`PUT /api/coaches/me/profile`**.
+- **`rating_system`**: Same allow-list as create (**`"self"`** | **`"DUPR"`** | **`"UTR-P"`**) when sent.
+- **Request Body** (same as `PUT /api/coaches/me/profile`).
+- **Response** (Status: 200):
+  ```json
+  {
+    "success": true,
+    "message": "Coach profile updated successfully",
+    "data": {
+      "id": 1,
+      "headline": "Updated Headline",
+      "bio": "Updated bio with more experience",
       "experience_years": 12,
       "skill_rating": 4.5,
       "rating_system": "self"
@@ -766,33 +862,31 @@ Authorization: Bearer <token>
 
 ### Availability vs lessons
 - **Lessons** = *what* the coach offers (e.g. "1hr private", "90min clinic"). Created via `POST /api/lessons`.
-- **Availability** = *when* the coach is free (e.g. "Mondays 9am–5pm"). Created via `POST /api/coaches/availability`.
+- **Availability** = *when* the coach is free (e.g. "Mondays 9am–5pm"). Coaches create/update/delete/list **only their own** rows via **`/api/coaches/me/availability`** (see below). The server sets **`coach_id` from the authenticated user**; clients must **not** send `coach_id` in the URL or body.
+- **Browsing another coach’s weekly windows** (student booking): **`GET /api/coaches/:id/availability`** requires a JWT whose effective roles include **`student`** or **`admin`**. **Coach-only** sessions (no `student` in effective roles) get **403**. Users with both `student` and `coach` use the student-capable session to view other coaches’ availability. **Anonymous** callers get **401** (auth required).
 - Both are required for booking: the student picks a lesson and a time; the time must fall within the coach's availability and the lesson's constraints.
 
-### `POST /api/coaches/availability`
-- **Auth**: Required
-- **Description**: Create coach availability slot. Defines *when* the coach can be booked (by weekday and optional date/time window).
+### `GET /api/coaches/me/availability`
+- **Auth**: Required (**Coach** only)
+- **Description**: List the authenticated coach’s availability slots. Optional query `page`, `limit` (same pagination contract as `GET /api/coaches/:id/availability`). Owner-scoped only.
+
+### `POST /api/coaches/me/availability`
+- **Auth**: Required (**Coach** only)
+- **Description**: Create coach availability slot for **the authenticated coach only**. Defines *when* the coach can be booked using a **recurring weekly** row: `weekday` plus time-of-day and optional calendar bounds.
 - **Request Body**:
-  - **Recommended for recurring weekly slots** (e.g. "Mondays 9am–5pm"): use `weekday` + `start_date` / `end_date` + **`start_time`** / **`end_time`** (time-of-day only, e.g. `"09:00"`, `"17:00"`). No need to send full `start_datetime`/`end_datetime`. Times are interpreted in the **coach's timezone**.
-  - `start_date` / `end_date`: Optional **date range** when this slot is valid (e.g. "2026-01-31" to "2026-12-30").
-  - `start_time` / `end_time`: Optional **time-of-day only** (e.g. `"09:00"` or `"17:00:00"`). Use for recurring weekly windows; interpreted in coach timezone.
-  - `start_datetime` / `end_datetime`: Optional **full timestamps** for one continuous window (alternate input format). If you use `start_time`/`end_time`, you do not need these.
+  - **Model**: `weekday` + required **`start_time`** / **`end_time`** (time-of-day only, e.g. `"09:00"`, `"17:00"`). Optional **`start_date`** / **`end_date`** as plain **`YYYY-MM-DD`** strings (no timestamps). Times are interpreted in the **coach's timezone** when validating bookings.
+  - `start_date` / `end_date`: Optional **inclusive date range** when this weekly slot applies; omit both for “every week indefinitely”.
   - `weekday`: 0–6 (Sunday–Saturday) or name (e.g. `"monday"`). Evaluated in the **coach's timezone** when checking bookings.
   ```json
   {
-    "coach_id": "number (required for coach; optional for admin - defaults to authenticated user's ID)",
     "weekday": "number 0-6 or string (e.g. 'monday')",
-    "start_time": "string (optional, e.g. '09:00' or '09:00:00')",
-    "end_time": "string (optional, e.g. '17:00' or '17:00:00')",
-    "start_datetime": "string (optional, ISO 8601 date-time)",
-    "end_datetime": "string (optional, ISO 8601 date-time)",
-    "start_date": "string (optional, ISO 8601 date)",
-    "end_date": "string (optional, ISO 8601 date)",
-    "recurrence_rule": "string (optional)",
-    "is_available": "boolean (optional, defaults to true)"
+    "start_time": "string (required, e.g. '09:00' or '09:00:00')",
+    "end_time": "string (required, e.g. '17:00' or '17:00:00')",
+    "start_date": "string (optional, YYYY-MM-DD)",
+    "end_date": "string (optional, YYYY-MM-DD)"
   }
   ```
-- **Example – Mondays 9am–5pm from Feb 1 to Dec 1**: `{ "coach_id": 2, "weekday": "monday", "start_date": "2026-02-01", "end_date": "2026-12-01", "start_time": "09:00", "end_time": "17:00" }`
+- **Example – Mondays 9am–5pm from Feb 1 to Dec 1**: `{ "weekday": "monday", "start_date": "2026-02-01", "end_date": "2026-12-01", "start_time": "09:00", "end_time": "17:00" }`
 - **Response** (Status: 201):
   ```json
   {
@@ -806,15 +900,19 @@ Authorization: Bearer <token>
       "end_time": "17:00:00",
       "start_date": "2026-02-01",
       "end_date": "2026-12-01",
-      "is_available": true,
       "created_at": "2026-01-01T00:00:00.000Z"
     }
   }
   ```
 
+### `PUT /api/coaches/me/availability/:id`
+- **Auth**: Required (**Coach** only)
+- **Description**: Update one availability row **you own**. `:id` is the availability **record** id. Body uses the **same fields as POST** (full replacement of that slot’s window fields). Overlap rules match create (cannot overlap another slot for the same weekday and date range).
+- **Error responses**: `403` (not coach, or not own row), `404`, `400` (validation / overlap), `500`.
+
 ### `GET /api/coaches/:id/availability`
-- **Auth**: None required
-- **Description**: Get coach availability (public). Each item may include `start_time`/`end_time` (time-of-day), and/or `start_datetime`/`end_datetime`, and/or `start_date`/`end_date`. Omit `page`/`limit` to return all matching rows (server-capped). Provide `page` or `limit` for paged mode.
+- **Auth**: Required — effective roles must include **`student`** or **`admin`**. Coach-only accounts: **403**. Missing/invalid token: **401**.
+- **Description**: Get another coach’s availability for the **student booking** flow (or admin support). Each item includes `weekday`, **`start_time`** / **`end_time`**, and optional **`start_date`** / **`end_date`** as **`YYYY-MM-DD`** (same strings as stored; no datetime columns). Omit `page`/`limit` to return all matching rows (server-capped). Provide `page` or `limit` for paged mode.
 - **Query Parameters**: Optional `page`, optional `limit`.
 - **Pagination contract**: Paged mode includes `pagination` (`page`, `limit`, `total`, `totalPages`). All-results mode returns only `data`.
 - **Response** (Status: 200):
@@ -831,15 +929,15 @@ Authorization: Bearer <token>
         "end_time": "17:00:00",
         "start_date": "2026-02-01",
         "end_date": "2026-12-01",
-        "is_available": true
+        "created_at": "2026-01-01T00:00:00.000Z"
       }
     ]
   }
   ```
 
-### `DELETE /api/coaches/availability/:id`
+### `DELETE /api/coaches/me/availability/:id`
 - **Auth**: Required (Coach only)
-- **Description**: Delete a coach availability slot (**hard delete**). Coaches can only delete their own availability. `:id` is the availability record id (from GET coach availability or POST create response).
+- **Description**: Delete a coach availability slot (**hard delete**). Coaches can only delete their own availability. `:id` is the availability record id (from `GET /api/coaches/me/availability` or POST create response).
 - **Response** (Status: 200):
   ```json
   {
@@ -1193,6 +1291,8 @@ Authorization: Bearer <token>
 
 ## Lessons (`/api/lessons`)
 
+**Pricing**: `price` is the **total** charged for one booking of that lesson (for its `duration_minutes`). It is the billing source of truth (bookings copy this amount). API responses also include read-only **`effective_hourly_rate`** (USD/hr): `price / (duration_minutes / 60)`.
+
 ### `GET /api/lessons`
 - **Auth**: None required
 - **Description**: Get lessons (public). If `page` and `limit` are omitted, returns all matching lessons in `data` (server-capped at 10,000). If `page` or `limit` is provided, returns the requested page size (max 100 per page).
@@ -1211,6 +1311,7 @@ Authorization: Bearer <token>
         "description": "Learn the basics",
         "duration_minutes": 60,
         "price": 50.00,
+        "effective_hourly_rate": 50.00,
         "max_students": 4,
         "is_active": true
       }
@@ -1233,6 +1334,7 @@ Authorization: Bearer <token>
       "description": "Learn the basics of pickleball",
       "duration_minutes": 60,
       "price": 50.00,
+      "effective_hourly_rate": 50.00,
       "max_students": 4,
       "is_active": true,
       "coach": {
@@ -1268,6 +1370,7 @@ Authorization: Bearer <token>
       "description": "Learn the basics of pickleball",
       "duration_minutes": 60,
       "price": 50.00,
+      "effective_hourly_rate": 50.00,
       "max_students": 4,
       "is_active": true,
       "created_at": "2026-01-01T00:00:00.000Z"
@@ -1300,6 +1403,7 @@ Authorization: Bearer <token>
       "description": "Updated description",
       "duration_minutes": 90,
       "price": 55.00,
+      "effective_hourly_rate": 36.67,
       "max_students": 6,
       "is_active": true
     }
@@ -1357,7 +1461,7 @@ The sections below document the **MVP write flow** first, then **beyond MVP** (l
 
 ### `POST /api/bookings` (MVP — student)
 - **Auth**: Required (email must be verified)
-- **Description**: Student creates a booking (`pending`). **Only non-admin students** may call this (403 for others).
+- **Description**: Student creates a booking (`pending`). Callers must have the **student** capability in effective roles (includes users with `admin`+`student`). Returns **403** if the user does not have `student`.
 - **Request Body**:
   ```json
   {
@@ -1713,8 +1817,8 @@ Use this section as the admin decision guide for incidents, payouts/refunds, dis
 - **Description**: Coach-only booking inbox/list (bookings where `coach_id` is the authenticated coach).
 
 ### `POST /api/bookings/:id/reschedule`
-- **Auth**: Required
-- **Description**: Request a reschedule for a booking
+- **Auth**: Required (must be booking **coach**, **primary student**, or **uninvolved admin**)
+- **Description**: Request a reschedule for a booking. Persisted **`requested_by`** is **`coach`** or **`student`** when the caller is that participant on the booking (even if they also have **`admin`**); only **uninvolved** admins get **`requested_by: admin`** (no reliability impact for those rows). Reliability updates use the same participant-first rule.
 - **Request Body**:
   ```json
   {
@@ -1732,7 +1836,7 @@ Use this section as the admin decision guide for incidents, payouts/refunds, dis
 
 ### `GET /api/payments`
 - **Auth**: Required
-- **Description**: Get user's payments (filtered by role)
+- **Description**: Get payments visible to the caller. **Non-admin:** scoped by participation — if the user has **both** `coach` and `student`, rows where they are **either** `coach_id` **or** `student_id` are included (additive capabilities). If only `coach` or only `student`, that side applies. Users with neither role see an empty list. **Admin:** no participant filter (full list subject to query params).
 - **Query Parameters**: Filters (`status`, `escrow_status`, `student_id`, `coach_id`), optional `page`, optional `limit` (omit both for all matching rows; provide either to paginate)
 - **Pagination contract**: Paged mode includes `pagination` (`page`, `limit`, `total`, `totalPages`). All-results mode returns only `data`.
 - **Response** (Status: 200):
@@ -2438,7 +2542,7 @@ Dispute resolution is the **authoritative adjudication boundary** for whether th
   {
     "full_name": "string (required)",
     "email": "string (required, valid email)",
-    "password": "string (required, min 8 chars)",
+    "password": "string (required, min 10 chars, at least one lowercase, one uppercase, one number; symbols optional)",
     "phone": "string (optional)",
     "timezone": "string (optional, defaults to 'UTC')"
   }
@@ -2548,7 +2652,7 @@ Dispute resolution is the **authoritative adjudication boundary** for whether th
 - **Query parameters**:
   - **`role`** (optional): **`coach`** \| **`student`**. Selects which **`user_reliability`** row to return.
   - **Omitted**: defaults to **`coach`** if the target user has the coach role, otherwise **`student`** if they have the student role. Returns **`400`** if the requested **`role`** does not match the user’s roles, or if **`role`** is invalid.
-- **Description**: Full reliability breakdown for support. Response is always **`data.reliability`**, with a **`role`** field (**`"coach"`** or **`"student"`**). **`reliability_score`**, canonical **`user_reliability`** metrics (recent / decayed / total per penalty bucket, booking baseline, smoothing metadata), and **`penalties.points`** are all derived from the **same** math as `reliabilityEngine.calculateReliabilityScoreFromPersistenceRow` (see **`docs/reliability-system.md`**). **`reschedules.*`** blocks remain computed live from **`RescheduleHistory`**. **`legacy_aliases`** mirrors older JSON field names (`total_bookings`, `reschedules`, `late_cancels`, …) for backward-compatible clients.
+- **Description**: Full reliability breakdown for support and investigation. This is **not** the same as a coach’s self-service read: authenticated coaches use **`GET /api/coaches/me/reliability`** for a **curated detail DTO** without decay triplets or engine diagnostics. Response is always **`data.reliability`**, with a **`role`** field (**`"coach"`** or **`"student"`**). **`reliability_score`**, canonical **`user_reliability`** metrics (recent / decayed / total per penalty bucket, booking baseline, smoothing metadata), and **`penalties.points`** are all derived from the **same** math as `reliabilityEngine.calculateReliabilityScoreFromPersistenceRow` (see **`docs/reliability-system.md`**). **`reschedules.*`** blocks remain computed live from **`RescheduleHistory`**. **`legacy_aliases`** mirrors older JSON field names (`total_bookings`, `reschedules`, `late_cancels`, …) for backward-compatible clients.
 - **Coach (`data.reliability.role` = `"coach"`)** — **`penalties`**:
   - Each scored category is an object **`{ recent, decayed, total }`** matching persisted `user_reliability` columns (`penalized_reschedules_*`, `late_cancels_*`, `coach_cancels_non_late_*`, `no_shows_*`, behavior dispute buckets, etc.).
   - **`penalties.points`** lists per-bucket **point deductions** (same weights as the scorer). Coach includes **`penalized_reschedules`**, **`late_cancels`**, **`late_arrival_penalties`**, **`no_shows`**, **`coach_cancels_non_late`**, **`misconduct_penalties`**, **`lesson_not_completed_penalties`**.
@@ -2642,7 +2746,7 @@ Dispute resolution is the **authoritative adjudication boundary** for whether th
 
 ### `DELETE /api/admin/coaches/:coachId/availability/:id`
 - **Auth**: Required (Admin only)
-- **Description**: Delete a coach's availability slot (e.g. wrong times). **Path**: `coachId` = coach's user id, `id` = availability record id (from GET /coaches/:id/availability or coach's own availability list).
+- **Description**: Delete a coach's availability slot (e.g. wrong times). **Path**: `coachId` = coach's user id, `id` = availability record id (from `GET /api/coaches/:id/availability` as admin, or `GET /api/coaches/me/availability` for the coach’s own list).
 - **Response** (Status: 200):
   ```json
   {

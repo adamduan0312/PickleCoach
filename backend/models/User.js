@@ -77,6 +77,10 @@ class User extends Model {
         type: DataTypes.DATE,
         allowNull: true,
       },
+      email_verification_last_sent_at: {
+        type: DataTypes.DATE,
+        allowNull: true,
+      },
       email_change_token: {
         type: DataTypes.STRING(255),
         allowNull: true,
@@ -93,9 +97,20 @@ class User extends Model {
         type: DataTypes.STRING(255),
         allowNull: true,
       },
+      /** When true, `admin_allowed_roles` caps self-service `PUT /api/auth/me/role` and filters `req.user.roles` for authorize(). */
+      role_governance_locked: {
+        type: DataTypes.BOOLEAN,
+        allowNull: false,
+        defaultValue: false,
       },
-      {
-        sequelize,
+      /** Exact role keys admin permits (set when admin sends `roles` on PUT /api/users/:id). Null = open / legacy. */
+      admin_allowed_roles: {
+        type: DataTypes.JSON,
+        allowNull: true,
+      },
+    },
+    {
+      sequelize,
         modelName: 'User',
         tableName: 'users',
         timestamps: true,

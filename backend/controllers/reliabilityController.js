@@ -1,6 +1,7 @@
 import { Booking, Payment, RescheduleHistory, User, UserRole, UserReliability } from '../models/index.js';
 import { Op } from 'sequelize';
 import { successResponse, errorResponse } from '../utils/response.js';
+import { serializeCoachReliabilityDetail } from '../utils/userDto.js';
 import { logger } from '../config/logger.js';
 import {
   attachLegacyReliabilityAliases,
@@ -9,11 +10,12 @@ import {
   defaultCanonicalReliabilityRow,
   persistenceRowToCanonical,
 } from '../services/reliabilityEngine.js';
+import { getEffectiveRolesForUserRecord } from '../utils/roleGovernance.js';
 
 /**
  * Coach reliability payload (penalized-impact metrics + score).
- * Returns full `UserReliability` row data (including `paid_reschedules` persisted by
- * `updateUserReliability` — same semantics as the former API override).
+ * Internal helper: full `UserReliability` row JSON plus `attachLegacyReliabilityAliases`.
+ * HTTP responses for **`GET /api/coaches/me/reliability`** use **`serializeCoachReliabilityDetail`** on this object.
  */
 const getCoachPenalizedReliabilityPayload = async (coachId) => {
   const reliability = await UserReliability.findOne({ where: { user_id: coachId, role: 'coach' } });
@@ -37,15 +39,7 @@ export const getStudentReliabilityForMe = async (req, res) => {
   try {
     const studentId = req.user.id;
 
-    const user = await User.findByPk(studentId, {
-      include: [{ model: UserRole, as: 'userRoles', attributes: ['role'] }],
-    });
-
-    if (!user) {
-      return errorResponse(res, 'User not found', 404);
-    }
-
-    const roles = user.userRoles?.map((r) => r.role) ?? [];
+    const roles = req.user.roles || [];
     if (!roles.includes('student')) {
       return errorResponse(res, 'User is not a student', 400);
     }
@@ -77,7 +71,7 @@ export const getCoachReliabilityForStudent = async (req, res) => {
       return errorResponse(res, 'Coach not found', 404);
     }
 
-    const roles = coach.userRoles?.map((r) => r.role) ?? [];
+    const roles = getEffectiveRolesForUserRecord(coach);
     if (!roles.includes('coach')) {
       return errorResponse(res, 'User is not a coach', 400);
     }
@@ -97,28 +91,24 @@ export const getCoachReliabilityForStudent = async (req, res) => {
 };
 
 /**
- * Coach self: view your own penalized-impact reliability breakdown + score.
- * This endpoint is the "coach UI" endpoint (more detail than student-facing).
+ * Coach self: coach-facing reliability detail (curated counters + score; not a raw persistence row).
+ * For session-level summary see GET /api/auth/profile; for admin audit see GET /api/admin/users/:id/reliability.
  */
 export const getCoachReliabilityForMe = async (req, res) => {
   try {
     const coachId = req.user.id;
 
-    const coach = await User.findByPk(coachId, {
-      include: [{ model: UserRole, as: 'userRoles', attributes: ['role'] }],
-    });
-
-    if (!coach) {
-      return errorResponse(res, 'Coach not found', 404);
-    }
-
-    const roles = coach.userRoles?.map((r) => r.role) ?? [];
+    const roles = req.user.roles || [];
     if (!roles.includes('coach')) {
       return errorResponse(res, 'User is not a coach', 400);
     }
 
     const payload = await getCoachPenalizedReliabilityPayload(coachId);
-    return successResponse(res, { reliability: payload }, 'Coach reliability retrieved successfully');
+    return successResponse(
+      res,
+      { reliability: serializeCoachReliabilityDetail(payload) },
+      'Coach reliability retrieved successfully',
+    );
   } catch (error) {
     logger.error('Get coach self reliability error:', error);
     return errorResponse(res, 'Failed to retrieve coach reliability', 500);
@@ -338,23 +328,23 @@ export const getUserReliabilityForAdmin = async (req, res) => {
       return errorResponse(res, 'User not found', 404);
     }
 
-    const roles = targetUser.userRoles?.map((r) => r.role) ?? [];
+    const effectivePerms = getEffectiveRolesForUserRecord(targetUser);
     const q = req.query.role;
-    let effectiveRole;
+    let resolvedRole;
     if (q === 'coach' || q === 'student') {
-      if (!roles.includes(q)) {
+      if (!effectivePerms.includes(q)) {
         return errorResponse(res, `User does not have ${q} role`, 400);
       }
-      effectiveRole = q;
+      resolvedRole = q;
     } else if (q == null || q === '') {
-      if (roles.includes('coach')) effectiveRole = 'coach';
-      else if (roles.includes('student')) effectiveRole = 'student';
+      if (effectivePerms.includes('coach')) resolvedRole = 'coach';
+      else if (effectivePerms.includes('student')) resolvedRole = 'student';
       else return errorResponse(res, 'User has no coach or student role', 400);
     } else {
       return errorResponse(res, 'Invalid role query (use coach or student)', 400);
     }
 
-    if (effectiveRole === 'coach') {
+    if (resolvedRole === 'coach') {
       const reliabilityRow = await UserReliability.findOne({ where: { user_id: userId, role: 'coach' } });
       const stored = reliabilityRow ? reliabilityRow.toJSON() : defaultCanonicalReliabilityRow(userId, 'coach');
 

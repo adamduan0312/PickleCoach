@@ -399,7 +399,7 @@ export const getMyCoachCourts = async (req, res) => {
       : { limit: MAX_LIST_ALL_COACH_COURTS, offset: 0 };
 
     if (!(req.user.roles || []).includes('coach')) {
-      return res.status(403).json(createErrorResponse(`Only coaches can view their courts. Your roles: ${(req.user.roles || []).join(', ') || 'none'}. Switch via PUT /api/auth/me/role with body { "role": "coach" } if needed.`));
+      return res.status(403).json(createErrorResponse(`Only coaches can view their courts. Your roles: ${(req.user.roles || []).join(', ') || 'none'}. Add the coach role via PUT /api/auth/me/role with body { "role": "coach" } if you intend to coach.`));
     }
 
     const coachCourts = await CoachCourtLocation.findAndCountAll({

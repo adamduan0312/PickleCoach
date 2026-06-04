@@ -88,7 +88,6 @@ module.exports = {
           user_id: user.id,
           headline: `Professional Pickleball Coach ${i + 1}`,
           bio: `Experienced pickleball coach with ${5 + i} years of teaching. Specializing in ${i % 2 === 0 ? 'beginner' : 'advanced'} players.`,
-          hourly_rate: 50 + (i * 5),
           experience_years: 3 + i,
           skill_rating: [3.0, 3.5, 4.5, 5.5][i % 4],
           rating_system: 'self',
@@ -144,24 +143,14 @@ module.exports = {
       }
     }
 
-    // Create availability for coaches
+    // Create availability for coaches: recurring Mon–Fri 9–5 (coach timezone at booking time).
     for (const coach of coaches) {
-      // Monday-Friday, 9 AM - 5 PM
       for (let day = 1; day <= 5; day++) {
-        // Create availability for 9 AM - 5 PM on weekdays
-        const today = new Date();
-        const targetDate = new Date(today);
-        targetDate.setDate(today.getDate() + (day - today.getDay() + 7) % 7);
-        targetDate.setHours(9, 0, 0, 0);
-        const startDatetime = new Date(targetDate);
-        targetDate.setHours(17, 0, 0, 0);
-        const endDatetime = new Date(targetDate);
-        
         await CoachAvailability.create({
           coach_id: coach.user.id,
           weekday: day,
-          start_datetime: startDatetime,
-          end_datetime: endDatetime,
+          start_time: '09:00:00',
+          end_time: '17:00:00',
         });
       }
     }

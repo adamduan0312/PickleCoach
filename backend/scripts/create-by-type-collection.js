@@ -71,7 +71,7 @@ const FOLDER_ORDER = [
 
 const FOLDER_DESCRIPTIONS = {
   Authentication:
-    'Auth endpoints. Register/Login = no auth; Profile/Switch Role/Delete = authenticated.',
+    'Auth endpoints. Register/Login = no auth; Profile/Add Role (self-service)/Delete = authenticated.',
   Bookings:
     'MVP: POST /bookings (student) → POST .../accept and POST .../decline (assigned coach only). Below: list/detail and extended routes (complete, student-no-show, cancel, reschedule). Use the explicit student-no-show route.',
   'Webhooks (Reference Only)':

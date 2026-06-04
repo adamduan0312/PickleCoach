@@ -33,7 +33,7 @@ if (envError) {
 const app = express();
 const port = envVars.PORT || 4000;
 
-// Security middleware
+// Security middleware — CSP is a baseline; tighten scriptSrc when you add non-self assets/CDNs.
 app.use(helmet({
   contentSecurityPolicy: {
     directives: {
@@ -46,9 +46,27 @@ app.use(helmet({
   crossOriginEmbedderPolicy: false,
 }));
 
-// CORS configuration (update with your frontend URL in production)
+// CORS: avoid wildcard origin with credentials in production (browser behavior + security).
+function buildCorsOrigin() {
+  const raw = process.env.FRONTEND_URL;
+  if (raw && String(raw).trim()) {
+    return String(raw)
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
+  if (env === 'development' || env === 'test') {
+    return true;
+  }
+  logger.warn(
+    'CORS: FRONTEND_URL is unset in production — falling back to permissive origin. Set FRONTEND_URL (comma-separated allowlist) for a strict deployment.',
+  );
+  return true;
+}
+
+const corsAllowedOrigins = buildCorsOrigin();
 const corsOptions = {
-  origin: process.env.FRONTEND_URL || '*', // Change to specific URL in production
+  origin: corsAllowedOrigins,
   credentials: true,
   optionsSuccessStatus: 200,
 };
@@ -68,10 +86,15 @@ app.use((req, res, next) => {
   next();
 });
 
-// Rate limiting (disabled in development for easier testing)
+// Rate limiting (disabled in development for easier testing).
+// General API is looser than /api/auth (login, register, refresh, password flows).
+// TODO(horizontal scale): replace in-memory store with Redis — see middleware/rateLimiter.js
+const RATE_WINDOW_MS = 15 * 60 * 1000;
+const RATE_LIMIT_GENERAL = 200;
+const RATE_LIMIT_AUTH = 40;
 if (env !== 'development') {
-  app.use('/api', rateLimiter(15 * 60 * 1000, 100)); // 100 requests per 15 minutes
-  app.use('/api/auth', rateLimiter(15 * 60 * 1000, 10)); // Stricter limit for auth endpoints
+  app.use('/api', rateLimiter(RATE_WINDOW_MS, RATE_LIMIT_GENERAL));
+  app.use('/api/auth', rateLimiter(RATE_WINDOW_MS, RATE_LIMIT_AUTH));
 }
 
 // Health check endpoint

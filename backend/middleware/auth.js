@@ -1,9 +1,17 @@
 import jwt from 'jsonwebtoken';
 import { User, UserRole } from '../models/index.js';
+import { effectiveRolesFromGovernance, getDbRoleAssignments } from '../utils/roleGovernance.js';
+
+/** Expect `Authorization: Bearer <jwt>`. Rejects missing/malformed scheme (no silent "raw token" fallback). */
+function parseBearerToken(authorizationHeader) {
+  if (!authorizationHeader || typeof authorizationHeader !== 'string') return null;
+  const match = authorizationHeader.trim().match(/^Bearer\s+(\S+)/i);
+  return match ? match[1] : null;
+}
 
 export const authenticate = async (req, res, next) => {
   try {
-    const token = req.headers.authorization?.split(' ')[1];
+    const token = parseBearerToken(req.headers.authorization || '');
 
     if (!token) {
       return res.status(401).json({ error: 'Authentication required' });
@@ -14,8 +22,18 @@ export const authenticate = async (req, res, next) => {
       include: [{ model: UserRole, as: 'userRoles', attributes: ['role'] }],
     });
 
-    if (!user || !user.is_active || user.deleted_at) {
+    if (!user) {
       return res.status(401).json({ error: 'Invalid or inactive user' });
+    }
+    if (user.deleted_at) {
+      return res.status(401).json({
+        error: 'This account has been deleted. Log in with a different account or ask an administrator to restore access.',
+      });
+    }
+    if (!user.is_active) {
+      return res.status(401).json({
+        error: 'This account is inactive. Contact support if you need access restored.',
+      });
     }
 
     // Token versioning: ensure token has not been revoked
@@ -26,16 +44,19 @@ export const authenticate = async (req, res, next) => {
     }
 
     req.user = user;
-    req.user.roles = user.userRoles && user.userRoles.length
-      ? user.userRoles.map((r) => r.role)
-      : [];
+    const dbRoleAssignments = getDbRoleAssignments(user);
+    /** @type {string[]} ONLY source for `authorize()` and route-level permission checks on this request. */
+    const activePermissions = effectiveRolesFromGovernance(dbRoleAssignments, user);
+    req.user.dbRoleAssignments = dbRoleAssignments;
+    req.user.roles = activePermissions;
+    req.user.effectiveRoles = activePermissions;
     next();
   } catch (error) {
     return res.status(401).json({ error: 'Invalid token' });
   }
 };
 
-/** Check if the authenticated user has at least one of the given roles (from user_roles table). */
+/** Check if the authenticated user has at least one allowed role (uses **`req.user.roles`** = effective / active permissions only). */
 export const authorize = (...allowedRoles) => {
   return (req, res, next) => {
     if (!req.user) {

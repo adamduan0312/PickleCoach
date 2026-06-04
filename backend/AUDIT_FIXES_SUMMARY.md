@@ -81,9 +81,7 @@ Date: 2026-01-26
 Several update endpoints use `req.body` directly without validation:
 - `PUT /api/auth/profile`
 - `PUT /api/users/:id`
-- `PUT /api/coaches/profile/:id`
-- `POST /api/coaches/profile`
-- `POST /api/coaches/availability`
+- `POST /api/coaches/me/availability`
 - `PUT /api/lessons/:id`
 - `PUT /api/bookings/:id/status`
 - `PUT /api/reviews/:id`

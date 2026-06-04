@@ -17,7 +17,7 @@ You can test almost everything with just the server and database running. No Str
 | What to test | Why no third‑party yet |
 |--------------|-------------------------|
 | **Health** | Server/DB only. |
-| **Auth** (Register, Login, Profile, Refresh, Forgot/Reset Password, Email Verification, Change Password, Switch Role, Logout, Delete) | All work with DB + JWT. Forgot/Reset and verification will **fail to send email** without SendGrid, but the API should still return **200** and not 500. You can verify “email would be sent” later. |
+| **Auth** (Register, Login, Profile, Refresh, Forgot/Reset Password, Email Verification, Change Password, Add Role (self-service), Logout, Delete) | All work with DB + JWT. Forgot/Reset and verification will **fail to send email** without SendGrid, but the API should still return **200** and not 500. You can verify “email would be sent” later. |
 | **Coaches** (profile, availability, courts, list coaches, get coach) | Pure DB. |
 | **Courts** (CRUD) | Pure DB. |
 | **Lessons** (CRUD) | Pure DB. |
@@ -134,7 +134,9 @@ The collection already uses `{{base_url}}` and `{{api_url}}`. Register, Login, *
 
 Import one or both into Postman. Select your environment so `base_url` and `api_url` are set. Run **Health Check** first to confirm server and DB are up.
 
-**Workflow:** Edit **ByType** when you add or change endpoints. Then run `node backend/scripts/reorganize-postman-flows.js` to regenerate **ByFlow** from ByType. To rebuild ByType from ByFlow (e.g. if you only have the flow file), run `node backend/scripts/create-by-type-collection.js`.
+**Workflow:** Edit **ByType** when you add or change endpoints. Then run `npm run postman:reorganize-flows` (or `node backend/scripts/reorganize-postman-flows.js`) to regenerate **ByFlow** from ByType. The script **exits with code 1** if any `ADMIN_ORDER` / `COACH_ORDER` / `STUDENT_ORDER` tuple does not match a **folder name + request name** in By Type exactly — fix the name or the tuple; do not rely on silent skips. To rebuild ByType from ByFlow (e.g. if you only have the flow file), run `node backend/scripts/create-by-type-collection.js`.
+
+**Rule:** One canonical Postman request per HTTP endpoint in **By Type**; multiple flows reuse the same `[Folder, Request name]` in the script (optional display name + `applyDescriptionOverride` in `reorganize-postman-flows.js` for copy only). **Do not hand-edit By Flow** — it is generated output only.
 
 ---
 
@@ -142,22 +144,22 @@ Import one or both into Postman. Select your environment so `base_url` and `api_
 
 The **PickleCoach API (By Flow)** collection has **only three top-level folders**. Every endpoint lives inside one of them, in the correct user-flow order. There are no separate “Authentication”, “Coaches”, “Bookings”, etc. folders — everything is in **1 – Flow: Admin**, **2 – Flow: Coach**, or **3 – Flow: Student**.
 
-**Rule:** Each folder contains only endpoints that role is **allowed** to use (no 403). Admin cannot use Switch Role or Delete My Account; Coach cannot use List Coaches (Search) or Create Booking. There is no generic Update Booking Status endpoint.
+**Rule:** Each folder contains only endpoints that role is **allowed** to use (no 403). Admin cannot use Add Role (self-service) or Delete My Account; Coach cannot use List Coaches (Search) or Create Booking. There is no generic Update Booking Status endpoint.
 
-- **1 – Flow: Admin** — 44 requests. Health → Login (admin) → Profile → Dashboard → Users → Payments → Disputes → Notifications → Coach support (incl. Get Coach By ID) → Auth extras (no Switch Role / Delete My Account) → Courts/Lessons/Disputes → Admin booking reads/overrides → Payments → Webhook.
-- **2 – Flow: Coach** — 60 requests. Health → Register/Login → Profile → Coach profile → Get Coach By ID → Courts → Availability → Stripe Connect → Lessons → Bookings (Accept, Decline, Complete, No-Show, Cancel, Reschedule + coach booking inbox) → Payments → Reviews → Messages → Disputes → Notifications → Auth extras.
-- **3 – Flow: Student** — 45 requests. Health → Register/Login → Profile → Search coaches → Get Coach By ID → Get Coach Courts → Get Coach Availability → Courts → Lessons → **Create Booking** (MVP: POST /bookings) → Bookings → Payments → Reviews → Messages → Disputes → Notifications → Auth extras.
+- **1 – Flow: Admin** — 45 requests. Health → Login (admin) → Profile → Dashboard → Users → … → Notifications → Coach support (**includes `GET /coaches/:id/availability` via the same canonical Coaches request as Student, with an admin sidebar label**) → Auth extras (no Add Role (self-service) / Delete My Account) → Courts/Lessons/Disputes → Admin booking reads/overrides → Payments → Webhook.
+- **2 – Flow: Coach** — 62 requests. Health → Register/Login → Profile → Coach profile → **Owner availability** (`GET/POST/PUT/DELETE …/me/availability` only) → Stripe Connect → Lessons → Bookings → …
+- **3 – Flow: Student** — 47 requests. Health → Register/Login → Profile → Search coaches → Get Coach By ID → Get Coach Courts → **Get Coach Availability** (`GET /coaches/:id/availability`) → Courts → Lessons → **Create Booking** (MVP: POST /bookings) → …
 
 Run the requests in each folder in order (1, 2, 3, …). After editing the **ByType** collection, regenerate ByFlow with: `node backend/scripts/reorganize-postman-flows.js`.
 
-**Full order — 1 – Flow: Admin (44 steps):**  
-Health Check → Login → Get Profile → Refresh Token → Get Dashboard Stats → Get Audit Logs → Get Alerts → Resolve Alert → Create Admin User → Get All Users (Admin) → Get User By ID (Admin) → Update User (Admin) → Update Coach Profile (Admin) → **Get Coach By ID** → Adjust User Reliability → Create Notification (Admin) → Get Coach Courts (Admin) → Delete Coach Court (Admin) → Delete Coach Availability (Admin) → Delete User (Admin) → Register → Forgot Password → Reset Password → Update Profile → Change Password → Request Email Verification → Confirm Email Verification → Request Email Change → Confirm Email Change → Logout → List/Search Courts → Get Court By ID → Get All Lessons → Get Lesson By ID → Get All Disputes → Get Dispute By ID → Get Bookings (Admin) → Get Booking By ID (Admin) → Cancel Booking (Admin) → Create Dispute (Admin) → Mark Student No-Show (Admin) → Mark Coach No-Show (Admin) → Refund Booking (Admin) → Resolve Dispute → Get My Payments → Get Payment By ID → Stripe Webhook.
+**Full order — 1 – Flow: Admin (45 steps):**  
+Health Check → Login → Get Profile → Refresh Token → Get Dashboard Stats → Get Audit Logs → Get Alerts → Resolve Alert → Create Admin User → Get All Users (Admin) → Get User By ID (Admin) → Update User (Admin) → Update Coach Profile (Admin) → Get User Reliability (Admin) → Adjust User Reliability → Create Notification (Admin) → Get My Notifications → Get Coach Courts (Admin) → **Get Coach Availability (Admin)** (same By Type definition as Student) → Delete Coach Court (Admin) → Delete Coach Availability (Admin) → Delete User (Admin) → Register → …
 
-**Full order — 2 – Flow: Coach (59 steps):**  
-Health Check → Register → Login → Get Profile → Update Profile → Request Email Verification → Confirm Email Verification → Change Password → Request Email Change → Confirm Email Change → Switch Role → Create Coach Profile → Update Coach Profile → **Get Coach By ID** → Get Coach Availability → Create Availability → Delete Availability → List/Search Courts → Get Court By ID → Create Court → Delete Court → Add Court to Coach → List My Courts → Remove Court from Coach → Initiate Stripe Connect Onboarding → Get Stripe Connect Status → Get All Lessons → Get Lesson By ID → Create Lesson → Update Lesson → Delete Lesson → Get Coach Bookings → Get Booking By ID → **Accept Booking** → **Decline Booking** → Complete Booking → Mark No-Show → Cancel Booking → Request Reschedule → Get Reschedule History → Get My Payments → Get Payment By ID → Get All Reviews → Create Review → Update Review → Delete Review → Get Conversations → Create Conversation → Get Conversation By ID → Send Message → Mark Message As Read → Get All Disputes → Get Dispute By ID → Create Dispute → Get My Notifications → Mark Notification As Read → Forgot Password → Reset Password → Logout → Delete My Account.
+**Full order — 2 – Flow: Coach (62 steps):**  
+Health Check → Register → Login → Get Profile → … → Add Role (self-service) → Create Coach Profile → Update My Coach Profile → **Create Availability** → **Get My Coach Availability** → **Update My Availability** → **Delete Availability** → List/Search Courts → … (no `GET /coaches/:id/availability` — coach-only JWT gets **403** on that route.)
 
-**Full order — 3 – Flow: Student (45 steps):**  
-Health Check → Register → Login → Get Profile → Update Profile → Request Email Verification → Confirm Email Verification → Change Password → Request Email Change → Confirm Email Change → Switch Role → List Coaches (Search) → Get Coach By ID → **Get Coach Courts** → **Get Coach Availability** → List/Search Courts → Get Court By ID → Get All Lessons → Get Lesson By ID → **Create Booking** (requires Stripe) → Get My Bookings → Get Booking By ID → Cancel Booking → Request Reschedule → Get Reschedule History → Get My Payments → Get Payment By ID → Get All Reviews → Create Review → Update Review → Delete Review → Get Conversations → Create Conversation → Get Conversation By ID → Send Message → Mark Message As Read → Get All Disputes → Get Dispute By ID → Create Dispute → Get My Notifications → Mark Notification As Read → Forgot Password → Reset Password → Logout → Delete My Account.
+**Full order — 3 – Flow: Student (47 steps):**  
+Health Check → Register → Login → Get Profile → … → List Coaches (Search) → Get Coach By ID → **Get Coach Courts** → **Get Coach Availability** → List/Search Courts → …
 
 **Tip:** **Create Booking** (Student step 20) needs Stripe. For Phase 1, run Student steps 1–19 and 21+ if you have existing bookings; after setting up Stripe, run the full flow including Create Booking.
 
@@ -189,14 +191,14 @@ Use this as a living checklist. Check off each line as you verify it (happy path
 - [ ] Confirm Email Verification — 200 with valid token; 400 invalid/expired
 - [ ] Change Password — 200; 400 wrong current password
 - [ ] Request Email Change → Confirm Email Change — 200
-- [ ] Switch Role (student ↔ coach) — 200; 403 for admin
+- [ ] Add Role (self-service) — one of `student` | `coach` per request; additive; 200; 403 for admin
 - [ ] Logout — 200; then same token → 401
 - [ ] Delete My Account — 200 (soft delete); 403 for admin
 
 ### COACH
 
 - [ ] Create Coach Profile — 201; 403 if not coach role (coach-only; admins cannot use)
-- [ ] Update Coach Profile — 200
+- [ ] Update My Coach Profile — 200; `PUT /api/coaches/me/profile` (coach only; no `:id` in URL)
 - [ ] Get Coach Courts (by coach id, no auth) — 200; lists courts where coach teaches (student flow: **3 – Flow: Student** → Get Coach Courts)
 - [ ] Get Coach Availability — 200
 - [ ] Create Availability — 201
@@ -288,6 +290,7 @@ Use this as a living checklist. Check off each line as you verify it (happy path
 - [ ] Get All Users — 200; 403 non-admin
 - [ ] Get User By ID — 200; 403 non-admin
 - [ ] Update User — 200; 403 non-admin
+- [ ] Update Coach Profile (Admin) — 200; `PUT /api/coaches/profile/:id` where `:id` is the coach’s **user id**; admin token only; 403 if coach/student calls this route
 - [ ] Delete User — 200; 403 non-admin
 - [ ] Resolve Dispute — 200; 403 non-admin; body always requires `decision` + `financial_action` (`refund_amount` required for `refund_student_partial`). For **attendance** claims: `outcome` required; **`financial_action` must match `outcome`** (coach_no_show → refund path; student_no_show → no_change), including when `decision` is `rejected` (with contradicting `outcome` per claim type). `outcome` forbidden on behavior disputes.
 - [ ] Create Notification — 200/201; 403 non-admin
@@ -321,6 +324,8 @@ For every endpoint that changes state or returns sensitive data, run:
   Happy: valid token → 200. Unauthorized: no token or expired → 401. Wrong role: N/A.
 - **POST /api/coaches/profile**  
   Happy: coach role + valid body → 201. Wrong role: student or admin → 403. Unauthorized: no token → 401. Coach-only; no `user_id` in body.
+- **PUT /api/coaches/me/profile**  
+  Happy: coach token + optional body fields → 200 (no user id in URL). No token → 401. Student without coach role → 403. Admins updating another coach’s profile use **`PUT /api/coaches/profile/:id`** with admin token.
 - **POST /api/bookings**  
   Happy: student, verified email, valid body → 201. Unverified email → 403. Missing `lesson_id` → 400. No token → 401.
 - **GET /api/users** (admin)  
@@ -376,9 +381,9 @@ Use `API_ENDPOINTS.md` for full request/response specs. Minimal examples for flo
 
 - **Register:** `{ "full_name", "email", "password", "role": "student" | "coach", "phone?", "timezone?" }`
 - **Login:** `{ "email", "password" }`
-- **Create Coach Profile:** `{ "headline?", "bio?", "hourly_rate?", "experience_years?", "skill_rating?" (2.0–6.0, 0.5 steps), "rating_system?" (default `"self"`), "certifications?", "location?" }`
+- **Create Coach Profile:** `{ "headline?", "bio?", "experience_years?", "skill_rating?" (2.0–6.0, 0.5 steps), "rating_system?" (**`self`** | **`DUPR`** | **`UTR-P`**; default `"self"`), "certifications?", "location?" }` — pricing is per **lesson** (`price` + `duration_minutes`), not on the profile.
 - **Create Court:** name, address, etc. (see API_ENDPOINTS).
-- **Create Availability:** `weekday` (0–6 or "monday"), optional `start_time`/`end_time` (e.g. "09:00", "17:00") or `start_datetime`/`end_datetime`.
+- **Create Availability:** `weekday` (0–6 or `"monday"`), required `start_time` / `end_time` (e.g. `"09:00"`, `"17:00"`), optional `start_date` / `end_date` as **`YYYY-MM-DD`** only.
 - **Create Lesson:** title, duration_minutes, price, coach_id, etc.
 - **Create Booking:** lesson_id, coach_id, start datetime (and any other required fields).
 - **Create Review:** booking_id or lesson_id, rating, comment (per your API).

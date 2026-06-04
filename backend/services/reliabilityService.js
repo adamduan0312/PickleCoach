@@ -17,6 +17,7 @@ import {
   calculateReliabilityScoreFromCanonical,
   flattenCanonicalForPersistence,
 } from './reliabilityEngine.js';
+import { getEffectiveRolesForUserRecord } from '../utils/roleGovernance.js';
 
 export { getReliabilityConfig };
 
@@ -513,10 +514,7 @@ export const updateUserReliability = async (userId, role, options = {}) => {
     throw new Error(`User ${userId} not found`);
   }
 
-  const roles = user.userRoles?.map((r) => r.role) ?? [];
-  if (roles.includes('admin')) {
-    return null;
-  }
+  const roles = getEffectiveRolesForUserRecord(user);
   if (role === 'coach' && !roles.includes('coach')) {
     return null;
   }

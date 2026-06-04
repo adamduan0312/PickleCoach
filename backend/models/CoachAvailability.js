@@ -15,14 +15,6 @@ const CoachAvailability = sequelize.define('coach_availabilities', {
     type: DataTypes.TINYINT,
     allowNull: true,
   },
-  start_datetime: {
-    type: DataTypes.DATE,
-    allowNull: true,
-  },
-  end_datetime: {
-    type: DataTypes.DATE,
-    allowNull: true,
-  },
   start_date: {
     type: DataTypes.DATEONLY,
     allowNull: true,

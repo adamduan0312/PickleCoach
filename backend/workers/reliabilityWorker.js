@@ -2,9 +2,10 @@ import { User, UserRole, SystemJob } from '../models/index.js';
 import { Op } from 'sequelize';
 import { logger } from '../config/logger.js';
 import { updateUserReliability } from '../services/reliabilityService.js';
+import { getEffectiveRolesForUserRecord } from '../utils/roleGovernance.js';
 
 /**
- * Recalculate reliability scores for all non-admin users (coach and student rows separately).
+ * Recalculate reliability scores for users with coach and/or student capability (separate rows).
  */
 export const recalculateReliability = async () => {
   try {
@@ -18,8 +19,7 @@ export const recalculateReliability = async () => {
 
     let updates = 0;
     for (const user of users) {
-      const roles = user.userRoles?.map((r) => r.role) ?? [];
-      if (roles.includes('admin')) continue;
+      const roles = getEffectiveRolesForUserRecord(user);
       if (roles.includes('coach')) {
         await updateUserReliability(user.id, 'coach', { skipIfAdminOverride: true }).catch((err) => {
           logger.error(`Coach reliability failed for user ${user.id}:`, err);
@@ -52,10 +52,7 @@ export const calculateUserReliability = async (userId) => {
     if (!user) {
       throw new Error(`User ${userId} not found`);
     }
-    const roles = user.userRoles?.map((r) => r.role) ?? [];
-    if (roles.includes('admin')) {
-      return;
-    }
+    const roles = getEffectiveRolesForUserRecord(user);
     if (roles.includes('coach')) {
       await updateUserReliability(userId, 'coach');
     }
@@ -122,8 +119,8 @@ export const monthlyCoachReliabilityReset = async () => {
         const fullUser = await User.findByPk(coach.id, {
           include: [{ model: UserRole, as: 'userRoles', attributes: ['role'], required: false }],
         });
-        const roles = fullUser?.userRoles?.map((r) => r.role) ?? [];
-        if (roles.includes('admin')) continue;
+        const roles = getEffectiveRolesForUserRecord(fullUser);
+        if (!roles.includes('coach')) continue;
 
         await updateUserReliability(coach.id, 'coach', { skipIfAdminOverride: true }).catch((err) => {
           logger.error(`Monthly coach reliability recompute failed for ${coach.id}:`, err);

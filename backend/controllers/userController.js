@@ -1,9 +1,11 @@
 import { Op } from 'sequelize';
 import { User, UserRole, CoachProfile, UserReliability, sequelize } from '../models/index.js';
-import { attachLegacyReliabilityAliases } from '../services/reliabilityEngine.js';
 import { successResponse, errorResponse, paginatedResponse } from '../utils/response.js';
 import { getPagination, getPagingData } from '../utils/pagination.js';
 import { logger } from '../config/logger.js';
+import { serializeAdminUserList, serializeAdminUserDetail } from '../utils/userDto.js';
+import { validateAdminRoleRemovalSafeguards, countOtherLiveAdmins } from '../utils/userRoleChangeGuards.js';
+import { effectiveRolesFromGovernance, serializeRoleState } from '../utils/roleGovernance.js';
 
 export const getAllUsers = async (req, res) => {
   try {
@@ -49,12 +51,7 @@ export const getAllUsers = async (req, res) => {
     const users = await User.findAndCountAll(findOptions);
 
     const response = getPagingData(users, page, limit ?? users.count);
-    const itemsWithRoles = response.items.map((u) => {
-      const json = u.toJSON();
-      json.roles = (u.userRoles || []).map((r) => r.role);
-      delete json.userRoles;
-      return json;
-    });
+    const itemsWithRoles = response.items.map((u) => serializeAdminUserList(u));
     if (limit != null) {
       return paginatedResponse(res, itemsWithRoles, response.pagination, 'Users retrieved successfully');
     }
@@ -100,21 +97,7 @@ export const getUserById = async (req, res) => {
       return errorResponse(res, 'User not found', 404);
     }
 
-    const roles = user.userRoles?.map((r) => r.role) ?? [];
-    const payload = user.toJSON();
-    payload.roles = roles;
-    delete payload.userRoles;
-
-    const relRows = user.reliabilities || [];
-    delete payload.reliabilities;
-    const coachRel = relRows.find((r) => r.role === 'coach');
-    const studentRel = relRows.find((r) => r.role === 'student');
-    if (roles.includes('coach') && coachRel) {
-      payload.reliability = attachLegacyReliabilityAliases(coachRel.toJSON());
-    }
-    if (roles.includes('student') && studentRel) {
-      payload.reliability_student = attachLegacyReliabilityAliases(studentRel.toJSON());
-    }
+    const payload = serializeAdminUserDetail(user);
 
     logger.info(`User ${req.user.id} (roles: ${(req.user.roles || []).join(',')}) retrieved user ${userId}`);
     return successResponse(res, payload, 'User retrieved successfully');
@@ -127,9 +110,14 @@ export const getUserById = async (req, res) => {
 export const updateUser = async (req, res) => {
   try {
     const { id } = req.params;
-    const { full_name, email, phone, timezone, avatar_url, is_active, role, deleted_at } = req.validated;
+    const userId = parseInt(id, 10);
+    if (Number.isNaN(userId)) {
+      return errorResponse(res, 'Invalid user ID', 400);
+    }
+    const { full_name, email, phone, timezone, avatar_url, is_active, roles, deleted_at, role_governance_locked } =
+      req.validated;
 
-    const user = await User.findByPk(id);
+    const user = await User.findByPk(userId);
     if (!user) {
       return errorResponse(res, 'User not found', 404);
     }
@@ -144,7 +132,7 @@ export const updateUser = async (req, res) => {
 
     // Guard: Prevent setting is_active: true on a deleted user (must undelete first)
     if (user.deleted_at && is_active === true && deleted_at !== null) {
-      logger.warn(`Admin ${req.user.id} attempted to activate deleted user ${id} without undeleting`);
+      logger.warn(`Admin ${req.user.id} attempted to activate deleted user ${userId} without undeleting`);
       return errorResponse(res, 'Cannot activate a deleted user. Set deleted_at to null to undelete first, or undelete and activate in separate requests', 400);
     }
 
@@ -164,23 +152,75 @@ export const updateUser = async (req, res) => {
     // Allow explicit undelete by setting deleted_at to null
     if (deleted_at === null) {
       updateData.deleted_at = null;
-      logger.info(`Admin ${req.user.id} undeleted user ${id} (cleared deleted_at)`);
+      logger.info(`Admin ${req.user.id} undeleted user ${userId} (cleared deleted_at)`);
+    }
+
+    let uniqueRoles;
+    if (roles !== undefined) {
+      uniqueRoles = [...new Set(roles)];
+      const previousRoles = await UserRole.findAll({
+        where: { user_id: user.id },
+        attributes: ['role'],
+      }).then((rows) => rows.map((r) => r.role));
+
+      const hadAdmin = previousRoles.includes('admin');
+      const willHaveAdmin = uniqueRoles.includes('admin');
+      if (hadAdmin && !willHaveAdmin) {
+        const otherAdminCount = await countOtherLiveAdmins(user.id);
+        const guard = validateAdminRoleRemovalSafeguards({
+          actorUserId: req.user.id,
+          targetUserId: user.id,
+          previousRoles,
+          nextRoles: uniqueRoles,
+          otherAdminUserCount: otherAdminCount,
+        });
+        if (!guard.ok) {
+          return errorResponse(res, guard.message, guard.status);
+        }
+      }
     }
 
     await user.update(updateData);
 
-    if (role !== undefined) {
-      await UserRole.destroy({ where: { user_id: user.id } });
-      await UserRole.create({ user_id: user.id, role });
+    if (roles !== undefined) {
+      await sequelize.transaction(async (transaction) => {
+        await UserRole.destroy({ where: { user_id: user.id }, transaction });
+        if (uniqueRoles.length > 0) {
+          await UserRole.bulkCreate(
+            uniqueRoles.map((role) => ({ user_id: user.id, role })),
+            { transaction },
+          );
+        }
+        await user.update(
+          {
+            role_governance_locked: true,
+            admin_allowed_roles: uniqueRoles,
+          },
+          { transaction },
+        );
+      });
+    } else if (role_governance_locked === false) {
+      await user.update({
+        role_governance_locked: false,
+        admin_allowed_roles: null,
+      });
     }
 
-    const currentRoles = await UserRole.findAll({ where: { user_id: user.id }, attributes: ['role'] }).then((rows) => rows.map((r) => r.role));
+    await user.reload({
+      include: [{ model: UserRole, as: 'userRoles', attributes: ['role'] }],
+    });
 
+    const dbRoles = user.userRoles?.length ? user.userRoles.map((r) => r.role) : [];
+    const currentRoles = [...dbRoles].sort();
+    const effective = effectiveRolesFromGovernance(dbRoles, user);
+
+    // `roles` = persisted assignments (same convention as GET /api/users serializers); `role_state.effective_roles` = authorize() view.
     return successResponse(res, {
       id: user.id,
       full_name: user.full_name,
       email: user.email,
       roles: currentRoles,
+      role_state: serializeRoleState(user, effective),
       is_active: user.is_active,
       phone: user.phone ?? null,
       timezone: user.timezone ?? null,
@@ -195,7 +235,11 @@ export const updateUser = async (req, res) => {
 export const deleteUser = async (req, res) => {
   try {
     const { id } = req.params;
-    const user = await User.findByPk(id);
+    const userId = parseInt(id, 10);
+    if (Number.isNaN(userId)) {
+      return errorResponse(res, 'Invalid user ID', 400);
+    }
+    const user = await User.findByPk(userId);
 
     if (!user) {
       return errorResponse(res, 'User not found', 404);
@@ -203,6 +247,18 @@ export const deleteUser = async (req, res) => {
 
     if (user.deleted_at) {
       return errorResponse(res, 'User is already deleted', 400);
+    }
+
+    const targetIsAdmin = await UserRole.findOne({
+      where: { user_id: user.id, role: 'admin' },
+    });
+    if (targetIsAdmin) {
+      const otherLiveAdminCount = await countOtherLiveAdmins(user.id);
+      if (otherLiveAdminCount < 1) {
+        return errorResponse(res, 'Cannot delete this user: they are an admin and no other active admin exists. Assign or restore another admin first.', 409, null, {
+          code: 'last_admin_required',
+        });
+      }
     }
 
     await user.update({ deleted_at: new Date(), is_active: false });

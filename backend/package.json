@@ -4,7 +4,7 @@
   "type": "module",
   "main": "server.js",
   "scripts": {
-    "test": "node --test tests/reliability-scoring.test.mjs tests/reliability-engine.test.mjs tests/user-reliability-model-persistence-parity.test.mjs tests/payment-engine.test.mjs tests/payment-stripe-contract.test.mjs tests/bookingAttendanceStatus.test.mjs tests/booking-state-machine.test.mjs tests/dispute-state-machine.test.mjs tests/booking-dispute-state-crossflow.test.mjs tests/dispute-finalization-contract.test.mjs tests/dispute-resolution-warnings.test.mjs tests/dispute-resolution-alignment.test.mjs tests/validator-joi-message.test.mjs tests/dispute-response-format.test.mjs",
+    "test": "node --test tests/reliability-scoring.test.mjs tests/reliability-engine.test.mjs tests/user-reliability-model-persistence-parity.test.mjs tests/payment-engine.test.mjs tests/payment-stripe-contract.test.mjs tests/bookingAttendanceStatus.test.mjs tests/booking-state-machine.test.mjs tests/dispute-state-machine.test.mjs tests/booking-dispute-state-crossflow.test.mjs tests/dispute-finalization-contract.test.mjs tests/dispute-resolution-warnings.test.mjs tests/dispute-resolution-alignment.test.mjs tests/validator-joi-message.test.mjs tests/dispute-response-format.test.mjs tests/admin-user-role-safeguards.test.mjs tests/role-governance.test.mjs tests/coach-availability-access.test.mjs tests/dateOnly.test.mjs",
     "test:payment:integration": "RUN_PAYMENT_INTEGRATION=1 node --test tests/payment-stripe-integration.test.mjs",
     "dev": "nodemon server.js",
     "start": "node server.js",

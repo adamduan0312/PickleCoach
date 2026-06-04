@@ -1,3 +1,4 @@
+import { Op } from 'sequelize';
 import { Payment, Booking, User } from '../models/index.js';
 import { successResponse, errorResponse, paginatedResponse } from '../utils/response.js';
 import { getPagination, getPagingData } from '../utils/pagination.js';
@@ -19,11 +20,19 @@ export const getPayments = async (req, res) => {
     if (student_id) where.student_id = student_id;
     if (coach_id) where.coach_id = coach_id;
 
-    if (!(req.user.roles || []).includes('admin')) {
-      if ((req.user.roles || []).includes('coach')) {
+    const roles = req.user.roles || [];
+    if (!roles.includes('admin')) {
+      const isCoach = roles.includes('coach');
+      const isStudent = roles.includes('student');
+      // Philosophy A: coach + student are additive — list payments where user is coach OR student (never pick only one role).
+      if (isCoach && isStudent) {
+        where[Op.or] = [{ coach_id: req.user.id }, { student_id: req.user.id }];
+      } else if (isCoach) {
         where.coach_id = req.user.id;
-      } else if ((req.user.roles || []).includes('student')) {
+      } else if (isStudent) {
         where.student_id = req.user.id;
+      } else {
+        where.id = { [Op.eq]: -1 };
       }
     }
 

@@ -8,7 +8,7 @@ import {
   forgotPasswordSchema,
   resetPasswordSchema,
   updateProfileSchema,
-  switchRoleSchema,
+  addUserRoleSchema,
   changePasswordSchema,
   changeEmailRequestSchema,
   confirmEmailChangeSchema,
@@ -26,7 +26,8 @@ router.post('/reset-password', validateRequest(resetPasswordSchema), authControl
 router.get('/profile', authenticate, authController.getProfile);
 router.put('/profile', authenticate, validateRequest(updateProfileSchema), authController.updateProfile);
 router.post('/logout', authenticate, authController.logout);
-router.put('/me/role', authenticate, validateRequest(switchRoleSchema), authController.switchRole);
+/** Self-service: add `student` or `coach` to `user_roles` (does not remove roles). */
+router.put('/me/role', authenticate, validateRequest(addUserRoleSchema), authController.addUserRole);
 router.delete('/me', authenticate, authController.deleteMyAccount);
 
 // Sensitive account management

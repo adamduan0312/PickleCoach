@@ -1,5 +1,6 @@
-// Simple in-memory rate limiter (for MVP)
-// For production, use Redis-based rate limiting (express-rate-limit with Redis store)
+// Simple in-memory rate limiter (for MVP).
+// TODO(horizontal scale): Use Redis-backed rate limiting (e.g. express-rate-limit + Redis store)
+// so limits are shared across app instances and survive process restarts.
 
 const requestCounts = new Map();
 

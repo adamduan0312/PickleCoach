@@ -32,6 +32,7 @@ async function createFirstAdmin() {
         password_hash,
         full_name: fullName,
         is_active: true,
+        deleted_at: null,
       });
       await UserRole.findOrCreate({
         where: { user_id: existingAdmin.id, role: 'admin' },

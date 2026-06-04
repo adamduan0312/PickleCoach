@@ -6,10 +6,23 @@
  * Does not delete any endpoint — moves/copies each into the appropriate flow.
  *
  * Rule: Each endpoint appears only in flow folder(s) where that role is ALLOWED
- * to use it (no 403). E.g. Admin cannot use Switch Role or Delete My Account, so
+ * to use it (no 403). E.g. Admin cannot use Add Role (self-service) or Delete My Account, so
  * those are only in Coach and Student flows. Coach cannot use List Coaches (Search)
  * or Create Booking, so those are only in Admin and Student flows. Student cannot
  * use explicit booking action endpoints (accept/decline/complete/student-no-show/cancel).
+ *
+ * ## String contract (By Type is canonical)
+ *
+ * - **PickleCoach_API_ByType.postman_collection.json** is the single source of truth for
+ *   request bodies, URLs, and tests. **Folder name + request name** must match the
+ *   tuples in `ADMIN_ORDER`, `COACH_ORDER`, and `STUDENT_ORDER` exactly (case-sensitive).
+ * - **PickleCoach_API_ByFlow.postman_collection.json** is generated only by this script;
+ *   do not hand-edit it (changes will be overwritten on `npm run postman:reorganize-flows`).
+ * - Renaming a request in By Type without updating the `*_ORDER` arrays causes this script
+ *   to **exit with code 1** (see `assertFlowOrdersResolvable`). Same for typos.
+ * - One HTTP endpoint should exist **once** in By Type. If multiple flows need it, list the
+ *   same `[folderName, requestName]` in each `*_ORDER` (optionally with a 4th element
+ *   `displayName` for sidebar clarity). Use `applyDescriptionOverride` for per-flow copy only.
  */
 
 import fs from 'fs';
@@ -38,10 +51,35 @@ function getRequest(folderName, requestName) {
   const key = `${folderName}|${requestName}`;
   const found = requestMap.get(key);
   if (!found) {
-    console.warn(`Missing: ${folderName} -> ${requestName}`);
     return null;
   }
   return JSON.parse(JSON.stringify(found));
+}
+
+/** Fail fast if any `*_ORDER` tuple does not resolve in By Type (prevents silent flow drops). */
+function assertFlowOrdersResolvable() {
+  const missing = [];
+  const check = (label, entries) => {
+    for (const entry of entries) {
+      const [folderName, requestName] = entry;
+      const key = `${folderName}|${requestName}`;
+      if (!requestMap.has(key)) missing.push(`${label}: ${key}`);
+    }
+  };
+  check('ADMIN_ORDER', ADMIN_ORDER);
+  check('COACH_ORDER', COACH_ORDER);
+  check('STUDENT_ORDER', STUDENT_ORDER);
+  for (const [folderName, requestName] of REFERENCE_ITEMS) {
+    const key = `${folderName}|${requestName}`;
+    if (!requestMap.has(key)) missing.push(`REFERENCE_ITEMS: ${key}`);
+  }
+  if (missing.length) {
+    console.error(
+      'Postman: flow order references missing By Type requests. Fix folder/request names in reorganize-postman-flows.js or add the request to PickleCoach_API_ByType.postman_collection.json:\n',
+    );
+    for (const line of missing) console.error(' ', line);
+    process.exit(1);
+  }
 }
 
 /**
@@ -59,7 +97,11 @@ function buildFlowFolder(name, description, order) {
   for (const entry of order) {
     const [folderName, requestName, prefixOverride, displayName] = entry;
     const req = getRequest(folderName, requestName);
-    if (!req) continue;
+    if (!req) {
+      throw new Error(
+        `Internal: missing By Type request after validation: ${folderName}|${requestName}`,
+      );
+    }
     let prefix;
     if (prefixOverride) {
       prefix = prefixOverride;
@@ -116,6 +158,8 @@ const ADMIN_ORDER = [
   ['Notifications', 'Create Notification (Admin)'],
   ['Admin', 'Get My Notifications'],
   ['Admin', 'Get Coach Courts (Admin)'],
+  // Same canonical request as Coaches → Get Coach Availability (one definition in By Type).
+  ['Coaches', 'Get Coach Availability', '14b', 'Get Coach Availability (Admin)'],
   ['Admin', 'Delete Coach Court (Admin)'],
   ['Admin', 'Delete Coach Availability (Admin)'],
   ['Admin', 'Delete User (Admin)'],
@@ -128,7 +172,7 @@ const ADMIN_ORDER = [
   ['Authentication', 'Confirm Email Verification'],
   ['Authentication', 'Request Email Change'],
   ['Authentication', 'Confirm Email Change'],
-  // Admin cannot use Switch Role or Delete My Account (403)
+  // Admin cannot use PUT /auth/me/role (self-service add role) or Delete My Account (403)
   ['Authentication', 'Logout'],
   ['Courts', 'List/Search Courts'],
   ['Courts', 'Get Court By ID'],
@@ -164,11 +208,12 @@ const COACH_ORDER = [
   ['Authentication', 'Change Password'],
   ['Authentication', 'Request Email Change'],
   ['Authentication', 'Confirm Email Change'],
-  ['Authentication', 'Switch Role (Student ↔ Coach)'],
+  ['Authentication', 'Add Role (Self-Service)'],
   ['Coaches', 'Create Coach Profile'],
-  ['Coaches', 'Update Coach Profile'],
-  ['Coaches', 'Get Coach Availability'],
+  ['Coaches', 'Update My Coach Profile'],
   ['Coaches', 'Create Availability'],
+  ['Coaches', 'Get My Coach Availability'],
+  ['Coaches', 'Update My Availability'],
   ['Coaches', 'Delete Availability'],
   ['Courts', 'List/Search Courts'],
   ['Courts', 'Get Court By ID'],
@@ -228,7 +273,7 @@ const STUDENT_ORDER = [
   ['Authentication', 'Change Password'],
   ['Authentication', 'Request Email Change'],
   ['Authentication', 'Confirm Email Change'],
-  ['Authentication', 'Switch Role (Student ↔ Coach)'],
+  ['Authentication', 'Add Role (Self-Service)'],
   ['Coaches', 'List Coaches (Search)'],
   ['Coaches', 'Get Coach By ID'],
   ['Coaches', 'Get Coach Reliability (Score Only)', '13b', 'Get Coach Reliability (Student \u2014 detail)'],
@@ -266,6 +311,8 @@ const STUDENT_ORDER = [
   ['Authentication', 'Logout'],
   ['Authentication', 'Delete My Account'],
 ];
+
+assertFlowOrdersResolvable();
 
 const adminFolder = buildFlowFolder(
   '1 – Flow: Admin',
@@ -321,9 +368,9 @@ function applyDescriptionOverride(flowFolder, baseName, description) {
   item.request.description = description;
 }
 
-applySeededLoginExample(adminFolder, 'adamduan0312@gmail.com', '03122003');
-applySeededLoginExample(coachFolder, 'coach1@example.com', 'password123');
-applySeededLoginExample(studentFolder, 'student1@example.com', 'password123');
+applySeededLoginExample(adminFolder, 'adamduan0312@gmail.com', 'Adam03122003');
+applySeededLoginExample(coachFolder, 'coach1@example.com', 'Password123xx');
+applySeededLoginExample(studentFolder, 'student1@example.com', 'Password123xx');
 
 // Per-flow `Get Profile` descriptions. The single source request in the
 // `Authentication` folder holds the general description; each flow tweaks it
@@ -343,10 +390,16 @@ applyDescriptionOverride(
   'Get Profile',
   "Roles: Student, Coach, Admin. Get current authenticated user's profile. Students may see `data.reliability_student` when a student reliability row exists; dual-role users may also see coach `data.reliability`."
 );
+// Same cloned request as `Coaches/Get Coach Availability`; admin flow label is "(Admin)" for the sidebar only.
+applyDescriptionOverride(
+  adminFolder,
+  'Get Coach Availability (Admin)',
+  '**Admin flow** — uses the **same** By Type request as **Coaches → Get Coach Availability** (`GET /api/coaches/:id/availability`). Use an **admin** JWT to inspect a coach’s weekly windows (support). Effective roles must include **student** or **admin**; coach-only tokens get **403**. Path `:id` = coach user id (`{{coach_id}}`). Edit the canonical request under **Coaches** only so Student and Admin flows stay in sync.',
+);
 applySeededRegisterExample(adminFolder, {
   full_name: 'Adam Duan',
   email: 'adamduan0312@gmail.com',
-  password: '03122003',
+  password: 'Adam03122003',
   role: 'admin',
   phone: '+1234567890',
   timezone: 'UTC',
@@ -355,7 +408,7 @@ applySeededRegisterExample(adminFolder, {
 applySeededRegisterExample(coachFolder, {
   full_name: 'Coach One',
   email: 'coach1@example.com',
-  password: 'password123',
+  password: 'Password123xx',
   role: 'coach',
   phone: '+1234567890',
   timezone: 'UTC',
@@ -364,7 +417,7 @@ applySeededRegisterExample(coachFolder, {
 applySeededRegisterExample(studentFolder, {
   full_name: 'Student One',
   email: 'student1@example.com',
-  password: 'password123',
+  password: 'Password123xx',
   role: 'student',
   phone: '+1234567890',
   timezone: 'UTC',

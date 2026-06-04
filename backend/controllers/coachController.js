@@ -15,6 +15,8 @@ import { getPagination, getPagingData } from '../utils/pagination.js';
 import { Op } from 'sequelize';
 import { sequelize } from '../models/sequelize.js';
 import { logger } from '../config/logger.js';
+import { getEffectiveRolesForUserRecord } from '../utils/roleGovernance.js';
+import { toYmdApi } from '../utils/dateOnly.js';
 
 /**
  * Calculate distance between two lat/lng points using Haversine formula
@@ -55,8 +57,9 @@ const shapeCoachForListing = (coachInstance) => {
 
 export const getCoaches = async (req, res) => {
   try {
-    // Only students and admins can search/list coaches (e.g. to find someone to book). Coaches don't use this to find other coaches.
-    if (req.user && (req.user.roles || []).includes('coach')) {
+    const roles = req.user.roles || [];
+    /** Coach-only accounts use coach tooling to find students; student + coach and admins may browse. */
+    if (!roles.includes('student') && !roles.includes('admin')) {
       return errorResponse(res, 'Only students and admins can search for coaches', 403);
     }
 
@@ -216,6 +219,9 @@ export const getCoachById = async (req, res) => {
     const payload = coach.toJSON();
     payload.reliability = slimCoachReliabilityFromRows(payload.reliabilities);
     delete payload.reliabilities;
+    if (Array.isArray(payload.availabilities)) {
+      payload.availabilities = payload.availabilities.map(shapeAvailabilityForApi);
+    }
 
     return successResponse(res, payload, 'Coach retrieved successfully');
   } catch (error) {
@@ -229,7 +235,6 @@ export const createCoachProfile = async (req, res) => {
     const {
       headline,
       bio,
-      hourly_rate,
       experience_years,
       skill_rating,
       rating_system,
@@ -247,7 +252,6 @@ export const createCoachProfile = async (req, res) => {
       user_id: targetUserId,
       headline,
       bio,
-      hourly_rate: hourly_rate || 0,
       experience_years: experience_years ?? 0,
       skill_rating: skill_rating ?? null,
       rating_system: rating_system ?? 'self',
@@ -264,6 +268,49 @@ export const createCoachProfile = async (req, res) => {
   }
 };
 
+/** @param {import('sequelize').Model} profile @param {object} validated */
+async function applyCoachProfileUpdate(profile, validated) {
+  const {
+    headline,
+    bio,
+    experience_years,
+    skill_rating,
+    rating_system,
+    certifications,
+    location,
+  } = validated;
+  await profile.update({
+    headline: headline !== undefined ? headline : profile.headline,
+    bio: bio !== undefined ? bio : profile.bio,
+    experience_years: experience_years !== undefined ? experience_years : profile.experience_years,
+    skill_rating: skill_rating !== undefined ? skill_rating : profile.skill_rating,
+    rating_system: rating_system !== undefined ? rating_system : profile.rating_system,
+    certifications: certifications !== undefined ? certifications : profile.certifications,
+    location: location !== undefined ? location : profile.location,
+  });
+}
+
+/**
+ * PUT /api/coaches/me/profile — authenticated coach updates **their own** profile (no user id in URL).
+ */
+export const updateMyCoachProfile = async (req, res) => {
+  try {
+    const profile = await CoachProfile.findOne({ where: { user_id: req.user.id } });
+    if (!profile) {
+      return errorResponse(res, 'Coach profile not found', 404);
+    }
+    await applyCoachProfileUpdate(profile, req.validated);
+    return successResponse(res, profile, 'Coach profile updated successfully');
+  } catch (error) {
+    logger.error('Update my coach profile error:', error);
+    return errorResponse(res, 'Failed to update coach profile', 500);
+  }
+};
+
+/**
+ * PUT /api/coaches/profile/:id — **admin only**. `:id` is the coach’s **user id** (support / corrections).
+ * Coaches must use **`PUT /api/coaches/me/profile`** instead.
+ */
 export const updateCoachProfile = async (req, res) => {
   try {
     const { id } = req.params;
@@ -273,32 +320,7 @@ export const updateCoachProfile = async (req, res) => {
       return errorResponse(res, 'Coach profile not found', 404);
     }
 
-    if (req.user.id !== profile.user_id && !(req.user.roles || []).includes('admin')) {
-      return errorResponse(res, 'Unauthorized', 403);
-    }
-
-    const {
-      headline,
-      bio,
-      hourly_rate,
-      experience_years,
-      skill_rating,
-      rating_system,
-      certifications,
-      location,
-    } = req.validated;
-
-    await profile.update({
-      headline: headline !== undefined ? headline : profile.headline,
-      bio: bio !== undefined ? bio : profile.bio,
-      hourly_rate: hourly_rate !== undefined ? hourly_rate : profile.hourly_rate,
-      experience_years: experience_years !== undefined ? experience_years : profile.experience_years,
-      skill_rating: skill_rating !== undefined ? skill_rating : profile.skill_rating,
-      rating_system: rating_system !== undefined ? rating_system : profile.rating_system,
-      certifications: certifications !== undefined ? certifications : profile.certifications,
-      location: location !== undefined ? location : profile.location,
-    });
-
+    await applyCoachProfileUpdate(profile, req.validated);
     return successResponse(res, profile, 'Coach profile updated successfully');
   } catch (error) {
     logger.error('Update coach profile error:', error);
@@ -317,20 +339,15 @@ function normalizeTimeOfDay(str) {
   return null;
 }
 
-/** From a Date, return YYYY-MM-DD for DATEONLY. */
-function toDateOnly(d) {
-  if (!d) return null;
-  const date = d instanceof Date ? d : new Date(d);
-  return date.toISOString().slice(0, 10);
+/** JSON shape for availability rows (stable DATEONLY strings). */
+function shapeAvailabilityForApi(row) {
+  const plain = row && typeof row.get === 'function' ? row.get({ plain: true }) : { ...row };
+  return {
+    ...plain,
+    start_date: toYmdApi(plain.start_date),
+    end_date: toYmdApi(plain.end_date),
+  };
 }
-
-/** From a Date, return HH:mm:ss for time-of-day. */
-function toTimeOnly(d) {
-  if (!d) return null;
-  const date = d instanceof Date ? d : new Date(d);
-  return date.toTimeString().slice(0, 8);
-}
-
 
 /** Normalize time string to "HH:mm:ss" for comparison. */
 function toComparableTime(t) {
@@ -358,6 +375,10 @@ function dateRangesOverlap(aStart, aEnd, bStart, bEnd) {
   return aS <= bE && bS <= aE;
 }
 
+/**
+ * POST /api/coaches/me/availability
+ * Coach only (route); `coach_id` is always `req.user.id` — never taken from the body or URL coach param.
+ */
 export const createAvailability = async (req, res) => {
   try {
     if (!(req.user.roles || []).includes('coach')) {
@@ -365,38 +386,32 @@ export const createAvailability = async (req, res) => {
     }
 
     const coach_id = req.user.id;
-    const { weekday, start_datetime, end_datetime, start_date, end_date, start_time, end_time } = req.validated;
+    const { weekday, start_date, end_date, start_time, end_time } = req.validated;
 
-    // Avoid redundancy: client can send either (start_date, end_date, start_time, end_time) OR (start_datetime, end_datetime).
-    // Derive date/time from datetimes when only datetimes are provided.
-    const startDt = start_datetime ? new Date(start_datetime) : null;
-    const endDt = end_datetime ? new Date(end_datetime) : null;
-    const resolvedStartDate = start_date ?? (startDt ? toDateOnly(startDt) : null);
-    const resolvedEndDate = end_date ?? (endDt ? toDateOnly(endDt) : null);
-    const resolvedStartTime = normalizeTimeOfDay(start_time) ?? (startDt ? toTimeOnly(startDt) : null);
-    const resolvedEndTime = normalizeTimeOfDay(end_time) ?? (endDt ? toTimeOnly(endDt) : null);
+    const resolvedStartDate = start_date ?? null;
+    const resolvedEndDate = end_date ?? null;
+    const resolvedStartTime = normalizeTimeOfDay(start_time);
+    const resolvedEndTime = normalizeTimeOfDay(end_time);
 
     // Prevent overlapping availability: same coach, same weekday, overlapping date range and overlapping time range.
     const existing = await CoachAvailability.findAll({
       where: { coach_id, weekday },
-      attributes: ['start_date', 'end_date', 'start_time', 'end_time', 'start_datetime', 'end_datetime'],
+      attributes: ['id', 'start_date', 'end_date', 'start_time', 'end_time'],
     });
     for (const row of existing) {
       const dateOverlap = dateRangesOverlap(
         resolvedStartDate,
         resolvedEndDate,
-        row.start_date,
-        row.end_date
+        toYmdApi(row.start_date),
+        toYmdApi(row.end_date)
       );
       if (!dateOverlap) continue;
 
-      const rowStartTime = row.start_time ?? (row.start_datetime ? toTimeOnly(row.start_datetime) : null);
-      const rowEndTime = row.end_time ?? (row.end_datetime ? toTimeOnly(row.end_datetime) : null);
       const timeOverlap = timeRangesOverlap(
         resolvedStartTime,
         resolvedEndTime,
-        rowStartTime,
-        rowEndTime
+        row.start_time,
+        row.end_time
       );
       if (timeOverlap) {
         return errorResponse(
@@ -410,42 +425,56 @@ export const createAvailability = async (req, res) => {
     const availability = await CoachAvailability.create({
       coach_id,
       weekday,
-      start_datetime: startDt,
-      end_datetime: endDt,
       start_date: resolvedStartDate,
       end_date: resolvedEndDate,
       start_time: resolvedStartTime,
       end_time: resolvedEndTime,
     });
 
-    return successResponse(res, availability, 'Availability created successfully', 201);
+    return successResponse(res, shapeAvailabilityForApi(availability), 'Availability created successfully', 201);
   } catch (error) {
     logger.error('Create availability error:', error);
     return errorResponse(res, 'Failed to create availability', 500);
   }
 };
 
+async function listCoachAvailabilityForResponse(req, res, coachId) {
+  const { page, limit } = req.validated || {};
+  const isPaginated = page != null || limit != null;
+  const { limit: queryLimit, offset } = isPaginated
+    ? getPagination(page, limit)
+    : { limit: MAX_LIST_ALL_AVAILABILITY, offset: 0 };
+
+  const availabilities = await CoachAvailability.findAndCountAll({
+    where: { coach_id: coachId },
+    limit: queryLimit,
+    offset,
+    order: [
+      ['weekday', 'ASC'],
+      ['start_time', 'ASC'],
+    ],
+  });
+
+  const shapedRows = availabilities.rows.map((r) => shapeAvailabilityForApi(r));
+
+  if (!isPaginated) {
+    return successResponse(res, shapedRows, 'Availability retrieved successfully');
+  }
+  const response = getPagingData({ count: availabilities.count, rows: shapedRows }, page, queryLimit);
+  return paginatedResponse(res, response.items, response.pagination, 'Availability retrieved successfully');
+}
+
+/**
+ * GET /api/coaches/:id/availability
+ * Student or admin only (route). Used for booking another coach’s public weekly windows.
+ */
 export const getCoachAvailability = async (req, res) => {
   try {
-    const { id } = req.params;
-    const { page, limit } = req.validated || {};
-    const isPaginated = page != null || limit != null;
-    const { limit: queryLimit, offset } = isPaginated
-      ? getPagination(page, limit)
-      : { limit: MAX_LIST_ALL_AVAILABILITY, offset: 0 };
-
-    const availabilities = await CoachAvailability.findAndCountAll({
-      where: { coach_id: id },
-      limit: queryLimit,
-      offset,
-      order: [['weekday', 'ASC'], ['start_datetime', 'ASC']],
-    });
-
-    if (!isPaginated) {
-      return successResponse(res, availabilities.rows, 'Availability retrieved successfully');
+    const coachId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(coachId) || coachId < 1) {
+      return errorResponse(res, 'Invalid coach ID', 400);
     }
-    const response = getPagingData(availabilities, page, queryLimit);
-    return paginatedResponse(res, response.items, response.pagination, 'Availability retrieved successfully');
+    return await listCoachAvailabilityForResponse(req, res, coachId);
   } catch (error) {
     logger.error('Get availability error:', error);
     return errorResponse(res, 'Failed to retrieve availability', 500);
@@ -453,17 +482,114 @@ export const getCoachAvailability = async (req, res) => {
 };
 
 /**
- * Delete a coach availability slot (hard delete)
- * DELETE /api/coaches/availability/:id
+ * GET /api/coaches/me/availability
+ * Lists only the authenticated coach’s availability rows.
+ */
+export const getMyCoachAvailability = async (req, res) => {
+  try {
+    if (!(req.user.roles || []).includes('coach')) {
+      return errorResponse(res, 'Only coaches can list their availability', 403);
+    }
+    return await listCoachAvailabilityForResponse(req, res, req.user.id);
+  } catch (error) {
+    logger.error('Get my availability error:', error);
+    return errorResponse(res, 'Failed to retrieve availability', 500);
+  }
+};
+
+/**
+ * PUT /api/coaches/me/availability/:id
+ * Replace/update one slot; ownership enforced (`coach_id` must match `req.user.id`).
+ */
+export const updateMyAvailability = async (req, res) => {
+  try {
+    if (!(req.user.roles || []).includes('coach')) {
+      return errorResponse(res, 'Only coaches can update availability', 403);
+    }
+
+    const availabilityId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(availabilityId)) {
+      return errorResponse(res, 'Invalid availability ID', 400);
+    }
+
+    const row = await CoachAvailability.findByPk(availabilityId);
+    if (!row) {
+      return errorResponse(res, 'Availability not found', 404);
+    }
+    if (row.coach_id !== req.user.id) {
+      return errorResponse(res, 'You can only update your own availability', 403);
+    }
+
+    const coach_id = req.user.id;
+    const { weekday, start_date, end_date, start_time, end_time } = req.validated;
+
+    const resolvedStartDate = start_date ?? null;
+    const resolvedEndDate = end_date ?? null;
+    const resolvedStartTime = normalizeTimeOfDay(start_time);
+    const resolvedEndTime = normalizeTimeOfDay(end_time);
+
+    const existing = await CoachAvailability.findAll({
+      where: {
+        coach_id,
+        weekday,
+        id: { [Op.ne]: availabilityId },
+      },
+      attributes: ['id', 'start_date', 'end_date', 'start_time', 'end_time'],
+    });
+    for (const other of existing) {
+      const dateOverlap = dateRangesOverlap(
+        resolvedStartDate,
+        resolvedEndDate,
+        toYmdApi(other.start_date),
+        toYmdApi(other.end_date)
+      );
+      if (!dateOverlap) continue;
+
+      const timeOverlap = timeRangesOverlap(
+        resolvedStartTime,
+        resolvedEndTime,
+        other.start_time,
+        other.end_time
+      );
+      if (timeOverlap) {
+        return errorResponse(
+          res,
+          'This availability overlaps an existing slot for the same day and date range. Use a non-overlapping time window (e.g. 09:00–12:00 and 13:00–17:00).',
+          400
+        );
+      }
+    }
+
+    await row.update({
+      weekday,
+      start_date: resolvedStartDate,
+      end_date: resolvedEndDate,
+      start_time: resolvedStartTime,
+      end_time: resolvedEndTime,
+    });
+    await row.reload();
+
+    return successResponse(res, shapeAvailabilityForApi(row), 'Availability updated successfully');
+  } catch (error) {
+    logger.error('Update availability error:', error);
+    return errorResponse(res, 'Failed to update availability', 500);
+  }
+};
+
+/**
+ * DELETE /api/coaches/me/availability/:id
  * Coach only; can only delete their own availability.
  */
 export const deleteAvailability = async (req, res) => {
   try {
     if (!(req.user.roles || []).includes('coach')) {
-      return errorResponse(res, `Only coaches can delete their availability. Your roles: ${(req.user.roles || []).join(', ') || 'none'}. Switch via PUT /api/auth/me/role with body { "role": "coach" } if needed.`, 403);
+      return errorResponse(res, `Only coaches can delete their availability. Your roles: ${(req.user.roles || []).join(', ') || 'none'}. Add the coach role via PUT /api/auth/me/role with body { "role": "coach" } if you intend to coach.`, 403);
     }
 
-    const availabilityId = req.params.id;
+    const availabilityId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(availabilityId)) {
+      return errorResponse(res, 'Invalid availability ID', 400);
+    }
     const availability = await CoachAvailability.findByPk(availabilityId);
 
     if (!availability) {
@@ -500,7 +626,7 @@ export const initiateStripeConnectOnboarding = async (req, res) => {
     const coach = await User.findByPk(coachId, {
       include: [{ model: UserRole, as: 'userRoles', attributes: ['role'] }],
     });
-    const coachRoles = coach?.userRoles?.map((r) => r.role) ?? [];
+    const coachRoles = getEffectiveRolesForUserRecord(coach);
     if (!coach || !coachRoles.includes('coach')) {
       return errorResponse(res, 'Coach not found', 404);
     }

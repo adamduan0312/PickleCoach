@@ -112,7 +112,6 @@ module.exports = {
       const profilePayload = {
         headline,
         bio: 'Fixture coach for geo search tests.',
-        hourly_rate: 85.0,
         experience_years: 8,
         skill_rating: 4.5,
         rating_system: 'self',

@@ -59,9 +59,7 @@ Generated: 2026-01-26
 **Endpoints without validation**:
 - `PUT /api/auth/profile` - uses `req.body` directly
 - `PUT /api/users/:id` - uses `req.body` directly
-- `PUT /api/coaches/profile/:id` - uses `req.body` directly
-- `POST /api/coaches/profile` - uses `req.body` directly
-- `POST /api/coaches/availability` - uses `req.body` directly
+- `POST /api/coaches/me/availability` - uses `req.body` via validated schema; `coach_id` from `req.user.id` only
 - `PUT /api/lessons/:id` - uses `req.body` directly
 - `PUT /api/bookings/:id/status` - uses `req.body` directly
 - `PUT /api/reviews/:id` - uses `req.body` directly

@@ -278,8 +278,7 @@ export const handlePaymentCapture = async (paymentIntentId, chargeId) => {
           const userToUpdate = await User.findByPk(userIdToUpdate, {
             include: [{ model: UserRole, as: 'userRoles', attributes: ['role'] }],
           });
-          const updateRoles = userToUpdate?.userRoles?.map((r) => r.role) ?? [];
-          if (userToUpdate && !updateRoles.includes('admin')) {
+          if (userToUpdate) {
             const reliabilityRole = rescheduleHistory.requested_by === 'coach' ? 'coach' : 'student';
             await updateUserReliability(userIdToUpdate, reliabilityRole).catch((err) => {
               logger.error('Failed to update reliability after paid reschedule:', err);
