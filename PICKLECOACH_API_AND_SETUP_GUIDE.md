@@ -128,12 +128,12 @@ See `POSTMAN_SETUP_GUIDE.md` for detailed instructions and all endpoint test scr
 
 Use this sequence when adding courts to a coach in Postman (or in the app):
 
-1. **Create courts** (public or private): **`POST /api/courts`** only. If a coach creates the court, they are **automatically linked** to it. **Distance rule:** If the coach already has other courts, the new court must be within **100 miles** of one of them.
-2. **Add an existing court**: **`POST /api/coaches/me/courts`** with `court_id` (required), optional `rate_modifier`, `preferred`, `notes`. **Distance rule:** New court must be within **100 miles** of one of your existing courts (if you have any).
-3. **Remove a court** (e.g. when moving): **`DELETE /api/coaches/me/courts/:id`** where `:id` is the link id from List My Courts. Then add courts in the new city and update your profile **location**.
-4. **List your courts**: **`GET /api/coaches/me/courts`** returns all linked courts (each item has `id` for use with DELETE).
+1. **Create courts** (public or private): **`POST /api/courts`** only — **court fields only** (no `coach_notes` or legacy `notes`; either returns **400**). Coach is **auto-linked**; response includes `court` and `coachCourt` (link row without `coach_notes`). For **coach-specific link notes**, call **`POST /api/coaches/me/courts`** with the same `court_id` and **`coach_notes`** (**200** updates the auto-linked row). **Distance rule:** If the coach already has other courts, the new court must be within **100 miles** of one of them.
+2. **Add an existing court**: **`POST /api/coaches/me/courts`** with `court_id` (required), optional **`coach_notes`**. If already linked and you omit **`coach_notes`**, you get **409**; with **`coach_notes`**, link text is updated (**200**). **Distance rule:** New court must be within **100 miles** of one of your existing courts (if you have any).
+3. **Remove a court from your profile** (e.g. when moving): **`DELETE /api/coaches/me/courts/:courtId`** where **`courtId`** is **`court_locations.id`** (same as **`court_id`** / **`court.id`** from List My Courts). This only removes **your** link; it does not delete the shared court. Then add courts in the new city and update your profile **location**.
+4. **List your courts**: **`GET /api/coaches/me/courts`** returns all linked courts (use **`court_id`** in the unlink URL).
 
-**In Postman:** **Courts** → **Create Court**; **Coaches** → **List My Courts**; **Coaches** → **Add Court to Coach**; **Coaches** → **Remove Court from Coach** (use link id from list).
+**In Postman:** **Courts** → **Create Court**; **Coaches** → **List My Courts**; **Coaches** → **Add Court to Coach**; **Coaches** → **Remove Court from Coach** (uses **`{{court_id}}`** — set from Create Court or List My Courts).
 
 ---
 
@@ -461,7 +461,7 @@ Test endpoints in this order because some depend on others:
 8. **Payments** (view payment history)
 9. **Reviews** (create reviews)
 10. **Messages** (send messages)
-11. **Other endpoints** (reschedules, disputes, notifications, admin)
+11. **Other endpoints** (disputes, notifications, admin)
 
 **GET list endpoints and query parameters:** Many GET list endpoints (e.g. `GET /api/users`, `GET /api/bookings`, `GET /api/coaches`) accept optional query parameters for pagination and filtering. Common params: `page` (default 1), `limit` (default 10, max 100), plus endpoint-specific filters (e.g. `role`, `status`, `coach_id`). The API validates these; invalid values return 400 with error details.
 
@@ -1378,7 +1378,7 @@ VALUES (
    - User profile: `GET /api/auth/profile` (with token)
    - Coach endpoints: `GET /api/coaches`, `POST /api/coaches/profile`, `PUT /api/coaches/me/profile`
    - Lesson endpoints: `POST /api/lessons`, `GET /api/lessons`
-   - Booking endpoints: `POST /api/bookings`, `GET /api/bookings`
+   - Booking endpoints: `POST /api/booking-intents`, `POST /api/bookings/confirm`, `GET /api/bookings`
 
 5. **Test with Authentication:**
    - Add header to requests: `Authorization: Bearer {{student_token}}`
@@ -2351,10 +2351,10 @@ Authorization: Bearer <token>
 - **Error responses**: `403` (not coach or not own), `404` (not found), `500` (server error).
 
 **Coach courts workflow**
-- **Create courts**: **`POST /api/courts`**. Coach is auto-linked. **Distance rule:** New court must be within **100 miles** of one of your existing courts (if any).
-- **Add existing court**: **`POST /api/coaches/me/courts`** with `court_id`. **Distance rule:** Court must be within **100 miles** of one of your existing courts (if any).
-- **Remove court** (e.g. when moving): **`DELETE /api/coaches/me/courts/:id`** (`:id` = link id from GET response). Then add new city courts and update profile location.
-- **List your courts**: **`GET /api/coaches/me/courts`** (each item has `id` for DELETE).
+- **Create courts**: **`POST /api/courts`** (no `coach_notes` / `notes` on this route). Coach is auto-linked. Use **`POST /api/coaches/me/courts`** with the same `court_id` and **`coach_notes`** to set or change link notes (**200** after auto-link). **Distance rule:** New court must be within **100 miles** of one of your existing courts (if any).
+- **Add existing court**: **`POST /api/coaches/me/courts`** with `court_id`; duplicate without **`coach_notes`** → **409**. **Distance rule:** Court must be within **100 miles** of one of your existing courts (if any).
+- **Remove court from profile**: **`DELETE /api/coaches/me/courts/:courtId`** (`courtId` = `court_locations.id`, same as `court_id` from GET). Unlinks you only; does not delete the global court.
+- **List your courts**: **`GET /api/coaches/me/courts`** (use **`court_id`** for unlink).
 
 ### `GET /api/coaches/me/courts`
 - **Auth**: Required (coach only)
@@ -2369,9 +2369,7 @@ Authorization: Bearer <token>
         "id": 1,
         "coach_id": 2,
         "court_id": 1,
-        "rate_modifier": "1.00",
-        "preferred": true,
-        "notes": "My preferred court",
+        "coach_notes": "My home base",
         "created_at": "...",
         "updated_at": "...",
         "court": {
@@ -2380,9 +2378,7 @@ Authorization: Bearer <token>
           "address": "123 Main St",
           "latitude": 40.7,
           "longitude": -74.0,
-          "is_private": false,
-          "is_verified": true,
-          "createdBy": { "id": 1, "full_name": "Admin User" }
+          "is_private": false
         }
       }
     ]
@@ -2391,23 +2387,22 @@ Authorization: Bearer <token>
 
 ### `POST /api/coaches/me/courts`
 - **Auth**: Required (coach only; admins cannot add courts to their profile)
-- **Description**: Link an **existing** court to the coach's available courts. Does not create a new court; use `POST /api/courts` to create courts (coaches are auto-linked when they create).
+- **Description**: Link an **existing** court to the coach's available courts. Does not create a new court; use `POST /api/courts` to create courts (coaches are auto-linked when they create). **Already linked?** Include **`coach_notes`** in the body to update `coach_court_locations.coach_notes` (**200**); duplicate `court_id` without **`coach_notes`** → **409**.
 - **Request Body**:
   ```json
   {
     "court_id": "number (required)",
-    "rate_modifier": "number (optional)",
-    "preferred": "boolean (optional, defaults to false)",
-    "notes": "string (optional)"
+    "coach_notes": "string (optional)"
   }
   ```
-- **Response** (Status: 201): `data` contains `coachCourt` (id, coach_id, court_id, rate_modifier, preferred, notes, created_at, updated_at) and `court` (full court details including createdBy).
-- **Error responses**: `400` (court_id missing/invalid or court &gt;100 miles from your existing courts), `404` (court not found), `409` (already linked).
+- **Response**: **201** when a new link is created; **200** when the coach was already linked and the body included **`coach_notes`** (coach_notes updated only). `data` contains `coachCourt` (id, coach_id, court_id, coach_notes, created_at, updated_at) and `court` (id, name, address, latitude, longitude, is_private). `rate_modifier` is reserved in DB for future pricing and is not returned on coach APIs.
+- **Error responses**: `400` (court_id missing/invalid or court &gt;100 miles from your existing courts), `404` (court not found), `409` (already linked and **`coach_notes`** omitted).
 
-### `DELETE /api/coaches/me/courts/:id`
+### `DELETE /api/coaches/me/courts/:courtId`
 - **Auth**: Required (coach only)
-- **Description**: Unlink a court from your profile. `:id` is the coach_court_location id (from GET /api/coaches/me/courts), not court_id. Use when moving or no longer coaching at that court.
-- **Response** (200): `{ "success": true, "message": "Court removed from your profile", "data": null }`.
+- **Description**: Unlink your profile from this court (`coach_court_locations` only). **`courtId`** = **`court_locations.id`** (same as **`court_id`** on **`GET /api/coaches/me/courts`**). Does not delete the shared court or affect other coaches.
+- **Response** (200): `{ "success": true, "message": "Court removed from your profile", "data": { "court_id": <number>, "name": "<string|null>" } }` — echoes the court id and display name that was unlinked from your profile.
+- **Error responses**: `404` if the court does not exist, is globally deleted, or you are not linked to it.
 
 ### `POST /api/coaches/me/stripe-connect/onboard`
 - **Auth**: Required
@@ -2450,6 +2445,8 @@ Authorization: Bearer <token>
 
 ## Courts (`/api/courts`)
 
+**Field notes:** `is_private` — coach-set. **Private courts are excluded from public discovery** (`GET /api/courts`, `GET /api/courts/:id` returns **404** for private ids). Coach profile / booking / admin APIs still return private courts where applicable. `rate_modifier` on coach–court links is stored for future per-court pricing but not exposed on coach/student APIs until booking logic uses it.
+
 ### `GET /api/courts`
 - **Auth**: None required
 - **Description**: Search courts (with lazy import from OpenStreetMap if no results)
@@ -2466,8 +2463,7 @@ Authorization: Bearer <token>
         "address": "123 Main St",
         "latitude": 40.7128,
         "longitude": -74.0060,
-        "is_private": false,
-        "is_verified": true
+        "is_private": false
       }
     ]
   }
@@ -2488,15 +2484,16 @@ Authorization: Bearer <token>
       "latitude": 40.7128,
       "longitude": -74.0060,
       "is_private": false,
-      "is_verified": true,
-      "created_at": "2026-01-01T00:00:00.000Z"
+      "source": "manual",
+      "created_at": "2026-01-01T00:00:00.000Z",
+      "updated_at": "2026-01-01T00:00:00.000Z"
     }
   }
   ```
 
 ### `POST /api/courts`
 - **Auth**: Required (Coach or Admin only)
-- **Description**: Create a new court location
+- **Description**: Create a new court location (**court entity only**). **Coach auto-link:** When a coach creates a court, the server creates a link row with **only** `coach_id` and `court_id`. **`coach_notes` / `notes` are not accepted** on this route — body must not include those properties (**400** if present). Use **`POST /api/coaches/me/courts`** with `court_id` and optional **`coach_notes`** for relationship metadata.
 - **Request Body**:
   ```json
   {
@@ -2504,11 +2501,34 @@ Authorization: Bearer <token>
     "address": "string (optional)",
     "latitude": "number (optional)",
     "longitude": "number (optional)",
-    "is_private": "boolean (optional, defaults to false)",
-    "notes": "string (optional)"
+    "is_private": "boolean (optional, defaults to false)"
   }
   ```
-- **Response** (Status: 201):
+- **Response** (Status: 201) — **coach**:
+  ```json
+  {
+    "success": true,
+    "message": "Court created successfully",
+    "data": {
+      "court": {
+        "id": 1,
+        "name": "Central Park Pickleball Court",
+        "address": "123 Main St",
+        "latitude": 40.7128,
+        "longitude": -74.0060,
+        "is_private": false
+      },
+      "coachCourt": {
+        "id": 10,
+        "coach_id": 2,
+        "court_id": 1,
+        "created_at": "2026-01-01T00:00:00.000Z",
+        "updated_at": "2026-01-01T00:00:00.000Z"
+      }
+    }
+  }
+  ```
+- **Response** (Status: 201) — **admin** (court object only; no coach link):
   ```json
   {
     "success": true,
@@ -2520,17 +2540,16 @@ Authorization: Bearer <token>
       "latitude": 40.7128,
       "longitude": -74.0060,
       "is_private": false,
-      "is_verified": false,
       "created_at": "2026-01-01T00:00:00.000Z"
     }
   }
   ```
 
 ### `DELETE /api/courts/:id`
-- **Auth**: Required (Admin, or coach who created the court)
-- **Description**: **Soft delete** a court. Admins can delete any court; coaches can delete only courts they created. Court no longer appears in search or GET.
+- **Auth**: Required (**Admin only**)
+- **Description**: **Global soft delete** of the court (`court_locations.deleted_at`) and removal of **all** `coach_court_locations` for that court. Coaches **cannot** use this route — they unlink with **`DELETE /api/coaches/me/courts/:courtId`** only.
 - **Response** (Status: 200): `{ "success": true, "message": "Court deleted successfully", "data": null }`.
-- **Error responses**: `403` (not admin and not the creator), `404` (not found or already deleted), `500` (server error).
+- **Error responses**: `403` (not admin), `404` (not found or already deleted), `500` (server error).
 
 ---
 
@@ -2561,8 +2580,8 @@ Authorization: Bearer <token>
   ```
 
 ### `GET /api/lessons/:id`
-- **Auth**: None required
-- **Description**: Get lesson by ID (public)
+- **Auth**: Optional (Bearer token to load **inactive** lessons as **coach owner** or **admin**)
+- **Description**: Get lesson by ID. **Active** = public. **Inactive** = **`404`** for students, other coaches, and anonymous users; **owner** and **admin** with token get **200**. **Deleted** = **`404`** for everyone (including owner). Manage inactive offerings via **`GET /api/coaches/me/lessons`**.
 - **Response** (Status: 200):
   ```json
   {
@@ -2619,7 +2638,7 @@ Authorization: Bearer <token>
 
 ### `PUT /api/lessons/:id`
 - **Auth**: Required
-- **Description**: Update lesson
+- **Description**: Update lesson (coach owner or admin). **`404`** if soft-deleted (`deleted_at` set). Use **`is_active: false`** to hide without deleting.
 - **Request Body** (all fields optional - omit fields you don't want to update):
   ```json
   {
@@ -2650,7 +2669,7 @@ Authorization: Bearer <token>
 
 ### `DELETE /api/lessons/:id`
 - **Auth**: Required
-- **Description**: Delete lesson (soft delete)
+- **Description**: Soft-delete lesson (`deleted_at`). Row kept for booking history. **`404`** if already deleted. Use **`PUT`** with **`is_active: false`** to hide without deleting.
 - **Response** (Status: 200):
   ```json
   {
@@ -2724,42 +2743,19 @@ Authorization: Bearer <token>
   }
   ```
 
-### `POST /api/bookings`
-- **Auth**: Required
-- **Description**: Create a new booking
-- **Request Body**:
-  ```json
-  {
-    "lesson_id": "number (required, positive integer)",
-    "scheduled_at": "string (required, ISO 8601 date-time, must be in future)",
-    "duration_minutes": "number (optional, min 15)",
-    "player_ids": "array (optional, array of user IDs)",
-    "court_location_id": "number (optional, positive integer)",
-    "payment_method": "string (optional, 'stripe' | 'apple_pay' | 'google_pay' | 'card', defaults to 'stripe')"
-  }
-  ```
-- **Response** (Status: 201):
-  ```json
-  {
-    "success": true,
-    "message": "Booking created successfully",
-    "data": {
-      "booking": {
-        "id": 1,
-        "lesson_id": 1,
-        "coach_id": 2,
-        "primary_student_id": 1,
-        "scheduled_at": "2026-02-01T10:00:00.000Z",
-        "duration_minutes": 60,
-        "price": 50.00,
-        "status": "pending",
-        "created_at": "2026-01-01T00:00:00.000Z"
-      },
-      "payment_intent_client_secret": "pi_..._secret_...",
-      "payment_intent_id": "pi_..."
-    }
-  }
-  ```
+### `POST /api/booking-intents`
+- **Auth**: Required (verified email)
+- **Description**: Create Stripe PaymentIntent for a lesson slot (manual capture). No booking row until confirm.
+- **Response** (201): `client_secret`, `payment_intent_id`, `lesson_id`, `scheduled_at`, `amount`
+
+### `POST /api/bookings/confirm`
+- **Auth**: Required (verified email)
+- **Description**: After Stripe authorization (`requires_capture`), creates booking (`pending`) + payment (`authorized`). Idempotent per `payment_intent_id`.
+- **Request Body**: `{ "payment_intent_id": "pi_xxx" }`
+- **Response** (201): `{ booking, payment }`
+
+### `POST /api/bookings` (deprecated)
+- **Status**: **410 Gone** — use booking-intents + confirm flow. See `backend/docs/MIGRATION_AUTHORIZE_FIRST_BOOKING.md`.
 
 ### `PUT /api/bookings/:id/status`
 - **Auth**: Required
@@ -2807,19 +2803,7 @@ Authorization: Bearer <token>
   }
   ```
 
-### `POST /api/bookings/:id/reschedule`
-- **Auth**: Required
-- **Description**: Request a reschedule for a booking
-- **Request Body**:
-  ```json
-  {
-    "new_scheduled_at": "string (required, ISO 8601 date-time, must be in future)",
-    "reason": "string (required, valid reschedule reason)",
-    "reason_notes": "string (optional, max 255 chars)",
-    "paid_reschedule": "boolean (optional, defaults to false)"
-  }
-  ```
-- **Response**: Reschedule request created
+**Schedule changes:** Cancel + rebook (no reschedule API). Cancellation reasons: excused (`weather`, `emergency`, `sickness`) vs unexcused (`travel_delay`, `schedule_conflict`, `forgot`, `other`).
 
 ---
 
@@ -2876,33 +2860,7 @@ Authorization: Bearer <token>
   }
   ```
 
-**MVP note:** Payment rows are created when a student books a lesson (`POST /api/bookings`) and updated via Stripe webhooks and booking flows. There are no admin HTTP endpoints to create payments, adjust status, or mark refunds in isolation—use Stripe Dashboard and webhook replay; refunds that move money go through **`paymentService.processRefund`** (e.g. booking cancellation).
-
----
-
-## Reschedules (`/api/reschedules`)
-
-### `GET /api/reschedules`
-- **Auth**: Required
-- **Description**: Get reschedule history for user's bookings
-- **Query Parameters**: Filters (booking_id, status, etc.)
-- **Response** (Status: 200):
-  ```json
-  {
-    "success": true,
-    "message": "Reschedule history retrieved successfully",
-    "data": [
-      {
-        "id": 1,
-        "booking_id": 1,
-        "new_scheduled_at": "2026-02-02T14:00:00.000Z",
-        "reason": "schedule_conflict",
-        "status": "approved",
-        "created_at": "2026-01-01T00:00:00.000Z"
-      }
-    ]
-  }
-  ```
+**MVP note:** Payment rows are created when a student confirms a booking (`POST /api/bookings/confirm`) and updated via Stripe webhooks and booking flows. There are no admin HTTP endpoints to create payments, adjust status, or mark refunds in isolation—use Stripe Dashboard and webhook replay; refunds that move money go through **`paymentService.processRefund`** (e.g. booking cancellation).
 
 ---
 
@@ -3006,122 +2964,28 @@ Authorization: Bearer <token>
 
 ## Messages (`/api/messages`)
 
+**Booking-scoped messaging (V1).** One conversation per booking. Text only (`message_text`) — no attachments, edits, deletes, reactions, typing indicators, or read receipts.
+
+**Lifecycle:** derived from `booking.status` — `pending` locked; `confirmed` / `awaiting_verification` unlocked; terminal statuses locked (read-only). Admin: read yes, send no. Conversation is **auto-created when the booking becomes `confirmed`** (coach accept or payment capture).
+
+**Access:** coach, primary student, admin may read; only coach/student may send when unlocked. Locked sends → **409** `Messaging is unavailable for this booking`.
+
 ### `GET /api/messages/conversations`
-- **Auth**: Required
-- **Description**: Get all conversations for the authenticated user
-- **Query Parameters**: `booking_id` (optional filter)
-- **Response** (Status: 200):
-  ```json
-  {
-    "success": true,
-    "message": "Conversations retrieved successfully",
-    "data": [
-      {
-        "id": 1,
-        "booking_id": 1,
-        "latest_message": {
-          "id": 5,
-          "content": "See you there!",
-          "created_at": "2026-01-01T12:00:00.000Z"
-        },
-        "unread_count": 2
-      }
-    ]
-  }
-  ```
+- **Auth**: Required — participant bookings (admin: all)
 
 ### `GET /api/messages/conversations/:id`
-- **Auth**: Required
-- **Description**: Get conversation by ID with paginated messages
-- **Query Parameters**: `page`, `limit` (for message pagination)
-- **Response** (Status: 200):
-  ```json
-  {
-    "success": true,
-    "message": "Conversation retrieved successfully",
-    "data": {
-      "id": 1,
-      "booking_id": 1,
-      "messages": [
-        {
-          "id": 1,
-          "sender_id": 1,
-          "content": "Hello, I have a question",
-          "read_at": null,
-          "created_at": "2026-01-01T10:00:00.000Z"
-        }
-      ],
-      "pagination": {
-        "totalItems": 10,
-        "totalPages": 1,
-        "currentPage": 1,
-        "pageSize": 10
-      }
-    }
-  }
-  ```
+- **Auth**: Required — includes `messaging_locked`; history readable when locked
 
 ### `POST /api/messages/conversations`
-- **Auth**: Required
-- **Description**: Create a new conversation for a booking
-- **Request Body**:
-  ```json
-  {
-    "booking_id": "number (required, positive integer)"
-  }
-  ```
-- **Response** (Status: 201):
-  ```json
-  {
-    "success": true,
-    "message": "Conversation created successfully",
-    "data": {
-      "id": 1,
-      "booking_id": 1,
-      "created_at": "2026-01-01T00:00:00.000Z"
-    }
-  }
-  ```
+- **Auth**: Required (verified email) — body: `{ "booking_id": number }`
 
 ### `POST /api/messages/send`
-- **Auth**: Required
-- **Description**: Send a message in a conversation
+- **Auth**: Required (verified email)
 - **Request Body**:
   ```json
   {
-    "conversation_id": "number (required, positive integer)",
-    "content": "string (required, 1-5000 chars)",
-    "attachments": "array (optional, array of objects)"
-  }
-  ```
-- **Response** (Status: 201):
-  ```json
-  {
-    "success": true,
-    "message": "Message sent successfully",
-    "data": {
-      "id": 1,
-      "conversation_id": 1,
-      "sender_id": 1,
-      "content": "Hello, I have a question about the lesson",
-      "read_at": null,
-      "created_at": "2026-01-01T00:00:00.000Z"
-    }
-  }
-  ```
-
-### `PUT /api/messages/:id/read`
-- **Auth**: Required
-- **Description**: Mark a message as read
-- **Response** (Status: 200):
-  ```json
-  {
-    "success": true,
-    "message": "Message marked as read",
-    "data": {
-      "id": 1,
-      "read_at": "2026-01-01T12:00:00.000Z"
-    }
+    "conversation_id": "number (required)",
+    "message_text": "string (required, 1-5000 chars)"
   }
   ```
 

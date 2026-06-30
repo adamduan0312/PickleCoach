@@ -65,7 +65,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"email\": \"adamduan0312@gmail.com\",\n  \"password\": \"Adam03122003\"\n}"
+							"raw": "{\n  \"email\": \"admin.testflow@picklecoach.example.org\",\n  \"password\": \"Test1234!Ab\"\n}"
 						},
 						"url": {
 							"raw": "{{api_url}}/auth/login",
@@ -77,7 +77,7 @@
 								"login"
 							]
 						},
-						"description": "Roles: Any (no auth). Login and receive JWT token."
+						"description": "Roles: Any (no auth). Login as **test-flow admin** (`npm run seed:test-flows`). Saves JWT to auth_token."
 					},
 					"response": [],
 					"event": [
@@ -982,6 +982,14 @@
 								"exec": [
 									"pm.test(\"Status code is 200\", function () {",
 									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Response includes coach and court\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.data).to.be.an('object');",
+									"    pm.expect(jsonData.data).to.have.property('coach_id');",
+									"    pm.expect(jsonData.data).to.have.property('court_id');",
+									"    pm.expect(jsonData.data).to.have.property('name');",
 									"});"
 								],
 								"type": "text/javascript"
@@ -1100,7 +1108,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"full_name\": \"Adam Duan\",\n  \"email\": \"adamduan0312@gmail.com\",\n  \"password\": \"Adam03122003\",\n  \"role\": \"admin\",\n  \"phone\": \"+1234567890\",\n  \"timezone\": \"UTC\",\n  \"avatar_url\": \"\"\n}"
+							"raw": "{\n  \"full_name\": \"Test Admin\",\n  \"email\": \"{{auth_email}}\",\n  \"password\": \"Test1234!Ab\",\n  \"role\": \"admin\",\n  \"phone\": \"+1234567890\",\n  \"timezone\": \"America/New_York\",\n  \"avatar_url\": \"\"\n}"
 						},
 						"url": {
 							"raw": "{{api_url}}/auth/register",
@@ -1112,7 +1120,7 @@
 								"register"
 							]
 						},
-						"description": "Roles: Any (no auth). Register a new user account. Optional: avatar_url (valid URL, max 255 chars)."
+						"description": "Roles: Any (no auth). Register a **new student** (unique email per send via pre-request). Password `Test1234!Ab` meets MVP rules."
 					},
 					"response": [],
 					"event": [
@@ -1121,9 +1129,10 @@
 							"script": {
 								"type": "text/javascript",
 								"exec": [
+									"pm.collectionVariables.set(\"register_role\", \"admin\");",
+									"pm.environment.set(\"register_role\", \"admin\");",
 									"const unique = Date.now().toString(36) + Math.floor(Math.random() * 10000).toString();",
-									"const role = pm.collectionVariables.get(\"auth_role\") || \"student\";",
-									"const email = `${role}+${unique}@example.com`;",
+									"const email = \"admin+\" + unique + \"@example.com\";",
 									"pm.collectionVariables.set(\"auth_email\", email);",
 									"pm.environment.set(\"auth_email\", email);"
 								]
@@ -1636,7 +1645,7 @@
 								}
 							]
 						},
-						"description": "Roles: Any (no auth). **No lat/lng, no page/limit** = all courts in `data` (capped server-side). **page** and/or **limit** = paginated list (`pagination`). **lat** + **lng** (+ optional **radius**) = nearby search; results ordered **closest first** (lazy OSM import if empty)."
+						"description": "Roles: Any (no auth). **Public directory only** \u2014 results are **`is_private: false`** courts only (private courts are not discoverable here; use coach court endpoints). **No lat/lng, no page/limit** = all matching courts in `data` (capped server-side). **page** and/or **limit** = paginated list (`pagination`). **lat** + **lng** (+ optional **radius**) = nearby search; results ordered **closest first** (lazy OSM import if empty)."
 					},
 					"response": [],
 					"event": [
@@ -1685,7 +1694,7 @@
 								}
 							]
 						},
-						"description": "Roles: Any (no auth). Get court details by ID."
+						"description": "Roles: Any (no auth). **Public directory only** \u2014 **`404`** for private courts or missing/deleted ids (same message; does not reveal private existence). Use **`GET /api/coaches/:id/courts`** to see where a coach teaches (includes private)."
 					},
 					"response": [],
 					"event": [
@@ -1781,7 +1790,13 @@
 					"name": "31. Get Lesson By ID",
 					"request": {
 						"method": "GET",
-						"header": [],
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"description": "Required to load **your** inactive lessons by id (owner/admin). Deleted lessons always **404** here."
+							}
+						],
 						"url": {
 							"raw": "{{api_url}}/lessons/:id",
 							"host": [
@@ -1798,7 +1813,7 @@
 								}
 							]
 						},
-						"description": "Roles: Any (no auth). Get lesson by ID."
+						"description": "Roles: Any for **active** lessons (no auth). **Inactive** returns **404** unless you send the **coach owner** or **admin** Bearer token. **Deleted** always **404** (same `Lesson not found`)."
 					},
 					"response": [],
 					"event": [
@@ -2044,7 +2059,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"reason\": \"schedule_conflict\",\n  \"reason_notes\": \"Schedule conflict - need to reschedule\"\n}"
+							"raw": "{\n  \"reason\": \"schedule_conflict\",\n  \"reason_notes\": \"Need a different time \u2014 will book another slot\"\n}"
 						},
 						"url": {
 							"raw": "{{api_url}}/admin/bookings/:id/cancel",
@@ -2064,7 +2079,7 @@
 								}
 							]
 						},
-						"description": "Roles: Admin only. Same as POST /api/bookings/:id/cancel: only pending or confirmed bookings (pre-lesson). Same cancellation/refund/void-PI behavior; cancelled_by is admin. Body: reason (required) + optional reason_notes. Post-lesson bookings (e.g. awaiting_verification, disputed, student_no_show) are rejected \u2014 use dispute resolution, POST /api/admin/bookings/:id/refund, or other documented admin actions."
+						"description": "Roles: Admin only. Same as POST /api/bookings/:id/cancel: only pending or confirmed bookings (pre-lesson). Same cancellation/refund/void-PI behavior; cancelled_by is admin. Notifies the other party. Body: reason (required) + optional reason_notes. Excused reasons: weather, emergency, sickness; unexcused: travel_delay, schedule_conflict, forgot, other. Post-lesson bookings (e.g. awaiting_verification, disputed, student_no_show) are rejected \u2014 use dispute resolution, POST /api/admin/bookings/:id/refund, or other documented admin actions."
 					},
 					"response": [],
 					"event": [
@@ -2542,7 +2557,7 @@
 		},
 		{
 			"name": "2 \u2013 Flow: Coach",
-			"description": "All coach endpoints in user-flow order. Run in sequence: Health \u2192 Register/Login \u2192 Profile \u2192 **GET /coaches/me/reliability** \u2192 Coach profile \u2192 Courts \u2192 Availability \u2192 Stripe Connect \u2192 Lessons \u2192 Bookings \u2192 Payments \u2192 Reviews \u2192 Messages \u2192 Disputes \u2192 Notifications \u2192 Auth extras. See backend/POSTMAN_TESTING_GUIDE.md.\n\nBooking MVP: student uses POST /bookings; coach uses PUT .../accept or PUT .../decline only for pending requests (coach on that booking only).",
+			"description": "All coach endpoints in user-flow order. Run in sequence: Health \u2192 Register/Login \u2192 Profile \u2192 **GET /coaches/me/reliability** \u2192 Coach profile \u2192 Courts \u2192 Availability \u2192 Stripe Connect \u2192 Lessons \u2192 Bookings \u2192 Payments \u2192 Reviews \u2192 Messages \u2192 Disputes \u2192 Notifications \u2192 Auth extras. See backend/POSTMAN_TESTING_GUIDE.md.\n\nBooking MVP: student uses POST /booking-intents → authorize → POST /bookings/confirm; coach uses PUT .../accept or PUT .../decline only for pending requests (coach on that booking only). Schedule changes: cancel + book again (no reschedule API). Accept/decline/cancel notify the other party.",
 			"item": [
 				{
 					"name": "1. Health Check",
@@ -2599,7 +2614,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"full_name\": \"Coach One\",\n  \"email\": \"coach1@example.com\",\n  \"password\": \"Password123xx\",\n  \"role\": \"coach\",\n  \"phone\": \"+1234567890\",\n  \"timezone\": \"UTC\",\n  \"avatar_url\": \"\"\n}"
+							"raw": "{\n  \"full_name\": \"Test Coach\",\n  \"email\": \"{{auth_email}}\",\n  \"password\": \"Test1234!Ab\",\n  \"role\": \"coach\",\n  \"phone\": \"+1234567890\",\n  \"timezone\": \"America/New_York\",\n  \"avatar_url\": \"\"\n}"
 						},
 						"url": {
 							"raw": "{{api_url}}/auth/register",
@@ -2611,7 +2626,7 @@
 								"register"
 							]
 						},
-						"description": "Roles: Any (no auth). Register a new user account. Optional: avatar_url (valid URL, max 255 chars)."
+						"description": "Roles: Any (no auth). Register a **new student** (unique email per send via pre-request). Password `Test1234!Ab` meets MVP rules."
 					},
 					"response": [],
 					"event": [
@@ -2620,9 +2635,10 @@
 							"script": {
 								"type": "text/javascript",
 								"exec": [
+									"pm.collectionVariables.set(\"register_role\", \"coach\");",
+									"pm.environment.set(\"register_role\", \"coach\");",
 									"const unique = Date.now().toString(36) + Math.floor(Math.random() * 10000).toString();",
-									"const role = pm.collectionVariables.get(\"auth_role\") || \"student\";",
-									"const email = `${role}+${unique}@example.com`;",
+									"const email = \"coach+\" + unique + \"@example.com\";",
 									"pm.collectionVariables.set(\"auth_email\", email);",
 									"pm.environment.set(\"auth_email\", email);"
 								]
@@ -2685,7 +2701,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"email\": \"coach1@example.com\",\n  \"password\": \"Password123xx\"\n}"
+							"raw": "{\n  \"email\": \"coach.testflow@picklecoach.example.org\",\n  \"password\": \"Test1234!Ab\"\n}"
 						},
 						"url": {
 							"raw": "{{api_url}}/auth/login",
@@ -2697,7 +2713,7 @@
 								"login"
 							]
 						},
-						"description": "Roles: Any (no auth). Login and receive JWT token."
+						"description": "Roles: Any (no auth). Login as **test-flow admin** (`npm run seed:test-flows`). Saves JWT to auth_token."
 					},
 					"response": [],
 					"event": [
@@ -3519,7 +3535,7 @@
 								}
 							]
 						},
-						"description": "Roles: Any (no auth). **No lat/lng, no page/limit** = all courts in `data` (capped server-side). **page** and/or **limit** = paginated list (`pagination`). **lat** + **lng** (+ optional **radius**) = nearby search; results ordered **closest first** (lazy OSM import if empty)."
+						"description": "Roles: Any (no auth). **Public directory only** \u2014 results are **`is_private: false`** courts only (private courts are not discoverable here; use coach court endpoints). **No lat/lng, no page/limit** = all matching courts in `data` (capped server-side). **page** and/or **limit** = paginated list (`pagination`). **lat** + **lng** (+ optional **radius**) = nearby search; results ordered **closest first** (lazy OSM import if empty)."
 					},
 					"response": [],
 					"event": [
@@ -3568,7 +3584,7 @@
 								}
 							]
 						},
-						"description": "Roles: Any (no auth). Get court details by ID."
+						"description": "Roles: Any (no auth). **Public directory only** \u2014 **`404`** for private courts or missing/deleted ids (same message; does not reveal private existence). Use **`GET /api/coaches/:id/courts`** to see where a coach teaches (includes private)."
 					},
 					"response": [],
 					"event": [
@@ -3607,7 +3623,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"name\": \"Central Park Pickleball Court\",\n  \"address\": \"123 Main St\",\n  \"latitude\": 40.7128,\n  \"longitude\": -74.0060,\n  \"is_private\": false,\n  \"notes\": \"Outdoor court with 4 courts available\"\n}"
+							"raw": "{\n  \"name\": \"Central Park Pickleball Court\",\n  \"address\": \"123 Main St\",\n  \"latitude\": 40.7128,\n  \"longitude\": -74.0060,\n  \"is_private\": false\n}"
 						},
 						"url": {
 							"raw": "{{api_url}}/courts",
@@ -3618,7 +3634,7 @@
 								"courts"
 							]
 						},
-						"description": "Roles: Coach. Create a new court location (coach is auto-linked)."
+						"description": "Roles: Coach. Create a new court location (**court fields only** \u2014 do not send `coach_notes` or `notes`; use Add Court to Coach for coach_notes). **Auto-link:** `coachCourt` in response has id/coach_id/court_id/timestamps only. **Distance rule:** if you already have courts, the new one must be within 100 miles of one of them."
 					},
 					"response": [],
 					"event": [
@@ -3634,9 +3650,20 @@
 									"    var jsonData = pm.response.json();",
 									"    pm.expect(jsonData.success).to.be.true;",
 									"    ",
-									"    // Save court ID",
-									"    if (jsonData.data && jsonData.data.id) {",
+									"    if (jsonData.data && jsonData.data.court && jsonData.data.court.id) {",
+									"        pm.environment.set(\"court_id\", jsonData.data.court.id);",
+									"    } else if (jsonData.data && jsonData.data.id) {",
 									"        pm.environment.set(\"court_id\", jsonData.data.id);",
+									"    }",
+									"});",
+									"",
+									"pm.test(\"Coach auto-linked to new court\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    if (jsonData.data && jsonData.data.coachCourt) {",
+									"        pm.expect(jsonData.data.coachCourt.court_id).to.eql(jsonData.data.court.id);",
+									"        if (jsonData.data.coachCourt.id) {",
+									"            pm.environment.set(\"coach_court_link_id\", jsonData.data.coachCourt.id);",
+									"        }",
 									"    }",
 									"});"
 								],
@@ -3646,50 +3673,7 @@
 					]
 				},
 				{
-					"name": "21. Delete Court",
-					"request": {
-						"method": "DELETE",
-						"header": [
-							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
-							}
-						],
-						"url": {
-							"raw": "{{api_url}}/courts/:id",
-							"host": [
-								"{{api_url}}"
-							],
-							"path": [
-								"courts",
-								":id"
-							],
-							"variable": [
-								{
-									"key": "id",
-									"value": "{{court_id}}"
-								}
-							]
-						},
-						"description": "Roles: Admin (any court), Coach (only courts they created). Soft delete a court; no longer appears in search or GET."
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Status code is 200 or 403\", function () {",
-									"    pm.expect([200, 403]).to.include(pm.response.code);",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "22. Add Court to Coach",
+					"name": "21. Add Court to Coach",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -3704,7 +3688,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"court_id\": {{court_id}},\n  \"rate_modifier\": 1.0,\n  \"preferred\": true,\n  \"notes\": \"My preferred court\"\n}"
+							"raw": "{\n  \"court_id\": {{court_id}},\n  \"coach_notes\": \"Linked from directory\"\n}"
 						},
 						"url": {
 							"raw": "{{api_url}}/coaches/me/courts",
@@ -3717,7 +3701,7 @@
 								"courts"
 							]
 						},
-						"description": "Roles: Coach. Link an existing court to my courts. Create courts with POST /api/courts first (coaches auto-linked when they create). Body: court_id (required), optional rate_modifier, preferred, notes. For admin fix use DELETE /api/admin/coaches/:coachId/courts/:courtId."
+						"description": "Roles: Coach. Link an **existing** court from the directory (not one you just created \u2014 POST /api/courts auto-links). Body: court_id (required), optional coach_notes. For admin fix use DELETE /api/admin/coaches/:coachId/courts/:courtId."
 					},
 					"response": [],
 					"event": [
@@ -3740,7 +3724,7 @@
 					]
 				},
 				{
-					"name": "23. List My Courts",
+					"name": "22. List My Courts",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -3789,6 +3773,9 @@
 									"    pm.expect(jsonData.success).to.be.true;",
 									"    pm.expect(jsonData).to.have.property('data');",
 									"    pm.expect(jsonData.data).to.be.an('array');",
+									"    if (jsonData.data.length > 0 && jsonData.data[0].court_id) {",
+									"        pm.environment.set(\"court_id\", jsonData.data[0].court_id);",
+									"    }",
 									"});"
 								],
 								"type": "text/javascript"
@@ -3797,7 +3784,7 @@
 					]
 				},
 				{
-					"name": "24. Get My Lessons",
+					"name": "23. Get My Lessons",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -3856,7 +3843,7 @@
 					]
 				},
 				{
-					"name": "25. Remove Court from Coach",
+					"name": "24. Remove Court from Coach",
 					"request": {
 						"method": "DELETE",
 						"header": [
@@ -3866,7 +3853,7 @@
 							}
 						],
 						"url": {
-							"raw": "{{api_url}}/coaches/me/courts/:id",
+							"raw": "{{api_url}}/coaches/me/courts/{{court_id}}",
 							"host": [
 								"{{api_url}}"
 							],
@@ -3874,17 +3861,10 @@
 								"coaches",
 								"me",
 								"courts",
-								":id"
-							],
-							"variable": [
-								{
-									"key": "id",
-									"value": "1",
-									"description": "Coach court link id from GET /api/coaches/me/courts (data[].id)"
-								}
+								"{{court_id}}"
 							]
 						},
-						"description": "Roles: Coach. Unlink a court from my courts. :id is the coach_court_location id from List My Courts (data[].id). For admin fix use DELETE /api/admin/coaches/:coachId/courts/:courtId."
+						"description": "Roles: Coach. Unlink from this court only (`coach_court_locations` row for your user + `courtId`). Does **not** delete the global court or other coaches' links. Use `court_locations.id` \u2014 same as `court_id` / `data[].court.id` from List My Courts. For admin global delete use `DELETE /api/courts/:id` (admin only); admin unlink another coach: `DELETE /api/admin/coaches/:coachId/courts/:courtId`."
 					},
 					"response": [],
 					"event": [
@@ -3896,9 +3876,12 @@
 									"    pm.response.to.have.status(200);",
 									"});",
 									"",
-									"pm.test(\"Court removed\", function () {",
+									"pm.test(\"Response names removed court\", function () {",
 									"    var jsonData = pm.response.json();",
 									"    pm.expect(jsonData.success).to.be.true;",
+									"    pm.expect(jsonData.data).to.be.an('object');",
+									"    pm.expect(jsonData.data).to.have.property('court_id');",
+									"    pm.expect(jsonData.data).to.have.property('name');",
 									"});"
 								],
 								"type": "text/javascript"
@@ -3907,7 +3890,7 @@
 					]
 				},
 				{
-					"name": "26. Initiate Stripe Connect Onboarding",
+					"name": "25. Initiate Stripe Connect Onboarding",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -3960,7 +3943,7 @@
 					]
 				},
 				{
-					"name": "27. Get Stripe Connect Status",
+					"name": "26. Get Stripe Connect Status",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -4004,7 +3987,7 @@
 					]
 				},
 				{
-					"name": "28. Get All Lessons (Filter by coach_id)",
+					"name": "27. Get All Lessons (Filter by coach_id)",
 					"request": {
 						"method": "GET",
 						"header": [],
@@ -4073,10 +4056,16 @@
 					]
 				},
 				{
-					"name": "29. Get Lesson By ID",
+					"name": "28. Get Lesson By ID",
 					"request": {
 						"method": "GET",
-						"header": [],
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"description": "Required to load **your** inactive lessons by id (owner/admin). Deleted lessons always **404** here."
+							}
+						],
 						"url": {
 							"raw": "{{api_url}}/lessons/:id",
 							"host": [
@@ -4093,7 +4082,7 @@
 								}
 							]
 						},
-						"description": "Roles: Any (no auth). Get lesson by ID."
+						"description": "Roles: Any for **active** lessons (no auth). **Inactive** returns **404** unless you send the **coach owner** or **admin** Bearer token. **Deleted** always **404** (same `Lesson not found`)."
 					},
 					"response": [],
 					"event": [
@@ -4117,7 +4106,7 @@
 					]
 				},
 				{
-					"name": "30. Create Lesson",
+					"name": "29. Create Lesson",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -4171,7 +4160,7 @@
 					]
 				},
 				{
-					"name": "31. Update Lesson",
+					"name": "30. Update Lesson",
 					"request": {
 						"method": "PUT",
 						"header": [
@@ -4227,7 +4216,7 @@
 					]
 				},
 				{
-					"name": "32. Delete Lesson",
+					"name": "31. Delete Lesson",
 					"request": {
 						"method": "DELETE",
 						"header": [
@@ -4275,7 +4264,7 @@
 					]
 				},
 				{
-					"name": "33. Get Coach Bookings",
+					"name": "32. Get Coach Bookings",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -4330,7 +4319,7 @@
 					]
 				},
 				{
-					"name": "34. Get Booking By ID",
+					"name": "33. Get Booking By ID",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -4379,7 +4368,7 @@
 					]
 				},
 				{
-					"name": "35. Accept Booking",
+					"name": "34. Accept Booking",
 					"request": {
 						"method": "PUT",
 						"header": [
@@ -4413,7 +4402,7 @@
 								}
 							]
 						},
-						"description": "MVP \u2014 POST /bookings/:id/accept. Roles: Coach only (booking coach_id = you). Confirms pending booking."
+						"description": "MVP \u2014 PUT /bookings/:id/accept. Roles: Coach only (booking coach_id = you). Confirms pending booking and captures payment when applicable. Notifies student (in-app + email when SendGrid is configured)."
 					},
 					"response": [],
 					"event": [
@@ -4436,7 +4425,7 @@
 					]
 				},
 				{
-					"name": "36. Decline Booking",
+					"name": "35. Decline Booking",
 					"request": {
 						"method": "PUT",
 						"header": [
@@ -4451,7 +4440,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"message_to_student\": \"This time no longer works for me\u2014please choose another slot.\",\n  \"decline_reason_code\": \"availability_wrong\"\n}"
+							"raw": "{\n  \"message_to_student\": \"This time no longer works for me\u2014please choose another slot.\",\n  \"decline_reason_code\": \"availability_conflict\"\n}"
 						},
 						"url": {
 							"raw": "{{api_url}}/bookings/:id/decline",
@@ -4470,7 +4459,7 @@
 								}
 							]
 						},
-						"description": "MVP \u2014 POST /bookings/:id/decline. Roles: Coach only. Declines pending booking; student not charged."
+						"description": "MVP \u2014 PUT /bookings/:id/decline. Roles: Coach only. Declines pending booking; student not charged. Notifies student (in-app + email when SendGrid is configured)."
 					},
 					"response": [],
 					"event": [
@@ -4493,7 +4482,7 @@
 					]
 				},
 				{
-					"name": "37. Cancel Booking",
+					"name": "36. Cancel Booking",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -4508,7 +4497,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"reason\": \"schedule_conflict\",\n  \"reason_notes\": \"Schedule conflict - need to reschedule\"\n}"
+							"raw": "{\n  \"reason\": \"schedule_conflict\",\n  \"reason_notes\": \"Need a different time \u2014 will book another slot\"\n}"
 						},
 						"url": {
 							"raw": "{{api_url}}/bookings/:id/cancel",
@@ -4527,7 +4516,7 @@
 								}
 							]
 						},
-						"description": "Roles: Student, Coach, Admin. Cancel a booking (triggers refund if applicable)."
+						"description": "Roles: Student, Coach, Admin. Cancel a pending or confirmed booking (pre-lesson). Triggers refund/cancellation rules and notifies the other party (in-app + email when SendGrid is configured). **Schedule changes:** cancel, then POST /api/bookings for a new slot. Reasons \u2014 excused (no reliability): weather, emergency, sickness; unexcused: travel_delay, schedule_conflict, forgot, other."
 					},
 					"response": [],
 					"event": [
@@ -4550,7 +4539,7 @@
 					]
 				},
 				{
-					"name": "38. Complete Booking",
+					"name": "37. Complete Booking",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -4607,7 +4596,7 @@
 					]
 				},
 				{
-					"name": "39. Mark Student No-Show",
+					"name": "38. Mark Student No-Show",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -4664,106 +4653,7 @@
 					]
 				},
 				{
-					"name": "40. Request Reschedule",
-					"request": {
-						"method": "POST",
-						"header": [
-							{
-								"key": "Content-Type",
-								"value": "application/json"
-							},
-							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
-							}
-						],
-						"body": {
-							"mode": "raw",
-							"raw": "{\n  \"new_scheduled_at\": \"2026-02-02T14:00:00Z\",\n  \"reason\": \"schedule_conflict\",\n  \"reason_notes\": \"Need to reschedule due to conflict\",\n  \"paid_reschedule\": false\n}"
-						},
-						"url": {
-							"raw": "{{api_url}}/bookings/:id/reschedule",
-							"host": [
-								"{{api_url}}"
-							],
-							"path": [
-								"bookings",
-								":id",
-								"reschedule"
-							],
-							"variable": [
-								{
-									"key": "id",
-									"value": "{{booking_id}}"
-								}
-							]
-						},
-						"description": "Roles: Student, Coach, Admin. Request a reschedule for a booking. Both student and coach can call this. Body: new_scheduled_at, reason (required), reason_notes (optional), paid_reschedule (optional)."
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Status code is 201\", function () {",
-									"    pm.response.to.have.status(201);",
-									"});",
-									"",
-									"pm.test(\"Reschedule requested\", function () {",
-									"    var jsonData = pm.response.json();",
-									"    pm.expect(jsonData.success).to.be.true;",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "41. Get Reschedule History",
-					"request": {
-						"method": "GET",
-						"header": [
-							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
-							}
-						],
-						"url": {
-							"raw": "{{api_url}}/reschedules",
-							"host": [
-								"{{api_url}}"
-							],
-							"path": [
-								"reschedules"
-							]
-						},
-						"description": "Get reschedule history for authenticated user"
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Status code is 200\", function () {",
-									"    pm.response.to.have.status(200);",
-									"});",
-									"",
-									"pm.test(\"Returns array of reschedules\", function () {",
-									"    var jsonData = pm.response.json();",
-									"    pm.expect(jsonData).to.have.property('data');",
-									"    pm.expect(jsonData.data).to.be.an('array');",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "42. Get My Payments",
+					"name": "39. Get My Payments",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -4817,7 +4707,7 @@
 					]
 				},
 				{
-					"name": "43. Get Payment By ID",
+					"name": "40. Get Payment By ID",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -4865,7 +4755,7 @@
 					]
 				},
 				{
-					"name": "44. Get All Reviews",
+					"name": "41. Get All Reviews",
 					"request": {
 						"method": "GET",
 						"header": [],
@@ -4914,7 +4804,7 @@
 					]
 				},
 				{
-					"name": "45. Create Review",
+					"name": "42. Create Review",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -4964,7 +4854,7 @@
 					]
 				},
 				{
-					"name": "46. Update Review",
+					"name": "43. Update Review",
 					"request": {
 						"method": "PUT",
 						"header": [
@@ -5020,7 +4910,7 @@
 					]
 				},
 				{
-					"name": "47. Delete Review",
+					"name": "44. Delete Review",
 					"request": {
 						"method": "DELETE",
 						"header": [
@@ -5068,7 +4958,7 @@
 					]
 				},
 				{
-					"name": "48. Get Conversations",
+					"name": "45. Get Conversations",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -5123,7 +5013,7 @@
 					]
 				},
 				{
-					"name": "49. Create Conversation",
+					"name": "46. Create Conversation",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -5150,7 +5040,7 @@
 								"conversations"
 							]
 						},
-						"description": "Create a new conversation for a booking"
+						"description": "Create or fetch the single conversation for a booking. Requires confirmed/unlocked messaging (409 when locked). Participant only (403 for others)."
 					},
 					"response": [],
 					"event": [
@@ -5178,7 +5068,7 @@
 					]
 				},
 				{
-					"name": "50. Get Conversation By ID",
+					"name": "47. Get Conversation By ID",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -5239,7 +5129,7 @@
 					]
 				},
 				{
-					"name": "51. Send Message",
+					"name": "48. Send Message",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -5254,7 +5144,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"conversation_id\": \"{{conversation_id}}\",\n  \"content\": \"Hello, I have a question about the lesson\",\n  \"attachments\": []\n}"
+							"raw": "{\n  \"conversation_id\": \"{{conversation_id}}\",\n  \"message_text\": \"Hello, I have a question about the lesson\"\n}"
 						},
 						"url": {
 							"raw": "{{api_url}}/messages/send",
@@ -5281,7 +5171,7 @@
 									"pm.test(\"Message sent\", function () {",
 									"    var jsonData = pm.response.json();",
 									"    pm.expect(jsonData.success).to.be.true;",
-									"    pm.expect(jsonData.data).to.have.property('content');",
+									"    pm.expect(jsonData.data).to.have.property('message_text');",
 									"});"
 								],
 								"type": "text/javascript"
@@ -5290,56 +5180,7 @@
 					]
 				},
 				{
-					"name": "52. Mark Message As Read",
-					"request": {
-						"method": "PUT",
-						"header": [
-							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
-							}
-						],
-						"url": {
-							"raw": "{{api_url}}/messages/:id/read",
-							"host": [
-								"{{api_url}}"
-							],
-							"path": [
-								"messages",
-								":id",
-								"read"
-							],
-							"variable": [
-								{
-									"key": "id",
-									"value": "1"
-								}
-							]
-						},
-						"description": "Roles: Student, Coach. Mark a message as read."
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Status code is 200\", function () {",
-									"    pm.response.to.have.status(200);",
-									"});",
-									"",
-									"pm.test(\"Message marked as read\", function () {",
-									"    var jsonData = pm.response.json();",
-									"    pm.expect(jsonData.success).to.be.true;",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "53. Get All Disputes",
+					"name": "49. Get All Disputes",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -5393,7 +5234,7 @@
 					]
 				},
 				{
-					"name": "54. Get Dispute By ID",
+					"name": "50. Get Dispute By ID",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -5441,7 +5282,7 @@
 					]
 				},
 				{
-					"name": "55. Create Dispute",
+					"name": "51. Create Dispute",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -5490,7 +5331,7 @@
 					]
 				},
 				{
-					"name": "56. Get My Notifications",
+					"name": "52. Get My Notifications",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -5544,7 +5385,7 @@
 					]
 				},
 				{
-					"name": "57. Mark Notification As Read",
+					"name": "53. Mark Notification As Read",
 					"request": {
 						"method": "PUT",
 						"header": [
@@ -5593,7 +5434,7 @@
 					]
 				},
 				{
-					"name": "58. Forgot Password",
+					"name": "54. Forgot Password",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -5639,7 +5480,7 @@
 					]
 				},
 				{
-					"name": "59. Reset Password",
+					"name": "55. Reset Password",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -5685,7 +5526,7 @@
 					]
 				},
 				{
-					"name": "60. Logout",
+					"name": "56. Logout",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -5726,7 +5567,7 @@
 					]
 				},
 				{
-					"name": "61. Delete My Account",
+					"name": "57. Delete My Account",
 					"request": {
 						"method": "DELETE",
 						"header": [
@@ -5766,7 +5607,7 @@
 		},
 		{
 			"name": "3 \u2013 Flow: Student",
-			"description": "All student endpoints in user-flow order. Run in sequence: Health \u2192 Register/Login \u2192 Profile \u2192 **GET /students/me/reliability** \u2192 Search coaches (each result includes **reliability** score) \u2192 Open coach (GET /coaches/:id, includes **reliability**) \u2192 Optional GET /coaches/:id/reliability \u2192 Get coach courts \u2192 Check availability \u2192 Create Booking \u2192 Bookings \u2192 Payments \u2192 Reviews \u2192 Messages \u2192 Disputes \u2192 Notifications \u2192 Auth extras. See backend/POSTMAN_TESTING_GUIDE.md.\n\nBooking MVP: POST /bookings creates a pending request; the coach accepts or declines with PUT .../accept | PUT .../decline.",
+			"description": "All student endpoints in user-flow order. Run in sequence: Health \u2192 Register/Login \u2192 Profile \u2192 **GET /students/me/reliability** \u2192 Search coaches (each result includes **reliability** score) \u2192 Open coach (GET /coaches/:id, includes **reliability**) \u2192 Optional GET /coaches/:id/reliability \u2192 Get coach courts \u2192 Check availability \u2192 Create Booking \u2192 Bookings \u2192 Payments \u2192 Reviews \u2192 Messages \u2192 Disputes \u2192 Notifications \u2192 Auth extras. See backend/POSTMAN_TESTING_GUIDE.md.\n\nBooking MVP: POST /booking-intents → Stripe authorization → POST /bookings/confirm creates a pending request; the coach accepts or declines with PUT .../accept | PUT .../decline. To change time: cancel this booking, then book again via intent + confirm.",
 			"item": [
 				{
 					"name": "1. Health Check",
@@ -5823,7 +5664,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"full_name\": \"Student One\",\n  \"email\": \"student1@example.com\",\n  \"password\": \"Password123xx\",\n  \"role\": \"student\",\n  \"phone\": \"+1234567890\",\n  \"timezone\": \"UTC\",\n  \"avatar_url\": \"\"\n}"
+							"raw": "{\n  \"full_name\": \"Test Student\",\n  \"email\": \"{{auth_email}}\",\n  \"password\": \"Test1234!Ab\",\n  \"role\": \"student\",\n  \"phone\": \"+1234567890\",\n  \"timezone\": \"America/New_York\",\n  \"avatar_url\": \"\"\n}"
 						},
 						"url": {
 							"raw": "{{api_url}}/auth/register",
@@ -5835,7 +5676,7 @@
 								"register"
 							]
 						},
-						"description": "Roles: Any (no auth). Register a new user account. Optional: avatar_url (valid URL, max 255 chars)."
+						"description": "Roles: Any (no auth). Register a **new student** (unique email per send via pre-request). Password `Test1234!Ab` meets MVP rules."
 					},
 					"response": [],
 					"event": [
@@ -5844,9 +5685,10 @@
 							"script": {
 								"type": "text/javascript",
 								"exec": [
+									"pm.collectionVariables.set(\"register_role\", \"student\");",
+									"pm.environment.set(\"register_role\", \"student\");",
 									"const unique = Date.now().toString(36) + Math.floor(Math.random() * 10000).toString();",
-									"const role = pm.collectionVariables.get(\"auth_role\") || \"student\";",
-									"const email = `${role}+${unique}@example.com`;",
+									"const email = \"student+\" + unique + \"@example.com\";",
 									"pm.collectionVariables.set(\"auth_email\", email);",
 									"pm.environment.set(\"auth_email\", email);"
 								]
@@ -5909,7 +5751,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"email\": \"student1@example.com\",\n  \"password\": \"Password123xx\"\n}"
+							"raw": "{\n  \"email\": \"student.testflow@picklecoach.example.org\",\n  \"password\": \"Test1234!Ab\"\n}"
 						},
 						"url": {
 							"raw": "{{api_url}}/auth/login",
@@ -5921,7 +5763,7 @@
 								"login"
 							]
 						},
-						"description": "Roles: Any (no auth). Login and receive JWT token."
+						"description": "Roles: Any (no auth). Login as **test-flow admin** (`npm run seed:test-flows`). Saves JWT to auth_token."
 					},
 					"response": [],
 					"event": [
@@ -6761,7 +6603,7 @@
 								}
 							]
 						},
-						"description": "Roles: Any (no auth). **No lat/lng, no page/limit** = all courts in `data` (capped server-side). **page** and/or **limit** = paginated list (`pagination`). **lat** + **lng** (+ optional **radius**) = nearby search; results ordered **closest first** (lazy OSM import if empty)."
+						"description": "Roles: Any (no auth). **Public directory only** \u2014 results are **`is_private: false`** courts only (private courts are not discoverable here; use coach court endpoints). **No lat/lng, no page/limit** = all matching courts in `data` (capped server-side). **page** and/or **limit** = paginated list (`pagination`). **lat** + **lng** (+ optional **radius**) = nearby search; results ordered **closest first** (lazy OSM import if empty)."
 					},
 					"response": [],
 					"event": [
@@ -6810,7 +6652,7 @@
 								}
 							]
 						},
-						"description": "Roles: Any (no auth). Get court details by ID."
+						"description": "Roles: Any (no auth). **Public directory only** \u2014 **`404`** for private courts or missing/deleted ids (same message; does not reveal private existence). Use **`GET /api/coaches/:id/courts`** to see where a coach teaches (includes private)."
 					},
 					"response": [],
 					"event": [
@@ -6906,7 +6748,13 @@
 					"name": "19. Get Lesson By ID",
 					"request": {
 						"method": "GET",
-						"header": [],
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"description": "Required to load **your** inactive lessons by id (owner/admin). Deleted lessons always **404** here."
+							}
+						],
 						"url": {
 							"raw": "{{api_url}}/lessons/:id",
 							"host": [
@@ -6923,7 +6771,7 @@
 								}
 							]
 						},
-						"description": "Roles: Any (no auth). Get lesson by ID."
+						"description": "Roles: Any for **active** lessons (no auth). **Inactive** returns **404** unless you send the **coach owner** or **admin** Bearer token. **Deleted** always **404** (same `Lesson not found`)."
 					},
 					"response": [],
 					"event": [
@@ -6947,7 +6795,7 @@
 					]
 				},
 				{
-					"name": "20. Create Booking",
+					"name": "20. Create Booking Intent",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -6965,15 +6813,15 @@
 							"raw": "{\n  \"lesson_id\": \"{{lesson_id}}\",\n  \"scheduled_at\": \"2026-02-01T10:00:00Z\",\n  \"duration_minutes\": 60,\n  \"player_ids\": [],\n  \"court_location_id\": \"{{court_id}}\",\n  \"payment_method\": \"stripe\"\n}"
 						},
 						"url": {
-							"raw": "{{api_url}}/bookings",
+							"raw": "{{api_url}}/booking-intents",
 							"host": [
 								"{{api_url}}"
 							],
 							"path": [
-								"bookings"
+								"booking-intents"
 							]
 						},
-						"description": "MVP \u2014 POST /bookings. Roles: Student (non-admin). Creates a pending booking; response `data.booking` plus payment client secret when Stripe is configured."
+						"description": "POST /booking-intents. Student only. PaymentIntent created; authorize with Stripe client, then Confirm Booking."
 					},
 					"response": [],
 					"event": [
@@ -6985,11 +6833,59 @@
 									"    pm.response.to.have.status(201);",
 									"});",
 									"",
-									"pm.test(\"Booking created\", function () {",
+									"pm.test(\"Intent created\", function () {",
 									"    var jsonData = pm.response.json();",
 									"    pm.expect(jsonData.success).to.be.true;",
-									"    ",
-									"    // Save booking ID",
+									"    pm.environment.set(\"payment_intent_id\", jsonData.data.payment_intent_id);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "20b. Confirm Booking",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"payment_intent_id\": \"{{payment_intent_id}}\"\n}"
+						},
+						"url": {
+							"raw": "{{api_url}}/bookings/confirm",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"bookings",
+								"confirm"
+							]
+						},
+						"description": "POST /bookings/confirm after Stripe authorization. Creates booking_id for coach accept/decline steps."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 201 or 200\", function () {",
+									"    pm.expect([200, 201]).to.include(pm.response.code);",
+									"});",
+									"",
+									"pm.test(\"Booking created\", function () {",
+									"    var jsonData = pm.response.json();",
 									"    if (jsonData.data && jsonData.data.booking && jsonData.data.booking.id) {",
 									"        pm.environment.set(\"booking_id\", jsonData.data.booking.id);",
 									"    }",
@@ -7119,7 +7015,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"reason\": \"schedule_conflict\",\n  \"reason_notes\": \"Schedule conflict - need to reschedule\"\n}"
+							"raw": "{\n  \"reason\": \"schedule_conflict\",\n  \"reason_notes\": \"Need a different time \u2014 will book another slot\"\n}"
 						},
 						"url": {
 							"raw": "{{api_url}}/bookings/:id/cancel",
@@ -7138,7 +7034,7 @@
 								}
 							]
 						},
-						"description": "Roles: Student, Coach, Admin. Cancel a booking (triggers refund if applicable)."
+						"description": "Roles: Student, Coach, Admin. Cancel a pending or confirmed booking (pre-lesson). Triggers refund/cancellation rules and notifies the other party (in-app + email when SendGrid is configured). **Schedule changes:** cancel, then POST /api/bookings for a new slot. Reasons \u2014 excused (no reliability): weather, emergency, sickness; unexcused: travel_delay, schedule_conflict, forgot, other."
 					},
 					"response": [],
 					"event": [
@@ -7161,106 +7057,7 @@
 					]
 				},
 				{
-					"name": "24. Request Reschedule",
-					"request": {
-						"method": "POST",
-						"header": [
-							{
-								"key": "Content-Type",
-								"value": "application/json"
-							},
-							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
-							}
-						],
-						"body": {
-							"mode": "raw",
-							"raw": "{\n  \"new_scheduled_at\": \"2026-02-02T14:00:00Z\",\n  \"reason\": \"schedule_conflict\",\n  \"reason_notes\": \"Need to reschedule due to conflict\",\n  \"paid_reschedule\": false\n}"
-						},
-						"url": {
-							"raw": "{{api_url}}/bookings/:id/reschedule",
-							"host": [
-								"{{api_url}}"
-							],
-							"path": [
-								"bookings",
-								":id",
-								"reschedule"
-							],
-							"variable": [
-								{
-									"key": "id",
-									"value": "{{booking_id}}"
-								}
-							]
-						},
-						"description": "Roles: Student, Coach, Admin. Request a reschedule for a booking. Both student and coach can call this. Body: new_scheduled_at, reason (required), reason_notes (optional), paid_reschedule (optional)."
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Status code is 201\", function () {",
-									"    pm.response.to.have.status(201);",
-									"});",
-									"",
-									"pm.test(\"Reschedule requested\", function () {",
-									"    var jsonData = pm.response.json();",
-									"    pm.expect(jsonData.success).to.be.true;",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "25. Get Reschedule History",
-					"request": {
-						"method": "GET",
-						"header": [
-							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
-							}
-						],
-						"url": {
-							"raw": "{{api_url}}/reschedules",
-							"host": [
-								"{{api_url}}"
-							],
-							"path": [
-								"reschedules"
-							]
-						},
-						"description": "Get reschedule history for authenticated user"
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Status code is 200\", function () {",
-									"    pm.response.to.have.status(200);",
-									"});",
-									"",
-									"pm.test(\"Returns array of reschedules\", function () {",
-									"    var jsonData = pm.response.json();",
-									"    pm.expect(jsonData).to.have.property('data');",
-									"    pm.expect(jsonData.data).to.be.an('array');",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "26. Get My Payments",
+					"name": "24. Get My Payments",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -7314,7 +7111,7 @@
 					]
 				},
 				{
-					"name": "27. Get Payment By ID",
+					"name": "25. Get Payment By ID",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -7362,7 +7159,7 @@
 					]
 				},
 				{
-					"name": "28. Get All Reviews",
+					"name": "26. Get All Reviews",
 					"request": {
 						"method": "GET",
 						"header": [],
@@ -7411,7 +7208,7 @@
 					]
 				},
 				{
-					"name": "29. Create Review",
+					"name": "27. Create Review",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -7461,7 +7258,7 @@
 					]
 				},
 				{
-					"name": "30. Update Review",
+					"name": "28. Update Review",
 					"request": {
 						"method": "PUT",
 						"header": [
@@ -7517,7 +7314,7 @@
 					]
 				},
 				{
-					"name": "31. Delete Review",
+					"name": "29. Delete Review",
 					"request": {
 						"method": "DELETE",
 						"header": [
@@ -7565,7 +7362,7 @@
 					]
 				},
 				{
-					"name": "32. Get Conversations",
+					"name": "30. Get Conversations",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -7620,7 +7417,7 @@
 					]
 				},
 				{
-					"name": "33. Create Conversation",
+					"name": "31. Create Conversation",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -7647,7 +7444,7 @@
 								"conversations"
 							]
 						},
-						"description": "Create a new conversation for a booking"
+						"description": "Create or fetch the single conversation for a booking. Requires confirmed/unlocked messaging (409 when locked). Participant only (403 for others)."
 					},
 					"response": [],
 					"event": [
@@ -7675,7 +7472,7 @@
 					]
 				},
 				{
-					"name": "34. Get Conversation By ID",
+					"name": "32. Get Conversation By ID",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -7736,7 +7533,7 @@
 					]
 				},
 				{
-					"name": "35. Send Message",
+					"name": "33. Send Message",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -7751,7 +7548,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"conversation_id\": \"{{conversation_id}}\",\n  \"content\": \"Hello, I have a question about the lesson\",\n  \"attachments\": []\n}"
+							"raw": "{\n  \"conversation_id\": \"{{conversation_id}}\",\n  \"message_text\": \"Hello, I have a question about the lesson\"\n}"
 						},
 						"url": {
 							"raw": "{{api_url}}/messages/send",
@@ -7778,7 +7575,7 @@
 									"pm.test(\"Message sent\", function () {",
 									"    var jsonData = pm.response.json();",
 									"    pm.expect(jsonData.success).to.be.true;",
-									"    pm.expect(jsonData.data).to.have.property('content');",
+									"    pm.expect(jsonData.data).to.have.property('message_text');",
 									"});"
 								],
 								"type": "text/javascript"
@@ -7787,56 +7584,7 @@
 					]
 				},
 				{
-					"name": "36. Mark Message As Read",
-					"request": {
-						"method": "PUT",
-						"header": [
-							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
-							}
-						],
-						"url": {
-							"raw": "{{api_url}}/messages/:id/read",
-							"host": [
-								"{{api_url}}"
-							],
-							"path": [
-								"messages",
-								":id",
-								"read"
-							],
-							"variable": [
-								{
-									"key": "id",
-									"value": "1"
-								}
-							]
-						},
-						"description": "Roles: Student, Coach. Mark a message as read."
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Status code is 200\", function () {",
-									"    pm.response.to.have.status(200);",
-									"});",
-									"",
-									"pm.test(\"Message marked as read\", function () {",
-									"    var jsonData = pm.response.json();",
-									"    pm.expect(jsonData.success).to.be.true;",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "37. Get All Disputes",
+					"name": "34. Get All Disputes",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -7890,7 +7638,7 @@
 					]
 				},
 				{
-					"name": "38. Get Dispute By ID",
+					"name": "35. Get Dispute By ID",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -7938,7 +7686,7 @@
 					]
 				},
 				{
-					"name": "39. Create Dispute",
+					"name": "36. Create Dispute",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -7987,7 +7735,7 @@
 					]
 				},
 				{
-					"name": "40. Get My Notifications",
+					"name": "37. Get My Notifications",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -8041,7 +7789,7 @@
 					]
 				},
 				{
-					"name": "41. Mark Notification As Read",
+					"name": "38. Mark Notification As Read",
 					"request": {
 						"method": "PUT",
 						"header": [
@@ -8090,7 +7838,7 @@
 					]
 				},
 				{
-					"name": "42. Forgot Password",
+					"name": "39. Forgot Password",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -8136,7 +7884,7 @@
 					]
 				},
 				{
-					"name": "43. Reset Password",
+					"name": "40. Reset Password",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -8182,7 +7930,7 @@
 					]
 				},
 				{
-					"name": "44. Logout",
+					"name": "41. Logout",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -8223,7 +7971,7 @@
 					]
 				},
 				{
-					"name": "45. Delete My Account",
+					"name": "42. Delete My Account",
 					"request": {
 						"method": "DELETE",
 						"header": [
@@ -8344,8 +8092,43 @@
 			"type": "string"
 		},
 		{
+			"key": "admin_email",
+			"value": "admin.testflow@picklecoach.example.org",
+			"type": "string"
+		},
+		{
+			"key": "admin_password",
+			"value": "Test1234!Ab",
+			"type": "string"
+		},
+		{
+			"key": "coach_email",
+			"value": "coach.testflow@picklecoach.example.org",
+			"type": "string"
+		},
+		{
+			"key": "coach_password",
+			"value": "Test1234!Ab",
+			"type": "string"
+		},
+		{
+			"key": "student_email",
+			"value": "student.testflow@picklecoach.example.org",
+			"type": "string"
+		},
+		{
+			"key": "student_password",
+			"value": "Test1234!Ab",
+			"type": "string"
+		},
+		{
+			"key": "register_role",
+			"value": "student",
+			"type": "string"
+		},
+		{
 			"key": "auth_password",
-			"value": "SecurePassword123!",
+			"value": "Test1234!Ab",
 			"type": "string"
 		},
 		{
