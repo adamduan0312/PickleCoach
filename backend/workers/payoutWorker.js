@@ -1,22 +1,22 @@
-import { Booking, Payment, User, CoachProfile } from '../models/index.js';
+import { Booking, Payment, User, CoachProfile, CancellationHistory, PaymentAction } from '../models/index.js';
 import { Op } from 'sequelize';
 import { logger } from '../config/logger.js';
 import * as paymentService from '../services/paymentService.js';
 import { ACTIVE_DISPUTE_STATUSES } from '../services/disputeStateMachine.js';
+import {
+  isLateCancelRetainedRevenueEligibleFromHistory,
+  isLateCancelRefundSettledForPayout,
+} from '../utils/lateCancelPayout.js';
 
 /**
- * Process payouts for completed bookings
+ * Process payouts for completed bookings and student late-cancels with retained revenue.
  * Runs every 10 minutes
  *
- * Selection: only payments with booking.status in completed / awaiting_verification / student_no_show
- * (and payout gating). student_no_show is payable because coach reserved and delivered attendance.
+ * Selection: payments with booking.status in completed / awaiting_verification / student_no_show,
+ * or cancelled with a student late-cancel penalty on cancellation_history (coach compensation).
  */
 export const processPayouts = async () => {
   try {
-    // Find payments that are:
-    // 1. In 'held' escrow status
-    // 2. Associated with completed bookings
-    // 3. No open disputes
     const payments = await Payment.findAll({
       where: {
         escrow_status: 'held',
@@ -27,7 +27,9 @@ export const processPayouts = async () => {
           model: Booking,
           as: 'booking',
           where: {
-            status: { [Op.in]: ['completed', 'awaiting_verification', 'student_no_show'] },
+            status: {
+              [Op.in]: ['completed', 'awaiting_verification', 'student_no_show', 'cancelled'],
+            },
             payout_status: { [Op.in]: ['none', 'pending', 'awaiting_verification'] },
           },
           include: [
@@ -53,6 +55,35 @@ export const processPayouts = async () => {
 
     for (const payment of payments) {
       try {
+        if (payment.booking.status === 'cancelled') {
+          const history = await CancellationHistory.findOne({
+            where: { booking_id: payment.booking_id },
+            order: [['id', 'DESC']],
+          });
+          if (!isLateCancelRetainedRevenueEligibleFromHistory(history)) {
+            continue;
+          }
+          const pendingCancelRefund = await PaymentAction.findOne({
+            where: {
+              booking_id: payment.booking_id,
+              action_type: 'booking_cancel_refund',
+              status: 'pending',
+            },
+          });
+          if (pendingCancelRefund) {
+            logger.info(`Skipping late-cancel payout for payment ${payment.id} - cancel refund action pending`);
+            continue;
+          }
+          if (payment.refund_status === 'pending') {
+            logger.info(`Skipping late-cancel payout for payment ${payment.id} - refund pending`);
+            continue;
+          }
+          if (!isLateCancelRefundSettledForPayout(payment)) {
+            logger.info(`Skipping late-cancel payout for payment ${payment.id} - partial refund not settled yet`);
+            continue;
+          }
+        }
+
         // Check for open disputes
         const disputes = await payment.booking.getDisputes({
           where: {

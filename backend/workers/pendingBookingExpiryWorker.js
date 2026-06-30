@@ -3,12 +3,21 @@ import { Op } from 'sequelize';
 import { logger } from '../config/logger.js';
 import * as paymentService from '../services/paymentService.js';
 
-const expiryHours = () =>
-  Math.max(1, Number.parseInt(process.env.PENDING_BOOKING_EXPIRY_HOURS || '24', 10));
+/** Coach must accept/decline within this window (authorize-first: booking is already authorized). */
+const expiryHours = () => {
+  const raw =
+    process.env.COACH_ACCEPTANCE_TIMEOUT_HOURS ??
+    process.env.PENDING_BOOKING_EXPIRY_HOURS ??
+    '24';
+  return Math.max(1, Number.parseInt(raw, 10));
+};
 
 /**
- * Cancel pending bookings that are older than PENDING_BOOKING_EXPIRY_HOURS (default 24) with no coach accept/decline.
- * Frees the slot and voids uncaptured PaymentIntents.
+ * Cancel authorized pending bookings when the coach does not accept or decline in time.
+ * Frees the slot and voids uncaptured PaymentIntents (authorized manual-capture holds).
+ *
+ * This is a **coach-action timeout**, not a payment-authorization timeout — bookings only
+ * exist after authorization succeeds in the authorize-first flow.
  */
 export const expireStalePendingBookings = async () => {
   const hours = expiryHours();

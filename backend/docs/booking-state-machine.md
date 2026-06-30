@@ -18,7 +18,7 @@ Attendance **source sets** and outcome validation still live in `utils/bookingAt
 
 | Status | Meaning (short) |
 |--------|-----------------|
-| `pending` | Student requested; coach has not accepted |
+| `pending` | Student requested; coach has not accepted (payment already authorized in authorize-first flow) |
 | `confirmed` | Coach accepted (or payment-captured equivalent) |
 | `awaiting_verification` | Lesson end passed; coach has not marked outcome |
 | `completed` | Lesson treated as completed |
@@ -36,8 +36,9 @@ Attendance **source sets** and outcome validation still live in `utils/bookingAt
                     ▼                                          │
 pending ──accept──► confirmed ──lesson end──► awaiting_verification
    │                    │                              │         │
-   │ decline/expiry/   │ complete / auto-complete     │         │
-   │ pre-lesson cancel │ student_no_show (coach)     │         │
+   │ decline/          │ complete / auto-complete     │         │
+   │ coach timeout/    │ student_no_show (coach)     │         │
+   │ pre-lesson cancel │                              │         │
    ▼                    ▼                              ▼         │
 cancelled          completed ◄────────────────────────┘         │
    │                    ▲                                        │
@@ -57,7 +58,7 @@ Examples (non-exhaustive; see code for full graph):
 | `payment_capture_webhook` | `paymentService.handlePaymentCapture` (pending → confirmed) |
 | `coach_accept_without_payment` | `bookingController.acceptBooking` (no payment row) |
 | `coach_decline` | `cancelPaymentOnCoachDecline`, coach decline without payment |
-| `system_expire_pending` | `expirePendingBookingNoCoachResponse` |
+| `system_expire_pending` | Coach acceptance timeout worker (authorized pending, no accept/decline in time) |
 | `pre_lesson_cancel` | `cancelBooking` transaction |
 | `worker_lesson_end_to_awaiting_verification` | `autoConfirmWorker` bulk update |
 | `mark_completed` | coach complete, auto-complete worker |

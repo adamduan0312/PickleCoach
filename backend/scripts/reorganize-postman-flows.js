@@ -218,7 +218,6 @@ const COACH_ORDER = [
   ['Courts', 'List/Search Courts'],
   ['Courts', 'Get Court By ID'],
   ['Courts', 'Create Court'],
-  ['Courts', 'Delete Court'],
   ['Coaches', 'Add Court to Coach'],
   ['Coaches', 'List My Courts'],
   ['Coaches', 'Get My Lessons'],
@@ -237,8 +236,6 @@ const COACH_ORDER = [
   ['Bookings', 'Cancel Booking'],
   ['Bookings', 'Complete Booking'],
   ['Bookings', 'Mark Student No-Show'],
-  ['Bookings', 'Request Reschedule'],
-  ['Reschedules', 'Get Reschedule History'],
   ['Payments', 'Get My Payments'],
   ['Payments', 'Get Payment By ID'],
   ['Reviews', 'Get All Reviews'],
@@ -249,7 +246,6 @@ const COACH_ORDER = [
   ['Messages', 'Create Conversation'],
   ['Messages', 'Get Conversation By ID'],
   ['Messages', 'Send Message'],
-  ['Messages', 'Mark Message As Read'],
   ['Disputes', 'Get All Disputes'],
   ['Disputes', 'Get Dispute By ID'],
   ['Disputes', 'Create Dispute'],
@@ -288,8 +284,6 @@ const STUDENT_ORDER = [
   ['Bookings', 'Get Booking By ID'],
   // Students do not get coach/admin booking override endpoints in flow ordering
   ['Bookings', 'Cancel Booking'],
-  ['Bookings', 'Request Reschedule'],
-  ['Reschedules', 'Get Reschedule History'],
   ['Payments', 'Get My Payments'],
   ['Payments', 'Get Payment By ID'],
   ['Reviews', 'Get All Reviews'],
@@ -300,7 +294,6 @@ const STUDENT_ORDER = [
   ['Messages', 'Create Conversation'],
   ['Messages', 'Get Conversation By ID'],
   ['Messages', 'Send Message'],
-  ['Messages', 'Mark Message As Read'],
   ['Disputes', 'Get All Disputes'],
   ['Disputes', 'Get Dispute By ID'],
   ['Disputes', 'Create Dispute'],
@@ -322,36 +315,79 @@ const adminFolder = buildFlowFolder(
 
 const coachFolder = buildFlowFolder(
   '2 – Flow: Coach',
-  'All coach endpoints in user-flow order. Run in sequence: Health → Register/Login → Profile → **GET /coaches/me/reliability** → Coach profile → Courts → Availability → Stripe Connect → Lessons → Bookings → Payments → Reviews → Messages → Disputes → Notifications → Auth extras. See backend/POSTMAN_TESTING_GUIDE.md.\n\nBooking MVP: student uses POST /bookings; coach uses PUT .../accept or PUT .../decline only for pending requests (coach on that booking only).',
+  'All coach endpoints in user-flow order. Run in sequence: Health → Register/Login → Profile → **GET /coaches/me/reliability** → Coach profile → Courts → Availability → Stripe Connect → Lessons → Bookings → Payments → Reviews → Messages → Disputes → Notifications → Auth extras. See backend/POSTMAN_TESTING_GUIDE.md.\n\nBooking MVP: student uses POST /bookings; coach uses PUT .../accept or PUT .../decline only for pending requests (coach on that booking only). Schedule changes: cancel + book again (no reschedule API). Accept/decline/cancel notify the other party.',
   COACH_ORDER
 );
 
 const studentFolder = buildFlowFolder(
   '3 – Flow: Student',
-  'All student endpoints in user-flow order. Run in sequence: Health → Register/Login → Profile → **GET /students/me/reliability** → Search coaches (each result includes **reliability** score) → Open coach (GET /coaches/:id, includes **reliability**) → Optional GET /coaches/:id/reliability → Get coach courts → Check availability → Create Booking → Bookings → Payments → Reviews → Messages → Disputes → Notifications → Auth extras. See backend/POSTMAN_TESTING_GUIDE.md.\n\nBooking MVP: POST /bookings creates a pending request; the coach accepts or declines with PUT .../accept | PUT .../decline.',
+  'All student endpoints in user-flow order. Run in sequence: Health → Register/Login → Profile → **GET /students/me/reliability** → Search coaches (each result includes **reliability** score) → Open coach (GET /coaches/:id, includes **reliability**) → Optional GET /coaches/:id/reliability → Get coach courts → Check availability → Create Booking → Bookings → Payments → Reviews → Messages → Disputes → Notifications → Auth extras. See backend/POSTMAN_TESTING_GUIDE.md.\n\nBooking MVP: POST /bookings creates a pending request; the coach accepts or declines with PUT .../accept | PUT .../decline. To change time: cancel this booking, then POST /bookings again.',
   STUDENT_ORDER
 );
+
+const REGISTER_PASSWORD = 'Test1234!Ab';
+
+const DEV_LOGINS = {
+  admin: {
+    email: 'admin.testflow@picklecoach.example.org',
+    password: REGISTER_PASSWORD,
+    fullName: 'Test Admin',
+  },
+  coach: {
+    email: 'coach.testflow@picklecoach.example.org',
+    password: REGISTER_PASSWORD,
+    fullName: 'Test Coach',
+  },
+  student: {
+    email: 'student.testflow@picklecoach.example.org',
+    password: REGISTER_PASSWORD,
+    fullName: 'Test Student',
+  },
+};
+
+function registerBodyRaw(role) {
+  const cfg = DEV_LOGINS[role] || DEV_LOGINS.student;
+  return `{\n  "full_name": "${cfg.fullName}",\n  "email": "{{auth_email}}",\n  "password": "${REGISTER_PASSWORD}",\n  "role": "${role}",\n  "phone": "+1234567890",\n  "timezone": "America/New_York",\n  "avatar_url": ""\n}`;
+}
+
+const REGISTER_BODY_RAW = registerBodyRaw('student');
+
+function registerPrerequestExec(role) {
+  return [
+    `pm.collectionVariables.set("register_role", "${role}");`,
+    `pm.environment.set("register_role", "${role}");`,
+    'const unique = Date.now().toString(36) + Math.floor(Math.random() * 10000).toString();',
+    `const email = "${role}+" + unique + "@example.com";`,
+    'pm.collectionVariables.set("auth_email", email);',
+    'pm.environment.set("auth_email", email);',
+  ];
+}
 
 function stripFlowPrefix(name) {
   return name.replace(/^\d+[a-zA-Z]?\.\s+/, '');
 }
 
-function applySeededLoginExample(flowFolder, email, password) {
+function applySeededLoginExample(flowFolder, role) {
+  const cfg = DEV_LOGINS[role];
   const loginReq = flowFolder.item.find((it) => /\. Login$/.test(it.name));
-  if (!loginReq?.request) return;
+  if (!loginReq?.request || !cfg) return;
   loginReq.request.body = {
     mode: 'raw',
-    raw: JSON.stringify({ email, password }, null, 2),
+    raw: `{\n  "email": "${cfg.email}",\n  "password": "${cfg.password}"\n}`,
   };
 }
 
-function applySeededRegisterExample(flowFolder, payload) {
+function applySeededRegisterExample(flowFolder, role) {
   const registerReq = flowFolder.item.find((it) => /\. Register$/.test(it.name));
   if (!registerReq?.request) return;
   registerReq.request.body = {
     mode: 'raw',
-    raw: JSON.stringify(payload, null, 2),
+    raw: registerBodyRaw(role),
   };
+  const pre = registerReq.event?.find((e) => e.listen === 'prerequest');
+  if (pre?.script) {
+    pre.script.exec = registerPrerequestExec(role);
+  }
 }
 
 /**
@@ -368,9 +404,9 @@ function applyDescriptionOverride(flowFolder, baseName, description) {
   item.request.description = description;
 }
 
-applySeededLoginExample(adminFolder, 'adamduan0312@gmail.com', 'Adam03122003');
-applySeededLoginExample(coachFolder, 'coach1@example.com', 'Password123xx');
-applySeededLoginExample(studentFolder, 'student1@example.com', 'Password123xx');
+applySeededLoginExample(adminFolder, 'admin');
+applySeededLoginExample(coachFolder, 'coach');
+applySeededLoginExample(studentFolder, 'student');
 
 // Per-flow `Get Profile` descriptions. The single source request in the
 // `Authentication` folder holds the general description; each flow tweaks it
@@ -396,33 +432,9 @@ applyDescriptionOverride(
   'Get Coach Availability (Admin)',
   '**Admin flow** — uses the **same** By Type request as **Coaches → Get Coach Availability** (`GET /api/coaches/:id/availability`). Use an **admin** JWT to inspect a coach’s weekly windows (support). Effective roles must include **student** or **admin**; coach-only tokens get **403**. Path `:id` = coach user id (`{{coach_id}}`). Edit the canonical request under **Coaches** only so Student and Admin flows stay in sync.',
 );
-applySeededRegisterExample(adminFolder, {
-  full_name: 'Adam Duan',
-  email: 'adamduan0312@gmail.com',
-  password: 'Adam03122003',
-  role: 'admin',
-  phone: '+1234567890',
-  timezone: 'UTC',
-  avatar_url: '',
-});
-applySeededRegisterExample(coachFolder, {
-  full_name: 'Coach One',
-  email: 'coach1@example.com',
-  password: 'Password123xx',
-  role: 'coach',
-  phone: '+1234567890',
-  timezone: 'UTC',
-  avatar_url: '',
-});
-applySeededRegisterExample(studentFolder, {
-  full_name: 'Student One',
-  email: 'student1@example.com',
-  password: 'Password123xx',
-  role: 'student',
-  phone: '+1234567890',
-  timezone: 'UTC',
-  avatar_url: '',
-});
+applySeededRegisterExample(adminFolder, 'admin');
+applySeededRegisterExample(coachFolder, 'coach');
+applySeededRegisterExample(studentFolder, 'student');
 
 const referenceFolder = buildReferenceFolder();
 

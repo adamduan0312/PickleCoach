@@ -1,5 +1,4 @@
-import { Booking, Payment, RescheduleHistory, User, UserRole, UserReliability } from '../models/index.js';
-import { Op } from 'sequelize';
+import { User, UserRole, UserReliability } from '../models/index.js';
 import { successResponse, errorResponse } from '../utils/response.js';
 import { serializeCoachReliabilityDetail } from '../utils/userDto.js';
 import { logger } from '../config/logger.js';
@@ -11,6 +10,7 @@ import {
   persistenceRowToCanonical,
 } from '../services/reliabilityEngine.js';
 import { getEffectiveRolesForUserRecord } from '../utils/roleGovernance.js';
+import { COACH_LATE_STUDENT_CANCEL_HELP_TEXT } from '../utils/lateCancelPayout.js';
 
 /**
  * Coach reliability payload (penalized-impact metrics + score).
@@ -24,7 +24,7 @@ const getCoachPenalizedReliabilityPayload = async (coachId) => {
 };
 
 /**
- * Student self / admin: full student reliability row (same `paid_reschedules` persistence as coach).
+ * Student self / admin: full student reliability row.
  */
 const getStudentPenalizedReliabilityPayload = async (studentId) => {
   const reliability = await UserReliability.findOne({ where: { user_id: studentId, role: 'student' } });
@@ -106,122 +106,18 @@ export const getCoachReliabilityForMe = async (req, res) => {
     const payload = await getCoachPenalizedReliabilityPayload(coachId);
     return successResponse(
       res,
-      { reliability: serializeCoachReliabilityDetail(payload) },
+      {
+        reliability: serializeCoachReliabilityDetail(payload),
+        policy_notes: {
+          late_student_cancel: COACH_LATE_STUDENT_CANCEL_HELP_TEXT,
+        },
+      },
       'Coach reliability retrieved successfully',
     );
   } catch (error) {
     logger.error('Get coach self reliability error:', error);
     return errorResponse(res, 'Failed to retrieve coach reliability', 500);
   }
-};
-
-const roundMoney = (n) => Math.round(n * 100) / 100;
-
-const emptyRescheduleBlock = () => ({
-  total: 0,
-  penalized: 0,
-  non_penalized: 0,
-  paid: {
-    count: 0,
-    with_captured_payment: {
-      total: 0,
-      penalized: 0,
-      non_penalized: 0,
-      amounts: { penalized: 0, non_penalized: 0, total: 0 },
-    },
-  },
-});
-
-/**
- * @param {number[]} bookingIds
- * @param {'coach'|'student'} requestedBy
- */
-const buildAdminRescheduleBlock = async (bookingIds, requestedBy) => {
-  if (bookingIds.length === 0) return emptyRescheduleBlock();
-
-  const totalReschedules = await RescheduleHistory.count({
-    where: {
-      booking_id: { [Op.in]: bookingIds },
-      requested_by: requestedBy,
-    },
-  });
-
-  const penalized = await RescheduleHistory.count({
-    where: {
-      booking_id: { [Op.in]: bookingIds },
-      requested_by: requestedBy,
-      affects_reliability: true,
-    },
-  });
-
-  const paidRescheduleCountAll = await RescheduleHistory.count({
-    where: {
-      booking_id: { [Op.in]: bookingIds },
-      requested_by: requestedBy,
-      paid_reschedule: true,
-    },
-  });
-
-  const nonPenalized = await RescheduleHistory.count({
-    where: {
-      booking_id: { [Op.in]: bookingIds },
-      requested_by: requestedBy,
-      affects_reliability: false,
-    },
-  });
-
-  const paidRescheduleRecords = await RescheduleHistory.findAll({
-    where: {
-      booking_id: { [Op.in]: bookingIds },
-      requested_by: requestedBy,
-      paid_reschedule: true,
-    },
-    include: [{
-      model: Payment,
-      as: 'transaction',
-      attributes: ['total_charge_to_student'],
-      where: { payment_status: { [Op.in]: ['captured', 'partially_refunded'] } },
-      required: true,
-    }],
-    attributes: ['id', 'affects_reliability'],
-  });
-
-  let paidAmountPenalized = 0;
-  let paidAmountNonPenalized = 0;
-  let paidPenalizedCaptured = 0;
-  let paidNonPenalizedCaptured = 0;
-
-  for (const r of paidRescheduleRecords) {
-    const amount = parseFloat(r?.transaction?.total_charge_to_student ?? 0);
-    if (r.affects_reliability) {
-      paidPenalizedCaptured += 1;
-      paidAmountPenalized += amount;
-    } else {
-      paidNonPenalizedCaptured += 1;
-      paidAmountNonPenalized += amount;
-    }
-  }
-
-  const capturedTotal = paidRescheduleRecords.length;
-
-  return {
-    total: totalReschedules,
-    penalized,
-    non_penalized: nonPenalized,
-    paid: {
-      count: paidRescheduleCountAll,
-      with_captured_payment: {
-        total: capturedTotal,
-        penalized: paidPenalizedCaptured,
-        non_penalized: paidNonPenalizedCaptured,
-        amounts: {
-          penalized: roundMoney(paidAmountPenalized),
-          non_penalized: roundMoney(paidAmountNonPenalized),
-          total: roundMoney(paidAmountPenalized + paidAmountNonPenalized),
-        },
-      },
-    },
-  };
 };
 
 const round6 = (x) => Math.round(Number(x) * 1e6) / 1e6;
@@ -232,19 +128,13 @@ const penaltyTriplet = (stored, recentKey, decayedKey, totalKey) => ({
   total: Number(stored[totalKey]) || 0,
 });
 
-const buildAdminReliabilityPayload = (role, userId, stored, reschedulesBlock) => {
+const buildAdminReliabilityPayload = (role, userId, stored) => {
   const canonical = persistenceRowToCanonical(role, stored);
   const breakdown = calculatePenaltyBreakdown(role, canonical);
   const reconstructed = calculateReliabilityScoreFromPersistenceRow(role, stored);
   const persisted = Number(stored.reliability_score);
 
   const penalties = {
-    penalized_reschedules: penaltyTriplet(
-      stored,
-      'penalized_reschedules_recent',
-      'penalized_reschedules_decayed',
-      'penalized_reschedules_total',
-    ),
     late_cancels: penaltyTriplet(stored, 'late_cancels_recent', 'late_cancels_decayed', 'late_cancels_total'),
     late_arrival_penalties: penaltyTriplet(
       stored,
@@ -302,7 +192,6 @@ const buildAdminReliabilityPayload = (role, userId, stored, reschedulesBlock) =>
         (stored.score_source || 'computed') === 'computed' &&
         Math.abs((Number.isFinite(persisted) ? persisted : 0) - reconstructed) < 0.02,
     },
-    reschedules: reschedulesBlock,
     penalties,
     badges: stored.badges,
     legacy_aliases: attachLegacyReliabilityAliases(stored),
@@ -344,32 +233,12 @@ export const getUserReliabilityForAdmin = async (req, res) => {
       return errorResponse(res, 'Invalid role query (use coach or student)', 400);
     }
 
-    if (resolvedRole === 'coach') {
-      const reliabilityRow = await UserReliability.findOne({ where: { user_id: userId, role: 'coach' } });
-      const stored = reliabilityRow ? reliabilityRow.toJSON() : defaultCanonicalReliabilityRow(userId, 'coach');
+    const reliabilityRow = await UserReliability.findOne({ where: { user_id: userId, role: resolvedRole } });
+    const stored = reliabilityRow
+      ? reliabilityRow.toJSON()
+      : defaultCanonicalReliabilityRow(userId, resolvedRole);
 
-      const coachBookings = await Booking.findAll({
-        where: { coach_id: userId },
-        attributes: ['id'],
-      });
-      const coachBookingIds = coachBookings.map((b) => b.id);
-      const reschedulesBlock = await buildAdminRescheduleBlock(coachBookingIds, 'coach');
-
-      const payload = buildAdminReliabilityPayload('coach', userId, stored, reschedulesBlock);
-      return successResponse(res, { reliability: payload }, 'Reliability retrieved successfully');
-    }
-
-    const reliabilityRow = await UserReliability.findOne({ where: { user_id: userId, role: 'student' } });
-    const stored = reliabilityRow ? reliabilityRow.toJSON() : defaultCanonicalReliabilityRow(userId, 'student');
-
-    const studentBookings = await Booking.findAll({
-      where: { primary_student_id: userId },
-      attributes: ['id'],
-    });
-    const studentBookingIds = studentBookings.map((b) => b.id);
-    const reschedulesBlock = await buildAdminRescheduleBlock(studentBookingIds, 'student');
-
-    const payload = buildAdminReliabilityPayload('student', userId, stored, reschedulesBlock);
+    const payload = buildAdminReliabilityPayload(resolvedRole, userId, stored);
     return successResponse(res, { reliability: payload }, 'Reliability retrieved successfully');
   } catch (error) {
     logger.error('Admin get user reliability error:', error);

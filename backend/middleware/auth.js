@@ -9,50 +9,87 @@ function parseBearerToken(authorizationHeader) {
   return match ? match[1] : null;
 }
 
+/** Load user + effective roles from JWT; throws on invalid/revoked token or inactive user. */
+async function loadUserForRequest(token) {
+  const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
+  const user = await User.findByPk(decoded.userId, {
+    include: [{ model: UserRole, as: 'userRoles', attributes: ['role'] }],
+  });
+
+  if (!user) {
+    const err = new Error('Invalid or inactive user');
+    err.authStatus = 401;
+    err.authBody = { error: 'Invalid or inactive user' };
+    throw err;
+  }
+  if (user.deleted_at) {
+    const err = new Error('User deleted');
+    err.authStatus = 401;
+    err.authBody = {
+      error: 'This account has been deleted. Log in with a different account or ask an administrator to restore access.',
+    };
+    throw err;
+  }
+  if (!user.is_active) {
+    const err = new Error('User inactive');
+    err.authStatus = 401;
+    err.authBody = {
+      error: 'This account is inactive. Contact support if you need access restored.',
+    };
+    throw err;
+  }
+
+  const tokenVersionFromToken = decoded.tokenVersion ?? 0;
+  const currentTokenVersion = user.token_version ?? 0;
+  if (currentTokenVersion !== tokenVersionFromToken) {
+    const err = new Error('Token revoked');
+    err.authStatus = 401;
+    err.authBody = { error: 'Token has been revoked. Please log in again.' };
+    throw err;
+  }
+
+  const dbRoleAssignments = getDbRoleAssignments(user);
+  /** @type {string[]} ONLY source for `authorize()` and route-level permission checks on this request. */
+  const activePermissions = effectiveRolesFromGovernance(dbRoleAssignments, user);
+  user.dbRoleAssignments = dbRoleAssignments;
+  user.roles = activePermissions;
+  user.effectiveRoles = activePermissions;
+  return user;
+}
+
+function respondAuthError(res, error) {
+  if (error?.authStatus && error?.authBody) {
+    return res.status(error.authStatus).json(error.authBody);
+  }
+  return res.status(401).json({ error: 'Invalid token' });
+}
+
 export const authenticate = async (req, res, next) => {
+  const token = parseBearerToken(req.headers.authorization || '');
+
+  if (!token) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+
   try {
-    const token = parseBearerToken(req.headers.authorization || '');
-
-    if (!token) {
-      return res.status(401).json({ error: 'Authentication required' });
-    }
-
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
-    const user = await User.findByPk(decoded.userId, {
-      include: [{ model: UserRole, as: 'userRoles', attributes: ['role'] }],
-    });
-
-    if (!user) {
-      return res.status(401).json({ error: 'Invalid or inactive user' });
-    }
-    if (user.deleted_at) {
-      return res.status(401).json({
-        error: 'This account has been deleted. Log in with a different account or ask an administrator to restore access.',
-      });
-    }
-    if (!user.is_active) {
-      return res.status(401).json({
-        error: 'This account is inactive. Contact support if you need access restored.',
-      });
-    }
-
-    // Token versioning: ensure token has not been revoked
-    const tokenVersionFromToken = decoded.tokenVersion ?? 0;
-    const currentTokenVersion = user.token_version ?? 0;
-    if (currentTokenVersion !== tokenVersionFromToken) {
-      return res.status(401).json({ error: 'Token has been revoked. Please log in again.' });
-    }
-
-    req.user = user;
-    const dbRoleAssignments = getDbRoleAssignments(user);
-    /** @type {string[]} ONLY source for `authorize()` and route-level permission checks on this request. */
-    const activePermissions = effectiveRolesFromGovernance(dbRoleAssignments, user);
-    req.user.dbRoleAssignments = dbRoleAssignments;
-    req.user.roles = activePermissions;
-    req.user.effectiveRoles = activePermissions;
+    req.user = await loadUserForRequest(token);
     next();
   } catch (error) {
-    return res.status(401).json({ error: 'Invalid token' });
+    return respondAuthError(res, error);
+  }
+};
+
+/** Sets `req.user` when a valid Bearer token is present; continues anonymously when omitted. */
+export const optionalAuthenticate = async (req, res, next) => {
+  const token = parseBearerToken(req.headers.authorization || '');
+  if (!token) {
+    return next();
+  }
+  try {
+    req.user = await loadUserForRequest(token);
+    next();
+  } catch (error) {
+    return respondAuthError(res, error);
   }
 };
 

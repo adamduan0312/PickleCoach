@@ -24,7 +24,7 @@ export const RELIABILITY_SMOOTHING_K = parseEnvFloat('RELIABILITY_SMOOTHING_K', 
  * Bump when penalty weights, decay model, smoothing, or window semantics change.
  * Persisted on each `user_reliability` row so historical rows stay interpretable.
  */
-export const SCORE_FORMULA_VERSION = 2;
+export const SCORE_FORMULA_VERSION = 3;
 
 /** Decimal places for persisted fractional metrics (decayed weights, totals, baseline decay). */
 export const RELIABILITY_METRIC_DECIMAL_PLACES = 6;

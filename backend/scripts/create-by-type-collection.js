@@ -40,7 +40,6 @@ function pathToFolder(pathSegments) {
   if (first === 'lessons') return 'Lessons';
   if (first === 'bookings') return 'Bookings';
   if (first === 'payments') return 'Payments';
-  if (first === 'reschedules') return 'Reschedules';
   if (first === 'reviews') return 'Reviews';
   if (first === 'messages') return 'Messages';
   if (first === 'disputes') return 'Disputes';
@@ -59,7 +58,6 @@ const FOLDER_ORDER = [
   'Lessons',
   'Bookings',
   'Payments',
-  'Reschedules',
   'Reviews',
   'Messages',
   'Disputes',
@@ -73,7 +71,7 @@ const FOLDER_DESCRIPTIONS = {
   Authentication:
     'Auth endpoints. Register/Login = no auth; Profile/Add Role (self-service)/Delete = authenticated.',
   Bookings:
-    'MVP: POST /bookings (student) → POST .../accept and POST .../decline (assigned coach only). Below: list/detail and extended routes (complete, student-no-show, cancel, reschedule). Use the explicit student-no-show route.',
+    'MVP: POST /bookings (student) → POST .../accept and POST .../decline (assigned coach only). Below: list/detail and extended routes (complete, student-no-show, cancel). Use the explicit student-no-show route.',
   'Webhooks (Reference Only)':
     'Reference-only folder. Stripe (and other signed webhooks) cannot be tested from Postman with a hand-crafted body because the server verifies `Stripe-Signature` against the raw request bytes using `STRIPE_WEBHOOK_SECRET`. Use `stripe listen` or the Stripe Dashboard to trigger events.',
 };

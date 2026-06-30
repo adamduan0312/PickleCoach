@@ -24,9 +24,9 @@
  *   `releaseEscrow` still needs Stripe + Connect to actually pay the coach.
  *
  * Test users (all email_verified):
- *   Admin   admin.testflow@picklecoach.test    / Test1234!Ab
- *   Coach   coach.testflow@picklecoach.test    / Test1234!Ab
- *   Student student.testflow@picklecoach.test  / Test1234!Ab
+ *   Admin   admin.testflow@picklecoach.example.org    / Test1234!Ab
+ *   Coach   coach.testflow@picklecoach.example.org    / Test1234!Ab
+ *   Student student.testflow@picklecoach.example.org  / Test1234!Ab
  *
  * Run from `backend/`:
  *   npm run seed:test-flows
@@ -62,7 +62,6 @@ import {
   DisputeType,
   DisputeResolutionAction,
   CancellationHistory,
-  RescheduleHistory,
   Review,
   StudentFeedback,
   Conversation,
@@ -71,7 +70,8 @@ import {
   AuditLog,
 } from '../models/index.js';
 
-const TEST_EMAIL_DOMAIN = 'picklecoach.test';
+/** Joi-valid; not matched by demo seeder wipe (`%@example.com`). */
+const TEST_EMAIL_DOMAIN = 'picklecoach.example.org';
 const PASSWORD = 'Test1234!Ab';
 const PASSWORD_HASH_ROUNDS = 10;
 
@@ -121,7 +121,6 @@ async function wipe() {
   await Payout.destroy({ where: {} });
   await PaymentAction.destroy({ where: {} });
   await CancellationHistory.destroy({ where: {} });
-  await RescheduleHistory.destroy({ where: {} });
   await StudentFeedback.destroy({ where: {} });
   await Message.destroy({ where: {} });
   await Conversation.destroy({ where: {} });
@@ -209,7 +208,6 @@ async function createCoachStack(coach) {
     address: '1 Pickleball Lane, New York, NY',
     latitude: 40.7128,
     longitude: -74.006,
-    is_verified: true,
     is_private: false,
     source: 'manual',
     created_by_user_id: coach.id,
@@ -218,7 +216,6 @@ async function createCoachStack(coach) {
   await CoachCourtLocation.create({
     coach_id: coach.id,
     court_id: court.id,
-    preferred: true,
   });
 
   // Recurring weekday windows (no stored datetimes); bookings use coach timezone + weekday.
@@ -274,7 +271,8 @@ async function createBookings({ coach, student, lesson, court }) {
   const now = Date.now();
   const out = {};
 
-  // 1) Pending future booking — cancel without payment row at all
+  // 1) Legacy pending booking (authorized label, no Stripe PI) — cancel-only offline testing.
+  //    For accept/decline with authorize-first shape, run: npm run seed:booking-action-tests
   out.pending_future = await Booking.create({
     lesson_id: lesson.id,
     coach_id: coach.id,
@@ -286,9 +284,9 @@ async function createBookings({ coach, student, lesson, court }) {
     status: 'pending',
     payout_status: 'none',
     messaging_locked: true,
-    reschedule_deadline: new Date(now + 4 * dayMs),
     idempotency_key: idemKey('pending_future'),
   });
+  await createNoStripePayment(out.pending_future, { paymentStatus: 'authorized' });
 
   // 2) Confirmed future booking — cancel with payment row but no Stripe linkage
   out.confirmed_future = await Booking.create({
@@ -302,7 +300,6 @@ async function createBookings({ coach, student, lesson, court }) {
     status: 'confirmed',
     payout_status: 'none',
     messaging_locked: false,
-    reschedule_deadline: new Date(now + 6 * dayMs),
     idempotency_key: idemKey('confirmed_future'),
   });
   await createNoStripePayment(out.confirmed_future);
@@ -320,7 +317,6 @@ async function createBookings({ coach, student, lesson, court }) {
     status: 'confirmed',
     payout_status: 'none',
     messaging_locked: false,
-    reschedule_deadline: new Date(lateScheduled.getTime() - dayMs),
     idempotency_key: idemKey('confirmed_late_cancel'),
   });
   await createNoStripePayment(out.confirmed_late_cancel);
@@ -339,7 +335,6 @@ async function createBookings({ coach, student, lesson, court }) {
     status: 'awaiting_verification',
     payout_status: 'awaiting_verification',
     messaging_locked: false,
-    reschedule_deadline: new Date(sched4.getTime() - dayMs),
     idempotency_key: idemKey('awaiting_for_dispute'),
   });
   await createNoStripePayment(out.awaiting_for_dispute);
@@ -359,7 +354,6 @@ async function createBookings({ coach, student, lesson, court }) {
     status: 'confirmed',
     payout_status: 'none',
     messaging_locked: false,
-    reschedule_deadline: new Date(sched5.getTime() - dayMs),
     idempotency_key: idemKey('confirmed_for_student_no_show'),
   });
   await createNoStripePayment(out.confirmed_for_student_no_show);
@@ -380,7 +374,6 @@ async function createBookings({ coach, student, lesson, court }) {
     status: 'confirmed',
     payout_status: 'none',
     messaging_locked: false,
-    reschedule_deadline: new Date(sched6.getTime() - dayMs),
     idempotency_key: idemKey('confirmed_for_coach_no_show'),
   });
   await createNoStripePayment(out.confirmed_for_coach_no_show);
@@ -402,7 +395,6 @@ async function createBookings({ coach, student, lesson, court }) {
     status: 'completed',
     payout_status: 'pending',
     messaging_locked: false,
-    reschedule_deadline: new Date(sched7.getTime() - dayMs),
     idempotency_key: idemKey('completed_for_refund'),
   });
   await createNoStripePayment(out.completed_for_refund, { escrowStatus: 'held' });
@@ -423,7 +415,6 @@ async function createBookings({ coach, student, lesson, court }) {
     status: 'disputed',
     payout_status: 'none',
     messaging_locked: true,
-    reschedule_deadline: new Date(sched8.getTime() - dayMs),
     idempotency_key: idemKey('disputed_attendance'),
   });
   await createNoStripePayment(out.disputed_attendance);
@@ -443,7 +434,6 @@ async function createBookings({ coach, student, lesson, court }) {
     status: 'disputed',
     payout_status: 'none',
     messaging_locked: true,
-    reschedule_deadline: new Date(sched9.getTime() - dayMs),
     idempotency_key: idemKey('disputed_behavior'),
   });
   await createNoStripePayment(out.disputed_behavior);
@@ -514,6 +504,9 @@ function printEndpointPlaybook(summary) {
 
   console.log('\nEndpoint playbook (use one of the seeded bookings per scenario):');
   console.log(
+    'For PUT .../accept, PUT .../decline, and pending cancel with dev Stripe stubs, run:\n  npm run seed:booking-action-tests\n',
+  );
+  console.log(
     JSON.stringify(
       {
         cancel_booking: {
@@ -521,6 +514,7 @@ function printEndpointPlaybook(summary) {
           stripe_required: false,
           try_with: {
             student_pre_lesson: { booking_id: b.pending_future.id, body: { reason: 'schedule_conflict' } },
+            note: 'For pending cancel with PI void (authorize-first), use seed:booking-action-tests pending_for_cancel',
             student_full_refund: { booking_id: b.confirmed_future.id, body: { reason: 'sickness' } },
             student_late_cancel_50_50: {
               booking_id: b.confirmed_late_cancel.id,

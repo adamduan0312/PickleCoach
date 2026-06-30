@@ -40,7 +40,6 @@ Weights differ by role; see `reliabilityEngine.js` → `calculatePenaltyBreakdow
 `updateUserReliability` writes:
 
 - All `*_recent`, `*_decayed`, `*_total` penalty buckets used in scoring.
-- `paid_reschedules` is **informational** (paid + penalized + `affects_reliability` reschedules whose linked payment is **captured** or **partially_refunded**; persisted for both coach and student rows from the same query the API reads) and is **not** a scoring input.
 - `smoothing_k`, `decay_lambda`, `scoring_window_days`, `last_recomputed_at`, `score_version`, `score_source`.
 
 When `score_source === 'computed'`, `reliability_score` must equal `calculateReliabilityScoreFromPersistenceRow(role, row)` after the same fixed-precision rounding rules (see tests).
@@ -74,7 +73,7 @@ When `score_source === 'computed'`, `reliability_score` must equal `calculateRel
 
 ## Legacy API aliases
 
-`attachLegacyReliabilityAliases` adds older field names (`total_bookings`, `reschedules`, `late_cancels`, …) mapped from the canonical columns for backward-compatible JSON.
+`attachLegacyReliabilityAliases` adds older field names (`total_bookings`, `late_cancels`, …) mapped from the canonical columns for backward-compatible JSON.
 
 ## Operational note
 

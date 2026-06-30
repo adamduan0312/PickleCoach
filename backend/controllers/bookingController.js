@@ -6,7 +6,6 @@ import {
   UserRole,
   BookingPlayer,
   Payment,
-  RescheduleHistory,
   CancellationHistory,
   CourtLocation,
   CoachCourtLocation,
@@ -19,13 +18,14 @@ import { getPagination, getPagingData } from '../utils/pagination.js';
 import { Op } from 'sequelize';
 import { logAudit, createAuditLog } from '../utils/audit.js';
 import { affectsReliability, sanitizeResponse } from '../services/reliabilityPenaltyService.js';
+import { buildCancellationApiPayload } from '../utils/cancellationResponse.js';
+import * as bookingIntentService from '../services/bookingIntentService.js';
 import { updateUserReliability } from '../services/reliabilityService.js';
 import * as paymentService from '../services/paymentService.js';
 import * as stripeService from '../services/stripeService.js';
 import * as notificationService from '../services/notificationService.js';
 import { checkBookingAvailability } from '../services/bookingService.js';
 import { logger } from '../config/logger.js';
-import crypto from 'crypto';
 import {
   ADMIN_MARK_NO_SHOW_SOURCE_STATUSES,
   checkAttendanceFinalized,
@@ -33,6 +33,15 @@ import {
 import { applyBookingStatusTransition, BookingTransitionVia } from '../services/bookingStateMachine.js';
 import { ACTIVE_DISPUTE_STATUSES } from '../services/disputeStateMachine.js';
 import { getEffectiveRolesForUserRecord } from '../utils/roleGovernance.js';
+import { attachConversationSummaries, attachConversationSummaryToBookingJson } from '../utils/bookingConversationSummary.js';
+import {
+  shouldQueueLateCancelCoachPayout,
+  cancellationFinancialsForHistory,
+} from '../utils/lateCancelPayout.js';
+import {
+  assertPreLessonCancelAllowed,
+  assertBookingStatusAllowsPreLessonCancel,
+} from '../utils/bookingCancelEligibility.js';
 
 function respondIfBookingStateMachineError(res, error) {
   if (error?.statusCode === 400 && error?.code) {
@@ -41,51 +50,7 @@ function respondIfBookingStateMachineError(res, error) {
   return null;
 }
 
-/** In dev, return clear error detail; if Stripe API key error, clarify it's server-side STRIPE_SECRET_KEY. */
-function getCreateBookingErrorDetail(error, isDev) {
-  if (!isDev) return null;
-  const raw = error?.message || String(error);
-  const isStripeKeyError = /api key|Authorization header|STRIPE|Bearer YOUR_SECRET_KEY/i.test(raw);
-  if (isStripeKeyError) {
-    return {
-      detail: raw,
-      hint: 'This is Stripe\'s error. The "Authorization header" refers to the request this server makes to Stripe, not your request to this API. Set STRIPE_SECRET_KEY in .env.development (or your env file) so the server can authenticate to Stripe. Do not put the Stripe key in your own Authorization header.',
-    };
-  }
-  return { detail: raw };
-}
-
-const generateBookingIdempotencyKey = (studentId) =>
-  `booking_${studentId}_${Date.now()}_${crypto.randomUUID()}`;
-
 const MAX_LIST_ALL_BOOKINGS = 10000;
-
-const buildReplayBookingPayload = async (booking) => {
-  const latestPayment = await Payment.findOne({
-    where: { booking_id: booking.id },
-    order: [['created_at', 'DESC']],
-  });
-
-  let paymentIntentClientSecret = null;
-  if (latestPayment?.payment_intent_id) {
-    try {
-      const paymentIntent = await stripeService.getPaymentIntent(latestPayment.payment_intent_id);
-      paymentIntentClientSecret = paymentIntent?.client_secret ?? null;
-    } catch (piError) {
-      logger.warn('Failed to fetch PaymentIntent during idempotent replay', {
-        bookingId: booking.id,
-        paymentIntentId: latestPayment.payment_intent_id,
-        error: piError?.message || String(piError),
-      });
-    }
-  }
-
-  return {
-    booking: booking.get({ plain: true }),
-    payment_intent_client_secret: paymentIntentClientSecret,
-    payment_intent_id: latestPayment?.payment_intent_id ?? null,
-  };
-};
 
 export const getBookings = async (req, res) => {
   try {
@@ -127,10 +92,12 @@ export const getBookings = async (req, res) => {
     });
 
     if (!isPaginated) {
-      return successResponse(res, bookings.rows, 'Bookings retrieved successfully');
+      const data = await attachConversationSummaries(bookings.rows, req.user.id, roles);
+      return successResponse(res, data, 'Bookings retrieved successfully');
     }
 
     const response = getPagingData(bookings, page, queryLimit);
+    response.items = await attachConversationSummaries(response.items, req.user.id, roles);
     return paginatedResponse(res, response.items, response.pagination, 'Bookings retrieved successfully');
   } catch (error) {
     logger.error('Get bookings error:', error);
@@ -149,6 +116,30 @@ export const getCoachBookings = async (req, res) => {
     const where = { coach_id: req.user.id };
     if (status) where.status = status;
 
+    const latestAuthorizedPaymentExists = sequelize.literal(`EXISTS (
+      SELECT 1 FROM payments p
+      WHERE p.booking_id = bookings.id
+        AND p.payment_status = 'authorized'
+        AND p.id = (SELECT MAX(p2.id) FROM payments p2 WHERE p2.booking_id = bookings.id)
+    )`);
+
+    if (status === 'pending') {
+      where[Op.and] = [latestAuthorizedPaymentExists];
+    } else if (!status) {
+      where[Op.and] = [
+        sequelize.literal(`(
+          bookings.status != 'pending'
+          OR NOT EXISTS (SELECT 1 FROM payments p WHERE p.booking_id = bookings.id)
+          OR EXISTS (
+            SELECT 1 FROM payments p
+            WHERE p.booking_id = bookings.id
+              AND p.payment_status = 'authorized'
+              AND p.id = (SELECT MAX(p2.id) FROM payments p2 WHERE p2.booking_id = bookings.id)
+          )
+        )`),
+      ];
+    }
+
     const bookings = await Booking.findAndCountAll({
       where,
       include: [
@@ -163,10 +154,12 @@ export const getCoachBookings = async (req, res) => {
     });
 
     if (!isPaginated) {
-      return successResponse(res, bookings.rows, 'Coach bookings retrieved successfully');
+      const data = await attachConversationSummaries(bookings.rows, req.user.id, req.user.roles || []);
+      return successResponse(res, data, 'Coach bookings retrieved successfully');
     }
 
     const response = getPagingData(bookings, page, queryLimit);
+    response.items = await attachConversationSummaries(response.items, req.user.id, req.user.roles || []);
     return paginatedResponse(res, response.items, response.pagination, 'Coach bookings retrieved successfully');
   } catch (error) {
     logger.error('Get coach bookings error:', error);
@@ -185,12 +178,6 @@ export const getBookingById = async (req, res) => {
         { model: CourtLocation, as: 'courtLocation' },
         { model: BookingPlayer, as: 'players', include: [{ model: User, as: 'player', attributes: ['id', 'full_name'] }] },
         { model: Payment, as: 'payments' },
-        {
-          model: RescheduleHistory,
-          as: 'rescheduleHistory',
-          separate: true,
-          order: [['requested_at', 'DESC']],
-        },
         {
           model: CancellationHistory,
           as: 'cancellationHistory',
@@ -217,16 +204,19 @@ export const getBookingById = async (req, res) => {
       return errorResponse(res, 'Unauthorized', 403);
     }
 
-    // Sanitize reschedule history - remove affects_reliability from frontend
+    // Sanitize cancellation history - remove affects_reliability from frontend
     const bookingJson = booking.toJSON();
-    if (bookingJson.rescheduleHistory && Array.isArray(bookingJson.rescheduleHistory)) {
-      bookingJson.rescheduleHistory = bookingJson.rescheduleHistory.map(record => sanitizeResponse(record));
-    }
     if (bookingJson.cancellationHistory && Array.isArray(bookingJson.cancellationHistory)) {
       bookingJson.cancellationHistory = bookingJson.cancellationHistory.map(record => sanitizeResponse(record));
     }
 
-    return successResponse(res, bookingJson, 'Booking retrieved successfully');
+    const payload = await attachConversationSummaryToBookingJson(
+      bookingJson,
+      req.user.id,
+      req.user.roles || [],
+    );
+
+    return successResponse(res, payload, 'Booking retrieved successfully');
   } catch (error) {
     logger.error('Get booking error:', error);
     return errorResponse(res, 'Failed to retrieve booking', 500);
@@ -242,220 +232,53 @@ export const getAdminBookingById = async (req, res) => {
 };
 
 export const createBooking = async (req, res) => {
+  return errorResponse(
+    res,
+    'POST /api/bookings is deprecated. Use POST /api/booking-intents to authorize payment, then POST /api/bookings/confirm.',
+    410,
+    null,
+    { code: 'booking_create_deprecated_use_intent_flow' },
+  );
+};
+
+export const confirmBooking = async (req, res) => {
   try {
-    const {
-      lesson_id,
-      scheduled_at,
-      duration_minutes,
-      player_ids,
-      court_location_id,
-      payment_method = 'stripe',
-      payment_method_id,
-      idempotency_key,
-    } = req.validated;
-    const requestIdempotencyKey =
-      idempotency_key ||
-      req.headers['idempotency-key'] ||
-      generateBookingIdempotencyKey(req.user.id);
-
-    const existingBooking = await Booking.findOne({
-      where: {
-        idempotency_key: requestIdempotencyKey,
-        primary_student_id: req.user.id,
-      },
-    });
-    if (existingBooking) {
-      let existingPayload = await buildReplayBookingPayload(existingBooking);
-      // Hardening: recover PaymentIntent if booking exists but payment row/intent is missing.
-      if (!existingPayload.payment_intent_id) {
-        try {
-          logger.info({
-            event: 'booking_replay_payment_recovery',
-            bookingId: existingBooking.id,
-            studentId: req.user.id,
-            idempotencyKey: requestIdempotencyKey,
-          });
-          const recovered = await paymentService.createPaymentForBooking(
-            existingBooking,
-            req.user.id,
-            payment_method,
-            {
-              paymentMethodId: payment_method_id || null,
-              idempotencyKey: requestIdempotencyKey,
-            }
-          );
-          existingPayload = {
-            ...existingPayload,
-            payment_intent_client_secret: recovered.paymentIntent?.client_secret ?? null,
-            payment_intent_id: recovered.paymentIntent?.id ?? null,
-          };
-        } catch (recoveryError) {
-          logger.warn('Idempotent replay payment recovery failed', {
-            bookingId: existingBooking.id,
-            idempotencyKey: requestIdempotencyKey,
-            error: recoveryError?.message || String(recoveryError),
-          });
-        }
-      }
-      return successResponse(res, existingPayload, 'Booking already exists for this idempotency key');
-    }
-
-    const lesson = await Lesson.findByPk(lesson_id);
-    if (!lesson || !lesson.is_active) {
-      return errorResponse(res, 'Lesson not found or inactive', 404);
-    }
-
-    const roles = req.user.roles || [];
-    if (!roles.includes('student')) {
-      return errorResponse(res, 'Only users with the student role can create bookings', 403);
-    }
-
-    const lessonCoachUser = await User.findByPk(lesson.coach_id, {
-      include: [{ model: UserRole, as: 'userRoles', attributes: ['role'] }],
-    });
-    const lessonCoachEffective = getEffectiveRolesForUserRecord(lessonCoachUser);
-    if (!lessonCoachUser || !lessonCoachEffective.includes('coach')) {
-      return errorResponse(res, 'Lesson coach account is not a valid coach', 400);
-    }
-
-    // Coach and student must be different users (no self-booking)
-    if (lesson.coach_id === req.user.id) {
-      return errorResponse(res, 'You cannot book your own lesson. Coach and student must be different users.', 400);
-    }
-
-    const now = new Date();
-    const scheduledDate = new Date(scheduled_at);
-    if (scheduledDate < now) {
-      return errorResponse(res, 'Cannot book in the past', 400);
-    }
-
-    // Validate court location if provided
-    if (court_location_id) {
-      const court = await CourtLocation.findByPk(court_location_id);
-      if (!court || court.deleted_at) {
-        return errorResponse(res, 'Court location not found', 404);
-      }
-
-      const coachCourtLink = await CoachCourtLocation.findOne({
-        where: {
-          coach_id: lesson.coach_id,
-          court_id: court_location_id,
-        },
-      });
-      if (!coachCourtLink) {
-        return errorResponse(res, 'Selected court is not available for this coach', 400);
-      }
-    }
-
-    // Check availability before creating booking. Prevents double-booking so the coach never has to fix it.
-    // 1) Coach availability (coach-maintained schedule)
-    // 2) Existing bookings for this lesson in this time range (pending, confirmed, awaiting_verification)
-    // If another student already has that slot, we reject with 400 and a clear message—no second booking is created.
-    const finalDuration = duration_minutes || lesson.duration_minutes;
-    const availabilityCheck = await checkBookingAvailability(lesson_id, scheduled_at, finalDuration);
-    if (!availabilityCheck.available) {
-      return errorResponse(res, availabilityCheck.reason || 'This time slot is no longer available.', 400);
-    }
-
-    // Calculate reschedule deadline (default: 24 hours before scheduled time)
-    const rescheduleDeadline = new Date(scheduledDate.getTime() - 24 * 60 * 60 * 1000);
-
-    const transaction = await sequelize.transaction();
-    let booking;
-    let paymentIntent;
-    try {
-      booking = await Booking.create({
-        lesson_id,
-        coach_id: lesson.coach_id,
-        primary_student_id: req.user.id,
-        idempotency_key: requestIdempotencyKey,
-        scheduled_at: scheduledDate,
-        duration_minutes: duration_minutes || lesson.duration_minutes,
-        price: lesson.price,
-        court_location_id: court_location_id || null,
-        status: 'pending',
-        reschedule_deadline: rescheduleDeadline,
-      }, { transaction });
-
-      if (player_ids && Array.isArray(player_ids)) {
-        const players = player_ids.map(player_id => ({
-          booking_id: booking.id,
-          player_id,
-        }));
-        await BookingPlayer.bulkCreate(players, { transaction });
-      }
-
-      // Create payment and PaymentIntent (payment creation uses same transaction; if Stripe fails we roll back)
-      const result = await paymentService.createPaymentForBooking(
-        booking,
-        req.user.id,
-        payment_method,
-        {
-          transaction,
-          paymentMethodId: payment_method_id || null,
-          idempotencyKey: requestIdempotencyKey,
-        }
-      );
-      paymentIntent = result.paymentIntent;
-
-      await transaction.commit();
-    } catch (txError) {
-      await transaction.rollback();
-      if (txError?.name === 'SequelizeUniqueConstraintError') {
-        const racedBooking = await Booking.findOne({
-          where: {
-            idempotency_key: requestIdempotencyKey,
-            primary_student_id: req.user.id,
-          },
-        });
-        if (racedBooking) {
-          const payload = await buildReplayBookingPayload(racedBooking);
-          return successResponse(res, payload, 'Booking already exists for this idempotency key');
-        }
-      }
-      const errMsg = (txError?.message || String(txError)) + (txError?.stack ? '\n' + txError.stack : '');
-      logger.error('Create booking error: ' + errMsg);
-      if (!res.headersSent) {
-        const isDev = process.env.NODE_ENV !== 'production';
-        return errorResponse(res, 'Failed to create booking', 500, isDev ? getCreateBookingErrorDetail(txError, true) : null);
-      }
-      return;
-    }
-
-    await logAudit(req.user.id, 'booking_created', 'bookings', booking.id, null, booking.get({ plain: true }), req);
-
-    void notificationService.notifyCoachNewBookingRequest(booking.id).catch((err) => {
-      logger.error({
-        event: 'notify_coach_new_booking_failed',
-        bookingId: booking.id,
-        message: err?.message || String(err),
-      });
+    const { payment_intent_id } = req.validated;
+    const result = await bookingIntentService.confirmBookingFromPaymentIntent({
+      studentId: req.user.id,
+      paymentIntentId: payment_intent_id,
     });
 
-    // Use plain object so res.json() never fails on Sequelize model serialization
-    const bookingData = booking.get({ plain: true });
-    const payload = {
-      booking: bookingData,
-      payment_intent_client_secret: paymentIntent?.client_secret ?? null,
-      payment_intent_id: paymentIntent?.id ?? null,
-    };
-    try {
-      return successResponse(res, payload, 'Booking created successfully', 201);
-    } catch (responseError) {
-      const errMsg = (responseError?.message || String(responseError)) + (responseError?.stack ? '\n' + responseError.stack : '');
-      logger.error('Create booking response send error: ' + errMsg);
-      if (!res.headersSent) {
-        const isDev = process.env.NODE_ENV !== 'production';
-        return errorResponse(res, 'Failed to create booking', 500, isDev ? getCreateBookingErrorDetail(responseError, true) : null);
-      }
-    }
+    const bookingData = result.booking.get({ plain: true });
+    const paymentData = result.payment?.get
+      ? result.payment.get({ plain: true })
+      : result.payment;
+
+    const message = result.idempotentReplay
+      ? 'Booking already confirmed for this payment'
+      : 'Booking created successfully';
+
+    return successResponse(
+      res,
+      { booking: bookingData, payment: paymentData },
+      message,
+      result.idempotentReplay ? 200 : 201,
+    );
   } catch (error) {
-    const errMsg = (error?.message || String(error)) + (error?.stack ? '\n' + error.stack : '');
-    logger.error('Create booking error: ' + errMsg);
-    if (!res.headersSent) {
-      const isDev = process.env.NODE_ENV !== 'production';
-      return errorResponse(res, 'Failed to create booking', 500, isDev ? getCreateBookingErrorDetail(error, true) : null);
+    if (error.statusCode && error.code) {
+      return errorResponse(res, error.message, error.statusCode, null, { code: error.code });
     }
+    if (error.statusCode) {
+      return errorResponse(res, error.message, error.statusCode);
+    }
+    logger.error('Confirm booking error:', error);
+    const isDev = process.env.NODE_ENV !== 'production';
+    return errorResponse(
+      res,
+      'Failed to confirm booking',
+      500,
+      isDev ? { detail: error?.message || String(error) } : null,
+    );
   }
 };
 
@@ -553,7 +376,7 @@ export const completeBooking = async (req, res) => {
     await applyBookingStatusTransition(booking, {
       toStatus: 'completed',
       via: BookingTransitionVia.MARK_COMPLETED,
-      patch: { payout_status: 'pending', messaging_locked: true },
+      patch: { payout_status: 'pending' },
     });
     await logAudit(req.user.id, 'booking_completed', 'bookings', booking.id, beforeState, booking.toJSON(), req);
 
@@ -636,7 +459,7 @@ export const markBookingNoShow = async (req, res) => {
     await applyBookingStatusTransition(booking, {
       toStatus: 'student_no_show',
       via: BookingTransitionVia.COACH_MARK_STUDENT_NO_SHOW,
-      patch: { messaging_locked: true },
+      patch: {},
     });
     await logAudit(
       req.user.id,
@@ -678,6 +501,13 @@ export const markBookingNoShow = async (req, res) => {
  * Coach accepts a pending booking. Captures payment and sets status to confirmed.
  * MVP: only the assigned coach may accept (not admin, not student).
  */
+function respondIfPaymentAuthorizationError(res, error) {
+  if (error?.statusCode === 400 && error?.code?.startsWith('payment_')) {
+    return errorResponse(res, error.message, 400, null, { code: error.code });
+  }
+  return null;
+}
+
 export const acceptBooking = async (req, res) => {
   try {
     const { id } = req.params;
@@ -697,7 +527,6 @@ export const acceptBooking = async (req, res) => {
       await applyBookingStatusTransition(booking, {
         toStatus: 'confirmed',
         via: BookingTransitionVia.COACH_ACCEPT_WITHOUT_PAYMENT,
-        patch: { messaging_locked: false },
       });
       await logAudit(req.user.id, 'booking_confirmed_by_coach', 'bookings', booking.id, null, { status: 'confirmed' }, req);
     }
@@ -709,14 +538,27 @@ export const acceptBooking = async (req, res) => {
         { model: User, as: 'primaryStudent', attributes: ['id', 'full_name', 'avatar_url'] },
       ],
     });
+
+    void notificationService.notifyBookingAccepted(id).catch((err) => {
+      logger.warn({ component: 'booking', event: 'accept_notify_failed', bookingId: id, message: err?.message });
+    });
+
+    const payload = await attachConversationSummaryToBookingJson(
+      updated.toJSON(),
+      req.user.id,
+      req.user.roles || [],
+    );
+
     return successResponse(
       res,
-      updated,
+      payload,
       'Booking accepted. If payment was pending capture, confirmation completes when Stripe sends payment_intent.succeeded.'
     );
   } catch (error) {
     const sm = respondIfBookingStateMachineError(res, error);
     if (sm) return sm;
+    const pay = respondIfPaymentAuthorizationError(res, error);
+    if (pay) return pay;
     logger.error('Accept booking error:', error);
     const message = error.message || 'Failed to accept booking';
     const code = message.includes('not pending') ? 400 : 500;
@@ -728,7 +570,7 @@ export const acceptBooking = async (req, res) => {
  * Coach declines a pending booking. Cancels PaymentIntent (no charge) and sets booking to cancelled.
  * MVP: only the assigned coach may decline.
  * Optional message_to_student is shown to the student (e.g. "Something came up—please book another slot").
- * Optional decline_reason_code for analytics (e.g. availability_wrong, sick, other).
+ * Optional decline_reason_code enum for analytics (see getValidDeclineReasonCodes).
  */
 export const declineBooking = async (req, res) => {
   try {
@@ -784,11 +626,12 @@ export const declineBooking = async (req, res) => {
         { model: User, as: 'primaryStudent', attributes: ['id', 'full_name', 'avatar_url'] },
       ],
     });
-    return successResponse(res, {
-      booking: updated,
-      message_to_student: noteToStore,
-      system_note: 'You weren\'t charged. You can pick another time.',
-    }, 'Booking declined');
+
+    void notificationService.notifyBookingDeclined(id).catch((err) => {
+      logger.warn({ component: 'booking', event: 'decline_notify_failed', bookingId: id, message: err?.message });
+    });
+
+    return successResponse(res, updated, 'Booking declined');
   } catch (error) {
     const sm = respondIfBookingStateMachineError(res, error);
     if (sm) return sm;
@@ -857,13 +700,7 @@ export const cancelBooking = async (req, res) => {
       const PRE_LESSON_STATUSES = ['pending', 'confirmed'];
       if (!PRE_LESSON_STATUSES.includes(booking.status)) {
         if (booking.status === 'awaiting_verification') {
-          const err = new Error(
-            'Booking is awaiting verification. Use dispute resolution instead of cancellation.',
-          );
-          err.statusCode = 400;
-          err.code = 'awaiting_verification_use_dispute';
-          err.booking_status = booking.status;
-          throw err;
+          assertBookingStatusAllowsPreLessonCancel(booking.status);
         }
         if (booking.status === 'disputed') {
           const err = new Error(
@@ -889,13 +726,15 @@ export const cancelBooking = async (req, res) => {
           throw err;
         }
         const err = new Error(
-          'Only pending or confirmed bookings can be cancelled. Use dispute flow for post-lesson issues.',
+          'Only pending or confirmed bookings can be cancelled before the lesson starts. Use post-lesson workflows for completion, attendance, or disputes.',
         );
         err.statusCode = 400;
         err.code = 'cancel_pre_lesson_only';
         err.booking_status = booking.status;
         throw err;
       }
+
+      assertPreLessonCancelAllowed(booking.scheduled_at, new Date());
 
       beforeState = booking.toJSON();
 
@@ -1020,7 +859,7 @@ export const cancelBooking = async (req, res) => {
           refundPaymentId = payment.id;
         }
       }
-      if (!payment?.charge_id && payment?.payment_intent_id && payment.payment_status === 'pending') {
+      if (!payment?.charge_id && payment?.payment_intent_id && ['pending', 'authorized'].includes(payment.payment_status)) {
         try {
           await stripeService.cancelPaymentIntent(payment.payment_intent_id);
           await payment.update({ payment_status: 'pending_void' }, { transaction: t });
@@ -1042,9 +881,12 @@ export const cancelBooking = async (req, res) => {
           reason,
           reason_notes: reason_notes || null,
           affects_reliability: willAffectReliability,
-          refund_amount,
-          penalty_amount,
-          penalty_reason,
+          ...cancellationFinancialsForHistory({
+            voidedPaymentId,
+            refund_amount,
+            penalty_amount,
+            penalty_reason,
+          }),
         },
         { transaction: t },
       );
@@ -1053,13 +895,22 @@ export const cancelBooking = async (req, res) => {
         await cancellationHistory.update({ refund_payment_id: refundPaymentId }, { transaction: t });
       }
 
+      const queueLateCancelCoachPayout = shouldQueueLateCancelCoachPayout({
+        bookingStatus: 'cancelled',
+        cancelledBy,
+        penaltyCents,
+        penaltyReason,
+        refundPaymentId,
+        voidedPaymentId,
+      });
+
       await applyBookingStatusTransition(booking, {
         toStatus: 'cancelled',
         via: BookingTransitionVia.PRE_LESSON_CANCEL,
         patch: {
           cancelled_by: cancelledBy,
           cancelled_at: new Date(),
-          messaging_locked: true,
+          ...(queueLateCancelCoachPayout ? { payout_status: 'pending' } : {}),
         },
         options: { transaction: t },
       });
@@ -1080,11 +931,12 @@ export const cancelBooking = async (req, res) => {
         payment_voided_id: voidedPaymentId,
         queued_refund_payment_action_id: queuedCancelRefundPaymentActionId,
         total_charge_cents: totalChargeCents,
-        refund_cents: refundCents,
-        retained_penalty_cents: penaltyCents,
+        refund_cents: voidedPaymentId ? 0 : refundCents,
+        retained_penalty_cents: voidedPaymentId ? 0 : penaltyCents,
         is_late_cancel: isLateCancel,
         cancelled_by: cancelledBy,
-        penalty_reason: penaltyReason,
+        penalty_reason: voidedPaymentId ? null : penaltyReason,
+        uncaptured_authorization_voided: Boolean(voidedPaymentId),
         stripe_remaining_cents_before_refund: stripeRemainingCents,
       },
       ip_address: req?.ip || req?.connection?.remoteAddress,
@@ -1106,13 +958,30 @@ export const cancelBooking = async (req, res) => {
       }
     }
 
-    const sanitizedCancellation = sanitizeResponse(cancellationHistory);
+    void notificationService.notifyBookingCancelled(id, {
+      cancelledBy,
+      reason,
+      reason_notes: cancellationHistory.reason_notes,
+      refund_amount: cancellationHistory.refund_amount,
+      penalty_amount: cancellationHistory.penalty_amount,
+      refund_status: queuedCancelRefundPaymentActionId
+        ? 'pending_stripe_execution'
+        : voidedPaymentId
+          ? 'voided_authorization'
+          : null,
+    }).catch((err) => {
+      logger.warn({ component: 'booking', event: 'cancel_notify_failed', bookingId: id, message: err?.message });
+    });
+
+    const cancellationPayload = buildCancellationApiPayload(cancellationHistory, {
+      isLateCancel,
+    });
 
     return successResponse(
       res,
       {
         booking: afterBooking.toJSON(),
-        cancellation: sanitizedCancellation,
+        cancellation: cancellationPayload,
         ...(queuedCancelRefundPaymentActionId
           ? {
               refund: {
@@ -1283,7 +1152,7 @@ export const adminMarkCoachNoShow = async (req, res) => {
       await applyBookingStatusTransition(locked, {
         toStatus: 'coach_no_show',
         via: BookingTransitionVia.ADMIN_MARK_COACH_NO_SHOW,
-        patch: { messaging_locked: true },
+        patch: {},
         options: { transaction: tx },
       });
 
@@ -1469,7 +1338,7 @@ export const adminMarkBookingNoShow = async (req, res) => {
     await applyBookingStatusTransition(booking, {
       toStatus: 'student_no_show',
       via: BookingTransitionVia.ADMIN_MARK_STUDENT_NO_SHOW,
-      patch: { messaging_locked: true },
+      patch: {},
     });
     await logAudit(
       req.user.id,

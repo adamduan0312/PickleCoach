@@ -23,10 +23,6 @@ const CourtLocation = sequelize.define('court_locations', {
     type: DataTypes.DOUBLE,
     allowNull: true,
   },
-  is_verified: {
-    type: DataTypes.BOOLEAN,
-    defaultValue: false,
-  },
   is_private: {
     type: DataTypes.BOOLEAN,
     defaultValue: false,

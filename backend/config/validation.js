@@ -1,5 +1,6 @@
 import Joi from 'joi';
 import { getValidReasons } from '../services/reliabilityPenaltyService.js';
+import { getValidDeclineReasonCodes } from '../utils/declineReasonCodes.js';
 import { MIN_LESSON_PRICE_USD } from '../services/paymentEngine.js';
 import { validateDisputeResolutionPayload } from '../utils/disputeResolutionAlignment.js';
 
@@ -82,12 +83,11 @@ export const createBookingSchema = Joi.object({
   idempotency_key: Joi.string().trim().min(8).max(255).optional(),
 });
 
-export const rescheduleSchema = Joi.object({
-  // Booking ID is taken from the URL parameter (/:id/reschedule)
-  new_scheduled_at: Joi.date().iso().greater('now').required(),
-  reason: Joi.string().valid(...getValidReasons()).required(),
-  reason_notes: Joi.string().max(255).optional(),
-  paid_reschedule: Joi.boolean().default(false),
+/** Authorize-first flow: create PaymentIntent before any booking row exists. */
+export const createBookingIntentSchema = createBookingSchema;
+
+export const confirmBookingSchema = Joi.object({
+  payment_intent_id: Joi.string().trim().min(3).max(255).required(),
 });
 
 export const cancellationSchema = Joi.object({
@@ -95,10 +95,10 @@ export const cancellationSchema = Joi.object({
   reason_notes: Joi.string().max(255).optional(),
 });
 
-/** Coach decline (pending booking): required message to student; optional reason code for analytics */
+/** Coach decline (pending booking): required message to student; optional analytics reason code */
 export const declineBookingSchema = Joi.object({
   message_to_student: Joi.string().trim().min(10).max(500).required(),
-  decline_reason_code: Joi.string().max(50).allow('').optional(),
+  decline_reason_code: Joi.string().valid(...getValidDeclineReasonCodes()).allow('').optional(),
 });
 
 export const reviewSchema = Joi.object({
@@ -116,8 +116,7 @@ export const createConversationSchema = Joi.object({
 
 export const sendMessageSchema = Joi.object({
   conversation_id: Joi.number().integer().positive().required(),
-  content: Joi.string().min(1).max(5000).required(),
-  attachments: Joi.array().items(Joi.object()).optional(),
+  message_text: Joi.string().min(1).max(5000).required(),
 });
 
 export const forgotPasswordSchema = Joi.object({
@@ -566,10 +565,6 @@ export const getCoachAvailabilityQuerySchema = Joi.object({
   limit: Joi.number().integer().min(1).max(10000).optional(),
 });
 
-export const getRescheduleHistoryQuerySchema = Joi.object({
-  booking_id: Joi.number().integer().positive().optional(),
-});
-
 export const getAuditLogsQuerySchema = Joi.object({
   ...paginationQuery,
   page: Joi.number().integer().min(1).default(1),
@@ -580,7 +575,7 @@ export const getAuditLogsQuerySchema = Joi.object({
   record_id: Joi.number().integer().min(0).optional(),
 });
 
-/** GET /api/courts — list-all: omit lat/lng; omit page & limit to return all (server-capped). Pass page and/or limit to paginate. Geo: lat+lng together; optional radius. */
+/** GET /api/courts — public directory only (`is_private: false`). List-all: omit lat/lng; omit page & limit to return all (server-capped). Pass page and/or limit to paginate. Geo: lat+lng together; optional radius. */
 export const searchCourtsQuerySchema = Joi.object({
   page: Joi.number().integer().min(1).optional(),
   limit: Joi.number().integer().min(1).max(10000).optional(),

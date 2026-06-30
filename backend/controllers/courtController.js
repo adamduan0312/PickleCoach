@@ -1,8 +1,11 @@
-import { CourtLocation, CoachCourtLocation, User, CoachProfile } from '../models/index.js';
+import { CourtLocation, CoachCourtLocation, CoachProfile } from '../models/index.js';
 import { Op } from 'sequelize';
 import { successResponse, errorResponse, createErrorResponse, createResponse, paginatedResponse } from '../utils/response.js';
 import { getPagination, getPagingData } from '../utils/pagination.js';
 import { logger } from '../config/logger.js';
+import { courtCreatePayloadRejectsCoachCourtFields } from '../utils/validateCourtCreatePayload.js';
+import { parseCoachCourtLinkCoachNotesFromBody } from '../utils/coachCourtLinkNotes.js';
+import { publicCourtDirectoryWhere } from '../utils/courtPublicDirectory.js';
 
 /** Max miles a new court can be from a coach's existing courts (prevents linking/creating courts far away) */
 const MAX_COURT_DISTANCE_MILES = 100;
@@ -10,6 +13,35 @@ const MAX_COURT_DISTANCE_MILES = 100;
 /** Safety cap when listing all courts with no pagination (DoS prevention). */
 const MAX_LIST_ALL_COURTS = 10000;
 const MAX_LIST_ALL_COACH_COURTS = 10000;
+
+/** Public court fields for list/search (no creator or coach joins). */
+const PUBLIC_COURT_LIST_ATTRIBUTES = [
+  'id',
+  'name',
+  'address',
+  'latitude',
+  'longitude',
+  'is_private',
+];
+
+/** Coach–court link fields in coach/student APIs (rate_modifier stored in DB for future pricing). */
+const COACH_COURT_LINK_API_ATTRIBUTES = [
+  'id',
+  'coach_id',
+  'court_id',
+  'coach_notes',
+  'created_at',
+  'updated_at',
+];
+
+/** Auto-link row returned from POST /api/courts — no relationship metadata (use POST /api/coaches/me/courts for coach_notes). */
+const COACH_COURT_LINK_POST_COURT_RESPONSE_ATTRIBUTES = [
+  'id',
+  'coach_id',
+  'court_id',
+  'created_at',
+  'updated_at',
+];
 
 /**
  * Distance between two points in miles (Haversine)
@@ -41,6 +73,7 @@ const sortCourtsByDistanceFrom = (courts, originLat, originLng) =>
 
 /**
  * GET /api/courts
+ * Public directory only: excludes `is_private` courts (see `publicCourtDirectoryWhere`).
  * - No lat/lng: all courts (capped) when page & limit omitted; else paginated.
  * - With lat/lng (+ radius): bounding box; results ordered by distance; lazy import if empty.
  */
@@ -51,14 +84,8 @@ export const searchCourts = async (req, res) => {
     if (lat == null || lng == null) {
       if (page == null && limit == null) {
         const rows = await CourtLocation.findAll({
-          where: { deleted_at: null },
-          include: [
-            {
-              model: User,
-              as: 'createdBy',
-              attributes: ['id', 'full_name'],
-            },
-          ],
+          where: publicCourtDirectoryWhere(),
+          attributes: PUBLIC_COURT_LIST_ATTRIBUTES,
           order: [['id', 'ASC']],
           limit: MAX_LIST_ALL_COURTS,
         });
@@ -71,14 +98,8 @@ export const searchCourts = async (req, res) => {
       const offset = (pageNum - 1) * limitNum;
 
       const { count, rows } = await CourtLocation.findAndCountAll({
-        where: { deleted_at: null },
-        include: [
-          {
-            model: User,
-            as: 'createdBy',
-            attributes: ['id', 'full_name'],
-          },
-        ],
+        where: publicCourtDirectoryWhere(),
+        attributes: PUBLIC_COURT_LIST_ATTRIBUTES,
         limit: limitNum,
         offset,
         order: [['id', 'ASC']],
@@ -106,22 +127,15 @@ export const searchCourts = async (req, res) => {
     const lngRange = radiusMiles / (69 * Math.cos(latitude * Math.PI / 180));
 
     const courts = await CourtLocation.findAll({
-      where: {
-        deleted_at: null,
+      where: publicCourtDirectoryWhere({
         latitude: {
           [Op.between]: [latitude - latRange, latitude + latRange],
         },
         longitude: {
           [Op.between]: [longitude - lngRange, longitude + lngRange],
         },
-      },
-      include: [
-        {
-          model: User,
-          as: 'createdBy',
-          attributes: ['id', 'full_name'],
-        },
-      ],
+      }),
+      attributes: PUBLIC_COURT_LIST_ATTRIBUTES,
       limit: 100,
     });
 
@@ -135,22 +149,15 @@ export const searchCourts = async (req, res) => {
         
         // Re-fetch courts after import
         const allCourts = await CourtLocation.findAll({
-          where: {
-            deleted_at: null,
+          where: publicCourtDirectoryWhere({
             latitude: {
               [Op.between]: [latitude - latRange, latitude + latRange],
             },
             longitude: {
               [Op.between]: [longitude - lngRange, longitude + lngRange],
             },
-          },
-          include: [
-            {
-              model: User,
-              as: 'createdBy',
-              attributes: ['id', 'full_name'],
-            },
-          ],
+          }),
+          attributes: PUBLIC_COURT_LIST_ATTRIBUTES,
           limit: 100,
         });
         
@@ -172,26 +179,28 @@ export const searchCourts = async (req, res) => {
 
 /**
  * GET /api/courts/:id
- * Get court details
+ * Public directory only: private courts return **404** (same message as missing) — not discoverable by id.
+ * For coach-linked courts (including private), use `GET /api/coaches/:id/courts`.
  */
 export const getCourt = async (req, res) => {
   try {
-    const { id } = req.params;
+    const courtId = req.params.id != null ? parseInt(req.params.id, 10) : null;
+    if (!courtId || Number.isNaN(courtId)) {
+      return res.status(400).json(createErrorResponse('Valid court ID is required'));
+    }
 
     const court = await CourtLocation.findOne({
-      where: { id, deleted_at: null },
-      include: [
-        {
-          model: User,
-          as: 'createdBy',
-          attributes: ['id', 'full_name'],
-        },
-        {
-          model: User,
-          as: 'coaches',
-          through: { attributes: ['rate_modifier', 'preferred', 'notes'] },
-          attributes: ['id', 'full_name'],
-        },
+      where: publicCourtDirectoryWhere({ id: courtId }),
+      attributes: [
+        'id',
+        'name',
+        'address',
+        'latitude',
+        'longitude',
+        'is_private',
+        'source',
+        'created_at',
+        'updated_at',
       ],
     });
 
@@ -208,22 +217,21 @@ export const getCourt = async (req, res) => {
 
 /**
  * DELETE /api/courts/:id
- * Soft delete a court. Allowed: admin (any court), or coach (only courts they created).
+ * Soft delete a court (global marketplace row). **Admin only** — coaches remove courts from their profile with
+ * `DELETE /api/coaches/me/courts/:courtId` (unlink only), not this route.
  */
 export const deleteCourt = async (req, res) => {
   try {
+    const userRoles = req.user.roles || [];
+    if (!userRoles.includes('admin')) {
+      return res.status(403).json(createErrorResponse('Only admins can delete courts globally'));
+    }
+
     const courtId = req.params.id;
     const court = await CourtLocation.findOne({ where: { id: courtId, deleted_at: null } });
 
     if (!court) {
       return res.status(404).json(createErrorResponse('Court not found'));
-    }
-
-    const isAdmin = (req.user.roles || []).includes('admin');
-    const isCreator = court.created_by_user_id === req.user.id;
-
-    if (!isAdmin && !isCreator) {
-      return res.status(403).json(createErrorResponse('Only admins or the coach who created this court can delete it'));
     }
 
     await court.update({ deleted_at: new Date() });
@@ -243,12 +251,17 @@ export const deleteCourt = async (req, res) => {
  */
 export const createCourt = async (req, res) => {
   try {
-    const { name, address, latitude, longitude, is_private, notes } = req.body;
+    const { name, address, latitude, longitude, is_private } = req.body;
     const userId = req.user.id;
     const userRoles = req.user.roles || [];
 
     if (!userRoles.includes('coach') && !userRoles.includes('admin')) {
       return res.status(403).json(createErrorResponse('Only coaches and admins can create courts'));
+    }
+
+    const coachCourtFieldRejection = courtCreatePayloadRejectsCoachCourtFields(req.body);
+    if (coachCourtFieldRejection.rejected) {
+      return res.status(400).json(createErrorResponse(coachCourtFieldRejection.message));
     }
 
     if (!name) {
@@ -301,19 +314,27 @@ export const createCourt = async (req, res) => {
       latitude: latitude != null ? parseFloat(latitude) : null,
       longitude: longitude != null ? parseFloat(longitude) : null,
       is_private: is_private || false,
-      is_verified: userRoles.includes('admin'), // Auto-verify if admin creates
       created_by_user_id: userId,
       source: 'manual',
     });
 
-    // If coach created it, automatically link them to it
+    // Coaches are auto-linked to courts they create (court row only here; coach_notes via POST /api/coaches/me/courts).
     if (userRoles.includes('coach')) {
-      await CoachCourtLocation.create({
+      const coachCourt = await CoachCourtLocation.create({
         coach_id: userId,
         court_id: court.id,
-        preferred: true,
-        notes: notes || null,
       });
+
+      const courtData = await CourtLocation.findByPk(court.id, {
+        attributes: PUBLIC_COURT_LIST_ATTRIBUTES,
+      });
+      const coachCourtData = await CoachCourtLocation.findByPk(coachCourt.id, {
+        attributes: COACH_COURT_LINK_POST_COURT_RESPONSE_ATTRIBUTES,
+      });
+
+      return res.status(201).json(
+        createResponse({ court: courtData, coachCourt: coachCourtData }, 'Court created successfully')
+      );
     }
 
     return res.status(201).json(createResponse(court, 'Court created successfully'));
@@ -353,12 +374,12 @@ export const getCoachCourtsById = async (req, res) => {
           as: 'court',
           where: { deleted_at: null },
           required: true,
-          attributes: ['id', 'name', 'address', 'latitude', 'longitude'],
+          attributes: PUBLIC_COURT_LIST_ATTRIBUTES,
         },
       ],
       limit: queryLimit,
       offset,
-      order: [['preferred', 'DESC'], ['created_at', 'ASC']],
+      order: [['created_at', 'ASC']],
     });
 
     const data = coachCourts.rows.map((link) => {
@@ -367,9 +388,9 @@ export const getCoachCourtsById = async (req, res) => {
         court_id: court.id,
         name: court.name,
         address: court.address ?? null,
-        city: court.city ?? null,
         lat: court.latitude != null ? parseFloat(court.latitude) : null,
         lng: court.longitude != null ? parseFloat(court.longitude) : null,
+        is_private: court.is_private,
       };
     });
 
@@ -404,24 +425,19 @@ export const getMyCoachCourts = async (req, res) => {
 
     const coachCourts = await CoachCourtLocation.findAndCountAll({
       where: { coach_id: userId },
+      attributes: COACH_COURT_LINK_API_ATTRIBUTES,
       include: [
         {
           model: CourtLocation,
           as: 'court',
           where: { deleted_at: null },
           required: true,
-          include: [
-            {
-              model: User,
-              as: 'createdBy',
-              attributes: ['id', 'full_name'],
-            },
-          ],
+          attributes: PUBLIC_COURT_LIST_ATTRIBUTES,
         },
       ],
       limit: queryLimit,
       offset,
-      order: [['preferred', 'DESC'], ['created_at', 'ASC']],
+      order: [['created_at', 'ASC']],
     });
 
     if (!isPaginated) {
@@ -438,12 +454,14 @@ export const getMyCoachCourts = async (req, res) => {
 /**
  * POST /api/coaches/me/courts
  * Link an existing court to the coach's available courts.
- * To create new courts (public or private), use POST /api/courts instead; coaches are auto-linked when they create a court.
+ * To create new courts (public or private), use POST /api/courts instead; coaches are auto-linked when they create.
+ * If already linked: body must include `coach_notes` to update coach_court_locations.coach_notes (200); otherwise 409.
  */
 export const addCoachCourt = async (req, res) => {
   try {
     const userId = req.user.id;
-    const { court_id, rate_modifier, preferred, notes } = req.body;
+    const { court_id } = req.body;
+    const { coachNotesProvided, coachNotes } = parseCoachCourtLinkCoachNotesFromBody(req.body);
 
     if (!(req.user.roles || []).includes('coach')) {
       return res.status(403).json(createErrorResponse(`Only coaches can add courts to their profile. Your roles: ${(req.user.roles || []).join(', ') || 'none'}.`));
@@ -495,28 +513,35 @@ export const addCoachCourt = async (req, res) => {
     });
 
     if (existing) {
-      return res.status(409).json(createErrorResponse('Coach is already linked to this court'));
+      if (!coachNotesProvided) {
+        return res.status(409).json(createErrorResponse('Coach is already linked to this court'));
+      }
+      await existing.update({ coach_notes: coachNotes });
+      const court = await CourtLocation.findByPk(courtId, {
+        attributes: PUBLIC_COURT_LIST_ATTRIBUTES,
+      });
+      const coachCourtData = await CoachCourtLocation.findByPk(existing.id, {
+        attributes: COACH_COURT_LINK_API_ATTRIBUTES,
+      });
+      return res
+        .status(200)
+        .json(createResponse({ coachCourt: coachCourtData, court }, 'Coach court link updated'));
     }
 
     const coachCourt = await CoachCourtLocation.create({
       coach_id: userId,
       court_id: courtId,
-      rate_modifier: rate_modifier ? parseFloat(rate_modifier) : null,
-      preferred: preferred || false,
-      notes: notes || null,
+      coach_notes: coachNotes,
     });
 
     const court = await CourtLocation.findByPk(courtId, {
-      include: [
-        {
-          model: User,
-          as: 'createdBy',
-          attributes: ['id', 'full_name'],
-        },
-      ],
+      attributes: PUBLIC_COURT_LIST_ATTRIBUTES,
+    });
+    const coachCourtData = await CoachCourtLocation.findByPk(coachCourt.id, {
+      attributes: COACH_COURT_LINK_API_ATTRIBUTES,
     });
 
-    return res.status(201).json(createResponse({ coachCourt, court }, 'Court added successfully'));
+    return res.status(201).json(createResponse({ coachCourt: coachCourtData, court }, 'Court added successfully'));
   } catch (error) {
     logger.error('Error adding coach court:', error);
     if (error.name === 'SequelizeForeignKeyConstraintError') {
@@ -533,31 +558,44 @@ export const addCoachCourt = async (req, res) => {
 };
 
 /**
- * DELETE /api/coaches/me/courts/:id
- * Unlink a court from the coach (e.g. when moving to a new city).
- * :id is the coach_court_location id (from GET /api/coaches/me/courts).
+ * DELETE /api/coaches/me/courts/:courtId
+ * Unlink this coach from a court (`coach_court_locations` only). Does not soft-delete `court_locations` or affect other coaches.
+ * `:courtId` is `court_locations.id` (same as `court_id` on GET /api/coaches/me/courts).
+ * Success body includes `court_id` and `name` of the court unlinked from your profile.
  */
 export const deleteCoachCourt = async (req, res) => {
   try {
     const userId = req.user.id;
-    const linkId = req.params.id != null ? parseInt(req.params.id, 10) : null;
+    const courtId = req.params.courtId != null ? parseInt(req.params.courtId, 10) : null;
 
     if (!(req.user.roles || []).includes('coach')) {
       return res.status(403).json(createErrorResponse(`Only coaches can remove courts from their profile. Your roles: ${(req.user.roles || []).join(', ') || 'none'}.`));
     }
-    if (!linkId || Number.isNaN(linkId)) {
-      return res.status(400).json(createErrorResponse('Valid link ID is required'));
+    if (!courtId || Number.isNaN(courtId)) {
+      return res.status(400).json(createErrorResponse('Valid court ID is required'));
     }
 
-    const link = await CoachCourtLocation.findOne({
-      where: { id: linkId, coach_id: userId },
+    const court = await CourtLocation.findOne({
+      where: { id: courtId, deleted_at: null },
+      attributes: ['id', 'name'],
     });
-    if (!link) {
-      return res.status(404).json(createErrorResponse('Court link not found or you do not have access to it'));
+    if (!court) {
+      return res.status(404).json(createErrorResponse('Court not found'));
     }
 
-    await link.destroy();
-    return res.status(200).json(createResponse(null, 'Court removed from your profile'));
+    const removed = await CoachCourtLocation.destroy({
+      where: { coach_id: userId, court_id: courtId },
+    });
+    if (removed === 0) {
+      return res.status(404).json(createErrorResponse('You are not linked to this court'));
+    }
+
+    return res.status(200).json(
+      createResponse(
+        { court_id: court.id, name: court.name ?? null },
+        'Court removed from your profile',
+      ),
+    );
   } catch (error) {
     logger.error('Error removing coach court:', error);
     return res.status(500).json(createErrorResponse('Failed to remove court'));

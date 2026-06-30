@@ -18,6 +18,3 @@ export const COACH_COMMISSION_PERCENT = 92.0;
 
 /** Stripe minimum charge (USD) for a PaymentIntent. */
 export const MIN_CHARGE_USD = 0.5;
-
-/** Default paid-reschedule add-on charge (USD). */
-export const PAID_RESCHEDULE_FEE_USD = parseEnvFloat('PAID_RESCHEDULE_FEE', 3.0);

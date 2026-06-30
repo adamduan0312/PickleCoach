@@ -58,8 +58,6 @@ export const roundReliabilityScoreValue = (v) => {
  * @typedef {object} RawReliabilitySplits
  * @property {number} booking_baseline_recent
  * @property {number} booking_baseline_decayed
- * @property {number} penalized_reschedules_recent
- * @property {number} penalized_reschedules_decayed
  * @property {number} late_cancels_recent
  * @property {number} late_cancels_decayed
  * @property {number} coach_cancels_non_late_recent
@@ -74,7 +72,6 @@ export const roundReliabilityScoreValue = (v) => {
  * @property {number} misconduct_penalties_decayed
  * @property {number} lesson_not_completed_penalties_recent
  * @property {number} lesson_not_completed_penalties_decayed
- * @property {number} [paid_reschedules] informational only (not scored): paid penalized reschedules with captured/partially_refunded payment; coach rows count coach-requested, student rows count student-requested
  */
 
 /**
@@ -98,10 +95,6 @@ export const buildCanonicalReliabilityMetrics = (raw, config = {}) => {
     booking_baseline_decayed,
     booking_baseline_total,
     total_bookings_recent: booking_baseline_recent,
-
-    penalized_reschedules_recent: intReliabilityCount(raw.penalized_reschedules_recent),
-    penalized_reschedules_decayed: roundReliabilityMetric(raw.penalized_reschedules_decayed),
-    penalized_reschedules_total: pairTotal('penalized_reschedules_recent', 'penalized_reschedules_decayed'),
 
     late_cancels_recent: intReliabilityCount(raw.late_cancels_recent),
     late_cancels_decayed: roundReliabilityMetric(raw.late_cancels_decayed),
@@ -134,8 +127,6 @@ export const buildCanonicalReliabilityMetrics = (raw, config = {}) => {
       'lesson_not_completed_penalties_decayed',
     ),
 
-    paid_reschedules: intReliabilityCount(raw.paid_reschedules),
-
     scoring_window_days: windowDays,
     decay_lambda: roundReliabilityMetric(decayLambda),
     smoothing_k: smoothingK,
@@ -158,7 +149,6 @@ export const calculatePenaltyBreakdown = (role, canonical) => {
 
   if (role === 'coach') {
     const deductions = {
-      penalized_reschedules: ratio(canonical.penalized_reschedules_total, 5),
       late_cancels: ratio(canonical.late_cancels_total, 20),
       late_arrival_penalties: ratio(canonical.late_arrival_penalties_total, BEHAVIOR_DISPUTE_PENALTY_WEIGHTS.late_arrival),
       no_shows: ratio(canonical.no_shows_total, COACH_ATTENDANCE_NO_SHOW_WEIGHT),
@@ -174,7 +164,6 @@ export const calculatePenaltyBreakdown = (role, canonical) => {
   }
 
   const deductions = {
-    penalized_reschedules: ratio(canonical.penalized_reschedules_total, 8),
     late_cancels: ratio(canonical.late_cancels_total, 15),
     late_arrival_penalties: ratio(canonical.late_arrival_penalties_total, BEHAVIOR_DISPUTE_PENALTY_WEIGHTS.late_arrival),
     no_shows: ratio(canonical.no_shows_total, STUDENT_ATTENDANCE_NO_SHOW_WEIGHT),
@@ -214,8 +203,6 @@ export const persistenceRowToCanonical = (role, row) =>
     {
       booking_baseline_recent: intReliabilityCount(row.booking_baseline_recent),
       booking_baseline_decayed: row.booking_baseline_decayed,
-      penalized_reschedules_recent: intReliabilityCount(row.penalized_reschedules_recent),
-      penalized_reschedules_decayed: row.penalized_reschedules_decayed,
       late_cancels_recent: intReliabilityCount(row.late_cancels_recent),
       late_cancels_decayed: row.late_cancels_decayed,
       coach_cancels_non_late_recent: intReliabilityCount(row.coach_cancels_non_late_recent),
@@ -230,7 +217,6 @@ export const persistenceRowToCanonical = (role, row) =>
       misconduct_penalties_decayed: row.misconduct_penalties_decayed,
       lesson_not_completed_penalties_recent: intReliabilityCount(row.lesson_not_completed_penalties_recent),
       lesson_not_completed_penalties_decayed: row.lesson_not_completed_penalties_decayed,
-      paid_reschedules: intReliabilityCount(row.paid_reschedules),
     },
     {
       windowDays: row.scoring_window_days,
@@ -267,10 +253,6 @@ export const flattenCanonicalForPersistence = (role, canonical, score, meta = {}
     booking_baseline_total: roundReliabilityMetric(canonical.booking_baseline_total),
     total_bookings_recent: canonical.total_bookings_recent,
 
-    penalized_reschedules_recent: canonical.penalized_reschedules_recent,
-    penalized_reschedules_decayed: roundReliabilityMetric(canonical.penalized_reschedules_decayed),
-    penalized_reschedules_total: roundReliabilityMetric(canonical.penalized_reschedules_total),
-
     late_cancels_recent: canonical.late_cancels_recent,
     late_cancels_decayed: roundReliabilityMetric(canonical.late_cancels_decayed),
     late_cancels_total: roundReliabilityMetric(canonical.late_cancels_total),
@@ -299,8 +281,6 @@ export const flattenCanonicalForPersistence = (role, canonical, score, meta = {}
     lesson_not_completed_penalties_decayed: roundReliabilityMetric(canonical.lesson_not_completed_penalties_decayed),
     lesson_not_completed_penalties_total: roundReliabilityMetric(canonical.lesson_not_completed_penalties_total),
 
-    paid_reschedules: intReliabilityCount(canonical.paid_reschedules),
-
     smoothing_k: roundReliabilityMetric(canonical.smoothing_k),
     decay_lambda: roundReliabilityMetric(canonical.decay_lambda),
     scoring_window_days: canonical.scoring_window_days,
@@ -316,8 +296,6 @@ export const defaultCanonicalReliabilityRow = (userId, role) => {
   const raw = {
     booking_baseline_recent: 0,
     booking_baseline_decayed: 0,
-    penalized_reschedules_recent: 0,
-    penalized_reschedules_decayed: 0,
     late_cancels_recent: 0,
     late_cancels_decayed: 0,
     coach_cancels_non_late_recent: 0,
@@ -332,7 +310,6 @@ export const defaultCanonicalReliabilityRow = (userId, role) => {
     misconduct_penalties_decayed: 0,
     lesson_not_completed_penalties_recent: 0,
     lesson_not_completed_penalties_decayed: 0,
-    paid_reschedules: 0,
   };
   const canonical = buildCanonicalReliabilityMetrics(raw);
   const flat = flattenCanonicalForPersistence(role, canonical, 100.0, {
@@ -361,7 +338,6 @@ export const attachLegacyReliabilityAliases = (row) => {
   return {
     ...row,
     total_bookings: row.total_bookings_recent,
-    reschedules: row.penalized_reschedules_recent,
     late_cancels: row.late_cancels_recent,
     late_arrival_penalties: row.late_arrival_penalties_recent,
     misconduct_penalties: row.misconduct_penalties_recent,

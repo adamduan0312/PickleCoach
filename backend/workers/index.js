@@ -4,7 +4,6 @@ import * as reminderWorker from './reminderWorker.js';
 import * as autoConfirmWorker from './autoConfirmWorker.js';
 import * as payoutWorker from './payoutWorker.js';
 import * as reliabilityWorker from './reliabilityWorker.js';
-import * as chargePaidRescheduleWorker from './chargePaidRescheduleWorker.js';
 import * as retryFailedPaymentsWorker from './retryFailedPaymentsWorker.js';
 import * as stripeReconciliationWorker from './stripeReconciliationWorker.js';
 import * as pendingBookingExpiryWorker from './pendingBookingExpiryWorker.js';
@@ -50,15 +49,6 @@ export const startWorkers = () => {
     }
   });
 
-  // Process paid reschedule payments: every 10 minutes
-  cron.schedule('*/10 * * * *', async () => {
-    try {
-      await chargePaidRescheduleWorker.processPaidReschedulePayments();
-    } catch (error) {
-      logger.error('Error in paid reschedule worker:', error);
-    }
-  });
-
   // Retry failed payments: every 10 minutes
   cron.schedule('*/10 * * * *', async () => {
     try {
@@ -68,12 +58,13 @@ export const startWorkers = () => {
     }
   });
 
-  // Expire stale pending bookings (no coach response): every 15 minutes
+
+  // Coach acceptance timeout: pending (authorized) bookings with no coach response
   cron.schedule('*/15 * * * *', async () => {
     try {
       await pendingBookingExpiryWorker.expireStalePendingBookings();
     } catch (error) {
-      logger.error('Error in pending booking expiry worker:', error);
+      logger.error('Error in coach acceptance timeout worker:', error);
     }
   });
 
@@ -111,9 +102,8 @@ export const startWorkers = () => {
   logger.info('   - Reminder notifications: every minute');
   logger.info('   - Auto-confirm lessons: every 5 minutes');
   logger.info('   - Process payouts: every 10 minutes');
-  logger.info('   - Process paid reschedules: every 10 minutes');
   logger.info('   - Retry failed payments: every 10 minutes');
-  logger.info('   - Pending booking expiry: every 15 minutes (PENDING_BOOKING_EXPIRY_HOURS, default 24)');
+  logger.info('   - Coach acceptance timeout: every 15 minutes (COACH_ACCEPTANCE_TIMEOUT_HOURS, default 24)');
   logger.info('   - Deferred dispute refunds (`payment_actions`): every 2 minutes');
   logger.info('   - Stripe reconciliation + stale refund-action probe: hourly');
   logger.info('   - Recalculate reliability: daily at 2 AM');

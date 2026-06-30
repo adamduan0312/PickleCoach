@@ -24,7 +24,7 @@ test('resolveDispute transaction always sets attendance_finalized on booking upd
   const src = readFileSync(disputeControllerPath, 'utf8');
   assert.match(
     src,
-    /patch:\s*\{\s*attendance_finalized:\s*true,\s*messaging_locked:\s*true\s*\}/,
+    /patch:\s*\{\s*attendance_finalized:\s*true\s*\}/,
     'booking status change from resolve must include attendance_finalized: true in applyBookingStatusTransition patch',
   );
   assert.match(

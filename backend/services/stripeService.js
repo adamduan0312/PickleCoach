@@ -16,6 +16,130 @@ export const clearStripeTestDouble = () => {
   stripeTestDouble = null;
 };
 
+/** Dev-only seeded PaymentIntents (`pi_seed_dev_*`) for Postman without live Stripe. Never used in production. */
+const DEV_SEED_PI_PREFIX = 'pi_seed_dev_';
+/** @type {Map<string, { amountCapturableCents: number, status: string, chargeId: string | null }>} */
+const devSeedPaymentIntentRegistry = new Map();
+
+export function isDevSeedPaymentIntentId(paymentIntentId) {
+  if (process.env.NODE_ENV === 'production') return false;
+  return String(paymentIntentId || '').startsWith(DEV_SEED_PI_PREFIX);
+}
+
+/** Optional eager registration (seed scripts); API server hydrates from DB on first use. */
+export function registerDevSeedPaymentIntent(paymentIntentId, { amountCapturableCents }) {
+  if (process.env.NODE_ENV === 'production') return;
+  const id = String(paymentIntentId || '');
+  if (!id.startsWith(DEV_SEED_PI_PREFIX)) {
+    throw new Error(`Dev seed PaymentIntent ids must start with ${DEV_SEED_PI_PREFIX}`);
+  }
+  devSeedPaymentIntentRegistry.set(id, {
+    amountCapturableCents: Math.round(Number(amountCapturableCents) || 0),
+    status: 'requires_capture',
+    chargeId: null,
+  });
+}
+
+/**
+ * Load dev-seed PI state from the payments row so stubs work after server restart
+ * (seed scripts run in a separate process from the API server).
+ */
+async function ensureDevSeedIntentLoaded(paymentIntentId) {
+  const id = String(paymentIntentId || '');
+  if (!isDevSeedPaymentIntentId(id)) return false;
+  if (devSeedPaymentIntentRegistry.has(id)) return true;
+
+  const { Payment } = await import('../models/index.js');
+  const payment = await Payment.findOne({ where: { payment_intent_id: id } });
+
+  if (!payment) {
+    devSeedPaymentIntentRegistry.set(id, {
+      amountCapturableCents: 100,
+      status: 'requires_capture',
+      chargeId: null,
+    });
+    logger.warn({
+      component: 'stripe',
+      event: 'dev_seed_pi_hydrated_default',
+      paymentIntentId: id,
+    });
+    return true;
+  }
+
+  const total = Number(payment.total_charge_to_student) || 0;
+  const amountCapturableCents = Math.round(total * 100);
+  let status = 'requires_capture';
+  let chargeId = payment.charge_id || null;
+
+  if (['captured', 'pending_capture'].includes(String(payment.payment_status || ''))) {
+    status = 'succeeded';
+    chargeId = chargeId || `ch_seed_dev_${id.slice(-12)}`;
+  } else if (['pending_void', 'failed'].includes(String(payment.payment_status || ''))) {
+    status = 'canceled';
+    chargeId = null;
+  }
+
+  devSeedPaymentIntentRegistry.set(id, {
+    amountCapturableCents: status === 'requires_capture' ? amountCapturableCents : 0,
+    status,
+    chargeId,
+  });
+  logger.info({
+    component: 'stripe',
+    event: 'dev_seed_pi_hydrated_from_db',
+    paymentIntentId: id,
+    paymentStatus: payment.payment_status,
+  });
+  return true;
+}
+
+function buildDevSeedPaymentIntentResponse(paymentIntentId) {
+  const row = devSeedPaymentIntentRegistry.get(String(paymentIntentId));
+  if (!row) {
+    throw new Error(`Dev seed PaymentIntent ${paymentIntentId} is not loaded.`);
+  }
+  return {
+    id: paymentIntentId,
+    status: row.status,
+    amount_capturable: row.status === 'requires_capture' ? row.amountCapturableCents : 0,
+    latest_charge: row.chargeId,
+    charges: row.chargeId ? { data: [{ id: row.chargeId }] } : { data: [] },
+    client_secret: `${paymentIntentId}_secret_dev`,
+  };
+}
+
+async function devSeedCapturePaymentIntent(paymentIntentId) {
+  await ensureDevSeedIntentLoaded(paymentIntentId);
+  const id = String(paymentIntentId);
+  const row = devSeedPaymentIntentRegistry.get(id);
+  if (row.status === 'succeeded') {
+    return buildDevSeedPaymentIntentResponse(paymentIntentId);
+  }
+  if (row.status !== 'requires_capture') {
+    throw new Error(`Dev seed PaymentIntent ${paymentIntentId} is not capturable (status: ${row.status})`);
+  }
+  row.chargeId = `ch_seed_dev_${id.slice(-12)}`;
+  row.status = 'succeeded';
+  row.amountCapturableCents = 0;
+  logger.info('Dev seed PaymentIntent captured (stub)', { paymentIntentId });
+  return buildDevSeedPaymentIntentResponse(paymentIntentId);
+}
+
+async function devSeedCancelPaymentIntent(paymentIntentId) {
+  await ensureDevSeedIntentLoaded(paymentIntentId);
+  const row = devSeedPaymentIntentRegistry.get(String(paymentIntentId));
+  if (!row) {
+    throw new Error(`Dev seed PaymentIntent ${paymentIntentId} is not loaded.`);
+  }
+  if (row.status === 'canceled') {
+    return buildDevSeedPaymentIntentResponse(paymentIntentId);
+  }
+  row.status = 'canceled';
+  row.amountCapturableCents = 0;
+  logger.info('Dev seed PaymentIntent cancelled (stub)', { paymentIntentId });
+  return buildDevSeedPaymentIntentResponse(paymentIntentId);
+}
+
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || '', {
   apiVersion: '2024-11-20.acacia',
 });
@@ -82,6 +206,9 @@ export const createPaymentIntent = async (amount, currency = 'usd', customerId =
  * @returns {Promise<Object>} PaymentIntent object
  */
 export const capturePaymentIntent = async (paymentIntentId) => {
+  if (isDevSeedPaymentIntentId(paymentIntentId)) {
+    return devSeedCapturePaymentIntent(paymentIntentId);
+  }
   try {
     const paymentIntent = await stripe.paymentIntents.capture(paymentIntentId);
     logger.info('PaymentIntent captured', { paymentIntentId });
@@ -98,6 +225,9 @@ export const capturePaymentIntent = async (paymentIntentId) => {
  * @returns {Promise<Object>} PaymentIntent object
  */
 export const cancelPaymentIntent = async (paymentIntentId) => {
+  if (isDevSeedPaymentIntentId(paymentIntentId)) {
+    return devSeedCancelPaymentIntent(paymentIntentId);
+  }
   try {
     const paymentIntent = await stripe.paymentIntents.cancel(paymentIntentId);
     logger.info('PaymentIntent cancelled', { paymentIntentId });
@@ -302,6 +432,10 @@ export const verifyWebhookSignature = (payload, signature) => {
 export const getPaymentIntent = async (paymentIntentId) => {
   if (stripeTestDouble?.getPaymentIntent) {
     return stripeTestDouble.getPaymentIntent(paymentIntentId);
+  }
+  if (isDevSeedPaymentIntentId(paymentIntentId)) {
+    await ensureDevSeedIntentLoaded(paymentIntentId);
+    return buildDevSeedPaymentIntentResponse(paymentIntentId);
   }
   try {
     const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);

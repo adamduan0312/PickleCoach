@@ -152,6 +152,30 @@ export const splitNetRetainedCoachPlatformCents = ({
   };
 };
 
+/** Coach payout at full capture, derived from persisted lesson_price (stable after partial-refund mirror). */
+export const resolveCaptureCoachPayoutCents = (lessonPrice) =>
+  dollarsToCents(calculatePaymentAmounts(Number(lessonPrice)).coach_payout_expected);
+
+/**
+ * Coach escrow transfer from persisted payment fields after refunds.
+ * Net retained = `total_charge_to_student` − `refunded_amount` (Stripe-mirrored actuals).
+ * `lesson_price` supplies the capture-time coach/total ratio only — never the payout amount when refunded > 0.
+ */
+export const computeCoachEscrowPayoutFromPaymentSnapshot = ({
+  totalChargeToStudent,
+  refundedAmount,
+  lessonPrice,
+}) => {
+  const totalChargeCents = dollarsToCents(totalChargeToStudent);
+  const refundedCents = dollarsToCents(refundedAmount);
+  const captureCoachPayoutCents = resolveCaptureCoachPayoutCents(lessonPrice);
+  return computeEscrowCoachTransferCents({
+    totalChargeCents,
+    refundedCents,
+    coachPayoutExpectedCents: captureCoachPayoutCents,
+  });
+};
+
 /** Escrow payout to coach (whole cents) before Stripe transfer — same ratio as `splitNetRetainedCoachPlatformCents`. */
 export const computeEscrowCoachTransferCents = ({
   totalChargeCents,

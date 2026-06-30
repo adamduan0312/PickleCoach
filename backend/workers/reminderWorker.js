@@ -1,4 +1,4 @@
-import { Booking, User } from '../models/index.js';
+import { Booking, User, Lesson } from '../models/index.js';
 import { Op } from 'sequelize';
 import { logger } from '../config/logger.js';
 import * as notificationService from '../services/notificationService.js';
@@ -34,6 +34,7 @@ export const sendReminderNotifications = async () => {
       include: [
         { model: User, as: 'coach', attributes: ['id', 'full_name', 'email'] },
         { model: User, as: 'primaryStudent', attributes: ['id', 'full_name', 'email'] },
+        { model: Lesson, as: 'lesson', attributes: ['id', 'title'] },
       ],
     });
 
@@ -52,6 +53,7 @@ export const sendReminderNotifications = async () => {
       include: [
         { model: User, as: 'coach', attributes: ['id', 'full_name', 'email'] },
         { model: User, as: 'primaryStudent', attributes: ['id', 'full_name', 'email'] },
+        { model: Lesson, as: 'lesson', attributes: ['id', 'title'] },
       ],
     });
 
@@ -70,6 +72,7 @@ export const sendReminderNotifications = async () => {
       include: [
         { model: User, as: 'coach', attributes: ['id', 'full_name', 'email'] },
         { model: User, as: 'primaryStudent', attributes: ['id', 'full_name', 'email'] },
+        { model: Lesson, as: 'lesson', attributes: ['id', 'title'] },
       ],
     });
 

@@ -13,8 +13,8 @@ import {
 import { Op } from 'sequelize';
 import * as stripeService from './stripeService.js';
 import { logger } from '../config/logger.js';
-import { createAuditLog } from '../utils/audit.js';
-import { PAID_RESCHEDULE_FEE_USD, MIN_CHARGE_USD } from './paymentConstants.js';
+import { assertPaymentReadyForCoachCapture } from '../utils/paymentAuthorizationGate.js';
+import { MIN_CHARGE_USD } from './paymentConstants.js';
 import {
   dollarsToCents,
   centsToDecimalString,
@@ -27,6 +27,8 @@ import {
   remainingRefundableOnChargeCents,
   computeEscrowCoachTransferCents,
   splitNetRetainedCoachPlatformCents,
+  resolveCaptureCoachPayoutCents,
+  computeCoachEscrowPayoutFromPaymentSnapshot,
   centsNearEqual,
 } from './paymentEngine.js';
 import {
@@ -37,6 +39,11 @@ import {
   hydrateFullRemainingActionTypeSet,
   fixedCentsRefundActionTypeSet,
 } from './paymentStripeContract.js';
+import {
+  isLateCancelRetainedRevenueEligibleFromHistory,
+  isLateCancelRefundSettledForPayout,
+} from '../utils/lateCancelPayout.js';
+import { createAuditLog } from '../utils/audit.js';
 import { applyBookingStatusTransition, BookingTransitionVia } from './bookingStateMachine.js';
 
 /** Re-export canonical math for controllers/services that imported from `paymentService`. */
@@ -49,8 +56,6 @@ export {
   calculatePaymentAmounts,
   MIN_LESSON_PRICE_USD,
 };
-
-const PAID_RESCHEDULE_FEE = PAID_RESCHEDULE_FEE_USD;
 
 /**
  * Create payment and PaymentIntent for a booking.
@@ -95,7 +100,7 @@ export const createPaymentForBooking = async (booking, studentId, paymentMethod 
       booking_id: booking.id,
       student_id: studentId,
       payment_method: paymentMethod,
-      payment_status: { [Op.in]: ['pending', 'pending_capture', 'captured', 'partially_refunded'] },
+      payment_status: { [Op.in]: ['pending', 'authorized', 'pending_capture', 'captured', 'partially_refunded'] },
     },
     order: [['id', 'DESC']],
   };
@@ -187,10 +192,6 @@ export const createPaymentForBooking = async (booking, studentId, paymentMethod 
  * Handle successful payment capture (from webhook)
  */
 export const handlePaymentCapture = async (paymentIntentId, chargeId) => {
-  const { RescheduleHistory, Booking, User } = await import('../models/index.js');
-  const { updateUserReliability } = await import('./reliabilityService.js');
-  const { logAudit } = await import('../utils/audit.js');
-
   const payment = await Payment.findOne({
     where: { payment_intent_id: paymentIntentId },
     include: [{ model: Booking, as: 'booking' }],
@@ -200,10 +201,8 @@ export const handlePaymentCapture = async (paymentIntentId, chargeId) => {
     throw new Error(`Payment not found for PaymentIntent ${paymentIntentId}`);
   }
 
-  // Coach-must-confirm: student has authorized; we don't capture until coach accepts
   const captureOnAccept = payment.metadata?.capture_on_accept === true;
   if (captureOnAccept) {
-    /** Coach accept triggers capture API; webhook payment_intent.succeeded finalizes captured + booking. */
     await payment.update({
       charge_id: chargeId,
       payment_status: 'captured',
@@ -213,7 +212,6 @@ export const handlePaymentCapture = async (paymentIntentId, chargeId) => {
       await applyBookingStatusTransition(payment.booking, {
         toStatus: 'confirmed',
         via: BookingTransitionVia.PAYMENT_CAPTURE_WEBHOOK,
-        patch: { messaging_locked: false },
       });
     }
     await createAuditLog({
@@ -226,87 +224,17 @@ export const handlePaymentCapture = async (paymentIntentId, chargeId) => {
     return payment;
   }
 
-  // Standard capture (paid reschedule or automatic capture)
   await payment.update({
     payment_status: 'captured',
     charge_id: chargeId,
     escrow_status: 'held',
   });
 
-  // Check if this is a paid reschedule payment
-  const isPaidReschedule = payment.metadata?.type === 'paid_reschedule';
-  
-  if (isPaidReschedule && payment.metadata?.reschedule_history_id) {
-    // Apply the paid reschedule after payment succeeds
-    const rescheduleHistoryId = parseInt(payment.metadata.reschedule_history_id);
-    const rescheduleHistory = await RescheduleHistory.findByPk(rescheduleHistoryId, {
-      include: [{ model: Booking, as: 'booking' }],
+  if (payment.booking && payment.booking.status === 'pending') {
+    await applyBookingStatusTransition(payment.booking, {
+      toStatus: 'confirmed',
+      via: BookingTransitionVia.PAYMENT_CAPTURE_WEBHOOK,
     });
-
-    if (rescheduleHistory && rescheduleHistory.booking) {
-      const booking = rescheduleHistory.booking;
-
-      // SAFEGUARD: Only apply if reschedule is still pending (prevents double-application)
-      if (rescheduleHistory.approval_status !== 'pending') {
-        logger.warn(`Reschedule ${rescheduleHistory.id} already processed (status: ${rescheduleHistory.approval_status}), skipping application`);
-        return payment;
-      }
-
-      // Apply the reschedule
-      // IMPORTANT: Only update scheduled_at and extra_paid_reschedules
-      // DO NOT modify booking.status (e.g., confirmed/completed) to prevent state regressions
-      await booking.update({
-        scheduled_at: rescheduleHistory.new_scheduled_at,
-        extra_paid_reschedules: (booking.extra_paid_reschedules || 0) + 1,
-        // Explicitly preserve booking.status - reschedules do NOT change booking status
-      });
-
-      // Update reschedule history to approved
-      await rescheduleHistory.update({
-        approval_status: 'approved',
-        approved_at: new Date(),
-      });
-
-      // Update reliability if needed
-      // SAFEGUARD: Only update reliability once (since we check approval_status above, this ensures single execution)
-      if (rescheduleHistory.affects_reliability && rescheduleHistory.requested_by !== 'admin') {
-        const userIdToUpdate = rescheduleHistory.requested_by === 'coach' 
-          ? booking.coach_id 
-          : booking.primary_student_id;
-        
-        if (userIdToUpdate) {
-          const userToUpdate = await User.findByPk(userIdToUpdate, {
-            include: [{ model: UserRole, as: 'userRoles', attributes: ['role'] }],
-          });
-          if (userToUpdate) {
-            const reliabilityRole = rescheduleHistory.requested_by === 'coach' ? 'coach' : 'student';
-            await updateUserReliability(userIdToUpdate, reliabilityRole).catch((err) => {
-              logger.error('Failed to update reliability after paid reschedule:', err);
-            });
-          }
-        }
-      }
-
-      await logAudit(
-        payment.student_id,
-        'paid_reschedule_applied',
-        'bookings',
-        booking.id,
-        { scheduled_at: rescheduleHistory.old_scheduled_at },
-        { scheduled_at: rescheduleHistory.new_scheduled_at },
-        null
-      );
-
-      logger.info(`Paid reschedule applied for booking ${booking.id} after payment ${payment.id} succeeded`);
-    }
-  } else {
-    // Regular booking payment - unlock messaging
-    if (payment.booking) {
-      await payment.booking.update({
-        messaging_locked: false,
-        status: 'confirmed',
-      });
-    }
   }
 
   await createAuditLog({
@@ -336,7 +264,26 @@ export const capturePaymentOnCoachAccept = async (paymentId) => {
     throw new Error(`Booking is not pending (status: ${payment.booking.status})`);
   }
 
-  if (payment.payment_intent_id && payment.payment_status === 'pending') {
+  // Capture may have succeeded on a prior accept attempt while a later step failed (e.g. audit log).
+  if (payment.payment_status === 'pending_capture') {
+    logger.info({
+      component: 'stripe',
+      event: 'coach_accept_idempotent_pending_capture',
+      paymentId: payment.id,
+      bookingId: payment.booking.id,
+      paymentIntentId: payment.payment_intent_id,
+    });
+    return { payment, booking: payment.booking };
+  }
+
+  if (payment.payment_intent_id) {
+    const paymentIntent = await stripeService.getPaymentIntent(payment.payment_intent_id);
+    assertPaymentReadyForCoachCapture(payment.payment_status, paymentIntent?.status);
+  } else {
+    assertPaymentReadyForCoachCapture(payment.payment_status);
+  }
+
+  if (payment.payment_intent_id && payment.payment_status === 'authorized') {
     const paymentIntent = await stripeService.capturePaymentIntent(payment.payment_intent_id);
     const chargeId =
       paymentIntent.latest_charge ||
@@ -390,7 +337,7 @@ export const cancelPaymentOnCoachDecline = async (paymentId) => {
   if (payment.booking.status !== 'pending') {
     throw new Error(`Booking is not pending (status: ${payment.booking.status})`);
   }
-  if (payment.payment_intent_id && payment.payment_status === 'pending') {
+  if (payment.payment_intent_id && ['pending', 'authorized'].includes(payment.payment_status)) {
     await stripeService.cancelPaymentIntent(payment.payment_intent_id);
     await payment.update({ payment_status: 'pending_void' });
     await createAuditLog({
@@ -426,7 +373,9 @@ export const cancelPaymentOnCoachDecline = async (paymentId) => {
 };
 
 /**
- * Auto-expire a stale pending booking (no coach accept/decline): cancel uncaptured PaymentIntent, cancel booking, free the slot.
+ * Coach acceptance timeout: cancel a stale pending booking (no coach accept/decline within
+ * COACH_ACCEPTANCE_TIMEOUT_HOURS / PENDING_BOOKING_EXPIRY_HOURS). Voids uncaptured
+ * PaymentIntent (authorized manual-capture), cancels booking, frees the slot.
  * Idempotent if booking is no longer pending.
  * @returns {{ expired: boolean, reason?: string }}
  */
@@ -448,7 +397,7 @@ export const expirePendingBookingNoCoachResponse = async (bookingId) => {
       transaction,
     });
 
-    if (payment?.payment_intent_id && payment.payment_status === 'pending') {
+    if (payment?.payment_intent_id && ['pending', 'authorized'].includes(payment.payment_status)) {
       try {
         await stripeService.cancelPaymentIntent(payment.payment_intent_id);
         await payment.update({ payment_status: 'pending_void' }, { transaction });
@@ -479,7 +428,6 @@ export const expirePendingBookingNoCoachResponse = async (bookingId) => {
       patch: {
         cancelled_by: 'system',
         cancelled_at: new Date(),
-        messaging_locked: true,
       },
       options: { transaction },
     });
@@ -489,7 +437,7 @@ export const expirePendingBookingNoCoachResponse = async (bookingId) => {
         booking_id: booking.id,
         cancelled_by: 'system',
         reason: 'other',
-        reason_notes: 'Pending booking expired (no coach response within time limit)',
+        reason_notes: 'Coach did not accept or decline within time limit (authorization voided)',
         affects_reliability: false,
         refund_amount: 0,
         penalty_amount: 0,
@@ -520,8 +468,8 @@ export const expirePendingBookingNoCoachResponse = async (bookingId) => {
 
 /**
  * Release escrow and create payout (called by worker).
- * Invariant: only invoked from payoutWorker for bookings in completed / awaiting_verification / student_no_show;
- * releaseEscrow also rejects if booking status is otherwise (no payout on cancel / no-show).
+ * Payable when booking is completed / awaiting_verification / student_no_show,
+ * or cancelled after a student late cancel with retained penalty revenue.
  */
 export const releaseEscrow = async (paymentId, coachStripeAccountId = null) => {
   const payment = await Payment.findByPk(paymentId, {
@@ -539,19 +487,44 @@ export const releaseEscrow = async (paymentId, coachStripeAccountId = null) => {
     throw new Error('Payment is not in held status');
   }
 
-  // Check if booking is completed and no disputes
-  if (!['completed', 'awaiting_verification', 'student_no_show'].includes(payment.booking.status)) {
-    throw new Error('Booking must be completed, awaiting_verification, or student_no_show before payout');
+  const bookingStatus = payment.booking.status;
+  const standardPayableStatuses = ['completed', 'awaiting_verification', 'student_no_show'];
+  if (bookingStatus === 'cancelled') {
+    const history = await CancellationHistory.findOne({
+      where: { booking_id: payment.booking_id },
+      order: [['id', 'DESC']],
+    });
+    if (!isLateCancelRetainedRevenueEligibleFromHistory(history)) {
+      throw new Error('Cancelled booking is not eligible for late-cancel retained payout');
+    }
+    const pendingCancelRefund = await PaymentAction.findOne({
+      where: {
+        booking_id: payment.booking_id,
+        action_type: 'booking_cancel_refund',
+        status: 'pending',
+      },
+    });
+    if (pendingCancelRefund) {
+      throw new Error('Late-cancel coach payout blocked until cancel refund payment action completes');
+    }
+    if (payment.refund_status === 'pending') {
+      throw new Error('Late-cancel coach payout blocked until Stripe refund completes');
+    }
+    if (!isLateCancelRefundSettledForPayout(payment)) {
+      throw new Error('Late-cancel coach payout blocked until partial refund is settled (partially_refunded + refund_status succeeded)');
+    }
+  } else if (!standardPayableStatuses.includes(bookingStatus)) {
+    throw new Error('Booking must be completed, awaiting_verification, student_no_show, or a student late cancel with retained revenue before payout');
   }
 
-  const totalChargeCents = dollarsToCents(payment.total_charge_to_student);
-  const refundedCents = dollarsToCents(payment.refunded_amount);
-  const originalCoachPayoutCents = dollarsToCents(payment.coach_payout_expected);
-  const { payoutCents, netRetainedCents, coachShareRatio } = computeEscrowCoachTransferCents({
-    totalChargeCents,
-    refundedCents,
-    coachPayoutExpectedCents: originalCoachPayoutCents,
+  const { payoutCents, netRetainedCents, coachShareRatio } = computeCoachEscrowPayoutFromPaymentSnapshot({
+    totalChargeToStudent: payment.total_charge_to_student,
+    refundedAmount: payment.refunded_amount,
+    lessonPrice: payment.lesson_price,
   });
+  if (payoutCents > netRetainedCents) {
+    throw new Error('Coach payout exceeds net retained after refunds');
+  }
   const payoutAmountDollars = centsToDecimalString(payoutCents);
 
   // Create payout record
@@ -1567,6 +1540,8 @@ export const assertStripePaymentConsistency = async (payment, { autoHeal = false
   if (pi) {
     if (pi.status === 'succeeded' && pay.payment_status === 'pending_capture') {
       piMismatch = false;
+    } else if (pi.status === 'requires_capture' && pay.payment_status === 'pending' && pay.metadata?.capture_on_accept) {
+      piMismatch = true;
     } else if (pi.status === 'succeeded' && pay.payment_status === 'pending' && !pay.metadata?.capture_on_accept) {
       piMismatch = true;
     } else if (pi.status === 'canceled' && !['failed', 'pending_void'].includes(pay.payment_status)) {
@@ -1610,7 +1585,6 @@ export const assertStripePaymentConsistency = async (payment, { autoHeal = false
           await applyBookingStatusTransition(reloaded.booking, {
             toStatus: 'confirmed',
             via: BookingTransitionVia.PAYMENT_CAPTURE_WEBHOOK,
-            patch: { messaging_locked: false },
           });
         }
       }
@@ -1638,72 +1612,4 @@ export const assertStripePaymentConsistency = async (payment, { autoHeal = false
   }
 
   return { ok: true };
-};
-
-/**
- * Create payment and PaymentIntent for a paid reschedule
- * @param {Booking} booking - The booking being rescheduled
- * @param {number} studentId - Student user ID
- * @param {number} rescheduleHistoryId - Reschedule history record ID
- * @returns {Promise<Object>} Payment and PaymentIntent
- */
-export const createPaymentForPaidReschedule = async (booking, studentId, rescheduleHistoryId) => {
-  // Create payment record for reschedule fee
-  const payment = await Payment.create({
-    booking_id: booking.id,
-    coach_id: booking.coach_id,
-    student_id: studentId,
-    lesson_price: 0, // Reschedule fee is separate from lesson price
-    platform_fee_percent: 0,
-    platform_fee_amount: 0,
-    total_charge_to_student: PAID_RESCHEDULE_FEE,
-    coach_payout_expected: 0, // Reschedule fee goes to platform, not coach
-    escrow_status: 'held',
-    payment_status: 'pending',
-    refund_status: 'none',
-    payment_method: 'stripe',
-    currency: 'USD',
-    metadata: {
-      booking_id: booking.id,
-      reschedule_history_id: rescheduleHistoryId,
-      type: 'paid_reschedule',
-    },
-  });
-
-  // Create Stripe PaymentIntent
-  const paymentIntent = await stripeService.createPaymentIntent(
-    PAID_RESCHEDULE_FEE,
-    'usd',
-    null,
-    {
-      booking_id: booking.id.toString(),
-      payment_id: payment.id.toString(),
-      reschedule_history_id: rescheduleHistoryId.toString(),
-      type: 'paid_reschedule',
-    }
-  );
-
-  // Update payment with PaymentIntent ID
-  await payment.update({
-    payment_intent_id: paymentIntent.id,
-  });
-
-  await createAuditLog({
-    user_id: studentId,
-    action: 'paid_reschedule_payment_created',
-    table_name: 'payments',
-    record_id: payment.id,
-    after_state: { payment_intent_id: paymentIntent.id, amount: PAID_RESCHEDULE_FEE },
-  });
-
-  return {
-    payment,
-    paymentIntent: {
-      id: paymentIntent.id,
-      client_secret: paymentIntent.client_secret,
-      amount: paymentIntent.amount,
-      currency: paymentIntent.currency,
-      status: paymentIntent.status,
-    },
-  };
 };

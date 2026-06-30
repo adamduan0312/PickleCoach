@@ -95,6 +95,7 @@ describe('paymentEngine', () => {
       coachPayoutExpectedCents: 9200,
     });
     assert.equal(netRetainedCents, 5400);
+    assert.equal(payoutCents, 4600);
     const split = splitNetRetainedCoachPlatformCents({
       netRetainedCents,
       totalChargeCents: 10_800,

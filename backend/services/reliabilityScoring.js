@@ -34,8 +34,6 @@ export const reliabilityDenominator = (metrics) =>
       booking_baseline_recent: Number(metrics?.total_bookings) || 0,
       booking_baseline_decayed:
         Math.max(0, (Number(metrics?._booking_baseline) || 0) - (Number(metrics?.total_bookings) || 0)),
-      penalized_reschedules_recent: Number(metrics?.reschedules) || 0,
-      penalized_reschedules_decayed: Number(metrics?._decayed?.reschedules) || 0,
       late_cancels_recent: Number(metrics?.late_cancels) || 0,
       late_cancels_decayed: Number(metrics?._decayed?.late_cancels) || 0,
       coach_cancels_non_late_recent: Number(metrics?.coach_cancels) || 0,
@@ -51,7 +49,6 @@ export const reliabilityDenominator = (metrics) =>
       lesson_not_completed_penalties_recent: Number(metrics?.lesson_not_completed_penalties) || 0,
       lesson_not_completed_penalties_decayed:
         Number(metrics?._decayed?.lesson_not_completed_penalties) || 0,
-      paid_reschedules: Number(metrics?.paid_reschedules) || 0,
     }),
   );
 
@@ -69,8 +66,6 @@ export const calculateCoachReliabilityScore = (metrics) => {
       0,
       (Number(metrics._booking_baseline) || 0) - total_bookings,
     ),
-    penalized_reschedules_recent: Number(metrics.reschedules) || 0,
-    penalized_reschedules_decayed: Number(metrics._decayed?.reschedules) || 0,
     late_cancels_recent: Number(metrics.late_cancels) || 0,
     late_cancels_decayed: Number(metrics._decayed?.late_cancels) || 0,
     coach_cancels_non_late_recent: Number(metrics.coach_cancels) || 0,
@@ -86,7 +81,6 @@ export const calculateCoachReliabilityScore = (metrics) => {
     lesson_not_completed_penalties_recent: Number(metrics.lesson_not_completed_penalties) || 0,
     lesson_not_completed_penalties_decayed:
       Number(metrics._decayed?.lesson_not_completed_penalties) || 0,
-    paid_reschedules: Number(metrics.paid_reschedules) || 0,
   });
   return calculateReliabilityScoreFromCanonical('coach', canonical);
 };
@@ -105,8 +99,6 @@ export const calculateStudentReliabilityScore = (metrics) => {
       0,
       (Number(metrics._booking_baseline) || 0) - total_bookings,
     ),
-    penalized_reschedules_recent: Number(metrics.reschedules) || 0,
-    penalized_reschedules_decayed: Number(metrics._decayed?.reschedules) || 0,
     late_cancels_recent: Number(metrics.late_cancels) || 0,
     late_cancels_decayed: Number(metrics._decayed?.late_cancels) || 0,
     coach_cancels_non_late_recent: 0,
@@ -122,7 +114,6 @@ export const calculateStudentReliabilityScore = (metrics) => {
     lesson_not_completed_penalties_recent: Number(metrics.lesson_not_completed_penalties) || 0,
     lesson_not_completed_penalties_decayed:
       Number(metrics._decayed?.lesson_not_completed_penalties) || 0,
-    paid_reschedules: 0,
   });
   return calculateReliabilityScoreFromCanonical('student', canonical);
 };

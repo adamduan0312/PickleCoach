@@ -1,5 +1,6 @@
 import { Notification, User } from '../models/index.js';
 import { logger } from '../config/logger.js';
+import { formatDeclineReasonLabel } from '../utils/declineReasonCodes.js';
 
 /**
  * Send email via SendGrid (if configured)
@@ -144,6 +145,7 @@ const getEmailSubject = (type, payload) => {
     'pre_lesson_24h': 'Reminder: Your Pickleball Lesson Tomorrow',
     'pre_lesson_1h': 'Reminder: Your Pickleball Lesson in 1 Hour',
     'booking_confirmed': 'Booking Confirmed',
+    'booking_declined': 'Booking Declined',
     'booking_cancelled': 'Booking Cancelled',
     'payment_received': 'Payment Received',
     'payout_processed': 'Payout Processed',
@@ -180,6 +182,28 @@ const getEmailContent = (type, payload) => {
       <p>Your pickleball lesson starts in 1 hour at ${scheduledAt}.</p>
       <p>Coach: ${payload?.coach_name || 'Your coach'}</p>
       <p>See you there!</p>
+    `,
+    booking_confirmed: `
+      <h2>Booking Confirmed</h2>
+      <p>Your lesson with <strong>${payload?.coach_name || 'your coach'}</strong> is confirmed.</p>
+      <p><strong>${payload?.lesson_title || 'Lesson'}</strong> — ${scheduledAt}</p>
+      <p>Booking ID: ${payload?.booking_id ?? ''}</p>
+    `,
+    booking_declined: `
+      <h2>Booking Declined</h2>
+      <p>${payload?.headline || 'Coach declined your booking.'}</p>
+      <p><strong>${payload?.lesson_title || 'your lesson'}</strong> — ${scheduledAt}</p>
+      ${payload?.reason_line ? `<p><strong>${payload.reason_line}</strong></p>` : ''}
+      ${payload?.message_to_student ? `<p><strong>Message:</strong><br>${payload.message_to_student}</p>` : ''}
+      <p>You can book another available slot in PickleCoach.</p>
+    `,
+    booking_cancelled: `
+      <h2>Booking Cancelled</h2>
+      <p>${payload?.headline || `The lesson <strong>${payload?.lesson_title || 'Lesson'}</strong> scheduled for ${scheduledAt} was cancelled.`}</p>
+      ${payload?.reason_line ? `<p><strong>${payload.reason_line}</strong></p>` : ''}
+      ${payload?.reason_notes ? `<p>${payload.reason_notes}</p>` : ''}
+      ${payload?.refund_line ? `<p>${payload.refund_line}</p>` : ''}
+      <p>Booking ID: ${payload?.booking_id ?? ''}</p>
     `,
     'password_reset': `
       <h2>Reset Your Password</h2>
@@ -237,6 +261,13 @@ const getSMSContent = (type, payload) => {
     'pre_lesson_48h': `PickleCoach: Lesson reminder - ${scheduledAt} with ${payload?.coach_name || 'your coach'}`,
     'pre_lesson_24h': `PickleCoach: Lesson tomorrow at ${scheduledAt}`,
     'pre_lesson_1h': `PickleCoach: Lesson in 1 hour at ${scheduledAt}`,
+    booking_confirmed: `PickleCoach: Booking confirmed — ${payload?.lesson_title || 'lesson'} with ${payload?.coach_name || 'your coach'} at ${scheduledAt}.`,
+    booking_declined: [
+      `PickleCoach: ${payload?.headline || 'Coach declined your booking.'}`,
+      payload?.reason_line,
+      payload?.message_to_student ? `Message: ${payload.message_to_student}` : 'Book another slot in the app.',
+    ].filter(Boolean).join(' '),
+    booking_cancelled: `PickleCoach: ${payload?.headline || `Booking cancelled — ${payload?.lesson_title || 'lesson'} at ${scheduledAt}.`}${payload?.reason_line ? ` ${payload.reason_line}.` : ''}`,
     booking_request_coach: `PickleCoach: New booking request from ${payload?.student_name || 'a student'} — ${payload?.lesson_title || 'lesson'} at ${scheduledAt}. Accept or decline in the app.`,
   };
   
@@ -275,7 +306,28 @@ export const sendBookingReminder = async (bookingId, hoursBefore = 48) => {
 };
 
 /**
- * Send reminder notification for a booking
+ * Deliver in-app notification always; email when the user has an email on file.
+ */
+const deliverDualChannel = async (userId, type, payload, { email } = {}) => {
+  const inApp = await createNotification(userId, type, 'in_app', payload);
+  try {
+    await sendNotification(inApp.id);
+  } catch (error) {
+    logger.warn({ component: 'notification', event: 'in_app_send_failed', userId, type, message: error?.message });
+  }
+
+  if (email) {
+    const emailNotif = await createNotification(userId, type, 'email', payload);
+    try {
+      await sendNotification(emailNotif.id);
+    } catch (error) {
+      logger.warn({ component: 'notification', event: 'email_send_failed', userId, type, message: error?.message });
+    }
+  }
+};
+
+/**
+ * Send reminder notification for a booking (email + in-app for student and coach).
  * @param {Object} booking - Booking object with coach and primaryStudent
  * @param {string} reminderType - '48h', '24h', or '1h'
  */
@@ -289,48 +341,36 @@ export const sendReminderNotification = async (booking, reminderType) => {
 
     const hours = hoursMap[reminderType] || 48;
 
-    // Send to student
     if (booking.primaryStudent) {
-      const studentNotification = await createNotification(
+      const studentPayload = {
+        booking_id: booking.id,
+        scheduled_at: booking.scheduled_at,
+        coach_name: booking.coach?.full_name || 'Coach',
+        lesson_title: booking.lesson?.title,
+        reminder_type: reminderType,
+      };
+      await deliverDualChannel(
         booking.primary_student_id,
         `pre_lesson_${hours}h`,
-        'email',
-        {
-          booking_id: booking.id,
-          scheduled_at: booking.scheduled_at,
-          coach_name: booking.coach?.full_name || 'Coach',
-          reminder_type: reminderType,
-        }
+        studentPayload,
+        { email: booking.primaryStudent.email },
       );
-      
-      // Actually send the email
-      try {
-        await sendNotification(studentNotification.id);
-      } catch (error) {
-        logger.error(`Failed to send reminder email to student ${booking.primary_student_id}:`, error);
-      }
     }
 
-    // Send to coach
     if (booking.coach) {
-      const coachNotification = await createNotification(
+      const coachPayload = {
+        booking_id: booking.id,
+        scheduled_at: booking.scheduled_at,
+        student_name: booking.primaryStudent?.full_name || 'Student',
+        lesson_title: booking.lesson?.title,
+        reminder_type: reminderType,
+      };
+      await deliverDualChannel(
         booking.coach_id,
         `pre_lesson_${hours}h`,
-        'email',
-        {
-          booking_id: booking.id,
-          scheduled_at: booking.scheduled_at,
-          student_name: booking.primaryStudent?.full_name || 'Student',
-          reminder_type: reminderType,
-        }
+        coachPayload,
+        { email: booking.coach.email },
       );
-      
-      // Actually send the email
-      try {
-        await sendNotification(coachNotification.id);
-      } catch (error) {
-        logger.error(`Failed to send reminder email to coach ${booking.coach_id}:`, error);
-      }
     }
   } catch (error) {
     logger.error('Error sending reminder notification:', error);
@@ -398,5 +438,206 @@ export const notifyCoachNewBookingRequest = async (bookingId) => {
         message: error?.message,
       });
     }
+  }
+};
+
+const loadBookingNotificationContext = async (bookingId) => {
+  const { Booking, User, Lesson } = await import('../models/index.js');
+  return Booking.findByPk(bookingId, {
+    include: [
+      { model: User, as: 'coach', attributes: ['id', 'full_name', 'email'] },
+      { model: User, as: 'primaryStudent', attributes: ['id', 'full_name', 'email'] },
+      { model: Lesson, as: 'lesson', attributes: ['id', 'title'] },
+    ],
+  });
+};
+
+/** Notify student when coach accepts a pending booking. */
+export const notifyBookingAccepted = async (bookingId) => {
+  const booking = await loadBookingNotificationContext(bookingId);
+  if (!booking?.primary_student_id) return;
+
+  const payload = {
+    booking_id: booking.id,
+    scheduled_at: booking.scheduled_at,
+    coach_name: booking.coach?.full_name || 'Your coach',
+    lesson_title: booking.lesson?.title || 'Lesson',
+  };
+
+  await deliverDualChannel(
+    booking.primary_student_id,
+    'booking_confirmed',
+    payload,
+    { email: booking.primaryStudent?.email },
+  );
+};
+
+/** Notify student when coach declines a pending booking. */
+export const buildBookingDeclinedNotificationContent = (payload = {}) => {
+  const reasonKey = payload.decline_reason_code;
+  const reasonLabel = formatDeclineReasonLabel(reasonKey);
+  const messageLine =
+    payload.message_to_student != null && String(payload.message_to_student).trim()
+      ? String(payload.message_to_student).trim()
+      : payload.decline_message != null && String(payload.decline_message).trim()
+        ? String(payload.decline_message).trim()
+        : null;
+
+  const headline = 'Coach declined your booking.';
+  const reasonLine = reasonLabel ? `Reason: ${reasonLabel}` : null;
+
+  const summaryParts = [headline];
+  if (reasonLine) summaryParts.push(reasonLine);
+  if (messageLine) {
+    summaryParts.push('Message:');
+    summaryParts.push(messageLine);
+  }
+
+  return {
+    headline,
+    reason_line: reasonLine,
+    message_to_student: messageLine,
+    decline_message: messageLine,
+    summary: summaryParts.join('\n'),
+  };
+};
+
+export const notifyBookingDeclined = async (bookingId) => {
+  const booking = await loadBookingNotificationContext(bookingId);
+  if (!booking?.primary_student_id) return;
+
+  const basePayload = {
+    booking_id: booking.id,
+    scheduled_at: booking.scheduled_at,
+    coach_name: booking.coach?.full_name || 'Your coach',
+    lesson_title: booking.lesson?.title || 'Lesson',
+    decline_reason_code: booking.decline_reason_code || null,
+    message_to_student: booking.decline_message_to_student || null,
+  };
+
+  const payload = {
+    ...basePayload,
+    ...buildBookingDeclinedNotificationContent(basePayload),
+  };
+
+  await deliverDualChannel(
+    booking.primary_student_id,
+    'booking_declined',
+    payload,
+    { email: booking.primaryStudent?.email },
+  );
+};
+
+/** Notify the other party when a booking is cancelled. */
+export const CANCELLATION_REASON_LABELS = {
+  weather: 'Weather',
+  emergency: 'Emergency',
+  sickness: 'Sickness',
+  travel_delay: 'Travel delay',
+  schedule_conflict: 'Schedule conflict',
+  forgot: 'Forgot',
+  other: 'Other',
+};
+
+const CANCELLED_BY_PHRASE = {
+  student: 'the student',
+  coach: 'the coach',
+  admin: 'an administrator',
+  system: 'the system',
+};
+
+/**
+ * Build human-readable cancellation notification copy (in-app summary + email body fragments).
+ */
+export const buildBookingCancelledNotificationContent = (payload = {}) => {
+  const byKey = payload.cancelled_by || payload.cancelledBy;
+  const byPhrase = CANCELLED_BY_PHRASE[byKey] || byKey || 'the other party';
+  const reasonKey = payload.reason;
+  const reasonLabel = reasonKey ? (CANCELLATION_REASON_LABELS[reasonKey] || reasonKey) : null;
+
+  const headline = `Your lesson was cancelled by ${byPhrase}.`;
+  const reasonLine = reasonLabel ? `Reason: ${reasonLabel}` : null;
+  const notesLine =
+    payload.reason_notes && String(payload.reason_notes).trim()
+      ? String(payload.reason_notes).trim()
+      : null;
+
+  let refundLine = null;
+  const refundAmount = payload.refund_amount;
+  if (refundAmount != null && Number(refundAmount) > 0) {
+    refundLine = `Refund: $${Number(refundAmount).toFixed(2)}`;
+    if (payload.refund_status === 'pending_stripe_execution') {
+      refundLine += ' (processing)';
+    }
+  } else if (payload.refund_status === 'voided_authorization') {
+    refundLine = 'Your payment authorization was released.';
+  }
+
+  const summaryParts = [headline];
+  if (reasonLine) summaryParts.push(reasonLine);
+  if (notesLine) summaryParts.push(notesLine);
+  if (refundLine) summaryParts.push(refundLine);
+
+  return {
+    headline,
+    reason_line: reasonLine,
+    reason_notes: notesLine,
+    refund_line: refundLine,
+    summary: summaryParts.join('\n'),
+  };
+};
+
+export const notifyBookingCancelled = async (bookingId, {
+  cancelledBy,
+  reason,
+  reason_notes,
+  refund_amount,
+  penalty_amount,
+  refund_status,
+} = {}) => {
+  const booking = await loadBookingNotificationContext(bookingId);
+  if (!booking) return;
+
+  const payload = {
+    booking_id: booking.id,
+    scheduled_at: booking.scheduled_at,
+    lesson_title: booking.lesson?.title || 'Lesson',
+    coach_name: booking.coach?.full_name,
+    student_name: booking.primaryStudent?.full_name,
+    cancelled_by: cancelledBy || booking.cancelled_by,
+    reason: reason || null,
+    reason_notes: reason_notes || null,
+    refund_amount: refund_amount ?? null,
+    penalty_amount: penalty_amount ?? null,
+    refund_status: refund_status ?? null,
+    ...buildBookingCancelledNotificationContent({
+      cancelled_by: cancelledBy || booking.cancelled_by,
+      reason,
+      reason_notes,
+      refund_amount,
+      refund_status,
+    }),
+  };
+
+  const by = cancelledBy || booking.cancelled_by;
+  if (by === 'coach' || by === 'admin' || by === 'system') {
+    if (booking.primary_student_id) {
+      await deliverDualChannel(
+        booking.primary_student_id,
+        'booking_cancelled',
+        payload,
+        { email: booking.primaryStudent?.email },
+      );
+    }
+    return;
+  }
+
+  if (by === 'student' && booking.coach_id) {
+    await deliverDualChannel(
+      booking.coach_id,
+      'booking_cancelled',
+      payload,
+      { email: booking.coach?.email },
+    );
   }
 };

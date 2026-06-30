@@ -17,12 +17,14 @@ Requires `RUN_PAYMENT_INTEGRATION=1` (set by the script), a reachable DB from `c
 | Concern | Module |
 |--------|--------|
 | **All pure money math** (cents, fees, splits, caps, reconciliation comparisons) | `services/paymentEngine.js` |
-| **Tunable constants** (fee %, min charge, reschedule fee env) | `services/paymentConstants.js` |
+| **Tunable constants** (fee %, min charge) | `services/paymentConstants.js` |
 | **Stripe calls, DB writes, workers, webhooks** | `services/paymentService.js` |
 
 Controllers and workers must **not** reimplement fee, refund, or payout proportions. Import from `paymentEngine.js` or use `paymentService` re-exports that delegate to the engine.
 
 ## Initial charge (lesson booking)
+
+**Authorize-first flow (current):** `POST /api/booking-intents` creates a manual-capture PaymentIntent with no booking row. After client authorization (`requires_capture`), `POST /api/bookings/confirm` creates `bookings` + `payments` with `payment_status: authorized`. Coach accept captures funds. See `docs/MIGRATION_AUTHORIZE_FIRST_BOOKING.md`.
 
 - **Lesson price** → integer cents via `dollarsToCents`.
 - **Platform fee** = `round(lessonCents × platform_fee_percent / 100)` (default **8%** of lesson).
@@ -36,6 +38,8 @@ Implemented as `calculatePaymentAmounts(lessonPrice)` in `paymentEngine.js`. Per
 - **Total charge basis**: `parseTotalChargeCentsFromBooking(payment, booking)`.
 - **Split**: `computeCancellationSplitCents` (late student = half refund / half penalty; coach cancel = full refund; etc.). Invariant: `refundCents + penaltyCents === totalChargeCents`.
 - **Stripe cap**: `applyStripeRefundCap` clamps refund to remaining charge balance; same invariant.
+- **Student late cancel (<24h) retained revenue**: After the partial refund executes on a **captured** charge, the remaining charge balance is treated as lesson revenue. **`payoutWorker`** releases escrow to the coach using the normal capture-time coach/platform ratio. **Uncaptured** authorize-only PaymentIntents (`pending`, no `charge_id`) are **voided in full** on cancel — no retained funds, no coach payout (common on **`pending`** bookings before coach accept).
+- **Payout ordering (late cancel)**: Cancel → enqueue `booking_cancel_refund` → Stripe partial refund → `charge.refunded` mirror sets `payment_status: partially_refunded` and `refund_status: succeeded` → **only then** may `payoutWorker` call `releaseEscrow`. Guards block payout while a cancel refund `payment_actions` row is pending, while `refund_status === pending`, or before `partially_refunded` + succeeded.
 
 ## Post-refund coach vs platform split
 
@@ -46,6 +50,8 @@ When mirroring Stripe refund state or computing escrow payout:
 - **Coach portion** = `round(net × ratio)`, capped to `net`; **platform** = `net − coach` (remainder absorbs cent rounding).
 
 Implemented as `splitNetRetainedCoachPlatformCents` and `computeEscrowCoachTransferCents` in `paymentEngine.js`. Used by `applyRefundStateFromStripeCharge` and `releaseEscrow`.
+
+**Late-cancel / partial-refund payout:** `releaseEscrow` calls `computeCoachEscrowPayoutFromPaymentSnapshot`, which sets **net retained = `total_charge_to_student` − `refunded_amount`** (Stripe-mirrored payment row). `lesson_price` defines the capture-time coach/total **ratio only** — the transfer is **`net_retained × ratio`**, never the full pre-refund coach share.
 
 ## Rounding rules
 

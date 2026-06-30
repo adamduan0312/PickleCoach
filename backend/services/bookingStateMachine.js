@@ -12,6 +12,8 @@ import {
   DISPUTE_RESOLVE_ATTENDANCE_SOURCE_STATUSES,
   validateAttendanceOutcomeTransition,
 } from '../utils/bookingAttendanceStatus.js';
+import { messagingLockedValueForStatus } from '../utils/bookingMessaging.js';
+import { ensureBookingConversation } from '../utils/bookingConversationSummary.js';
 
 /** @typedef {import('../models/Booking.js').default} BookingModel */
 
@@ -37,8 +39,10 @@ export const BookingTransitionVia = Object.freeze({
   COACH_ACCEPT_WITHOUT_PAYMENT: 'coach_accept_without_payment',
   /** `cancelPaymentOnCoachDecline` */
   COACH_DECLINE: 'coach_decline',
-  /** `expirePendingBookingNoCoachResponse` */
+  /** Coach acceptance timeout worker (`expirePendingBookingNoCoachResponse`) */
   SYSTEM_EXPIRE_PENDING: 'system_expire_pending',
+  /** Stripe authorization failed before coach could accept */
+  PAYMENT_AUTHORIZATION_FAILED: 'payment_authorization_failed',
   /** Pre-lesson cancel API (student/coach/admin wrapper) */
   PRE_LESSON_CANCEL: 'pre_lesson_cancel',
   /** Background: lesson end passed while still confirmed */
@@ -78,6 +82,7 @@ function buildEdges() {
     BookingTransitionVia.COACH_DECLINE,
     BookingTransitionVia.SYSTEM_EXPIRE_PENDING,
     BookingTransitionVia.PRE_LESSON_CANCEL,
+    BookingTransitionVia.PAYMENT_AUTHORIZATION_FAILED,
   ]);
 
   addEdge('confirmed', 'awaiting_verification', [BookingTransitionVia.WORKER_LESSON_END_TO_AWAITING_VERIFICATION]);
@@ -213,7 +218,8 @@ function listAllowedDestinations(from) {
 }
 
 /**
- * Apply a validated `status` change plus optional columns (messaging_locked, payout_status, …).
+ * Apply a validated `status` change plus optional columns (payout_status, cancelled_*, …).
+ * `messaging_locked` is always derived from `toStatus` — do not pass it in `patch`.
  *
  * @param {BookingModel} booking — Sequelize instance; `status` read from current model state
  * @param {{ toStatus: string, via: string, patch?: Record<string, unknown>, options?: import('sequelize').UpdateOptions }} p
@@ -229,9 +235,20 @@ export async function applyBookingStatusTransition(booking, { toStatus, via, pat
   if (check.noop) {
     return booking;
   }
-  const payload = { ...patch, status: toStatus };
+  const { messaging_locked: _ignored, ...restPatch } = patch;
+  const payload = {
+    ...restPatch,
+    status: toStatus,
+    messaging_locked: messagingLockedValueForStatus(toStatus),
+  };
   await booking.update(payload, options);
   booking.status = toStatus;
+  booking.messaging_locked = messagingLockedValueForStatus(toStatus);
+
+  if (toStatus === 'confirmed') {
+    await ensureBookingConversation(booking.id, { transaction: options.transaction });
+  }
+
   return booking;
 }
 

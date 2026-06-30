@@ -213,8 +213,7 @@ async function main() {
       // Stagger each booking by one minute to keep timestamps distinct.
       const lessonEndMs = now - (endedMinutesAgo + i) * 60 * 1000;
       const scheduledAt = new Date(lessonEndMs - lesson.duration_minutes * 60 * 1000);
-      const rescheduleDeadline = new Date(scheduledAt.getTime() - 24 * 60 * 60 * 1000);
-      const student = students[i];
+            const student = students[i];
       const booking = await Booking.create({
         lesson_id: lesson.id,
         coach_id: coachId,
@@ -225,7 +224,6 @@ async function main() {
         status: 'confirmed',
         payout_status: 'none',
         messaging_locked: false,
-        reschedule_deadline: rescheduleDeadline,
         court_location_id: courtId,
         idempotency_key: createIdempotencyKey(),
       });

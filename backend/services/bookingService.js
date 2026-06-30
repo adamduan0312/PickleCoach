@@ -1,4 +1,4 @@
-import { Booking, Lesson, BookingPlayer, RescheduleHistory, CoachAvailability, User, sequelize } from '../models/index.js';
+import { Booking, Lesson, BookingPlayer, CoachAvailability, User, sequelize } from '../models/index.js';
 import { Op } from 'sequelize';
 import { calendarDateInTimezone, toYmdApi } from '../utils/dateOnly.js';
 
@@ -128,27 +128,4 @@ export const checkBookingAvailability = async (lessonId, scheduledAt, durationMi
   }
 
   return { available: true };
-};
-
-export const calculateRescheduleDeadline = (scheduledAt, hoursBefore = 24) => {
-  const scheduledDate = new Date(scheduledAt);
-  return new Date(scheduledDate.getTime() - hoursBefore * 60 * 60 * 1000);
-};
-
-export const canReschedule = (booking) => {
-  const now = new Date();
-  const deadline = booking.reschedule_deadline || calculateRescheduleDeadline(booking.scheduled_at);
-  
-  if (now > deadline) {
-    return { canReschedule: false, reason: 'Reschedule deadline has passed' };
-  }
-
-  const totalReschedules = booking.reschedule_count + booking.extra_paid_reschedules;
-  const maxReschedules = booking.reschedule_limit + booking.extra_paid_reschedules;
-
-  if (booking.reschedule_count >= booking.reschedule_limit && booking.extra_paid_reschedules === 0) {
-    return { canReschedule: false, reason: 'Free reschedule limit reached', requiresPaid: true };
-  }
-
-  return { canReschedule: true };
 };

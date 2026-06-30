@@ -3,9 +3,10 @@ import { Op } from 'sequelize';
 import { sequelize } from '../models/sequelize.js';
 import { logger } from '../config/logger.js';
 import { createAuditLog } from '../utils/audit.js';
+import { messagingLockedValueForStatus } from '../utils/bookingMessaging.js';
 import {
-  assertBulkBookingStatusTransition,
   applyBookingStatusTransition,
+  assertBulkBookingStatusTransition,
   BookingTransitionVia,
 } from '../services/bookingStateMachine.js';
 import { ACTIVE_DISPUTE_STATUSES } from '../services/disputeStateMachine.js';
@@ -29,7 +30,10 @@ const moveConfirmedToAwaitingVerification = async () => {
     BookingTransitionVia.WORKER_LESSON_END_TO_AWAITING_VERIFICATION,
   );
   const updated = await Booking.update(
-    { status: 'awaiting_verification' },
+    {
+      status: 'awaiting_verification',
+      messaging_locked: messagingLockedValueForStatus('awaiting_verification'),
+    },
     {
       where: {
         status: 'confirmed',

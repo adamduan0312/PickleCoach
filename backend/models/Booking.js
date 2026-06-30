@@ -89,25 +89,6 @@ const Booking = sequelize.define('bookings', {
     allowNull: false,
     defaultValue: true,
   },
-  reschedule_count: {
-    type: DataTypes.INTEGER,
-    allowNull: false,
-    defaultValue: 0,
-  },
-  reschedule_limit: {
-    type: DataTypes.INTEGER,
-    allowNull: false,
-    defaultValue: 1,
-  },
-  extra_paid_reschedules: {
-    type: DataTypes.INTEGER,
-    allowNull: false,
-    defaultValue: 0,
-  },
-  reschedule_deadline: {
-    type: DataTypes.DATE,
-    allowNull: true,
-  },
   court_location_id: {
     type: DataTypes.INTEGER,
     allowNull: true,

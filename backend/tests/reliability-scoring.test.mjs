@@ -16,7 +16,6 @@ import { roundReliabilityScoreValue } from '../services/reliabilityEngine.js';
 const baseCoachMetrics = (overrides = {}) => ({
   total_bookings: 10,
   _booking_baseline: 10,
-  reschedules: 0,
   late_cancels: 0,
   late_arrival_penalties: 0,
   misconduct_penalties: 0,
@@ -48,7 +47,6 @@ describe('reliability scoring (pure)', () => {
     const m = {
       total_bookings: 8,
       _booking_baseline: 8,
-      reschedules: 0,
       late_cancels: 0,
       late_arrival_penalties: 0,
       misconduct_penalties: 0,
@@ -67,7 +65,6 @@ describe('reliability scoring (pure)', () => {
     const m = {
       total_bookings: 10,
       _booking_baseline: 10,
-      reschedules: 0,
       late_cancels: 0,
       late_arrival_penalties: 1,
       misconduct_penalties: 0,

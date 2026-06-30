@@ -70,7 +70,6 @@ export function serializeCoachReliabilityDetail(payload) {
     reliability_score: dec(p.reliability_score) ?? 100,
     score_source: scoreSrc,
     total_bookings: int(p.total_bookings),
-    reschedules: int(p.reschedules),
     late_cancels: int(p.late_cancels),
     no_shows: int(p.no_shows),
     late_arrival_penalties: int(p.late_arrival_penalties),

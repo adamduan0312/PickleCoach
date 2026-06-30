@@ -245,8 +245,7 @@ async function main() {
         const scheduledAt = spec.getScheduledAt
           ? spec.getScheduledAt({ baseNow: now, lesson })
           : new Date(now + spec.offsetDays * dayMs + staggerMs);
-        const rescheduleDeadline = new Date(scheduledAt.getTime() - 24 * 60 * 60 * 1000);
-
+        
         const booking = await Booking.create(
           {
             lesson_id: lesson.id,
@@ -257,7 +256,6 @@ async function main() {
             price: lesson.price,
             status: spec.status,
             payout_status: spec.payout_status,
-            reschedule_deadline: rescheduleDeadline,
             court_location_id: courtId,
             idempotency_key: createIdempotencyKey(spec.key),
             ...spec.extra(),

@@ -5,6 +5,7 @@ import * as stripeService from '../services/stripeService.js';
 import * as paymentService from '../services/paymentService.js';
 import { syncStripeDisputeToDatabase } from '../services/stripeDisputeSyncService.js';
 import { logger } from '../config/logger.js';
+import * as paymentAuthorizationService from '../services/paymentAuthorizationService.js';
 import { shouldStripeWebhookSkipAsDuplicate } from '../services/paymentStripeContract.js';
 
 async function assertConsistencyAfterWebhook(paymentId, context) {
@@ -114,6 +115,10 @@ export const handleStripeWebhook = async (req, res) => {
     });
 
     switch (event.type) {
+      case 'payment_intent.amount_capturable_updated':
+        await handlePaymentIntentAmountCapturableUpdated(event.data.object);
+        break;
+
       case 'payment_intent.succeeded':
         await handlePaymentIntentSucceeded(event.data.object);
         break;
@@ -175,6 +180,24 @@ export const handleStripeWebhook = async (req, res) => {
 };
 
 /**
+ * payment_intent.amount_capturable_updated — manual capture authorization succeeded
+ */
+const handlePaymentIntentAmountCapturableUpdated = async (paymentIntent) => {
+  await paymentAuthorizationService.handlePaymentAuthorizationSucceeded(paymentIntent);
+
+  const payment = await Payment.findOne({
+    where: { payment_intent_id: paymentIntent.id },
+  });
+  await assertConsistencyAfterWebhook(payment?.id, 'payment_intent.amount_capturable_updated');
+
+  logger.info({
+    component: 'stripe',
+    event: 'payment_intent_amount_capturable_updated_processed',
+    paymentIntentId: paymentIntent.id,
+  });
+};
+
+/**
  * payment_intent.succeeded — delegate to paymentService (throws if Payment row not ready → Stripe retries)
  */
 const handlePaymentIntentSucceeded = async (paymentIntent) => {
@@ -204,8 +227,6 @@ const handlePaymentIntentSucceeded = async (paymentIntent) => {
  * payment_intent.payment_failed
  */
 const handlePaymentIntentFailed = async (paymentIntent) => {
-  const { RescheduleHistory } = await import('../models/index.js');
-
   const payment = await Payment.findOne({
     where: { payment_intent_id: paymentIntent.id },
   });
@@ -229,36 +250,7 @@ const handlePaymentIntentFailed = async (paymentIntent) => {
     return;
   }
 
-  await payment.update({
-    payment_status: 'failed',
-  });
-
-  const isPaidReschedule = payment.metadata?.type === 'paid_reschedule';
-  if (isPaidReschedule && payment.metadata?.reschedule_history_id) {
-    const rescheduleHistoryId = parseInt(payment.metadata.reschedule_history_id, 10);
-    const rescheduleHistory = await RescheduleHistory.findByPk(rescheduleHistoryId);
-
-    if (rescheduleHistory?.approval_status === 'pending') {
-      await rescheduleHistory.update({
-        approval_status: 'rejected',
-      });
-
-      logger.info({
-        component: 'stripe',
-        event: 'paid_reschedule_rejected_payment_failed',
-        rescheduleHistoryId,
-        paymentIntentId: paymentIntent.id,
-      });
-    } else if (rescheduleHistory) {
-      logger.info({
-        component: 'stripe',
-        event: 'paid_reschedule_reject_skipped_non_pending',
-        rescheduleHistoryId,
-        paymentIntentId: paymentIntent.id,
-        currentApprovalStatus: rescheduleHistory.approval_status,
-      });
-    }
-  }
+  await paymentAuthorizationService.handlePaymentAuthorizationFailed(paymentIntent);
 
   await assertConsistencyAfterWebhook(payment.id, 'payment_intent.payment_failed');
 

@@ -10,14 +10,15 @@ const Conversation = sequelize.define('conversations', {
   booking_id: {
     type: DataTypes.INTEGER,
     allowNull: false,
+    unique: true,
   },
 }, {
   tableName: 'conversations',
   timestamps: true,
   createdAt: 'created_at',
-  updatedAt: false,
+  updatedAt: 'updated_at',
   indexes: [
-    { fields: ['booking_id'] },
+    { unique: true, fields: ['booking_id'] },
   ],
 });
 

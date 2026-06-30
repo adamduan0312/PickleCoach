@@ -151,8 +151,7 @@ async function main() {
     }
 
     const scheduledAt = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
-    const rescheduleDeadline = new Date(scheduledAt.getTime() - 24 * 60 * 60 * 1000);
-    const courtId = await pickCoachCourtId(coachId);
+        const courtId = await pickCoachCourtId(coachId);
 
     const booking = await Booking.create({
       lesson_id: lesson.id,
@@ -163,7 +162,6 @@ async function main() {
       price: lesson.price,
       status: 'pending',
       payout_status: 'none',
-      reschedule_deadline: rescheduleDeadline,
       court_location_id: courtId,
       idempotency_key: createIdempotencyKey(),
     });

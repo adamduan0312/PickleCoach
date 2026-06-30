@@ -120,7 +120,6 @@ module.exports = {
         address: `${100 + i} Main St, ${city.name}`,
         latitude: city.lat + (Math.random() - 0.5) * 0.1,
         longitude: city.lng + (Math.random() - 0.5) * 0.1,
-        is_verified: i % 3 === 0, // Every 3rd court is verified
         is_private: i % 5 === 0, // Every 5th court is private
         source: 'manual',
       });
@@ -138,7 +137,6 @@ module.exports = {
         await CoachCourtLocation.create({
           coach_id: coaches[i].user.id,
           court_id: courts[courtIndex].id,
-          preferred: j === 0, // First court is preferred
         });
       }
     }
@@ -241,9 +239,6 @@ module.exports = {
         status: status,
         payout_status: status === 'completed' ? 'paid' : 'none',
         messaging_locked: status === 'pending',
-        reschedule_count: i % 5 === 0 ? 1 : 0,
-        reschedule_limit: 1,
-        reschedule_deadline: new Date(scheduledAt.getTime() - 24 * 60 * 60 * 1000),
       });
 
       // Create payment for completed/confirmed bookings

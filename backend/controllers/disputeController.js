@@ -492,7 +492,7 @@ export const resolveDispute = async (req, res) => {
           await applyBookingStatusTransition(booking, {
             toStatus: resolvedBookingStatus,
             via,
-            patch: { attendance_finalized: true, messaging_locked: true },
+            patch: { attendance_finalized: true },
             options: { transaction },
           });
         } else {

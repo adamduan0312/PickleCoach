@@ -4,14 +4,14 @@ const bcrypt = require('bcryptjs');
 
 /**
  * Additive GeoSearch fixtures for GET /coaches (with optional lat,lng,radius).
- * Uses @picklecoach.test emails so the main demo seeder wipe (%@example.com) leaves these alone.
+ * Uses @picklecoach.example.org emails (Joi-valid) so the main demo seeder wipe (%@example.com) leaves these alone.
  *
  * Credentials (development):
- * - Student-only: browse.geosearch@picklecoach.test / password123
+ * - Student-only: browse.geosearch@picklecoach.example.org / password123
  * - Coaches (NOT for GET /coaches — they'll get 403):
- *     geocoach.sf@picklecoach.test, geocoach.nyc@picklecoach.test / password123
+ *     geocoach.sf@picklecoach.example.org, geocoach.nyc@picklecoach.example.org / password123
  *
- * POST /login as browse.geosearch@picklecoach.test then:
+ * POST /login as browse.geosearch@picklecoach.example.org then:
  *   GET /coaches?lat=37.7749&lng=-122.4194&radius=25   → expects SF-linked coach(es)
  *   GET /coaches?lat=40.7580&lng=-73.9857&radius=25    → NYC-linked coach(es)
  *
@@ -67,7 +67,6 @@ module.exports = {
           address: spec.address,
           latitude: spec.latitude,
           longitude: spec.longitude,
-          is_verified: true,
           is_private: false,
           source: 'manual',
         },
@@ -84,7 +83,6 @@ module.exports = {
           latitude: spec.latitude,
           longitude: spec.longitude,
           deleted_at: null,
-          is_verified: true,
           is_private: false,
           source: 'manual',
         });
@@ -131,9 +129,8 @@ module.exports = {
         await CoachCourtLocation.findOrCreate({
           where: { coach_id: user.id, court_id: court.id },
           defaults: {
-            preferred: i === 0,
             rate_modifier: null,
-            notes: 'GeoSearch fixture link',
+            coach_notes: 'GeoSearch fixture link',
           },
         });
       }
@@ -141,7 +138,7 @@ module.exports = {
     }
 
     await ensureCoach({
-      email: 'geocoach.sf@picklecoach.test',
+      email: 'geocoach.sf@picklecoach.example.org',
       fullName: 'GeoSearch Coach SF',
       headline: 'SF fixture — GET /coaches near 37.77, -122.42',
       locationText: 'San Francisco Bay Area',
@@ -149,18 +146,18 @@ module.exports = {
     });
 
     await ensureCoach({
-      email: 'geocoach.nyc@picklecoach.test',
+      email: 'geocoach.nyc@picklecoach.example.org',
       fullName: 'GeoSearch Coach NYC',
       headline: 'NYC fixture — GET /coaches near 40.76, -73.98',
       locationText: 'New York City',
       courts: [courtRows['nyc-alpha'], courtRows['nyc-beta']],
     });
 
-    let student = await User.findOne({ where: { email: 'browse.geosearch@picklecoach.test' } });
+    let student = await User.findOne({ where: { email: 'browse.geosearch@picklecoach.example.org' } });
     if (!student) {
       student = await User.create({
         full_name: 'Browse GeoSearch Student',
-        email: 'browse.geosearch@picklecoach.test',
+        email: 'browse.geosearch@picklecoach.example.org',
         password_hash: passwordHash,
         phone: null,
         timezone: 'America/New_York',
@@ -173,7 +170,7 @@ module.exports = {
 
     console.log('');
     console.log('✅ GeoSearch fixtures ready (Courts linked to coaches)');
-    console.log('   POST /login: browse.geosearch@picklecoach.test / password123');
+    console.log('   POST /login: browse.geosearch@picklecoach.example.org / password123');
     console.log('   GET /coaches?lat=37.7749&lng=-122.4194&radius=25  (SF)');
     console.log('   GET /coaches?lat=40.7580&lng=-73.9857&radius=25  (NYC)');
     console.log('');
@@ -183,11 +180,17 @@ module.exports = {
     const { User, UserRole, CoachProfile, CoachCourtLocation, CourtLocation } = await import('../models/index.js');
     const { Op } = Sequelize;
 
-    const coachEmails = ['geocoach.sf@picklecoach.test', 'geocoach.nyc@picklecoach.test'];
-    const browseEmail = 'browse.geosearch@picklecoach.test';
+    const coachEmails = ['geocoach.sf@picklecoach.example.org', 'geocoach.nyc@picklecoach.example.org'];
+    const browseEmail = 'browse.geosearch@picklecoach.example.org';
+    const legacyCoachEmails = ['geocoach.sf@picklecoach.test', 'geocoach.nyc@picklecoach.test'];
+    const legacyBrowseEmail = 'browse.geosearch@picklecoach.test';
 
     const users = await User.findAll({
-      where: { email: { [Op.in]: [...coachEmails, browseEmail] } },
+      where: {
+        email: {
+          [Op.in]: [...coachEmails, browseEmail, ...legacyCoachEmails, legacyBrowseEmail],
+        },
+      },
     });
     const userIds = users.map((u) => u.id);
 

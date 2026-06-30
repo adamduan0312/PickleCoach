@@ -24,7 +24,15 @@ const CancellationHistory = sequelize.define('cancellation_history', {
     defaultValue: 0,
   },
   reason: {
-    type: DataTypes.ENUM('weather', 'emergency', 'sickness', 'travel_delay', 'schedule_conflict', 'forgot', 'other'),
+    type: DataTypes.ENUM(
+      'weather',
+      'emergency',
+      'sickness',
+      'travel_delay',
+      'schedule_conflict',
+      'forgot',
+      'other',
+    ),
     allowNull: true,
   },
   reason_notes: {

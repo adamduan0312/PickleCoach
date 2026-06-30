@@ -67,7 +67,7 @@ router.get(
 
 // Coach court management
 router.post('/me/courts', authenticate, courtController.addCoachCourt);
-router.delete('/me/courts/:id', authenticate, courtController.deleteCoachCourt);
+router.delete('/me/courts/:courtId', authenticate, courtController.deleteCoachCourt);
 
 // Stripe Connect onboarding (financial infrastructure — verified email required; admins exempt)
 router.post('/me/stripe-connect/onboard', authenticate, requireVerifiedEmailUnlessAdmin, coachController.initiateStripeConnectOnboarding);

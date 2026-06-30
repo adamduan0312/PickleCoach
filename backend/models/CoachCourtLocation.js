@@ -19,11 +19,7 @@ const CoachCourtLocation = sequelize.define('coach_court_locations', {
     type: DataTypes.DECIMAL(10, 2),
     allowNull: true,
   },
-  preferred: {
-    type: DataTypes.BOOLEAN,
-    defaultValue: false,
-  },
-  notes: {
+  coach_notes: {
     type: DataTypes.TEXT,
     allowNull: true,
   },

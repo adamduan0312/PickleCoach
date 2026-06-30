@@ -16,8 +16,6 @@ describe('UserReliability model vs persistence flatten', () => {
     const canonical = buildCanonicalReliabilityMetrics({
       booking_baseline_recent: 1,
       booking_baseline_decayed: 0,
-      penalized_reschedules_recent: 0,
-      penalized_reschedules_decayed: 0,
       late_cancels_recent: 0,
       late_cancels_decayed: 0,
       coach_cancels_non_late_recent: 0,
@@ -32,7 +30,6 @@ describe('UserReliability model vs persistence flatten', () => {
       misconduct_penalties_decayed: 0,
       lesson_not_completed_penalties_recent: 0,
       lesson_not_completed_penalties_decayed: 0,
-      paid_reschedules: 3,
     });
     const flatCoach = flattenCanonicalForPersistence('coach', canonical, 99.12, {
       scoreVersion: SCORE_FORMULA_VERSION,

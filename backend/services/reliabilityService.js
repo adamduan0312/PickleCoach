@@ -1,8 +1,6 @@
 import {
   UserReliability,
   Booking,
-  Payment,
-  RescheduleHistory,
   CancellationHistory,
   User,
   UserRole,
@@ -47,32 +45,6 @@ const splitRecencyWeight = (eventDate, now, windowStart, decayLambda) => {
 const hasReliabilitySignal = (raw) =>
   (Number(raw?.booking_baseline_recent) || 0) + (Number(raw?.booking_baseline_decayed) || 0) > 0;
 
-/**
- * Paid + penalized + reliability-affecting reschedules whose linked payment row is captured
- * (or partially_refunded). Single definition used for persistence and public reliability APIs.
- * Not a scoring input; stored on `user_reliability.paid_reschedules` for coach and student rows.
- */
-const countPaidPenalizedCapturedReschedules = async (bookingIds, requestedBy) => {
-  if (!bookingIds.length) return 0;
-  return RescheduleHistory.count({
-    where: {
-      booking_id: { [Op.in]: bookingIds },
-      requested_by: requestedBy,
-      paid_reschedule: true,
-      affects_reliability: true,
-    },
-    include: [
-      {
-        model: Payment,
-        as: 'transaction',
-        where: { payment_status: { [Op.in]: ['captured', 'partially_refunded'] } },
-        required: true,
-        attributes: [],
-      },
-    ],
-  });
-};
-
 /** Sustained behavior claims only: upheld/partial decisions count; rejected does not. */
 const sustainedBehaviorDecisionLiteral = () =>
   sequelize.literal(`disputes.decision IN ('upheld', 'partial')`);
@@ -102,8 +74,6 @@ const calculateCoachRawSplits = async (userId, cfg) => {
     return {
       booking_baseline_recent: 0,
       booking_baseline_decayed: 0,
-      penalized_reschedules_recent: 0,
-      penalized_reschedules_decayed: 0,
       late_cancels_recent: 0,
       late_cancels_decayed: 0,
       coach_cancels_non_late_recent: 0,
@@ -118,24 +88,7 @@ const calculateCoachRawSplits = async (userId, cfg) => {
       misconduct_penalties_decayed: 0,
       lesson_not_completed_penalties_recent: 0,
       lesson_not_completed_penalties_decayed: 0,
-      paid_reschedules: 0,
     };
-  }
-
-  const coachReschedules = await RescheduleHistory.findAll({
-    where: {
-      booking_id: { [Op.in]: coachBookingIds },
-      requested_by: 'coach',
-      affects_reliability: true,
-    },
-    attributes: ['id', 'requested_at'],
-  });
-  let penalized_reschedules = 0;
-  let decayed_penalized_reschedules = 0;
-  for (const r of coachReschedules) {
-    const split = splitRecencyWeight(r.requested_at, now, windowStart, cfg.decayLambda);
-    penalized_reschedules += split.recent;
-    decayed_penalized_reschedules += split.decayed;
   }
 
   const cancellations = await CancellationHistory.findAll({
@@ -261,13 +214,9 @@ const calculateCoachRawSplits = async (userId, cfg) => {
     decayed_no_shows += split.decayed;
   }
 
-  const paidReschedules = await countPaidPenalizedCapturedReschedules(coachBookingIds, 'coach');
-
   return {
     booking_baseline_recent: recentBookings,
     booking_baseline_decayed: decayedBookings,
-    penalized_reschedules_recent: penalized_reschedules,
-    penalized_reschedules_decayed: decayed_penalized_reschedules,
     late_cancels_recent: late_cancels,
     late_cancels_decayed: decayed_late_cancels,
     coach_cancels_non_late_recent: coach_cancels_non_late,
@@ -282,7 +231,6 @@ const calculateCoachRawSplits = async (userId, cfg) => {
     misconduct_penalties_decayed: misconductPenaltiesAgg.decayed,
     lesson_not_completed_penalties_recent: lessonNotCompletedPenaltiesAgg.recent,
     lesson_not_completed_penalties_decayed: lessonNotCompletedPenaltiesAgg.decayed,
-    paid_reschedules: paidReschedules,
   };
 };
 
@@ -309,8 +257,6 @@ const calculateStudentRawSplits = async (userId, cfg) => {
     return {
       booking_baseline_recent: 0,
       booking_baseline_decayed: 0,
-      penalized_reschedules_recent: 0,
-      penalized_reschedules_decayed: 0,
       late_cancels_recent: 0,
       late_cancels_decayed: 0,
       coach_cancels_non_late_recent: 0,
@@ -325,24 +271,7 @@ const calculateStudentRawSplits = async (userId, cfg) => {
       misconduct_penalties_decayed: 0,
       lesson_not_completed_penalties_recent: 0,
       lesson_not_completed_penalties_decayed: 0,
-      paid_reschedules: 0,
     };
-  }
-
-  const studentReschedules = await RescheduleHistory.findAll({
-    where: {
-      booking_id: { [Op.in]: studentBookingIds },
-      requested_by: 'student',
-      affects_reliability: true,
-    },
-    attributes: ['requested_at'],
-  });
-  let reschedules = 0;
-  let decayed_reschedules = 0;
-  for (const r of studentReschedules) {
-    const split = splitRecencyWeight(r.requested_at, now, windowStart, cfg.decayLambda);
-    reschedules += split.recent;
-    decayed_reschedules += split.decayed;
   }
 
   const cancellations = await CancellationHistory.findAll({
@@ -471,8 +400,6 @@ const calculateStudentRawSplits = async (userId, cfg) => {
   return {
     booking_baseline_recent: recentBookings,
     booking_baseline_decayed: decayedBookings,
-    penalized_reschedules_recent: reschedules,
-    penalized_reschedules_decayed: decayed_reschedules,
     late_cancels_recent: late_cancels,
     late_cancels_decayed: decayed_late_cancels,
     coach_cancels_non_late_recent: 0,
@@ -487,7 +414,6 @@ const calculateStudentRawSplits = async (userId, cfg) => {
     misconduct_penalties_decayed: misconductPenaltiesAgg.decayed,
     lesson_not_completed_penalties_recent: lessonNotCompletedPenaltiesAgg.recent,
     lesson_not_completed_penalties_decayed: lessonNotCompletedPenaltiesAgg.decayed,
-    paid_reschedules: await countPaidPenalizedCapturedReschedules(studentBookingIds, 'student'),
   };
 };
 

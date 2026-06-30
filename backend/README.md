@@ -7,7 +7,7 @@ A comprehensive backend API for the PickleCoach platform built with Node.js, Exp
 - **User Management**: Registration, authentication, profile management
 - **Coach Profiles**: Coach profiles, availability, ratings
 - **Lessons**: Lesson creation, management, and booking
-- **Bookings**: MVP create/accept/decline flow plus rescheduling and cancellation
+- **Bookings**: MVP create/accept/decline flow plus cancellation (cancel + rebook for schedule changes)
 - **Payments**: Payment processing with escrow, commissions, and refunds
 - **Reviews**: Student reviews and coach feedback
 - **Messaging**: In-app messaging system
@@ -35,7 +35,6 @@ backend/
 │   ├── messageController.js
 │   ├── notificationController.js
 │   ├── paymentController.js
-│   ├── rescheduleController.js
 │   ├── reviewController.js
 │   ├── userController.js
 │   └── webhookController.js
@@ -128,9 +127,8 @@ Quick reference:
 - **Coaches**: `/api/coaches` - Coach profiles, availability, Stripe Connect
 - **Courts**: `/api/courts` - Court location search and management
 - **Lessons**: `/api/lessons` - Lesson creation and management
-- **Bookings**: `/api/bookings` - MVP: student `POST /bookings`, coach `PUT .../accept` | `PUT .../decline`; also list/detail, complete, `POST .../student-no-show`, cancel, reschedule
+- **Bookings**: `/api/bookings` - MVP: student `POST /bookings`, coach `PUT .../accept` | `PUT .../decline`; also list/detail, complete, `POST .../student-no-show`, cancel
 - **Payments**: `/api/payments` - List and get payment records (created with bookings; refunds via booking flows / `paymentService`)
-- **Reschedules**: `/api/reschedules` - Reschedule history and requests
 - **Reviews**: `/api/reviews` - Review system
 - **Messages**: `/api/messages` - In-app messaging
 - **Disputes**: `/api/disputes` - Dispute management

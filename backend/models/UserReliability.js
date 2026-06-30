@@ -25,10 +25,6 @@ const UserReliability = sequelize.define('user_reliability', {
   booking_baseline_total: { type: decimal(20, 10), allowNull: false, defaultValue: 0 },
   total_bookings_recent: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
 
-  penalized_reschedules_recent: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
-  penalized_reschedules_decayed: { type: decimal(20, 10), allowNull: false, defaultValue: 0 },
-  penalized_reschedules_total: { type: decimal(20, 10), allowNull: false, defaultValue: 0 },
-
   late_cancels_recent: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
   late_cancels_decayed: { type: decimal(20, 10), allowNull: false, defaultValue: 0 },
   late_cancels_total: { type: decimal(20, 10), allowNull: false, defaultValue: 0 },
@@ -56,13 +52,6 @@ const UserReliability = sequelize.define('user_reliability', {
   lesson_not_completed_penalties_recent: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
   lesson_not_completed_penalties_decayed: { type: decimal(20, 10), allowNull: false, defaultValue: 0 },
   lesson_not_completed_penalties_total: { type: decimal(20, 10), allowNull: false, defaultValue: 0 },
-
-  /** Informational: paid + penalized + affects_reliability reschedules with captured/partially_refunded payment (role-specific requester). Not used in score. */
-  paid_reschedules: {
-    type: DataTypes.INTEGER,
-    allowNull: false,
-    defaultValue: 0,
-  },
 
   smoothing_k: { type: decimal(12, 6), allowNull: false, defaultValue: 5 },
   decay_lambda: { type: decimal(12, 6), allowNull: false, defaultValue: 0.03 },

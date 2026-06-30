@@ -13,25 +13,17 @@ const Message = sequelize.define('messages', {
   },
   sender_id: {
     type: DataTypes.INTEGER,
-    allowNull: true,
-  },
-  content: {
-    type: DataTypes.TEXT,
     allowNull: false,
   },
-  attachments: {
-    type: DataTypes.JSON,
-    allowNull: true,
-  },
-  read_at: {
-    type: DataTypes.DATE,
-    allowNull: true,
+  message_text: {
+    type: DataTypes.TEXT,
+    allowNull: false,
   },
 }, {
   tableName: 'messages',
   timestamps: true,
   createdAt: 'created_at',
-  updatedAt: false,
+  updatedAt: 'updated_at',
   indexes: [
     { fields: ['conversation_id'] },
     { fields: ['sender_id'] },

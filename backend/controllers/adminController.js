@@ -246,6 +246,41 @@ export const getAuditLogs = async (req, res) => {
 };
 
 /**
+ * Stable admin JSON for GET /api/admin/coaches/:coachId/courts (no raw Sequelize / no ORM drift).
+ */
+function mapCoachCourtLinkForAdmin(link) {
+  const court = link.court;
+  if (!court) {
+    throw new Error('CoachCourtLocation row missing court include');
+  }
+  const lat = court.latitude != null ? Number(court.latitude) : null;
+  const lng = court.longitude != null ? Number(court.longitude) : null;
+  const createdBy = court.createdBy;
+  return {
+    id: link.id,
+    coach_id: link.coach_id,
+    court_id: link.court_id,
+    coach_notes: link.coach_notes != null ? link.coach_notes : null,
+    created_at: link.created_at != null ? new Date(link.created_at).toISOString() : null,
+    updated_at: link.updated_at != null ? new Date(link.updated_at).toISOString() : null,
+    court: {
+      id: court.id,
+      name: court.name,
+      address: court.address != null ? court.address : null,
+      latitude: lat,
+      longitude: lng,
+      is_private: Boolean(court.is_private),
+      created_by: createdBy
+        ? {
+            id: createdBy.id,
+            full_name: createdBy.full_name != null ? createdBy.full_name : null,
+          }
+        : null,
+    },
+  };
+}
+
+/**
  * GET /api/admin/coaches/:coachId/courts
  * Admin only: list courts linked to a coach (for support/moderation).
  */
@@ -276,9 +311,10 @@ export const getCoachCourtsForAdmin = async (req, res) => {
           include: [{ model: User, as: 'createdBy', attributes: ['id', 'full_name'] }],
         },
       ],
-      order: [['preferred', 'DESC'], ['created_at', 'ASC']],
+      order: [['created_at', 'ASC']],
     });
-    return successResponse(res, coachCourts, 'Coach courts retrieved successfully');
+    const result = coachCourts.map((link) => mapCoachCourtLinkForAdmin(link));
+    return successResponse(res, result, 'Coach courts retrieved successfully');
   } catch (error) {
     logger.error('Admin get coach courts error:', error);
     return errorResponse(res, 'Failed to retrieve coach courts', 500);
@@ -289,6 +325,7 @@ export const getCoachCourtsForAdmin = async (req, res) => {
  * DELETE /api/admin/coaches/:coachId/courts/:courtId
  * Admin only: unlink a court from a coach (e.g. wrong court linked).
  * `courtId` is the court_locations.id (same as `court_id` on the link row from GET .../courts).
+ * Success `data`: `coach_id`, `court_id`, and court `name` (null if the court row is missing).
  */
 export const deleteCoachCourtForAdmin = async (req, res) => {
   try {
@@ -311,7 +348,15 @@ export const deleteCoachCourtForAdmin = async (req, res) => {
       );
     }
     await link.destroy();
-    return successResponse(res, null, 'Court removed from coach');
+    const court = await CourtLocation.findOne({
+      where: { id: courtId, deleted_at: null },
+      attributes: ['id', 'name'],
+    });
+    return successResponse(res, {
+      coach_id: coachId,
+      court_id: courtId,
+      name: court?.name ?? null,
+    }, 'Court removed from coach');
   } catch (error) {
     logger.error('Admin delete coach court error:', error);
     return errorResponse(res, 'Failed to remove court from coach', 500);

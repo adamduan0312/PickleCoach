@@ -231,8 +231,7 @@ async function main() {
       const rows = [];
       for (const spec of STATUS_ROWS) {
         const scheduledAt = new Date(now + spec.offsetDays * dayMs + rows.length * 60 * 60 * 1000);
-        const rescheduleDeadline = new Date(scheduledAt.getTime() - 24 * 60 * 60 * 1000);
-
+        
         const booking = await Booking.create(
           {
             lesson_id: lesson.id,
@@ -243,7 +242,6 @@ async function main() {
             price: lesson.price,
             status: spec.status,
             payout_status: spec.payout_status,
-            reschedule_deadline: rescheduleDeadline,
             court_location_id: courtId,
             idempotency_key: createIdempotencyKey(spec.key),
             ...spec.extra(),

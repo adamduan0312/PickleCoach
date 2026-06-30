@@ -18,7 +18,6 @@ const DisputeResolutionActionModule = await import('./DisputeResolutionAction.js
 const DisputeModule = await import('./Dispute.js');
 const PaymentModule = await import('./Payment.js');
 const PaymentActionModule = await import('./PaymentAction.js');
-const RescheduleHistoryModule = await import('./RescheduleHistory.js');
 const CancellationHistoryModule = await import('./CancellationHistory.js');
 const PayoutModule = await import('./Payout.js');
 const ReviewModule = await import('./Review.js');
@@ -48,7 +47,6 @@ const DisputeResolutionAction = DisputeResolutionActionModule.default;
 const Dispute = DisputeModule.default;
 const Payment = PaymentModule.default;
 const PaymentAction = PaymentActionModule.default;
-const RescheduleHistory = RescheduleHistoryModule.default;
 const CancellationHistory = CancellationHistoryModule.default;
 const Payout = PayoutModule.default;
 const Review = ReviewModule.default;
@@ -116,7 +114,6 @@ Booking.belongsTo(User, { foreignKey: 'primary_student_id', as: 'primaryStudent'
 Booking.belongsTo(CourtLocation, { foreignKey: 'court_location_id', as: 'courtLocation' });
 Booking.hasMany(BookingPlayer, { foreignKey: 'booking_id', as: 'players' });
 Booking.hasMany(Payment, { foreignKey: 'booking_id', as: 'payments' });
-Booking.hasMany(RescheduleHistory, { foreignKey: 'booking_id', as: 'rescheduleHistory' });
 Booking.hasMany(CancellationHistory, { foreignKey: 'booking_id', as: 'cancellationHistory' });
 Booking.hasMany(Dispute, { foreignKey: 'booking_id', as: 'disputes' });
 Booking.hasMany(PaymentAction, { foreignKey: 'booking_id', as: 'paymentActions' });
@@ -149,13 +146,7 @@ Payment.hasMany(PaymentAction, { foreignKey: 'payment_id', as: 'paymentActions' 
 PaymentAction.belongsTo(Booking, { foreignKey: 'booking_id', as: 'booking' });
 PaymentAction.belongsTo(Payment, { foreignKey: 'payment_id', as: 'payment' });
 PaymentAction.belongsTo(Dispute, { foreignKey: 'dispute_id', as: 'dispute' });
-Payment.hasMany(RescheduleHistory, { foreignKey: 'transaction_id', as: 'rescheduleTransactions' });
 Payment.hasMany(CancellationHistory, { foreignKey: 'refund_payment_id', as: 'refundPayments' });
-
-// RescheduleHistory associations
-RescheduleHistory.belongsTo(Booking, { foreignKey: 'booking_id', as: 'booking' });
-RescheduleHistory.belongsTo(User, { foreignKey: 'approved_by', as: 'approver' });
-RescheduleHistory.belongsTo(Payment, { foreignKey: 'transaction_id', as: 'transaction' });
 
 // CancellationHistory associations
 CancellationHistory.belongsTo(Booking, { foreignKey: 'booking_id', as: 'booking' });
@@ -210,7 +201,6 @@ export {
   Dispute,
   Payment,
   PaymentAction,
-  RescheduleHistory,
   CancellationHistory,
   Payout,
   Review,

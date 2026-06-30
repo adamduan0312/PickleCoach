@@ -6,6 +6,26 @@ import { logger } from '../config/logger.js';
 
 const MAX_LIST_ALL_LESSONS = 10000;
 
+/** Coach owner or admin may view **inactive** (not deleted) lessons by id — unpublished, recoverable. */
+function canViewInactiveLessonById(user, lesson) {
+  if (!user || !lesson) return false;
+  const roles = user.roles || [];
+  if (roles.includes('admin')) return true;
+  const ownerId = lesson.coach_id ?? lesson.get?.('coach_id');
+  return Number(user.id) === Number(ownerId);
+}
+
+function isLessonPubliclyVisibleById(lesson) {
+  if (!lesson || lesson.deleted_at) return false;
+  const active = lesson.is_active ?? lesson.get?.('is_active');
+  return active === true || active === 1;
+}
+
+/** Soft-deleted lessons are historical (bookings only); coach lesson APIs treat them as missing. */
+function isLessonDeleted(lesson) {
+  return lesson?.deleted_at != null;
+}
+
 export const getLessons = async (req, res) => {
   try {
     const { page, limit, coach_id, min_price, max_price } = req.validated;
@@ -91,7 +111,16 @@ export const getLessonById = async (req, res) => {
       ],
     });
 
-    if (!lesson || lesson.deleted_at) {
+    if (!lesson) {
+      return errorResponse(res, 'Lesson not found', 404);
+    }
+
+    // Soft-deleted: not accessible via coach APIs (row kept for bookings/history only).
+    if (lesson.deleted_at) {
+      return errorResponse(res, 'Lesson not found', 404);
+    }
+
+    if (!isLessonPubliclyVisibleById(lesson) && !canViewInactiveLessonById(req.user, lesson)) {
       return errorResponse(res, 'Lesson not found', 404);
     }
 
@@ -135,6 +164,10 @@ export const updateLesson = async (req, res) => {
       return errorResponse(res, 'Lesson not found', 404);
     }
 
+    if (isLessonDeleted(lesson)) {
+      return errorResponse(res, 'Lesson not found', 404);
+    }
+
     if (req.user.id !== lesson.coach_id && !(req.user.roles || []).includes('admin')) {
       return errorResponse(res, 'Unauthorized', 403);
     }
@@ -164,6 +197,10 @@ export const deleteLesson = async (req, res) => {
     const lesson = await Lesson.findByPk(id);
 
     if (!lesson) {
+      return errorResponse(res, 'Lesson not found', 404);
+    }
+
+    if (isLessonDeleted(lesson)) {
       return errorResponse(res, 'Lesson not found', 404);
     }
 
