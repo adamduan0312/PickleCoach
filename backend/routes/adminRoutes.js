@@ -2,6 +2,7 @@ import express from 'express';
 import * as adminController from '../controllers/adminController.js';
 import * as reliabilityController from '../controllers/reliabilityController.js';
 import * as bookingController from '../controllers/bookingController.js';
+import * as lessonController from '../controllers/lessonController.js';
 import * as disputeController from '../controllers/disputeController.js';
 import { authenticate, authorize } from '../middleware/auth.js';
 import { validateQuery, validateRequest } from '../middleware/validator.js';
@@ -14,6 +15,7 @@ import {
   adminAdjustReliabilitySchema,
   adminGetUserReliabilityQuerySchema,
   getBookingsQuerySchema,
+  getAdminLessonsQuerySchema,
   createDisputeSchema,
 } from '../config/validation.js';
 
@@ -43,6 +45,15 @@ router.get('/audit-logs', authenticate, authorize('admin'), validateQuery(getAud
 router.get('/coaches/:coachId/courts', authenticate, authorize('admin'), adminController.getCoachCourtsForAdmin);
 router.delete('/coaches/:coachId/courts/:courtId', authenticate, authorize('admin'), adminController.deleteCoachCourtForAdmin);
 router.delete('/coaches/:coachId/availability/:id', authenticate, authorize('admin'), adminController.deleteCoachAvailabilityForAdmin);
+
+// Admin lesson inventory (not marketplace-gated; pair with GET /api/lessons/:id for detail)
+router.get(
+  '/lessons',
+  authenticate,
+  authorize('admin'),
+  validateQuery(getAdminLessonsQuerySchema),
+  lessonController.getAdminLessons,
+);
 
 // Admin booking overrides
 router.get('/bookings', authenticate, authorize('admin'), validateQuery(getBookingsQuerySchema), bookingController.getAdminBookings);

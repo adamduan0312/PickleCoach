@@ -1395,7 +1395,7 @@ Before confirmation (browse, intent, authorized/`pending`), students see `name`,
 
 ### `GET /api/lessons`
 - **Auth**: None required
-- **Description**: Public **lesson discovery**. Returns active lessons whose coach is **marketplace-eligible** (same definition as `GET /api/coaches`: profile + `stripe_ready` + court + availability; the listed lesson itself satisfies the lesson step). Coaches who are not yet listable do not appear here. Owner inventory remains **`GET /api/coaches/me/lessons`**. If `page` and `limit` are omitted, returns all matching lessons in `data` (server-capped at 10,000). If `page` or `limit` is provided, returns the requested page size (max 100 per page).
+- **Description**: Public **lesson discovery**. Returns active lessons whose coach is **marketplace-eligible** (same definition as `GET /api/coaches`: profile + `stripe_ready` + court + availability; the listed lesson itself satisfies the lesson step). Coaches who are not yet listable do not appear here. Owner inventory remains **`GET /api/coaches/me/lessons`**. **Admin inventory** (all coaches, including non-eligible / inactive) is **`GET /api/admin/lessons`**. If `page` and `limit` are omitted, returns all matching lessons in `data` (server-capped at 10,000). If `page` or `limit` is provided, returns the requested page size (max 100 per page).
 - **Query Parameters**: Optional filters: `coach_id`, `min_price`, `max_price`; optional pagination: `page`, `limit`.
 - **Pagination contract**: Paged mode includes `pagination` (`page`, `limit`, `total`, `totalPages`). All-results mode returns only `data`.
 - **Note**: **`GET /api/lessons/:id`** uses the same public rule for students/anonymous: coach must be **marketplace-eligible** (otherwise **`404`**, same as missing). **Owner coach** and **admin** can still load by id regardless of marketplace status (and for inactive lessons). Booking still uses transactional validation, not the marketplace helper. **`GET /api/coaches/:id`** remains looser for profile deep links.
@@ -1978,6 +1978,23 @@ Use this section as the admin decision guide for incidents, payouts/refunds, dis
 ### `GET /api/admin/bookings/:id`
 - **Auth**: Required (`admin`)
 - **Description**: Admin get any booking by ID.
+
+### `GET /api/admin/lessons`
+- **Auth**: Required (`admin`)
+- **Description**: Admin **lesson inventory** — lists lessons across all coaches **without** the marketplace-eligibility gate used by **`GET /api/lessons`**. Use this to discover lesson IDs for support tooling; then open detail with **`GET /api/lessons/:id`** (admin token can load inactive / non-listable coaches’ non-deleted lessons). Soft-deleted lessons are **excluded by default**; pass **`include_deleted=true`** to include them (deleted rows are still **`404`** on **`GET /api/lessons/:id`** — list is for discovery/history).
+- **Query Parameters**:
+  - `coach_id` (optional) — filter by coach user id
+  - `is_active` (optional boolean) — `true` / `false`
+  - `include_deleted` (optional boolean, default **`false`**) — when `true`, include soft-deleted rows
+  - `min_price` / `max_price` (optional)
+  - `page` / `limit` (optional; omit both for all matching rows, server-capped)
+- **Pagination contract**: Same as other list endpoints — paged mode includes `pagination`; all-results mode returns only `data`.
+- **Contrast**:
+  | Endpoint | Who | Scope |
+  |----------|-----|--------|
+  | `GET /api/lessons` | Public | Active + marketplace-eligible coach only |
+  | `GET /api/coaches/me/lessons` | Coach | Own lessons (not deleted), including inactive |
+  | `GET /api/admin/lessons` | Admin | All coaches; optional inactive / deleted |
 
 ### `GET /api/coaches/me/bookings`
 - **Auth**: Required (`coach`)

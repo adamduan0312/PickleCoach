@@ -532,6 +532,20 @@ export const getLessonsQuerySchema = Joi.object({
   max_price: Joi.number().min(0).optional(),
 });
 
+/**
+ * GET /api/admin/lessons — admin inventory (not marketplace-gated).
+ * Default excludes soft-deleted rows; pass include_deleted=true to include them.
+ */
+export const getAdminLessonsQuerySchema = Joi.object({
+  page: Joi.number().integer().min(1).optional(),
+  limit: Joi.number().integer().min(1).max(10000).optional(),
+  coach_id: Joi.number().integer().positive().optional(),
+  is_active: Joi.boolean().optional(),
+  include_deleted: Joi.boolean().default(false),
+  min_price: Joi.number().min(0).optional(),
+  max_price: Joi.number().min(0).optional(),
+});
+
 export const getMyLessonsQuerySchema = Joi.object({
   page: Joi.number().integer().min(1).optional(),
   limit: Joi.number().integer().min(1).max(10000).optional(),

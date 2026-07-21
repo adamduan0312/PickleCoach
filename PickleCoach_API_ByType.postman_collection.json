@@ -5431,6 +5431,83 @@
 					]
 				},
 				{
+					"name": "Get Lessons (Admin)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{api_url}}/admin/lessons",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"admin",
+								"lessons"
+							],
+							"query": [
+								{
+									"key": "coach_id",
+									"value": "{{coach_id}}",
+									"disabled": true
+								},
+								{
+									"key": "is_active",
+									"value": "true",
+									"disabled": true
+								},
+								{
+									"key": "include_deleted",
+									"value": "false",
+									"disabled": true
+								},
+								{
+									"key": "page",
+									"value": "1",
+									"disabled": true
+								},
+								{
+									"key": "limit",
+									"value": "10",
+									"disabled": true
+								}
+							]
+						},
+						"description": "Roles: Admin only. Lesson inventory across all coaches — **not** marketplace-gated (unlike GET /api/lessons). Optional filters: coach_id, is_active, include_deleted (default false), min_price, max_price, page, limit. Use lesson ids here, then GET /api/lessons/:id with admin token for detail."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Returns array of lessons\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('data');",
+									"    pm.expect(jsonData.data).to.be.an('array');",
+									"});",
+									"",
+									"if (pm.response.code === 200) {",
+									"    var jsonData = pm.response.json();",
+									"    if (jsonData.data && jsonData.data.length > 0) {",
+									"        pm.collectionVariables.set('lesson_id', String(jsonData.data[0].id));",
+									"    }",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
 					"name": "Get Bookings (Admin)",
 					"request": {
 						"method": "GET",

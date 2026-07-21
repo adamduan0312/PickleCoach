@@ -1758,7 +1758,7 @@
 								}
 							]
 						},
-						"description": "Roles: Any (no auth). Get lessons. Omit page/limit to return all matching lessons (server-capped), or enable page/limit to paginate. Optional filters: coach_id, min_price, max_price."
+						"description": "Roles: Any (no auth). Public lesson discovery \u2014 only lessons whose coach is marketplace-eligible (same as GET /coaches: stripe_ready + court + availability). Omit page/limit for all matching (capped), or paginate. Optional: coach_id, min_price, max_price. Coach inventory: GET /coaches/me/lessons."
 					},
 					"response": [],
 					"event": [
@@ -1813,7 +1813,7 @@
 								}
 							]
 						},
-						"description": "Roles: Any for **active** lessons (no auth). **Inactive** returns **404** unless you send the **coach owner** or **admin** Bearer token. **Deleted** always **404** (same `Lesson not found`)."
+						"description": "Roles: Any for **active** lessons whose coach is **marketplace-eligible** (no auth). Public **404** if coach is not listable (same as missing). **Inactive** / not-listable: owner or admin Bearer only. **Deleted** always **404**. Coach inventory: GET /coaches/me/lessons."
 					},
 					"response": [],
 					"event": [
@@ -1939,7 +1939,84 @@
 					]
 				},
 				{
-					"name": "34. Get Bookings (Admin)",
+					"name": "34. Get Lessons (Admin)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{api_url}}/admin/lessons",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"admin",
+								"lessons"
+							],
+							"query": [
+								{
+									"key": "coach_id",
+									"value": "{{coach_id}}",
+									"disabled": true
+								},
+								{
+									"key": "is_active",
+									"value": "true",
+									"disabled": true
+								},
+								{
+									"key": "include_deleted",
+									"value": "false",
+									"disabled": true
+								},
+								{
+									"key": "page",
+									"value": "1",
+									"disabled": true
+								},
+								{
+									"key": "limit",
+									"value": "10",
+									"disabled": true
+								}
+							]
+						},
+						"description": "Roles: Admin only. Lesson inventory across all coaches \u2014 **not** marketplace-gated (unlike GET /api/lessons). Optional filters: coach_id, is_active, include_deleted (default false), min_price, max_price, page, limit. Use lesson ids here, then GET /api/lessons/:id with admin token for detail."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Returns array of lessons\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('data');",
+									"    pm.expect(jsonData.data).to.be.an('array');",
+									"});",
+									"",
+									"if (pm.response.code === 200) {",
+									"    var jsonData = pm.response.json();",
+									"    if (jsonData.data && jsonData.data.length > 0) {",
+									"        pm.collectionVariables.set('lesson_id', String(jsonData.data[0].id));",
+									"    }",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "35. Get Bookings (Admin)",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -1994,7 +2071,7 @@
 					]
 				},
 				{
-					"name": "35. Get Booking By ID (Admin)",
+					"name": "36. Get Booking By ID (Admin)",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -2044,7 +2121,7 @@
 					]
 				},
 				{
-					"name": "36. Cancel Booking (Admin)",
+					"name": "37. Cancel Booking (Admin)",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -2102,7 +2179,7 @@
 					]
 				},
 				{
-					"name": "37. Create Dispute (Admin)",
+					"name": "38. Create Dispute (Admin)",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -2153,7 +2230,7 @@
 					]
 				},
 				{
-					"name": "38. Mark Student No-Show (Admin)",
+					"name": "39. Mark Student No-Show (Admin)",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -2211,7 +2288,7 @@
 					]
 				},
 				{
-					"name": "39. Mark Coach No-Show (Admin)",
+					"name": "40. Mark Coach No-Show (Admin)",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -2281,7 +2358,7 @@
 					]
 				},
 				{
-					"name": "40. Refund Booking (Admin)",
+					"name": "41. Refund Booking (Admin)",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -2346,7 +2423,7 @@
 					]
 				},
 				{
-					"name": "41. Resolve Dispute (Admin)",
+					"name": "42. Resolve Dispute (Admin)",
 					"request": {
 						"method": "PUT",
 						"header": [
@@ -2452,7 +2529,7 @@
 					]
 				},
 				{
-					"name": "42. Get My Payments",
+					"name": "43. Get My Payments",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -2509,7 +2586,7 @@
 					]
 				},
 				{
-					"name": "43. Get Payment By ID (Admin)",
+					"name": "44. Get Payment By ID (Admin)",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -3990,51 +4067,6 @@
 					]
 				},
 				{
-					"name": "26b. Get Marketplace Status",
-					"request": {
-						"method": "GET",
-						"header": [
-							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
-							}
-						],
-						"url": {
-							"raw": "{{api_url}}/coaches/me/marketplace-status",
-							"host": [
-								"{{api_url}}"
-							],
-							"path": [
-								"coaches",
-								"me",
-								"marketplace-status"
-							]
-						},
-						"description": "Roles: Coach, Admin. Checklist: profile, stripe (`stripe_ready`), lesson, court, availability. `listed: true` means visible in student discovery."
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Status code is 200\", function () {",
-									"    pm.response.to.have.status(200);",
-									"});",
-									"",
-									"pm.test(\"Returns listed + steps checklist\", function () {",
-									"    var d = pm.response.json().data;",
-									"    pm.expect(d).to.have.property('listed');",
-									"    pm.expect(d).to.have.property('missing');",
-									"    pm.expect(d.steps).to.include.keys('profile', 'stripe', 'lesson', 'court', 'availability');",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
 					"name": "27. Get All Lessons (Filter by coach_id)",
 					"request": {
 						"method": "GET",
@@ -4075,7 +4107,7 @@
 								}
 							]
 						},
-						"description": "Roles: Any (no auth). Get lessons. Omit page/limit to return all matching lessons (server-capped), or enable page/limit to paginate. Optional filters: coach_id, min_price, max_price."
+						"description": "Roles: Any (no auth). Public lesson discovery \u2014 only lessons whose coach is marketplace-eligible (same as GET /coaches: stripe_ready + court + availability). Omit page/limit for all matching (capped), or paginate. Optional: coach_id, min_price, max_price. Coach inventory: GET /coaches/me/lessons."
 					},
 					"response": [],
 					"event": [
@@ -4130,7 +4162,7 @@
 								}
 							]
 						},
-						"description": "Roles: Any for **active** lessons (no auth). **Inactive** returns **404** unless you send the **coach owner** or **admin** Bearer token. **Deleted** always **404** (same `Lesson not found`)."
+						"description": "Roles: Any for **active** lessons whose coach is **marketplace-eligible** (no auth). Public **404** if coach is not listable (same as missing). **Inactive** / not-listable: owner or admin Bearer only. **Deleted** always **404**. Coach inventory: GET /coaches/me/lessons."
 					},
 					"response": [],
 					"event": [
@@ -6235,7 +6267,7 @@
 								}
 							]
 						},
-						"description": "Roles: Student, Admin (coaches get 403). **Marketplace eligibility (DB-only):** profile + `stripe_ready` + \u22651 active lesson + \u22651 court + \u22651 availability. Flattened cards: `headline`, `skill_rating`, `rating_average`, `reliability_score`, **`courts`**, and when lat/lng set **`distance_miles`**.\n\n**Radius fixtures:** `npm run seed:geosearch` then login as student (testflow or `browse.geosearch@picklecoach.example.org` / `password123`). Default query is downtown SF.\n- **radius=5** \u2192 SF Mission + Ferry (+ legacy SF)\n- **radius=10** \u2192 + Oakland (~9mi)\n- **radius=15** \u2192 + Berkeley\n- **radius=25** \u2192 + San Mateo\n- **radius=50** \u2192 + San Jose\n- Never: NYC, LA, NoCourts, SoftDeletedCourt coaches\n\nOther filters: **min_skill_rating / max_skill_rating** (playing skill), **min_rating** (review stars). Pass **page/limit** for `pagination` (`totalItems`, `totalPages`, `currentPage`, `pageSize`)."
+						"description": "Roles: Student, Admin (coaches get 403). **Marketplace eligibility (DB-only):** profile + `stripe_ready` + \u22651 active lesson + \u22651 court + \u22651 availability. Flattened cards: `headline`, `skill_rating`, `rating_average`, `reliability_score`, **`courts`**, and when lat/lng set **`distance_miles`**.\n\n**Radius fixtures:** `npm run seed:geosearch` then login as student. Default query downtown SF.\n- **radius=5** \u2192 SF Mission + Ferry (+ legacy SF)\n- **radius=10** \u2192 + Oakland (~9mi)\n- **radius=15** \u2192 + Berkeley\n- **radius=25** \u2192 + San Mateo\n- **radius=50** \u2192 + San Jose\n- Never: NYC, LA, NoCourts, SoftDeletedCourt coaches\n\nOther filters: **min_skill_rating / max_skill_rating** (playing skill), **min_rating** (review stars). Pass **page/limit** for `pagination`."
 					},
 					"response": [],
 					"event": [
@@ -6643,7 +6675,7 @@
 								}
 							]
 						},
-						"description": "Roles: Any (no auth). Get lessons. Omit page/limit to return all matching lessons (server-capped), or enable page/limit to paginate. Optional filters: coach_id, min_price, max_price."
+						"description": "Roles: Any (no auth). Public lesson discovery \u2014 only lessons whose coach is marketplace-eligible (same as GET /coaches: stripe_ready + court + availability). Omit page/limit for all matching (capped), or paginate. Optional: coach_id, min_price, max_price. Coach inventory: GET /coaches/me/lessons."
 					},
 					"response": [],
 					"event": [
@@ -6698,7 +6730,7 @@
 								}
 							]
 						},
-						"description": "Roles: Any for **active** lessons (no auth). **Inactive** returns **404** unless you send the **coach owner** or **admin** Bearer token. **Deleted** always **404** (same `Lesson not found`)."
+						"description": "Roles: Any for **active** lessons whose coach is **marketplace-eligible** (no auth). Public **404** if coach is not listable (same as missing). **Inactive** / not-listable: owner or admin Bearer only. **Deleted** always **404**. Coach inventory: GET /coaches/me/lessons."
 					},
 					"response": [],
 					"event": [

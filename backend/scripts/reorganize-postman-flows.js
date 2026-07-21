@@ -180,6 +180,7 @@ const ADMIN_ORDER = [
   ['Lessons', 'Get Lesson By ID'],
   ['Disputes', 'Get All Disputes'],
   ['Disputes', 'Get Dispute By ID'],
+  ['Admin', 'Get Lessons (Admin)'],
   ['Admin', 'Get Bookings (Admin)'],
   ['Admin', 'Get Booking By ID (Admin)'],
   ['Admin', 'Cancel Booking (Admin)'],

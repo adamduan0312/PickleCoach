@@ -135,6 +135,103 @@ export const getMyLessons = async (req, res) => {
   }
 };
 
+/**
+ * Build WHERE for admin lesson inventory (no marketplace eligibility gate).
+ * @param {{
+ *   coach_id?: number,
+ *   is_active?: boolean,
+ *   include_deleted?: boolean,
+ *   min_price?: number,
+ *   max_price?: number,
+ * }} filters
+ */
+export function buildAdminLessonsWhere({
+  coach_id,
+  is_active,
+  include_deleted = false,
+  min_price,
+  max_price,
+} = {}) {
+  const where = {};
+  if (!include_deleted) where.deleted_at = null;
+  if (coach_id != null) where.coach_id = coach_id;
+  if (is_active !== undefined) where.is_active = is_active;
+  if (min_price != null || max_price != null) {
+    where.price = {};
+    if (min_price != null) where.price[Op.gte] = parseFloat(min_price);
+    if (max_price != null) where.price[Op.lte] = parseFloat(max_price);
+  }
+  return where;
+}
+
+/**
+ * GET /api/admin/lessons
+ * Admin inventory of all lessons (optional filters). Not marketplace-gated —
+ * contrasts with public GET /api/lessons. Soft-deleted rows excluded unless
+ * include_deleted=true. Use GET /api/lessons/:id (admin token) for detail of
+ * non-deleted lessons.
+ */
+export const getAdminLessons = async (req, res) => {
+  try {
+    const { page, limit, coach_id, is_active, include_deleted, min_price, max_price } =
+      req.validated || {};
+
+    const where = buildAdminLessonsWhere({
+      coach_id,
+      is_active,
+      include_deleted,
+      min_price,
+      max_price,
+    });
+
+    const coachInclude = {
+      model: User,
+      as: 'coach',
+      attributes: ['id', 'full_name', 'avatar_url'],
+      required: false,
+    };
+
+    if (page == null && limit == null) {
+      const lessons = await Lesson.findAll({
+        where,
+        include: [coachInclude],
+        limit: MAX_LIST_ALL_LESSONS,
+        order: [['created_at', 'DESC']],
+      });
+      return successResponse(
+        res,
+        lessons.map(shapePublicLessonRow),
+        'Lessons retrieved successfully',
+      );
+    }
+
+    const { limit: queryLimit, offset } = getPagination(page, limit);
+    const lessons = await Lesson.findAndCountAll({
+      where,
+      include: [coachInclude],
+      limit: queryLimit,
+      offset,
+      distinct: true,
+      order: [['created_at', 'DESC']],
+    });
+
+    const response = getPagingData(
+      { count: lessons.count, rows: lessons.rows.map(shapePublicLessonRow) },
+      page,
+      queryLimit,
+    );
+    return paginatedResponse(
+      res,
+      response.items,
+      response.pagination,
+      'Lessons retrieved successfully',
+    );
+  } catch (error) {
+    logger.error('Get admin lessons error:', error);
+    return errorResponse(res, 'Failed to retrieve lessons', 500);
+  }
+};
+
 export const getLessonById = async (req, res) => {
   try {
     const { id } = req.params;
