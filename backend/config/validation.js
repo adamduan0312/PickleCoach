@@ -532,16 +532,25 @@ export const getLessonsQuerySchema = Joi.object({
   max_price: Joi.number().min(0).optional(),
 });
 
-/**
- * GET /api/admin/lessons — admin inventory (not marketplace-gated).
- * Default excludes soft-deleted rows; pass include_deleted=true to include them.
- */
+/** GET /api/coaches/:id/lessons — marketplace offerings for one coach. */
+export const getCoachLessonsQuerySchema = Joi.object({
+  page: Joi.number().integer().min(1).optional(),
+  limit: Joi.number().integer().min(1).max(10000).optional(),
+});
+
+/** GET /api/admin/lessons — admin inventory (no marketplace gate). Default includes soft-deleted. */
 export const getAdminLessonsQuerySchema = Joi.object({
   page: Joi.number().integer().min(1).optional(),
   limit: Joi.number().integer().min(1).max(10000).optional(),
   coach_id: Joi.number().integer().positive().optional(),
-  is_active: Joi.boolean().optional(),
-  include_deleted: Joi.boolean().default(false),
+  /** Filter by publish flag. Query string: `true` | `false`. */
+  is_active: Joi.string().valid('true', 'false').optional(),
+  /**
+   * Default includes soft-deleted (complete inventory). Pass `false` to exclude them.
+   */
+  include_deleted: Joi.string().valid('true', 'false').optional(),
+  /** `true` = soft-deleted only; `false` = non-deleted only. */
+  deleted: Joi.string().valid('true', 'false').optional(),
   min_price: Joi.number().min(0).optional(),
   max_price: Joi.number().min(0).optional(),
 });

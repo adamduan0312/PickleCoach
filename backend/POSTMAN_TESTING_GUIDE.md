@@ -235,10 +235,11 @@ Use this as a living checklist. Check off each line as you verify it (happy path
 
 ### LESSONS
 
-- [ ] Get All Lessons — 200 (public marketplace catalog only)
-  - Tip: filter by coach with `GET /api/lessons?coach_id={{coach_id}}`
-- [ ] Get Lessons (Admin) — 200; `GET /api/admin/lessons` (all coaches; not marketplace-gated; optional `coach_id`, `is_active`, `include_deleted`)
-- [ ] Get Lesson By ID — **200** for active (public); **404** if inactive unless owner/admin token; **404** if deleted (everyone)
+- [ ] Get All Lessons — **410** (`GET /api/lessons` catalog removed)
+- [ ] Get Coach Lessons — 200; `GET /api/coaches/:id/lessons` (active + marketplace-eligible coach)
+- [ ] Get Lessons (Admin) — 200; `GET /api/admin/lessons` (complete inventory)
+- [ ] Get My Lessons — 200; coach inventory including inactive
+- [ ] Get Lesson By ID — **200** owner/admin; **403** for students (not discovery)
 - [ ] Create Lesson — 201
 - [ ] Update Lesson — 200
 - [ ] Delete Lesson — 200

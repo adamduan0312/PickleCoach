@@ -1,10 +1,10 @@
 import { Lesson, User, Booking } from '../models/index.js';
 import { successResponse, errorResponse, paginatedResponse } from '../utils/response.js';
 import { getPagination, getPagingData } from '../utils/pagination.js';
-import { Op } from 'sequelize';
 import { logger } from '../config/logger.js';
-import { isPubliclyActiveUser } from '../utils/userLifecycle.js';
+import { findPublicActiveCoach } from '../utils/userLifecycle.js';
 import * as coachMarketplaceEligibility from '../services/coachMarketplaceEligibility.js';
+import { buildAdminLessonsWhere, buildLessonPriceWhere } from '../utils/lessonListQuery.js';
 
 const MAX_LIST_ALL_LESSONS = 10000;
 
@@ -12,9 +12,10 @@ const MAX_LIST_ALL_LESSONS = 10000;
 export const lessonByIdDeps = {
   getCoachMarketplaceEligibility: (coachId) =>
     coachMarketplaceEligibility.getCoachMarketplaceEligibility(coachId),
+  findPublicActiveCoach: (coachId) => findPublicActiveCoach(coachId),
 };
 
-/** Strip eligibility join clutter; public lesson cards only need coach id/name/avatar. */
+/** Marketplace / coach-profile lesson cards — coach id/name/avatar only. */
 function shapePublicLessonRow(lessonInstance) {
   const json = lessonInstance.get ? lessonInstance.get({ plain: true }) : { ...lessonInstance };
   if (json.coach && typeof json.coach === 'object') {
@@ -27,163 +28,53 @@ function shapePublicLessonRow(lessonInstance) {
   return json;
 }
 
-/** Coach owner or admin may view **inactive** (not deleted) lessons by id — unpublished, recoverable. */
-function canViewInactiveLessonById(user, lesson) {
-  if (!user || !lesson) return false;
-  const roles = user.roles || [];
-  if (roles.includes('admin')) return true;
-  const ownerId = lesson.coach_id ?? lesson.get?.('coach_id');
-  return Number(user.id) === Number(ownerId);
-}
-
-function isLessonPubliclyVisibleById(lesson) {
-  if (!lesson || lesson.deleted_at) return false;
-  const active = lesson.is_active ?? lesson.get?.('is_active');
-  return active === true || active === 1;
-}
-
 /** Soft-deleted lessons are historical (bookings only); coach lesson APIs treat them as missing. */
 function isLessonDeleted(lesson) {
   return lesson?.deleted_at != null;
 }
 
+/**
+ * GET /api/lessons — **deprecated**. Lesson-first marketplace catalog removed.
+ * Discover lessons via GET /api/coaches/:id/lessons (coach-first).
+ */
 export const getLessons = async (req, res) => {
-  try {
-    const { page, limit, coach_id, min_price, max_price } = req.validated;
-
-    const where = { is_active: true, deleted_at: null };
-    if (coach_id) where.coach_id = coach_id;
-    if (min_price || max_price) {
-      where.price = {};
-      if (min_price) where.price[Op.gte] = parseFloat(min_price);
-      if (max_price) where.price[Op.lte] = parseFloat(max_price);
-    }
-
-    const coachInclude = coachMarketplaceEligibility.marketplaceEligibleCoachIncludeForLessonBrowse();
-
-    if (page == null && limit == null) {
-      const lessons = await Lesson.findAll({
-        where,
-        include: [coachInclude],
-        limit: MAX_LIST_ALL_LESSONS,
-        order: [['created_at', 'DESC']],
-        subQuery: false,
-      });
-      return successResponse(
-        res,
-        lessons.map(shapePublicLessonRow),
-        'Lessons retrieved successfully',
-      );
-    }
-
-    const { limit: queryLimit, offset } = getPagination(page, limit);
-
-    const lessons = await Lesson.findAndCountAll({
-      where,
-      include: [coachInclude],
-      limit: queryLimit,
-      offset,
-      distinct: true,
-      subQuery: false,
-      order: [['created_at', 'DESC']],
-    });
-
-    const response = getPagingData(
-      { count: lessons.count, rows: lessons.rows.map(shapePublicLessonRow) },
-      page,
-      queryLimit,
-    );
-    return paginatedResponse(res, response.items, response.pagination, 'Lessons retrieved successfully');
-  } catch (error) {
-    logger.error('Get lessons error:', error);
-    return errorResponse(res, 'Failed to retrieve lessons', 500);
-  }
+  return errorResponse(
+    res,
+    'GET /api/lessons is gone. Lessons are discovered through coaches: GET /api/coaches/:id/lessons. Coach inventory: GET /api/coaches/me/lessons. Admin inventory: GET /api/admin/lessons.',
+    410,
+    null,
+    { code: 'lesson_catalog_removed' },
+  );
 };
 
-export const getMyLessons = async (req, res) => {
+/**
+ * GET /api/coaches/:id/lessons
+ * Student/marketplace discovery of a coach's public offerings.
+ * Active + not deleted; coach must be marketplace-eligible (same as GET /api/coaches).
+ */
+export const getCoachLessonsById = async (req, res) => {
   try {
-    if (!(req.user.roles || []).includes('coach')) {
-      return errorResponse(res, 'Only coaches can view their lessons', 403);
+    const coachId = req.params.id != null ? parseInt(req.params.id, 10) : null;
+    if (!coachId || Number.isNaN(coachId)) {
+      return errorResponse(res, 'Valid coach ID is required', 400);
+    }
+
+    const coach = await lessonByIdDeps.findPublicActiveCoach(coachId);
+    if (!coach) {
+      return errorResponse(res, 'Coach not found', 404);
+    }
+
+    const eligibility = await lessonByIdDeps.getCoachMarketplaceEligibility(coachId);
+    if (!eligibility.listed) {
+      return errorResponse(res, 'Coach not found', 404);
     }
 
     const { page, limit } = req.validated || {};
-    const isPaginated = page != null || limit != null;
-    const { limit: queryLimit, offset } = isPaginated
-      ? getPagination(page, limit)
-      : { limit: MAX_LIST_ALL_LESSONS, offset: 0 };
-
-    const lessons = await Lesson.findAndCountAll({
-      where: {
-        coach_id: req.user.id,
-        deleted_at: null,
-      },
-      include: [{ model: User, as: 'coach', attributes: ['id', 'full_name', 'avatar_url'] }],
-      limit: queryLimit,
-      offset,
-      order: [['created_at', 'DESC']],
-    });
-
-    if (!isPaginated) {
-      return successResponse(res, lessons.rows, 'My lessons retrieved successfully');
-    }
-
-    const response = getPagingData(lessons, page, queryLimit);
-    return paginatedResponse(res, response.items, response.pagination, 'My lessons retrieved successfully');
-  } catch (error) {
-    logger.error('Get my lessons error:', error);
-    return errorResponse(res, 'Failed to retrieve my lessons', 500);
-  }
-};
-
-/**
- * Build WHERE for admin lesson inventory (no marketplace eligibility gate).
- * @param {{
- *   coach_id?: number,
- *   is_active?: boolean,
- *   include_deleted?: boolean,
- *   min_price?: number,
- *   max_price?: number,
- * }} filters
- */
-export function buildAdminLessonsWhere({
-  coach_id,
-  is_active,
-  include_deleted = false,
-  min_price,
-  max_price,
-} = {}) {
-  const where = {};
-  if (!include_deleted) where.deleted_at = null;
-  if (coach_id != null) where.coach_id = coach_id;
-  if (is_active !== undefined) where.is_active = is_active;
-  if (min_price != null || max_price != null) {
-    where.price = {};
-    if (min_price != null) where.price[Op.gte] = parseFloat(min_price);
-    if (max_price != null) where.price[Op.lte] = parseFloat(max_price);
-  }
-  return where;
-}
-
-/**
- * GET /api/admin/lessons
- * Admin inventory of all lessons (optional filters). Not marketplace-gated —
- * contrasts with public GET /api/lessons. Soft-deleted rows excluded unless
- * include_deleted=true. Use GET /api/lessons/:id (admin token) for detail of
- * non-deleted lessons.
- */
-export const getAdminLessons = async (req, res) => {
-  try {
-    const { page, limit, coach_id, is_active, include_deleted, min_price, max_price } =
-      req.validated || {};
-
-    const where = buildAdminLessonsWhere({
-      coach_id,
-      is_active,
-      include_deleted,
-      min_price,
-      max_price,
-    });
-
+    const where = {
+      coach_id: coachId,
+      is_active: true,
+      deleted_at: null,
+    };
     const coachInclude = {
       model: User,
       as: 'coach',
@@ -227,13 +118,112 @@ export const getAdminLessons = async (req, res) => {
       'Lessons retrieved successfully',
     );
   } catch (error) {
+    logger.error('Get coach lessons by id error:', error);
+    return errorResponse(res, 'Failed to retrieve lessons', 500);
+  }
+};
+
+/**
+ * GET /api/admin/lessons
+ * Admin inventory — all coaches' lessons, no marketplace eligibility gate.
+ * Default includes soft-deleted (complete inventory). Pass include_deleted=false to exclude.
+ */
+export const getAdminLessons = async (req, res) => {
+  try {
+    const { page, limit, coach_id, is_active, include_deleted, deleted, min_price, max_price } =
+      req.validated || {};
+
+    const where = buildAdminLessonsWhere({ coach_id, is_active, include_deleted, deleted });
+    const priceWhere = buildLessonPriceWhere({ min_price, max_price });
+    if (priceWhere) where.price = priceWhere;
+
+    const coachInclude = {
+      model: User,
+      as: 'coach',
+      attributes: ['id', 'full_name', 'avatar_url', 'email', 'is_active', 'deleted_at'],
+      required: false,
+    };
+
+    if (page == null && limit == null) {
+      const lessons = await Lesson.findAll({
+        where,
+        include: [coachInclude],
+        limit: MAX_LIST_ALL_LESSONS,
+        order: [['created_at', 'DESC']],
+      });
+      return successResponse(res, lessons, 'Lessons retrieved successfully');
+    }
+
+    const { limit: queryLimit, offset } = getPagination(page, limit);
+    const lessons = await Lesson.findAndCountAll({
+      where,
+      include: [coachInclude],
+      limit: queryLimit,
+      offset,
+      distinct: true,
+      order: [['created_at', 'DESC']],
+    });
+
+    const response = getPagingData(lessons, page, queryLimit);
+    return paginatedResponse(
+      res,
+      response.items,
+      response.pagination,
+      'Lessons retrieved successfully',
+    );
+  } catch (error) {
     logger.error('Get admin lessons error:', error);
     return errorResponse(res, 'Failed to retrieve lessons', 500);
   }
 };
 
+export const getMyLessons = async (req, res) => {
+  try {
+    if (!(req.user.roles || []).includes('coach')) {
+      return errorResponse(res, 'Only coaches can view their lessons', 403);
+    }
+
+    const { page, limit } = req.validated || {};
+    const isPaginated = page != null || limit != null;
+    const { limit: queryLimit, offset } = isPaginated
+      ? getPagination(page, limit)
+      : { limit: MAX_LIST_ALL_LESSONS, offset: 0 };
+
+    const lessons = await Lesson.findAndCountAll({
+      where: {
+        coach_id: req.user.id,
+        deleted_at: null,
+      },
+      include: [{ model: User, as: 'coach', attributes: ['id', 'full_name', 'avatar_url'] }],
+      limit: queryLimit,
+      offset,
+      order: [['created_at', 'DESC']],
+    });
+
+    if (!isPaginated) {
+      return successResponse(res, lessons.rows, 'My lessons retrieved successfully');
+    }
+
+    const response = getPagingData(lessons, page, queryLimit);
+    return paginatedResponse(res, response.items, response.pagination, 'My lessons retrieved successfully');
+  } catch (error) {
+    logger.error('Get my lessons error:', error);
+    return errorResponse(res, 'Failed to retrieve my lessons', 500);
+  }
+};
+
+/**
+ * GET /api/lessons/:id
+ * Authenticated resource access only — not marketplace discovery.
+ * Coach owner: own lessons (including inactive). Admin: any lesson (including soft-deleted).
+ * Students discover offerings via GET /api/coaches/:id/lessons.
+ */
 export const getLessonById = async (req, res) => {
   try {
+    if (!req.user) {
+      return errorResponse(res, 'Authentication required', 401);
+    }
+
     const { id } = req.params;
     const lesson = await Lesson.findByPk(id, {
       include: [
@@ -250,37 +240,26 @@ export const getLessonById = async (req, res) => {
       return errorResponse(res, 'Lesson not found', 404);
     }
 
-    // Soft-deleted: not accessible via coach APIs (row kept for bookings/history only).
-    if (lesson.deleted_at) {
-      return errorResponse(res, 'Lesson not found', 404);
+    const roles = req.user.roles || [];
+    const isAdmin = roles.includes('admin');
+    const isOwner = Number(req.user.id) === Number(lesson.coach_id);
+
+    if (!isAdmin && !isOwner) {
+      return errorResponse(
+        res,
+        'Lesson detail by id is for the lesson owner or admin. Browse offerings via GET /api/coaches/:id/lessons.',
+        403,
+        null,
+        { code: 'lesson_detail_not_for_discovery' },
+      );
     }
 
-    const privileged = canViewInactiveLessonById(req.user, lesson);
-    if (!isLessonPubliclyVisibleById(lesson) && !privileged) {
+    // Soft-deleted: coach owner treats as missing; admin may still load for support.
+    if (lesson.deleted_at && !isAdmin) {
       return errorResponse(res, 'Lesson not found', 404);
-    }
-
-    // Suspended/deleted coaches: hide from public/student browse; owner/admin may still load by id.
-    if (!isPubliclyActiveUser(lesson.coach) && !privileged) {
-      return errorResponse(res, 'Lesson not found', 404);
-    }
-
-    // Option A MVP: public lesson pages only for marketplace-eligible coaches
-    // (same definition as GET /api/lessons / GET /api/coaches). Owner/admin always allowed.
-    if (!privileged) {
-      const eligibility = await lessonByIdDeps.getCoachMarketplaceEligibility(lesson.coach_id);
-      if (!eligibility.listed) {
-        return errorResponse(res, 'Lesson not found', 404);
-      }
     }
 
     const payload = typeof lesson.toJSON === 'function' ? lesson.toJSON() : { ...lesson };
-    if (payload.coach) {
-      // Keep public coach shape aligned with list endpoints (no lifecycle internals).
-      delete payload.coach.is_active;
-      delete payload.coach.deleted_at;
-    }
-
     return successResponse(res, payload, 'Lesson retrieved successfully');
   } catch (error) {
     logger.error('Get lesson error:', error);

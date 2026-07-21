@@ -169,6 +169,12 @@ export const getCoachById = async (req, res) => {
       payload.availabilities = payload.availabilities.map(shapeAvailabilityForApi);
     }
 
+    // Coach-first marketplace: only expose lesson offerings when coach is listable.
+    const eligibility = await getCoachMarketplaceEligibility(coach.id);
+    if (!eligibility.listed) {
+      payload.lessons = [];
+    }
+
     return successResponse(res, payload, 'Coach retrieved successfully');
   } catch (error) {
     logger.error('Get coach error:', error);

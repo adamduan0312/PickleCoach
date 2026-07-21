@@ -16,6 +16,7 @@ import {
   getCoachAvailabilityQuerySchema,
   getMyLessonsQuerySchema,
   getBookingsQuerySchema,
+  getCoachLessonsQuerySchema,
 } from '../config/validation.js';
 
 const router = express.Router();
@@ -58,9 +59,17 @@ router.get(
 // Must be declared before `/:id` route to avoid matching `reliability` as an `:id` param.
 router.get('/me/reliability', authenticate, authorize('coach'), reliabilityController.getCoachReliabilityForMe);
 router.get('/me/marketplace-status', authenticate, authorize('coach', 'admin'), coachController.getMyMarketplaceStatus);
-router.get('/:id/reliability', authenticate, authorize('student', 'admin'), reliabilityController.getCoachReliabilityForStudent);
-router.get('/:id', authenticate, authorize('student', 'admin'), coachController.getCoachById);
+router.get('/:id/reliability', authenticate, authorize('student', 'coach', 'admin'), reliabilityController.getCoachReliabilityForStudent);
 router.get('/:id/courts', validateQuery(getCoachCourtsQuerySchema), courtController.getCoachCourtsById);
+/** Marketplace: another coach's public lesson offerings (active + eligible coach only). */
+router.get(
+  '/:id/lessons',
+  authenticate,
+  authorize('student', 'coach', 'admin'),
+  validateQuery(getCoachLessonsQuerySchema),
+  lessonController.getCoachLessonsById,
+);
+router.get('/:id', authenticate, authorize('student', 'coach', 'admin'), coachController.getCoachById);
 router.post('/profile', authenticate, authorize('coach'), validateRequest(createCoachProfileSchema), coachController.createCoachProfile);
 router.put('/me/profile', authenticate, authorize('coach'), validateRequest(updateCoachProfileSchema), coachController.updateMyCoachProfile);
 router.put('/profile/:id', authenticate, authorize('admin'), validateRequest(updateCoachProfileSchema), coachController.updateCoachProfile);

@@ -8,11 +8,11 @@
  *
  * Discovery surfaces that MUST share this definition:
  * - GET /api/coaches (incl. geo)
- * - GET /api/lessons (public lesson browse)
- * - GET /api/lessons/:id (public direct link — owner/admin exempt)
+ * - GET /api/coaches/:id/lessons (coach-scoped public offerings)
  * - future featured / recommended / homepage rails
+ * (GET /api/lessons catalog removed — returns 410)
  *
- * Discovery (`GET /api/coaches`) and public lesson list stay database-only: use
+ * Discovery (`GET /api/coaches`) stays database-only: use
  * `stripe_ready` on coach_profiles, never live Stripe API calls in list queries.
  */
 
@@ -204,8 +204,8 @@ export function marketplaceDiscoveryIncludes(opts = {}) {
 }
 
 /**
- * Nested coach include for public lesson discovery (`GET /api/lessons`).
- * Same marketplace eligibility as coach search; omits nested lessons (outer row is the lesson).
+ * Nested coach include for eligibility joins when listing from Lesson rows.
+ * Prefer GET /api/coaches/:id/lessons for marketplace discovery (coach-first).
  * Nested join rows use empty attributes so the API coach payload stays id/name/avatar.
  */
 export function marketplaceEligibleCoachIncludeForLessonBrowse() {

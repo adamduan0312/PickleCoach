@@ -29,7 +29,11 @@ const getCoachesSection = coachControllerSrc.slice(
 );
 const getLessonsSection = lessonControllerSrc.slice(
   lessonControllerSrc.indexOf('export const getLessons'),
-  lessonControllerSrc.indexOf('export const getMyLessons'),
+  lessonControllerSrc.indexOf('export const getCoachLessonsById'),
+);
+const getCoachLessonsSection = lessonControllerSrc.slice(
+  lessonControllerSrc.indexOf('export const getCoachLessonsById'),
+  lessonControllerSrc.indexOf('export const getAdminLessons'),
 );
 
 describe('computeMarketplaceEligibilityFromSteps', () => {
@@ -125,15 +129,25 @@ describe('discovery filters (DB-only)', () => {
     assert.doesNotMatch(getCoachesSection, /accounts\.retrieve/);
   });
 
-  it('GET /api/lessons uses shared marketplace coach include (public discovery)', () => {
-    assert.match(getLessonsSection, /marketplaceEligibleCoachIncludeForLessonBrowse/);
+  it('GET /api/lessons catalog is removed (410)', () => {
+    assert.match(getLessonsSection, /410/);
+    assert.match(getLessonsSection, /lesson_catalog_removed/);
   });
 
-  it('mounts GET /api/coaches/me/marketplace-status before /:id', () => {
+  it('GET /api/coaches/:id/lessons gates on marketplace eligibility', () => {
+    assert.match(getCoachLessonsSection, /getCoachMarketplaceEligibility/);
+    assert.match(getCoachLessonsSection, /is_active:\s*true/);
+    assert.match(getCoachLessonsSection, /deleted_at:\s*null/);
+  });
+
+  it('mounts GET /api/coaches/:id/lessons and marketplace-status before /:id', () => {
     const routesSrc = readFileSync(join(__dirname, '../routes/coachRoutes.js'), 'utf8');
     const statusIdx = routesSrc.indexOf('/me/marketplace-status');
+    const lessonsIdx = routesSrc.indexOf('/:id/lessons');
     const idIdx = routesSrc.indexOf("'/:id'");
     assert.ok(statusIdx > -1 && idIdx > statusIdx);
+    assert.ok(lessonsIdx > -1);
+    assert.match(routesSrc, /getCoachLessonsById/);
     assert.match(routesSrc, /getMyMarketplaceStatus/);
   });
 });

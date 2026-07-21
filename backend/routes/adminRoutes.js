@@ -2,10 +2,10 @@ import express from 'express';
 import * as adminController from '../controllers/adminController.js';
 import * as reliabilityController from '../controllers/reliabilityController.js';
 import * as bookingController from '../controllers/bookingController.js';
-import * as lessonController from '../controllers/lessonController.js';
 import * as disputeController from '../controllers/disputeController.js';
 import { authenticate, authorize } from '../middleware/auth.js';
 import { validateQuery, validateRequest } from '../middleware/validator.js';
+import * as lessonController from '../controllers/lessonController.js';
 import {
   getAuditLogsQuerySchema,
   cancellationSchema,
@@ -46,7 +46,7 @@ router.get('/coaches/:coachId/courts', authenticate, authorize('admin'), adminCo
 router.delete('/coaches/:coachId/courts/:courtId', authenticate, authorize('admin'), adminController.deleteCoachCourtForAdmin);
 router.delete('/coaches/:coachId/availability/:id', authenticate, authorize('admin'), adminController.deleteCoachAvailabilityForAdmin);
 
-// Admin lesson inventory (not marketplace-gated; pair with GET /api/lessons/:id for detail)
+// Admin lesson inventory (no marketplace gate — complements GET /api/lessons/:id for admins)
 router.get(
   '/lessons',
   authenticate,

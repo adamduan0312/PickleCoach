@@ -1,68 +1,38 @@
 /**
- * GET /api/lessons/:id — inactive: owner/admin only; deleted: 404 for everyone.
- * Public active lessons also require marketplace-eligible coach (Option A).
+ * Coach-first lesson discovery + owner/admin lesson-by-id.
  */
 import assert from 'node:assert/strict';
 import { describe, it, afterEach } from 'node:test';
 import { Lesson } from '../models/index.js';
-import { getLessonById, lessonByIdDeps } from '../controllers/lessonController.js';
+import {
+  getLessons,
+  getLessonById,
+  getCoachLessonsById,
+  lessonByIdDeps,
+} from '../controllers/lessonController.js';
 
 const origFindByPk = Lesson.findByPk;
+const origFindAll = Lesson.findAll;
 const origEligibility = lessonByIdDeps.getCoachMarketplaceEligibility;
+const origFindPublicActiveCoach = lessonByIdDeps.findPublicActiveCoach;
 
 const listedEligibility = {
   listed: true,
   missing: [],
-  steps: {
-    profile: true,
-    stripe: true,
-    lesson: true,
-    court: true,
-    availability: true,
-  },
+  steps: { profile: true, stripe: true, lesson: true, court: true, availability: true },
 };
 
 const notListedEligibility = {
   listed: false,
-  missing: ['stripe', 'availability'],
-  steps: {
-    profile: true,
-    stripe: false,
-    lesson: true,
-    court: true,
-    availability: false,
-  },
-};
-
-const activeCoach = {
-  id: 2,
-  full_name: 'Coach',
-  avatar_url: null,
-  is_active: true,
-  deleted_at: null,
-};
-
-const activeLesson = {
-  id: 35,
-  coach_id: 2,
-  title: 'Beginner Lesson',
-  is_active: true,
-  deleted_at: null,
-  coach: activeCoach,
-};
-
-const inactiveLesson = {
-  id: 35,
-  coach_id: 2,
-  title: 'Beginner Lesson',
-  is_active: false,
-  deleted_at: null,
-  coach: activeCoach,
+  missing: ['stripe'],
+  steps: { profile: true, stripe: false, lesson: true, court: true, availability: true },
 };
 
 afterEach(() => {
   Lesson.findByPk = origFindByPk;
+  Lesson.findAll = origFindAll;
   lessonByIdDeps.getCoachMarketplaceEligibility = origEligibility;
+  lessonByIdDeps.findPublicActiveCoach = origFindPublicActiveCoach;
 });
 
 function mockRes() {
@@ -78,206 +48,107 @@ function mockRes() {
   };
 }
 
-function stubListed(listed = true) {
-  lessonByIdDeps.getCoachMarketplaceEligibility = async () =>
-    listed ? listedEligibility : notListedEligibility;
-}
-
-describe('GET /api/lessons/:id visibility', () => {
-  it('returns 200 for active lesson when coach is marketplace-eligible (no auth)', async () => {
-    Lesson.findByPk = async () => activeLesson;
-    stubListed(true);
-    const req = { params: { id: '35' } };
+describe('GET /api/lessons (deprecated catalog)', () => {
+  it('returns 410 Gone', async () => {
     const res = mockRes();
-    await getLessonById(req, res);
+    await getLessons({ validated: {} }, res);
+    assert.equal(res.statusCode, 410);
+    assert.equal(res.payload?.code, 'lesson_catalog_removed');
+  });
+});
+
+describe('GET /api/coaches/:id/lessons', () => {
+  it('returns 404 when coach is not marketplace-eligible', async () => {
+    lessonByIdDeps.findPublicActiveCoach = async () => ({ id: 35 });
+    lessonByIdDeps.getCoachMarketplaceEligibility = async () => notListedEligibility;
+    const res = mockRes();
+    await getCoachLessonsById({ params: { id: '35' }, validated: {} }, res);
+    assert.equal(res.statusCode, 404);
+  });
+
+  it('returns active lessons for eligible coach', async () => {
+    lessonByIdDeps.findPublicActiveCoach = async () => ({ id: 10, full_name: 'Coach' });
+    lessonByIdDeps.getCoachMarketplaceEligibility = async () => listedEligibility;
+    Lesson.findAll = async (opts) => {
+      assert.deepEqual(opts.where, { coach_id: 10, is_active: true, deleted_at: null });
+      return [
+        {
+          id: 99,
+          coach_id: 10,
+          title: 'Intro',
+          is_active: true,
+          deleted_at: null,
+          coach: { id: 10, full_name: 'Coach', avatar_url: null },
+          get({ plain }) {
+            return plain ? this : this;
+          },
+        },
+      ];
+    };
+    const res = mockRes();
+    await getCoachLessonsById({ params: { id: '10' }, validated: {} }, res);
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.payload?.data?.[0]?.id, 99);
+  });
+});
+
+describe('GET /api/lessons/:id (owner/admin only)', () => {
+  const lesson = {
+    id: 35,
+    coach_id: 2,
+    title: 'Beginner',
+    is_active: true,
+    deleted_at: null,
+    coach: { id: 2, full_name: 'Coach', avatar_url: null },
+    toJSON() {
+      return { ...this };
+    },
+  };
+
+  it('requires auth', async () => {
+    const res = mockRes();
+    await getLessonById({ params: { id: '35' } }, res);
+    assert.equal(res.statusCode, 401);
+  });
+
+  it('forbids student discovery by id', async () => {
+    Lesson.findByPk = async () => lesson;
+    const res = mockRes();
+    await getLessonById({ params: { id: '35' }, user: { id: 9, roles: ['student'] } }, res);
+    assert.equal(res.statusCode, 403);
+  });
+
+  it('allows coach owner', async () => {
+    Lesson.findByPk = async () => lesson;
+    const res = mockRes();
+    await getLessonById({ params: { id: '35' }, user: { id: 2, roles: ['coach'] } }, res);
     assert.equal(res.statusCode, 200);
     assert.equal(res.payload?.data?.id, 35);
   });
 
-  it('returns 404 for active lesson when coach is not marketplace-eligible (public)', async () => {
-    Lesson.findByPk = async () => activeLesson;
-    stubListed(false);
-    const req = { params: { id: '35' } };
-    const res = mockRes();
-    await getLessonById(req, res);
-    assert.equal(res.statusCode, 404);
-    assert.match(res.payload?.message || '', /not found/i);
-  });
-
-  it('returns 200 for active non-listed coach lesson when owner', async () => {
-    Lesson.findByPk = async () => activeLesson;
-    stubListed(false);
-    const req = {
-      params: { id: '35' },
-      user: { id: 2, roles: ['coach'] },
-    };
-    const res = mockRes();
-    await getLessonById(req, res);
-    assert.equal(res.statusCode, 200);
-  });
-
-  it('returns 200 for active non-listed coach lesson when admin', async () => {
-    Lesson.findByPk = async () => activeLesson;
-    stubListed(false);
-    const req = {
-      params: { id: '35' },
-      user: { id: 99, roles: ['admin'] },
-    };
-    const res = mockRes();
-    await getLessonById(req, res);
-    assert.equal(res.statusCode, 200);
-  });
-
-  it('returns 404 for inactive lesson when unauthenticated', async () => {
-    Lesson.findByPk = async () => inactiveLesson;
-    stubListed(true);
-    const req = { params: { id: '35' } };
-    const res = mockRes();
-    await getLessonById(req, res);
-    assert.equal(res.statusCode, 404);
-    assert.match(res.payload?.message || '', /not found/i);
-  });
-
-  it('returns 404 for inactive lesson when student (not owner)', async () => {
-    Lesson.findByPk = async () => inactiveLesson;
-    stubListed(true);
-    const req = {
-      params: { id: '35' },
-      user: { id: 99, roles: ['student'] },
-    };
-    const res = mockRes();
-    await getLessonById(req, res);
-    assert.equal(res.statusCode, 404);
-  });
-
-  it('returns 404 for inactive lesson when another coach (not owner)', async () => {
-    Lesson.findByPk = async () => inactiveLesson;
-    stubListed(true);
-    const req = {
-      params: { id: '35' },
-      user: { id: 99, roles: ['coach'] },
-    };
-    const res = mockRes();
-    await getLessonById(req, res);
-    assert.equal(res.statusCode, 404);
-  });
-
-  it('returns 200 for inactive lesson when coach owner (numeric id match)', async () => {
+  it('allows admin including soft-deleted', async () => {
     Lesson.findByPk = async () => ({
-      ...inactiveLesson,
-      coach_id: '2',
-    });
-    stubListed(false);
-    const req = {
-      params: { id: '35' },
-      user: { id: 2, roles: ['coach'] },
-    };
-    const res = mockRes();
-    await getLessonById(req, res);
-    assert.equal(res.statusCode, 200);
-  });
-
-  it('treats is_active 0 as inactive (MySQL boolean)', async () => {
-    Lesson.findByPk = async () => ({
-      ...inactiveLesson,
-      is_active: 0,
-    });
-    stubListed(true);
-    const req = { params: { id: '35' } };
-    const res = mockRes();
-    await getLessonById(req, res);
-    assert.equal(res.statusCode, 404);
-  });
-
-  it('returns 200 for inactive lesson when coach owner', async () => {
-    Lesson.findByPk = async () => inactiveLesson;
-    stubListed(false);
-    const req = {
-      params: { id: '35' },
-      user: { id: 2, roles: ['coach'] },
-    };
-    const res = mockRes();
-    await getLessonById(req, res);
-    assert.equal(res.statusCode, 200);
-    assert.equal(res.payload?.data?.is_active, false);
-  });
-
-  it('returns 200 for inactive lesson when admin (not owner)', async () => {
-    Lesson.findByPk = async () => inactiveLesson;
-    stubListed(false);
-    const req = {
-      params: { id: '35' },
-      user: { id: 99, roles: ['admin'] },
-    };
-    const res = mockRes();
-    await getLessonById(req, res);
-    assert.equal(res.statusCode, 200);
-  });
-
-  it('returns 404 for soft-deleted lesson even for coach owner', async () => {
-    Lesson.findByPk = async () => ({
-      ...inactiveLesson,
+      ...lesson,
       deleted_at: new Date(),
+      toJSON() {
+        return { id: 35, coach_id: 2, deleted_at: this.deleted_at };
+      },
     });
-    const req = {
-      params: { id: '35' },
-      user: { id: 2, roles: ['coach'] },
-    };
     const res = mockRes();
-    await getLessonById(req, res);
-    assert.equal(res.statusCode, 404);
-  });
-
-  it('returns 404 for soft-deleted lesson even for admin', async () => {
-    Lesson.findByPk = async () => ({
-      ...activeLesson,
-      is_active: false,
-      deleted_at: new Date(),
-    });
-    const req = {
-      params: { id: '35' },
-      user: { id: 99, roles: ['admin'] },
-    };
-    const res = mockRes();
-    await getLessonById(req, res);
-    assert.equal(res.statusCode, 404);
-  });
-
-  it('returns 404 for soft-deleted lesson when unauthenticated', async () => {
-    Lesson.findByPk = async () => ({
-      ...activeLesson,
-      deleted_at: new Date(),
-    });
-    const req = { params: { id: '35' } };
-    const res = mockRes();
-    await getLessonById(req, res);
-    assert.equal(res.statusCode, 404);
-  });
-
-  it('returns 404 for active lesson when coach is suspended (public)', async () => {
-    Lesson.findByPk = async () => ({
-      ...activeLesson,
-      coach: { ...activeCoach, is_active: false, deleted_at: null },
-    });
-    stubListed(true);
-    const req = { params: { id: '35' } };
-    const res = mockRes();
-    await getLessonById(req, res);
-    assert.equal(res.statusCode, 404);
-  });
-
-  it('returns 200 for suspended-coach lesson when admin', async () => {
-    Lesson.findByPk = async () => ({
-      ...activeLesson,
-      coach: { ...activeCoach, is_active: false, deleted_at: null },
-    });
-    stubListed(false);
-    const req = {
-      params: { id: '35' },
-      user: { id: 99, roles: ['admin'] },
-    };
-    const res = mockRes();
-    await getLessonById(req, res);
+    await getLessonById({ params: { id: '35' }, user: { id: 1, roles: ['admin'] } }, res);
     assert.equal(res.statusCode, 200);
+  });
+
+  it('404 for owner on soft-deleted', async () => {
+    Lesson.findByPk = async () => ({
+      ...lesson,
+      deleted_at: new Date(),
+      toJSON() {
+        return this;
+      },
+    });
+    const res = mockRes();
+    await getLessonById({ params: { id: '35' }, user: { id: 2, roles: ['coach'] } }, res);
+    assert.equal(res.statusCode, 404);
   });
 });

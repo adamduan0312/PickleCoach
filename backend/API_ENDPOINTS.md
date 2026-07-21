@@ -729,8 +729,8 @@ Authorization: Bearer <token>
   **Detail** (`GET /api/coaches/:id`) still uses the nested `coachProfile` + `reliability` shell (plus lessons/reviews/availability). Use **`GET /api/coaches/:id/courts`** when court IDs are needed for booking.
 
 ### `GET /api/coaches/:id`
-- **Auth**: Required. **Roles**: Student, Admin only (coaches get 403).
-- **Description**: Get coach details by ID (for students viewing a coach profile, or admins). Includes **`reliability`**: `{ "reliability_score", "last_updated" }` (defaults **100** / **`null`** when no row). **DTO contract**: nested public discovery shell (`coachProfile` without Stripe/commission/`deleted_at`) — not the flattened list card from **`GET /api/coaches`**.
+- **Auth**: Required. **Roles**: Student, Coach, or Admin (marketplace browse — coaches may view other coaches; booking still requires **student**).
+- **Description**: Get coach details by ID. Includes **`reliability`**: `{ "reliability_score", "last_updated" }` (defaults **100** / **`null`** when no row). Nested **`lessons`** are active + non-deleted only when the coach is **marketplace-eligible**; otherwise **`lessons: []`**. Prefer **`GET /api/coaches/:id/lessons`** for dedicated lesson discovery.
 - **Response** (Status: 200):
   ```json
   {
@@ -1065,7 +1065,7 @@ Authorization: Bearer <token>
 
 ### `GET /api/coaches/me/lessons`
 - **Auth**: Required (coach only)
-- **Description**: List lessons created by the authenticated coach. Omit `page`/`limit` to return all matching rows (server-capped). Provide `page` or `limit` for paged mode.
+- **Description**: **Coach dashboard inventory** — lessons owned by the authenticated coach (includes **inactive**; excludes soft-deleted). Not marketplace discovery.
 - **Query Parameters**: Optional `page`, optional `limit`.
 - **Pagination contract**: Paged mode includes `pagination` (`page`, `limit`, `total`, `totalPages`). All-results mode returns only `data`.
 - **Response** (Status: 200):
@@ -1379,7 +1379,17 @@ Before confirmation (browse, intent, authorized/`pending`), students see `name`,
 
 ---
 
-## Lessons (`/api/lessons`)
+## Lessons (`/api/lessons` + coach-scoped discovery)
+
+**Coach-first marketplace:** Students browse **coaches**, then that coach’s **lessons**. There is no public lesson catalog.
+
+| Flow | Endpoint |
+|------|----------|
+| Marketplace offerings for one coach | **`GET /api/coaches/:id/lessons`** |
+| Coach dashboard inventory | **`GET /api/coaches/me/lessons`** |
+| Admin inventory | **`GET /api/admin/lessons`** |
+| Owner/admin resource by id | **`GET /api/lessons/:id`** (authenticated; not discovery) |
+| ~~Lesson-first catalog~~ | **`GET /api/lessons`** → **`410 Gone`** |
 
 **Pricing**: `price` is the **total** charged for one booking of that lesson (for its `duration_minutes`). It is the billing source of truth (bookings copy this amount). API responses also include read-only **`effective_hourly_rate`** (USD/hr): `price / (duration_minutes / 60)`.
 
@@ -1387,52 +1397,36 @@ Before confirmation (browse, intent, authorized/`pending`), students see `name`,
 
 | API category | Endpoints | Deleted lessons |
 |--------------|-----------|-----------------|
-| Marketplace discovery | `GET /api/lessons`, `GET /api/lessons/:id`, `GET /api/coaches/:id` (lesson embed), `GET /api/coaches/me/lessons` | Hidden (`404` or omitted) |
-| Historical context | `GET /api/bookings/:id`, `GET /api/coaches/me/bookings`, `GET /api/students/me/bookings`, `GET /api/admin/bookings` | Nested `lesson` allowed on existing bookings |
+| Marketplace discovery | `GET /api/coaches/:id/lessons`, coach profile lesson embed | Hidden (`404` or empty) |
+| Coach inventory | `GET /api/coaches/me/lessons` | Omitted (not deleted) |
+| Admin inventory | `GET /api/admin/lessons` | Included by default (`include_deleted=false` to exclude) |
+| Historical context | booking list/detail endpoints | Nested `lesson` allowed on existing bookings |
 | Mutations | `PUT /api/lessons/:id`, `DELETE /api/lessons/:id` | **`404`** — not editable after delete |
 
 **Inactive** (`is_active: false`, not deleted) = recoverable via coach APIs. **Deleted** = no longer a listing; row kept for booking history only.
 
+### `GET /api/coaches/:id/lessons`
+- **Auth**: Required (`student`, `coach`, or `admin`) — marketplace browse (viewing ≠ booking; booking still requires **student** role).
+- **Description**: Public offerings for one coach. Returns **active**, **non-deleted** lessons only when the coach is **marketplace-eligible** (same checklist as `GET /api/coaches`). Non-listable coaches → **`404`** (same as missing). This is the student lesson-discovery endpoint.
+- **Query Parameters**: optional `page`, `limit`.
+- **Response** (Status: 200): array of lesson cards with nested coach `{ id, full_name, avatar_url }`.
+
 ### `GET /api/lessons`
-- **Auth**: None required
-- **Description**: Public **lesson discovery**. Returns active lessons whose coach is **marketplace-eligible** (same definition as `GET /api/coaches`: profile + `stripe_ready` + court + availability; the listed lesson itself satisfies the lesson step). Coaches who are not yet listable do not appear here. Owner inventory remains **`GET /api/coaches/me/lessons`**. **Admin inventory** (all coaches, including non-eligible / inactive) is **`GET /api/admin/lessons`**. If `page` and `limit` are omitted, returns all matching lessons in `data` (server-capped at 10,000). If `page` or `limit` is provided, returns the requested page size (max 100 per page).
-- **Query Parameters**: Optional filters: `coach_id`, `min_price`, `max_price`; optional pagination: `page`, `limit`.
-- **Pagination contract**: Paged mode includes `pagination` (`page`, `limit`, `total`, `totalPages`). All-results mode returns only `data`.
-- **Note**: **`GET /api/lessons/:id`** uses the same public rule for students/anonymous: coach must be **marketplace-eligible** (otherwise **`404`**, same as missing). **Owner coach** and **admin** can still load by id regardless of marketplace status (and for inactive lessons). Booking still uses transactional validation, not the marketplace helper. **`GET /api/coaches/:id`** remains looser for profile deep links.
-- **Response** (Status: 200):
-  ```json
-  {
-    "success": true,
-    "message": "Lessons retrieved successfully",
-    "data": [
-      {
-        "id": 1,
-        "coach_id": 2,
-        "title": "Beginner Pickleball Lesson",
-        "description": "Learn the basics",
-        "duration_minutes": 60,
-        "price": 50.00,
-        "effective_hourly_rate": 50.00,
-        "max_students": 4,
-        "is_active": true
-      }
-    ]
-  }
-  ```
+- **Auth**: None
+- **Status**: **`410 Gone`** — lesson-first catalog removed. Use **`GET /api/coaches/:id/lessons`**, **`GET /api/coaches/me/lessons`**, or **`GET /api/admin/lessons`**.
+- **Error body**: `code: lesson_catalog_removed`.
 
 ### `GET /api/lessons/:id`
-- **Auth**: Optional. No token required for **active** public lessons whose coach is marketplace-eligible. Send a Bearer token when the **coach owner** or an **admin** needs to load a lesson that is inactive or whose coach is not yet listable (same **`404`** as missing for everyone else).
-- **Description**: Get lesson by ID. **MVP Option A**: if a student can open a lesson page publicly, they should be able to book it — so public access requires the coach to be marketplace-eligible (same checklist as `GET /api/lessons` / `GET /api/coaches`). Visibility:
+- **Auth**: Required. **Owner coach** or **admin** only — **not** marketplace discovery.
+- **Description**: Resource access for managing a lesson or admin support. Students must use **`GET /api/coaches/:id/lessons`** (or booking payloads after booking).
 
-  | State | Owner coach | Admin | Everyone else |
-  |-------|-------------|-------|----------------|
-  | **Active** + coach **marketplace-eligible** | ✅ | ✅ | ✅ |
-  | **Active** + coach **not** marketplace-eligible | ✅ (token) | ✅ (token) | ❌ **`404`** |
-  | **Inactive** (`is_active: false`, not deleted) | ✅ (token) | ✅ (token) | ❌ **`404`** |
-  | **Deleted** (`deleted_at` set) | ❌ **`404`** | ❌ **`404`** | ❌ **`404`** |
+  | Caller | Active | Inactive | Soft-deleted |
+  |--------|--------|----------|--------------|
+  | Owner coach | ✅ | ✅ | ❌ **404** |
+  | Admin | ✅ | ✅ | ✅ |
+  | Student / other | ❌ **403** | ❌ **403** | ❌ **403** |
 
-  **Inactive** = temporarily hidden (recoverable via **`PUT`** / **`GET /api/coaches/me/lessons`**). **Deleted** = removed from coach APIs; row retained for booking history only. Non-owners always get **`Lesson not found`** when the lesson is not publicly bookable (does not reveal the row exists).
-- **Error responses**: **`404`** — missing id, **deleted**, **inactive**, or **not marketplace-eligible** without owner/admin token.
+- **Error responses**: **`401`**, **`403`** (`lesson_detail_not_for_discovery`), **`404`**.
 - **Response** (Status: 200):
   ```json
   {
@@ -1971,6 +1965,24 @@ Use this section as the admin decision guide for incidents, payouts/refunds, dis
 - **Dispute visibility is not admin-only.** Booking participants (coach/student on that booking) can view related disputes; admins can view all.
 - **Reliability deduplication exists for no-show overlap.** If booking is already `coach_no_show`/`student_no_show`, resolving the matching no-show claim dispute does not double-penalize scoring.
 
+### `GET /api/admin/lessons`
+- **Auth**: Required (`admin`)
+- **Description**: **Admin lesson inventory** — complete inventory across coaches (**no** marketplace gate). Default **includes soft-deleted**. Use to discover lesson IDs for support. Nested **`coach`** includes `id`, `full_name`, `avatar_url`, `email`, `is_active`, `deleted_at`.
+- **Contrast**:
+  | Endpoint | Audience | Scope |
+  |----------|----------|--------|
+  | `GET /api/coaches/:id/lessons` | Marketplace | Active + eligible coach only |
+  | `GET /api/coaches/me/lessons` | Coach | Own lessons (not deleted; includes inactive) |
+  | `GET /api/admin/lessons` | Admin | All coaches; active/inactive/deleted |
+- **Query Parameters**:
+  - `coach_id` (optional)
+  - `is_active` (optional) — `"true"` \| `"false"`
+  - `include_deleted` (optional) — `"false"` to exclude soft-deleted (default includes them)
+  - `deleted` (optional) — `"true"` deleted-only; `"false"` non-deleted only
+  - `min_price` / `max_price`, `page` / `limit`
+- **Pagination contract**: Same as other admin lists.
+- **Error responses**: **`401`**, **`403`** (not admin).
+
 ### `GET /api/admin/bookings`
 - **Auth**: Required (`admin`)
 - **Description**: Admin list bookings (all bookings, optional filters like status/coach_id/student_id).
@@ -1978,23 +1990,6 @@ Use this section as the admin decision guide for incidents, payouts/refunds, dis
 ### `GET /api/admin/bookings/:id`
 - **Auth**: Required (`admin`)
 - **Description**: Admin get any booking by ID.
-
-### `GET /api/admin/lessons`
-- **Auth**: Required (`admin`)
-- **Description**: Admin **lesson inventory** — lists lessons across all coaches **without** the marketplace-eligibility gate used by **`GET /api/lessons`**. Use this to discover lesson IDs for support tooling; then open detail with **`GET /api/lessons/:id`** (admin token can load inactive / non-listable coaches’ non-deleted lessons). Soft-deleted lessons are **excluded by default**; pass **`include_deleted=true`** to include them (deleted rows are still **`404`** on **`GET /api/lessons/:id`** — list is for discovery/history).
-- **Query Parameters**:
-  - `coach_id` (optional) — filter by coach user id
-  - `is_active` (optional boolean) — `true` / `false`
-  - `include_deleted` (optional boolean, default **`false`**) — when `true`, include soft-deleted rows
-  - `min_price` / `max_price` (optional)
-  - `page` / `limit` (optional; omit both for all matching rows, server-capped)
-- **Pagination contract**: Same as other list endpoints — paged mode includes `pagination`; all-results mode returns only `data`.
-- **Contrast**:
-  | Endpoint | Who | Scope |
-  |----------|-----|--------|
-  | `GET /api/lessons` | Public | Active + marketplace-eligible coach only |
-  | `GET /api/coaches/me/lessons` | Coach | Own lessons (not deleted), including inactive |
-  | `GET /api/admin/lessons` | Admin | All coaches; optional inactive / deleted |
 
 ### `GET /api/coaches/me/bookings`
 - **Auth**: Required (`coach`)
