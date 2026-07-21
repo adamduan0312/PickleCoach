@@ -33,6 +33,36 @@ Use **`src/domain/userReadiness.js`** and **`src/hooks/useCoachReadiness.js`** e
 | `complete_stripe` | Resume Stripe Connect onboarding. |
 | `ready` | Full coach dashboard. |
 
+## Marketplace bookability (separate from UI readiness)
+
+`isCoachReady` / `coachUiPhase === 'ready'` means the coach can use the **dashboard** (role + profile + Stripe account started). It does **not** mean they appear in student search.
+
+**Marketplace listing** (`listed`) is a separate checklist from:
+
+```
+GET /api/coaches/me/marketplace-status
+```
+
+```json
+{
+  "listed": false,
+  "missing": ["availability", "stripe"],
+  "steps": {
+    "profile": true,
+    "stripe": false,
+    "lesson": true,
+    "court": true,
+    "availability": false
+  }
+}
+```
+
+Discovery (`GET /api/coaches`, public `GET /api/lessons`) only returns coaches / lessons when the coach is marketplace-eligible, using **database fields only** (including `coach_profiles.stripe_ready`). After Stripe onboarding, call Connect **status** (or wait for `account.updated`) so `stripe_ready` flips; then ensure lesson + court + availability exist.
+
+**Do not** wire booking intent to this checklist — transactional validation stays separate (lesson/court/slot/stripe_ready facts as needed). **`GET /api/coaches/:id`** stays looser for profile deep links. **Public lesson pages** (`GET /api/lessons` and `GET /api/lessons/:id`) only expose marketplace-eligible coaches — owner/admin can still load their own lessons regardless.
+
+Recommended coach setup UX order: profile → lessons → courts → availability → finish Stripe. Stripe can be last, but they stay **hidden from discovery** until it is complete (`stripe_ready`).
+
 ## Anti-patterns
 
 ```js

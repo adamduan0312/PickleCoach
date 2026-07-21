@@ -2498,6 +2498,9 @@
 									"    var jsonData = pm.response.json();",
 									"    pm.expect(jsonData).to.have.property('data');",
 									"    pm.expect(jsonData.data).to.be.an('array');",
+									"    if (jsonData.data.length > 0) {",
+									"        pm.environment.set(\"payment_id\", jsonData.data[0].id);",
+									"    }",
 									"});"
 								],
 								"type": "text/javascript"
@@ -2506,7 +2509,7 @@
 					]
 				},
 				{
-					"name": "43. Get Payment By ID",
+					"name": "43. Get Payment By ID (Admin)",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -2527,11 +2530,11 @@
 							"variable": [
 								{
 									"key": "id",
-									"value": "1"
+									"value": "{{payment_id}}"
 								}
 							]
 						},
-						"description": "Get payment details by ID"
+						"description": "**Admin flow** \u2014 same route as coach/student (`GET /api/payments/:id`). **Admin** may fetch any payment by ID. Path `:id` = payment row id; use `{{payment_id}}` from the previous **Get My Payments** step when available."
 					},
 					"response": [],
 					"event": [
@@ -2557,7 +2560,7 @@
 		},
 		{
 			"name": "2 \u2013 Flow: Coach",
-			"description": "All coach endpoints in user-flow order. Run in sequence: Health \u2192 Register/Login \u2192 Profile \u2192 **GET /coaches/me/reliability** \u2192 Coach profile \u2192 Courts \u2192 Availability \u2192 Stripe Connect \u2192 Lessons \u2192 Bookings \u2192 Payments \u2192 Reviews \u2192 Messages \u2192 Disputes \u2192 Notifications \u2192 Auth extras. See backend/POSTMAN_TESTING_GUIDE.md.\n\nBooking MVP: student uses POST /booking-intents → authorize → POST /bookings/confirm; coach uses PUT .../accept or PUT .../decline only for pending requests (coach on that booking only). Schedule changes: cancel + book again (no reschedule API). Accept/decline/cancel notify the other party.",
+			"description": "All coach endpoints in user-flow order. Run in sequence: Health \u2192 Register/Login \u2192 Profile \u2192 **GET /coaches/me/reliability** \u2192 Coach profile \u2192 Courts \u2192 Availability \u2192 Stripe Connect \u2192 Lessons \u2192 Bookings \u2192 Payments \u2192 **Get All Reviews** (read-only) \u2192 Messages \u2192 Disputes \u2192 Notifications \u2192 Auth extras. See backend/POSTMAN_TESTING_GUIDE.md.\n\nBooking MVP: student uses booking-intents + confirm; coach uses PUT .../accept or PUT .../decline only for pending requests (coach on that booking only). Schedule changes: cancel + book again (no reschedule API). Accept/decline/cancel notify the other party.\n\nReviews: coaches may **list** reviews (e.g. filter `target_user_id`); only the booking primary student creates/updates/deletes reviews \u2014 use **3 \u2013 Flow: Student** for those.",
 			"item": [
 				{
 					"name": "1. Health Check",
@@ -3964,7 +3967,7 @@
 								"status"
 							]
 						},
-						"description": "Roles: Coach, Admin. Get Stripe Connect account status for coach."
+						"description": "Roles: Coach, Admin. Get Stripe Connect account status for coach. Syncs local `stripe_ready` used by marketplace discovery."
 					},
 					"response": [],
 					"event": [
@@ -3979,6 +3982,51 @@
 									"pm.test(\"Status data returned\", function () {",
 									"    var jsonData = pm.response.json();",
 									"    pm.expect(jsonData).to.have.property('data');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "26b. Get Marketplace Status",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{api_url}}/coaches/me/marketplace-status",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"coaches",
+								"me",
+								"marketplace-status"
+							]
+						},
+						"description": "Roles: Coach, Admin. Checklist: profile, stripe (`stripe_ready`), lesson, court, availability. `listed: true` means visible in student discovery."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Returns listed + steps checklist\", function () {",
+									"    var d = pm.response.json().data;",
+									"    pm.expect(d).to.have.property('listed');",
+									"    pm.expect(d).to.have.property('missing');",
+									"    pm.expect(d.steps).to.include.keys('profile', 'stripe', 'lesson', 'court', 'availability');",
 									"});"
 								],
 								"type": "text/javascript"
@@ -4264,7 +4312,7 @@
 					]
 				},
 				{
-					"name": "32. Get Coach Bookings",
+					"name": "32. List My Coach Bookings (Coach Dashboard)",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -4274,12 +4322,13 @@
 							}
 						],
 						"url": {
-							"raw": "{{api_url}}/coaches/bookings",
+							"raw": "{{api_url}}/coaches/me/bookings",
 							"host": [
 								"{{api_url}}"
 							],
 							"path": [
 								"coaches",
+								"me",
 								"bookings"
 							],
 							"query": [
@@ -4295,7 +4344,7 @@
 								}
 							]
 						},
-						"description": "Roles: Coach only. List bookings where authenticated coach is assigned."
+						"description": "Roles: Coach only. Coach dashboard inbox \u2014 bookings where coach_id is the authenticated user (not student-side bookings)."
 					},
 					"response": [],
 					"event": [
@@ -4319,7 +4368,7 @@
 					]
 				},
 				{
-					"name": "33. Get Booking By ID",
+					"name": "33. Get My Booking by ID",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -4699,6 +4748,9 @@
 									"    var jsonData = pm.response.json();",
 									"    pm.expect(jsonData).to.have.property('data');",
 									"    pm.expect(jsonData.data).to.be.an('array');",
+									"    if (jsonData.data.length > 0) {",
+									"        pm.environment.set(\"payment_id\", jsonData.data[0].id);",
+									"    }",
 									"});"
 								],
 								"type": "text/javascript"
@@ -4707,7 +4759,7 @@
 					]
 				},
 				{
-					"name": "40. Get Payment By ID",
+					"name": "40. Get My Payment By ID",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -4728,11 +4780,11 @@
 							"variable": [
 								{
 									"key": "id",
-									"value": "1"
+									"value": "{{payment_id}}"
 								}
 							]
 						},
-						"description": "Get payment details by ID"
+						"description": "**Coach flow** \u2014 same route as admin (`GET /api/payments/:id`). Only payments where you are `coach_id` (or `student_id` if you have both roles). **403** if the ID is not one of your payments. Path `:id` = `{{payment_id}}` from **Get My Payments**."
 					},
 					"response": [],
 					"event": [
@@ -4758,7 +4810,12 @@
 					"name": "41. Get All Reviews",
 					"request": {
 						"method": "GET",
-						"header": [],
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
 						"url": {
 							"raw": "{{api_url}}/reviews",
 							"host": [
@@ -4804,161 +4861,7 @@
 					]
 				},
 				{
-					"name": "42. Create Review",
-					"request": {
-						"method": "POST",
-						"header": [
-							{
-								"key": "Content-Type",
-								"value": "application/json"
-							},
-							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
-							}
-						],
-						"body": {
-							"mode": "raw",
-							"raw": "{\n  \"booking_id\": \"{{booking_id}}\",\n  \"target_user_id\": \"{{coach_id}}\",\n  \"rating\": 5,\n  \"comment\": \"Great lesson!\",\n  \"attendance_badges\": [],\n  \"visibility\": \"public\"\n}"
-						},
-						"url": {
-							"raw": "{{api_url}}/reviews",
-							"host": [
-								"{{api_url}}"
-							],
-							"path": [
-								"reviews"
-							]
-						},
-						"description": "Create a review. Use target_user_id for the user being reviewed (e.g. set to coach_id when reviewing a coach)."
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Status code is 201\", function () {",
-									"    pm.response.to.have.status(201);",
-									"});",
-									"",
-									"pm.test(\"Review created\", function () {",
-									"    var jsonData = pm.response.json();",
-									"    pm.expect(jsonData.success).to.be.true;",
-									"    pm.expect(jsonData.data.rating).to.be.at.least(1).and.at.most(5);",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "43. Update Review",
-					"request": {
-						"method": "PUT",
-						"header": [
-							{
-								"key": "Content-Type",
-								"value": "application/json"
-							},
-							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
-							}
-						],
-						"body": {
-							"mode": "raw",
-							"raw": "{\n  \"rating\": 4,\n  \"comment\": \"Updated review comment\",\n  \"attendance_badges\": [],\n  \"visibility\": \"public\"\n}"
-						},
-						"url": {
-							"raw": "{{api_url}}/reviews/:id",
-							"host": [
-								"{{api_url}}"
-							],
-							"path": [
-								"reviews",
-								":id"
-							],
-							"variable": [
-								{
-									"key": "id",
-									"value": "1"
-								}
-							]
-						},
-						"description": "Roles: Student. Update own review."
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Status code is 200\", function () {",
-									"    pm.response.to.have.status(200);",
-									"});",
-									"",
-									"pm.test(\"Review updated\", function () {",
-									"    var jsonData = pm.response.json();",
-									"    pm.expect(jsonData.success).to.be.true;",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "44. Delete Review",
-					"request": {
-						"method": "DELETE",
-						"header": [
-							{
-								"key": "Authorization",
-								"value": "Bearer {{auth_token}}"
-							}
-						],
-						"url": {
-							"raw": "{{api_url}}/reviews/:id",
-							"host": [
-								"{{api_url}}"
-							],
-							"path": [
-								"reviews",
-								":id"
-							],
-							"variable": [
-								{
-									"key": "id",
-									"value": "1"
-								}
-							]
-						},
-						"description": "Delete a review"
-					},
-					"response": [],
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Status code is 200\", function () {",
-									"    pm.response.to.have.status(200);",
-									"});",
-									"",
-									"pm.test(\"Review deleted\", function () {",
-									"    var jsonData = pm.response.json();",
-									"    pm.expect(jsonData.success).to.be.true;",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "45. Get Conversations",
+					"name": "42. Get Conversations",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -4989,7 +4892,7 @@
 								}
 							]
 						},
-						"description": "Roles: Student, Coach, Admin. Get conversations (own if student/coach; all if admin). Omit page/limit to return all rows (server-capped), or enable page/limit for paged mode (data + pagination)."
+						"description": "Roles: Student, Coach, Admin. **Inbox / preview** \u2014 list booking-scoped conversation threads (newest first). Each row includes `latest_message` (object or `null`) and a lightweight `booking` DTO. Does **not** return full message history \u2014 use **Get Conversation By ID** for the complete thread. Omit page/limit to return all rows (server-capped), or enable page/limit for paged mode (`data` + `pagination`).\n\nExample row:\n```json\n{\n  \"id\": 1,\n  \"booking_id\": 5,\n  \"created_at\": \"2026-05-29T10:00:00.000Z\",\n  \"updated_at\": \"2026-06-01T09:00:00.000Z\",\n  \"latest_message\": {\n    \"id\": 42,\n    \"conversation_id\": 1,\n    \"sender_id\": 20,\n    \"message_text\": \"See you at court!\",\n    \"created_at\": \"2026-06-01T09:00:00.000Z\",\n    \"updated_at\": \"2026-06-01T09:00:00.000Z\",\n    \"sender\": { \"id\": 20, \"full_name\": \"Student User\", \"avatar_url\": null }\n  },\n  \"booking\": {\n    \"id\": 5,\n    \"lesson_id\": 12,\n    \"coach_id\": 10,\n    \"primary_student_id\": 20,\n    \"scheduled_at\": \"2026-06-01T10:00:00.000Z\",\n    \"duration_minutes\": 60,\n    \"price\": \"50.00\",\n    \"status\": \"confirmed\",\n    \"court_location_id\": 3,\n    \"messaging_locked\": false\n  }\n}\n```"
 					},
 					"response": [],
 					"event": [
@@ -5005,6 +4908,23 @@
 									"    var jsonData = pm.response.json();",
 									"    pm.expect(jsonData).to.have.property('data');",
 									"    pm.expect(jsonData.data).to.be.an('array');",
+									"});",
+									"",
+									"pm.test(\"Inbox rows use latest_message preview shape\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    if (!jsonData.data.length) return;",
+									"    var row = jsonData.data[0];",
+									"    pm.expect(row).to.have.property('latest_message');",
+									"    pm.expect(row).to.not.have.property('messages');",
+									"    pm.expect(row).to.not.have.property('messaging_locked');",
+									"    if (row.latest_message) {",
+									"        pm.expect(row.latest_message).to.be.an('object');",
+									"        pm.expect(row.latest_message).to.have.property('message_text');",
+									"    }",
+									"    if (row.booking) {",
+									"        pm.expect(row.booking).to.have.property('messaging_locked');",
+									"        pm.expect(row.booking).to.not.have.property('idempotency_key');",
+									"    }",
 									"});"
 								],
 								"type": "text/javascript"
@@ -5013,7 +4933,7 @@
 					]
 				},
 				{
-					"name": "46. Create Conversation",
+					"name": "43. Create Conversation",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -5068,7 +4988,7 @@
 					]
 				},
 				{
-					"name": "47. Get Conversation By ID",
+					"name": "44. Get Conversation By ID",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -5106,7 +5026,7 @@
 								}
 							]
 						},
-						"description": "Roles: Student, Coach, Admin. Get conversation details by ID (own or any if admin). Omit page/limit to return all messages (server-capped), or enable page/limit for message pagination metadata (`data.messages_pagination`)."
+						"description": "Roles: Student, Coach, Admin. Get conversation with full message thread (oldest first). Readable when messaging is locked. **`messaging_locked`** is on **`booking`** (same as inbox list), not at the conversation root. Omit page/limit to return all messages (server-capped), or enable page/limit for `messages_pagination`."
 					},
 					"response": [],
 					"event": [
@@ -5121,6 +5041,16 @@
 									"pm.test(\"Conversation data returned\", function () {",
 									"    var jsonData = pm.response.json();",
 									"    pm.expect(jsonData).to.have.property('data');",
+									"});",
+									"",
+									"pm.test(\"messaging_locked is on booking, not conversation root\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    if (!jsonData.data) return;",
+									"    pm.expect(jsonData.data).to.not.have.property('messaging_locked');",
+									"    if (jsonData.data.booking) {",
+									"        pm.expect(jsonData.data.booking).to.have.property('messaging_locked');",
+									"        pm.expect(jsonData.data.booking).to.not.have.property('idempotency_key');",
+									"    }",
 									"});"
 								],
 								"type": "text/javascript"
@@ -5129,7 +5059,7 @@
 					]
 				},
 				{
-					"name": "48. Send Message",
+					"name": "45. Send Message",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -5180,7 +5110,7 @@
 					]
 				},
 				{
-					"name": "49. Get All Disputes",
+					"name": "46. Get All Disputes",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -5234,7 +5164,7 @@
 					]
 				},
 				{
-					"name": "50. Get Dispute By ID",
+					"name": "47. Get Dispute By ID",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -5282,7 +5212,7 @@
 					]
 				},
 				{
-					"name": "51. Create Dispute",
+					"name": "48. Create Dispute",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -5308,7 +5238,7 @@
 								"disputes"
 							]
 						},
-						"description": "Roles: Student, Coach, Admin (must be party to booking). POST /api/disputes \u2014 booking status unchanged. Admins can also use POST /api/admin/disputes as an explicit support route (same handler, opened_by=admin). MVP dispute_type_id: 1 coach_no_show_claim (student), 8 student_no_show_claim (coach), 2 late_arrival, 3 misconduct, 4 lesson_not_completed, 5 refund_request, 6 billing_issue, 7 other. Optional notes persisted as TEXT."
+						"description": "Roles: Student, Coach, Admin (must be party to booking). POST /api/disputes \u2014 booking status unchanged. Admins can also use POST /api/admin/disputes as an explicit support route (same handler, opened_by=admin). Active dispute_type_id: 1 coach_no_show_claim (student), 8 student_no_show_claim (coach), 3 misconduct, 4 lesson_not_completed, 7 other. Optional notes persisted as TEXT."
 					},
 					"response": [],
 					"event": [
@@ -5331,7 +5261,7 @@
 					]
 				},
 				{
-					"name": "52. Get My Notifications",
+					"name": "49. Get My Notifications",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -5385,7 +5315,7 @@
 					]
 				},
 				{
-					"name": "53. Mark Notification As Read",
+					"name": "50. Mark Notification As Read",
 					"request": {
 						"method": "PUT",
 						"header": [
@@ -5434,7 +5364,7 @@
 					]
 				},
 				{
-					"name": "54. Forgot Password",
+					"name": "51. Forgot Password",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -5480,7 +5410,7 @@
 					]
 				},
 				{
-					"name": "55. Reset Password",
+					"name": "52. Reset Password",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -5526,7 +5456,7 @@
 					]
 				},
 				{
-					"name": "56. Logout",
+					"name": "53. Logout",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -5567,7 +5497,7 @@
 					]
 				},
 				{
-					"name": "57. Delete My Account",
+					"name": "54. Delete My Account",
 					"request": {
 						"method": "DELETE",
 						"header": [
@@ -5607,7 +5537,7 @@
 		},
 		{
 			"name": "3 \u2013 Flow: Student",
-			"description": "All student endpoints in user-flow order. Run in sequence: Health \u2192 Register/Login \u2192 Profile \u2192 **GET /students/me/reliability** \u2192 Search coaches (each result includes **reliability** score) \u2192 Open coach (GET /coaches/:id, includes **reliability**) \u2192 Optional GET /coaches/:id/reliability \u2192 Get coach courts \u2192 Check availability \u2192 Create Booking \u2192 Bookings \u2192 Payments \u2192 Reviews \u2192 Messages \u2192 Disputes \u2192 Notifications \u2192 Auth extras. See backend/POSTMAN_TESTING_GUIDE.md.\n\nBooking MVP: POST /booking-intents → Stripe authorization → POST /bookings/confirm creates a pending request; the coach accepts or declines with PUT .../accept | PUT .../decline. To change time: cancel this booking, then book again via intent + confirm.",
+			"description": "All student endpoints in user-flow order. Run in sequence: Health \u2192 Register/Login \u2192 Profile \u2192 **GET /students/me/reliability** \u2192 Search coaches (each result includes **reliability** score) \u2192 Open coach (GET /coaches/:id, includes **reliability**) \u2192 Optional GET /coaches/:id/reliability \u2192 Get coach courts \u2192 Check availability \u2192 Create Booking Intent \u2192 Confirm Booking \u2192 Bookings \u2192 Payments \u2192 Reviews (create/update/delete after completed lesson) \u2192 Messages \u2192 Disputes \u2192 Notifications \u2192 Auth extras. See backend/POSTMAN_TESTING_GUIDE.md.\n\nBooking MVP: POST /booking-intents \u2192 Stripe authorize \u2192 POST /bookings/confirm creates a pending request; the coach accepts or declines with PUT .../accept | PUT .../decline. To change time: cancel this booking, then book again.",
 			"item": [
 				{
 					"name": "1. Health Check",
@@ -6250,7 +6180,7 @@
 							}
 						],
 						"url": {
-							"raw": "{{api_url}}/coaches",
+							"raw": "{{api_url}}/coaches?lat=37.78&lng=-122.41&radius=10",
 							"host": [
 								"{{api_url}}"
 							],
@@ -6261,37 +6191,34 @@
 								{
 									"key": "lat",
 									"value": "37.78",
-									"description": "Latitude (center for radius search, optional)",
-									"disabled": true
+									"description": "SF downtown center (matches npm run seed:geosearch fixtures)"
 								},
 								{
 									"key": "lng",
 									"value": "-122.41",
-									"description": "Longitude (center for radius search, optional)",
-									"disabled": true
+									"description": "SF downtown center (matches npm run seed:geosearch fixtures)"
 								},
 								{
 									"key": "radius",
 									"value": "10",
-									"description": "Miles from lat/lng (default 10, max 500)",
-									"disabled": true
+									"description": "Miles. With seed:geosearch: 5=SF only; 10=+Oakland; 15=+Berkeley; 25=+SanMateo; 50=+SanJose. NYC/LA/NoCourt never appear."
 								},
 								{
 									"key": "min_skill_rating",
 									"value": "4.0",
-									"description": "Self-reported pickleball level \u2265 this (2.0\u20136.0, 0.5 steps); excludes coaches with no skill_rating",
+									"description": "Playing skill filter: coachProfile.skill_rating \u2265 this (2.0\u20136.0, 0.5 steps). Self-reported / DUPR / UTR-P level \u2014 not review stars. Excludes coaches with null skill_rating.",
 									"disabled": true
 								},
 								{
 									"key": "max_skill_rating",
 									"value": "5.5",
-									"description": "Optional upper bound; must be \u2265 min_skill_rating when both set",
+									"description": "Playing skill filter: coachProfile.skill_rating \u2264 this (2.0\u20136.0). Must be \u2265 min_skill_rating when both set. Not review stars.",
 									"disabled": true
 								},
 								{
 									"key": "min_rating",
 									"value": "4",
-									"description": "Minimum rating 0-5",
+									"description": "Review filter: coachProfile.rating_average \u2265 this (0\u20135 star average from student reviews). Distinct from min/max_skill_rating.",
 									"disabled": true
 								},
 								{
@@ -6302,13 +6229,13 @@
 								},
 								{
 									"key": "limit",
-									"value": "10",
+									"value": "20",
 									"description": "Items per page",
 									"disabled": true
 								}
 							]
 						},
-						"description": "Roles: Student, Admin (coaches get 403). List/search coaches. `coachProfile` includes **`skill_rating`** and **`rating_system`** (default self). Each coach includes **`reliability`**: `{ reliability_score, last_updated }` (defaults to score 100 when no row). Query params: lat, lng, radius, **min_skill_rating**, **max_skill_rating**, **min_rating** (review average), page, limit."
+						"description": "Roles: Student, Admin (coaches get 403). **Marketplace eligibility (DB-only):** profile + `stripe_ready` + \u22651 active lesson + \u22651 court + \u22651 availability. Flattened cards: `headline`, `skill_rating`, `rating_average`, `reliability_score`, **`courts`**, and when lat/lng set **`distance_miles`**.\n\n**Radius fixtures:** `npm run seed:geosearch` then login as student (testflow or `browse.geosearch@picklecoach.example.org` / `password123`). Default query is downtown SF.\n- **radius=5** \u2192 SF Mission + Ferry (+ legacy SF)\n- **radius=10** \u2192 + Oakland (~9mi)\n- **radius=15** \u2192 + Berkeley\n- **radius=25** \u2192 + San Mateo\n- **radius=50** \u2192 + San Jose\n- Never: NYC, LA, NoCourts, SoftDeletedCourt coaches\n\nOther filters: **min_skill_rating / max_skill_rating** (playing skill), **min_rating** (review stars). Pass **page/limit** for `pagination` (`totalItems`, `totalPages`, `currentPage`, `pageSize`)."
 					},
 					"response": [],
 					"event": [
@@ -6810,7 +6737,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"lesson_id\": \"{{lesson_id}}\",\n  \"scheduled_at\": \"2026-02-01T10:00:00Z\",\n  \"duration_minutes\": 60,\n  \"player_ids\": [],\n  \"court_location_id\": \"{{court_id}}\",\n  \"payment_method\": \"stripe\"\n}"
+							"raw": "{\n  \"lesson_id\": \"{{lesson_id}}\",\n  \"scheduled_at\": \"2026-02-01T10:00:00Z\",\n  \"court_location_id\": \"{{court_id}}\",\n  \"payment_method\": \"stripe\"\n}"
 						},
 						"url": {
 							"raw": "{{api_url}}/booking-intents",
@@ -6821,7 +6748,7 @@
 								"booking-intents"
 							]
 						},
-						"description": "POST /booking-intents. Student only. PaymentIntent created; authorize with Stripe client, then Confirm Booking."
+						"description": "POST /booking-intents. Student + verified email. **Required:** `lesson_id`, `scheduled_at`, `court_location_id` (one of coach's courts). Duration/price come from the lesson \u2014 do **not** send `duration_minutes` or `player_ids` (400). Creates manual-capture Stripe PaymentIntent; no booking row yet. Response: **`amount`** = USD dollars (e.g. 54), **`amount_cents`** = Stripe units (e.g. 5400), **`currency`**: `usd`. Then authorize with Stripe and POST /bookings/confirm."
 					},
 					"response": [],
 					"event": [
@@ -6833,10 +6760,20 @@
 									"    pm.response.to.have.status(201);",
 									"});",
 									"",
-									"pm.test(\"Intent created\", function () {",
+									"pm.test(\"Intent returns client_secret and payment_intent_id\", function () {",
 									"    var jsonData = pm.response.json();",
 									"    pm.expect(jsonData.success).to.be.true;",
+									"    pm.expect(jsonData.data.payment_intent_id).to.be.a('string');",
+									"    pm.expect(jsonData.data.client_secret).to.be.a('string');",
 									"    pm.environment.set(\"payment_intent_id\", jsonData.data.payment_intent_id);",
+									"});",
+									"",
+									"pm.test(\"Amount is USD dollars; amount_cents is Stripe units\", function () {",
+									"    var d = pm.response.json().data;",
+									"    pm.expect(d).to.have.property('amount');",
+									"    pm.expect(d).to.have.property('amount_cents');",
+									"    pm.expect(d.currency).to.eql('usd');",
+									"    pm.expect(d.amount_cents).to.eql(Math.round(Number(d.amount) * 100));",
 									"});"
 								],
 								"type": "text/javascript"
@@ -6845,7 +6782,7 @@
 					]
 				},
 				{
-					"name": "20b. Confirm Booking",
+					"name": "21. Confirm Booking",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -6872,7 +6809,7 @@
 								"confirm"
 							]
 						},
-						"description": "POST /bookings/confirm after Stripe authorization. Creates booking_id for coach accept/decline steps."
+						"description": "POST /bookings/confirm after Stripe authorization (requires_capture). Creates pending booking + authorized payment."
 					},
 					"response": [],
 					"event": [
@@ -6884,11 +6821,10 @@
 									"    pm.expect([200, 201]).to.include(pm.response.code);",
 									"});",
 									"",
-									"pm.test(\"Booking created\", function () {",
+									"pm.test(\"Booking confirmed\", function () {",
 									"    var jsonData = pm.response.json();",
-									"    if (jsonData.data && jsonData.data.booking && jsonData.data.booking.id) {",
-									"        pm.environment.set(\"booking_id\", jsonData.data.booking.id);",
-									"    }",
+									"    pm.expect(jsonData.data.booking.id).to.be.a('number');",
+									"    pm.environment.set(\"booking_id\", jsonData.data.booking.id);",
 									"});"
 								],
 								"type": "text/javascript"
@@ -6897,7 +6833,7 @@
 					]
 				},
 				{
-					"name": "21. Get My Bookings",
+					"name": "22. List My Student Bookings (Student Dashboard)",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -6907,11 +6843,13 @@
 							}
 						],
 						"url": {
-							"raw": "{{api_url}}/bookings",
+							"raw": "{{api_url}}/students/me/bookings",
 							"host": [
 								"{{api_url}}"
 							],
 							"path": [
+								"students",
+								"me",
 								"bookings"
 							],
 							"query": [
@@ -6927,7 +6865,7 @@
 								}
 							]
 						},
-						"description": "Roles: Student, Coach, Admin. Get bookings (own if student/coach; all if admin). Omit page/limit to return all matching rows (server-capped), or enable page/limit for paged mode (`data` + `pagination`)."
+						"description": "Roles: Student only. Student dashboard \u2014 bookings where primary_student_id is the authenticated user (not coach-side bookings)."
 					},
 					"response": [],
 					"event": [
@@ -6951,7 +6889,7 @@
 					]
 				},
 				{
-					"name": "22. Get Booking By ID",
+					"name": "22. Get My Booking by ID",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -7103,6 +7041,9 @@
 									"    var jsonData = pm.response.json();",
 									"    pm.expect(jsonData).to.have.property('data');",
 									"    pm.expect(jsonData.data).to.be.an('array');",
+									"    if (jsonData.data.length > 0) {",
+									"        pm.environment.set(\"payment_id\", jsonData.data[0].id);",
+									"    }",
 									"});"
 								],
 								"type": "text/javascript"
@@ -7111,7 +7052,7 @@
 					]
 				},
 				{
-					"name": "25. Get Payment By ID",
+					"name": "25. Get My Payment By ID",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -7132,11 +7073,11 @@
 							"variable": [
 								{
 									"key": "id",
-									"value": "1"
+									"value": "{{payment_id}}"
 								}
 							]
 						},
-						"description": "Get payment details by ID"
+						"description": "**Student flow** \u2014 same route as admin (`GET /api/payments/:id`). Only payments where you are `student_id` (or `coach_id` if you have both roles). **403** if the ID is not one of your payments. Path `:id` = `{{payment_id}}` from **Get My Payments**."
 					},
 					"response": [],
 					"event": [
@@ -7162,7 +7103,12 @@
 					"name": "26. Get All Reviews",
 					"request": {
 						"method": "GET",
-						"header": [],
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
 						"url": {
 							"raw": "{{api_url}}/reviews",
 							"host": [
@@ -7223,7 +7169,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"booking_id\": \"{{booking_id}}\",\n  \"target_user_id\": \"{{coach_id}}\",\n  \"rating\": 5,\n  \"comment\": \"Great lesson!\",\n  \"attendance_badges\": [],\n  \"visibility\": \"public\"\n}"
+							"raw": "{\n  \"booking_id\": \"{{booking_id}}\",\n  \"rating\": 5,\n  \"comment\": \"Great lesson!\",\n  \"attendance_badges\": [],\n  \"visibility\": \"public\"\n}"
 						},
 						"url": {
 							"raw": "{{api_url}}/reviews",
@@ -7234,7 +7180,7 @@
 								"reviews"
 							]
 						},
-						"description": "Create a review. Use target_user_id for the user being reviewed (e.g. set to coach_id when reviewing a coach)."
+						"description": "Create a review for a completed booking. Caller must be the booking's primary student (`primary_student_id`). `target_user_id` is not accepted \u2014 the coach on the booking is reviewed automatically."
 					},
 					"response": [],
 					"event": [
@@ -7393,7 +7339,7 @@
 								}
 							]
 						},
-						"description": "Roles: Student, Coach, Admin. Get conversations (own if student/coach; all if admin). Omit page/limit to return all rows (server-capped), or enable page/limit for paged mode (data + pagination)."
+						"description": "Roles: Student, Coach, Admin. **Inbox / preview** \u2014 list booking-scoped conversation threads (newest first). Each row includes `latest_message` (object or `null`) and a lightweight `booking` DTO. Does **not** return full message history \u2014 use **Get Conversation By ID** for the complete thread. Omit page/limit to return all rows (server-capped), or enable page/limit for paged mode (`data` + `pagination`).\n\nExample row:\n```json\n{\n  \"id\": 1,\n  \"booking_id\": 5,\n  \"created_at\": \"2026-05-29T10:00:00.000Z\",\n  \"updated_at\": \"2026-06-01T09:00:00.000Z\",\n  \"latest_message\": {\n    \"id\": 42,\n    \"conversation_id\": 1,\n    \"sender_id\": 20,\n    \"message_text\": \"See you at court!\",\n    \"created_at\": \"2026-06-01T09:00:00.000Z\",\n    \"updated_at\": \"2026-06-01T09:00:00.000Z\",\n    \"sender\": { \"id\": 20, \"full_name\": \"Student User\", \"avatar_url\": null }\n  },\n  \"booking\": {\n    \"id\": 5,\n    \"lesson_id\": 12,\n    \"coach_id\": 10,\n    \"primary_student_id\": 20,\n    \"scheduled_at\": \"2026-06-01T10:00:00.000Z\",\n    \"duration_minutes\": 60,\n    \"price\": \"50.00\",\n    \"status\": \"confirmed\",\n    \"court_location_id\": 3,\n    \"messaging_locked\": false\n  }\n}\n```"
 					},
 					"response": [],
 					"event": [
@@ -7409,6 +7355,23 @@
 									"    var jsonData = pm.response.json();",
 									"    pm.expect(jsonData).to.have.property('data');",
 									"    pm.expect(jsonData.data).to.be.an('array');",
+									"});",
+									"",
+									"pm.test(\"Inbox rows use latest_message preview shape\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    if (!jsonData.data.length) return;",
+									"    var row = jsonData.data[0];",
+									"    pm.expect(row).to.have.property('latest_message');",
+									"    pm.expect(row).to.not.have.property('messages');",
+									"    pm.expect(row).to.not.have.property('messaging_locked');",
+									"    if (row.latest_message) {",
+									"        pm.expect(row.latest_message).to.be.an('object');",
+									"        pm.expect(row.latest_message).to.have.property('message_text');",
+									"    }",
+									"    if (row.booking) {",
+									"        pm.expect(row.booking).to.have.property('messaging_locked');",
+									"        pm.expect(row.booking).to.not.have.property('idempotency_key');",
+									"    }",
 									"});"
 								],
 								"type": "text/javascript"
@@ -7510,7 +7473,7 @@
 								}
 							]
 						},
-						"description": "Roles: Student, Coach, Admin. Get conversation details by ID (own or any if admin). Omit page/limit to return all messages (server-capped), or enable page/limit for message pagination metadata (`data.messages_pagination`)."
+						"description": "Roles: Student, Coach, Admin. Get conversation with full message thread (oldest first). Readable when messaging is locked. **`messaging_locked`** is on **`booking`** (same as inbox list), not at the conversation root. Omit page/limit to return all messages (server-capped), or enable page/limit for `messages_pagination`."
 					},
 					"response": [],
 					"event": [
@@ -7525,6 +7488,16 @@
 									"pm.test(\"Conversation data returned\", function () {",
 									"    var jsonData = pm.response.json();",
 									"    pm.expect(jsonData).to.have.property('data');",
+									"});",
+									"",
+									"pm.test(\"messaging_locked is on booking, not conversation root\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    if (!jsonData.data) return;",
+									"    pm.expect(jsonData.data).to.not.have.property('messaging_locked');",
+									"    if (jsonData.data.booking) {",
+									"        pm.expect(jsonData.data.booking).to.have.property('messaging_locked');",
+									"        pm.expect(jsonData.data.booking).to.not.have.property('idempotency_key');",
+									"    }",
 									"});"
 								],
 								"type": "text/javascript"
@@ -7712,7 +7685,7 @@
 								"disputes"
 							]
 						},
-						"description": "Roles: Student, Coach, Admin (must be party to booking). POST /api/disputes \u2014 booking status unchanged. Admins can also use POST /api/admin/disputes as an explicit support route (same handler, opened_by=admin). MVP dispute_type_id: 1 coach_no_show_claim (student), 8 student_no_show_claim (coach), 2 late_arrival, 3 misconduct, 4 lesson_not_completed, 5 refund_request, 6 billing_issue, 7 other. Optional notes persisted as TEXT."
+						"description": "Roles: Student, Coach, Admin (must be party to booking). POST /api/disputes \u2014 booking status unchanged. Admins can also use POST /api/admin/disputes as an explicit support route (same handler, opened_by=admin). Active dispute_type_id: 1 coach_no_show_claim (student), 8 student_no_show_claim (coach), 3 misconduct, 4 lesson_not_completed, 7 other. Optional notes persisted as TEXT."
 					},
 					"response": [],
 					"event": [

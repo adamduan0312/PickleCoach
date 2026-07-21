@@ -463,7 +463,7 @@ Test endpoints in this order because some depend on others:
 10. **Messages** (send messages)
 11. **Other endpoints** (disputes, notifications, admin)
 
-**GET list endpoints and query parameters:** Many GET list endpoints (e.g. `GET /api/users`, `GET /api/bookings`, `GET /api/coaches`) accept optional query parameters for pagination and filtering. Common params: `page` (default 1), `limit` (default 10, max 100), plus endpoint-specific filters (e.g. `role`, `status`, `coach_id`). The API validates these; invalid values return 400 with error details.
+**GET list endpoints and query parameters:** Many GET list endpoints (e.g. `GET /api/users`, `GET /api/coaches`, `GET /api/students/me/bookings`, `GET /api/coaches/me/bookings`) accept optional query parameters for pagination and filtering. Common params: `page` (default 1), `limit` (default 10, max 100), plus endpoint-specific filters (e.g. `role`, `status`, `coach_id`). The API validates these; invalid values return 400 with error details.
 
 ---
 
@@ -1003,13 +1003,17 @@ pm.test("Booking created", function () {
 });
 ```
 
-#### Get My Bookings
+#### List My Student Bookings / List My Coach Bookings
 
-**Request:**
+**Student Request:**
 - Method: `GET`
-- URL: `{{api_url}}/bookings`
+- URL: `{{api_url}}/students/me/bookings`
 - Headers: `Authorization: Bearer {{auth_token}}`
-- Body: None
+
+**Coach Request:**
+- Method: `GET`
+- URL: `{{api_url}}/coaches/me/bookings`
+- Headers: `Authorization: Bearer {{auth_token}}`
 
 **Test Script:**
 ```javascript
@@ -1378,7 +1382,7 @@ VALUES (
    - User profile: `GET /api/auth/profile` (with token)
    - Coach endpoints: `GET /api/coaches`, `POST /api/coaches/profile`, `PUT /api/coaches/me/profile`
    - Lesson endpoints: `POST /api/lessons`, `GET /api/lessons`
-   - Booking endpoints: `POST /api/booking-intents`, `POST /api/bookings/confirm`, `GET /api/bookings`
+   - Booking endpoints: `POST /api/booking-intents`, `POST /api/bookings/confirm`, `GET /api/students/me/bookings`, `GET /api/coaches/me/bookings`, `GET /api/bookings/:id`
 
 5. **Test with Authentication:**
    - Add header to requests: `Authorization: Bearer {{student_token}}`
@@ -2149,27 +2153,9 @@ Authorization: Bearer <token>
 
 ### `GET /api/coaches` (List / search coaches)
 - **Auth**: Required (student or admin only). Coaches cannot use this endpoint (403).
-- **Description**: List coaches with optional filters. Use **lat**, **lng**, and **radius** to find coaches who have courts within that distance (e.g. "coaches near me"). Other filters: **min_skill_rating**, **max_skill_rating**, **min_rating** (review average), page, limit.
+- **Description**: Flattened marketplace list. Optional **lat** / **lng** / **radius** for geo search (adds **`distance_miles`**). Other filters: **min_skill_rating**, **max_skill_rating**, **min_rating**, page, limit.
 - **Query Parameters**: `lat`, `lng`, `radius` (miles), `min_skill_rating`, `max_skill_rating`, `min_rating`, `page`, `limit` (all optional).
-- **Response** (Status: 200):
-  ```json
-  {
-    "success": true,
-    "message": "Coaches retrieved successfully",
-    "data": [
-      {
-        "id": 1,
-        "user_id": 2,
-        "full_name": "Jane Coach",
-        "coachProfile": {
-          "skill_rating": 4.5,
-          "rating_system": "self",
-          "rating_average": 4.8
-        }
-      }
-    ]
-  }
-  ```
+- **Response** (Status: 200): Flattened cards — `headline`, `skill_rating`, `rating_*`, `reliability_score`, `courts[]` (no join IDs). With lat/lng: `distance_miles`. Paged responses include `pagination` (`totalItems`, `totalPages`, `currentPage`, `pageSize`). See **backend/API_ENDPOINTS.md** for full example.
 
 ### `GET /api/coaches/:id`
 - **Auth**: None required
@@ -2445,7 +2431,11 @@ Authorization: Bearer <token>
 
 ## Courts (`/api/courts`)
 
-**Field notes:** `is_private` — coach-set. **Private courts are excluded from public discovery** (`GET /api/courts`, `GET /api/courts/:id` returns **404** for private ids). Coach profile / booking / admin APIs still return private courts where applicable. `rate_modifier` on coach–court links is stored for future per-court pricing but not exposed on coach/student APIs until booking logic uses it.
+**Field notes:** `is_private` is a **discovery flag**, not a permissions flag (not invitation-only / access-restricted). When `true`, the court is **hidden from public court discovery** only (`GET /api/courts`, `GET /api/courts/:id` returns **404**). **`is_private` affects only public court discovery.** Once a court is linked to a coach, it remains available for coach profiles, marketplace eligibility, and booking regardless of its privacy setting. Admins always see both.
+
+**Address visibility:** Exact location for `is_private: true` is unlocked **only on booking endpoints** when that booking is **confirmed** (or later). `GET /api/coaches/:id/courts` and marketplace coach cards **always** redact private street/GPS (even after the student has a confirmed booking) — use `GET /api/bookings/:id` for the booked court’s exact address. Public courts always show full address. Coaches and admins always see exact location. See `API_ENDPOINTS.md` Court field notes.
+
+`rate_modifier` on coach–court links is stored for future per-court pricing but not exposed on coach/student APIs until booking logic uses it.
 
 ### `GET /api/courts`
 - **Auth**: None required
@@ -2683,36 +2673,17 @@ Authorization: Bearer <token>
 
 ## Bookings (`/api/bookings`)
 
-### `GET /api/bookings`
-- **Auth**: Required
-- **Description**: Get user's bookings (filtered by role - coach sees coach bookings, student sees student bookings)
-- **Query Parameters**: Filters (status, date range, etc.)
-- **Response** (Status: 200):
-  ```json
-  {
-    "success": true,
-    "message": "Bookings retrieved successfully",
-    "data": [
-      {
-        "id": 1,
-        "lesson_id": 1,
-        "coach_id": 2,
-        "primary_student_id": 1,
-        "scheduled_at": "2026-02-01T10:00:00.000Z",
-        "duration_minutes": 60,
-        "price": 50.00,
-        "status": "pending",
-        "lesson": {
-          "title": "Beginner Pickleball Lesson"
-        }
-      }
-    ]
-  }
-  ```
+### `GET /api/students/me/bookings`
+- **Auth**: Required (`student`)
+- **Description**: Student dashboard — bookings where `primary_student_id` is the authenticated user.
+
+### `GET /api/coaches/me/bookings`
+- **Auth**: Required (`coach`)
+- **Description**: Coach dashboard — bookings where `coach_id` is the authenticated user.
 
 ### `GET /api/bookings/:id`
 - **Auth**: Required
-- **Description**: Get booking details by ID
+- **Description**: Get booking details by ID (participant access)
 - **Response** (Status: 200):
   ```json
   {
@@ -2745,8 +2716,8 @@ Authorization: Bearer <token>
 
 ### `POST /api/booking-intents`
 - **Auth**: Required (verified email)
-- **Description**: Create Stripe PaymentIntent for a lesson slot (manual capture). No booking row until confirm.
-- **Response** (201): `client_secret`, `payment_intent_id`, `lesson_id`, `scheduled_at`, `amount`
+- **Description**: Create Stripe PaymentIntent for a lesson slot (manual capture). No booking row until confirm. Requires `lesson_id`, `scheduled_at`, `court_location_id`.
+- **Response** (201): `client_secret`, `payment_intent_id`, `lesson_id`, `scheduled_at`, `duration_minutes`, `court_location_id`, **`amount`** (USD dollars), **`amount_cents`** (Stripe units), `currency`
 
 ### `POST /api/bookings/confirm`
 - **Auth**: Required (verified email)
@@ -2993,7 +2964,7 @@ Authorization: Bearer <token>
 
 ## Disputes (`/api/disputes`)
 
-MVP `dispute_types` ids (see migrations `20260408120000-canonical-dispute-types-mvp` and `20260421120000-dispute-types-attendance-claims`): **1** `coach_no_show_claim` (student claims coach no-show), **2** `late_arrival`, **3** `misconduct`, **4** `lesson_not_completed`, **5** `refund_request`, **6** `billing_issue`, **7** `other`, **8** `student_no_show_claim` (coach claims student no-show). Final attendance outcomes are **`bookings.status`** (`student_no_show` / `coach_no_show`), set when resolving disputes or via admin no-show booking routes when not disputed.
+MVP `dispute_types` ids (see migrations `20260408120000-canonical-dispute-types-mvp` and `20260421120000-dispute-types-attendance-claims`): **1** `coach_no_show_claim` (student claims coach no-show), **3** `misconduct`, **4** `lesson_not_completed`, **7** `other`, **8** `student_no_show_claim` (coach claims student no-show). Final attendance outcomes are **`bookings.status`** (`student_no_show` / `coach_no_show`), set when resolving disputes or via admin no-show booking routes when not disputed.
 
 ### `GET /api/disputes`
 - **Auth**: Required
