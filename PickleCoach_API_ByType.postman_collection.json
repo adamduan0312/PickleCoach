@@ -1997,6 +1997,62 @@
 					]
 				},
 				{
+					"name": "Get Coach Lessons",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{api_url}}/coaches/:id/lessons",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"coaches",
+								":id",
+								"lessons"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "{{coach_id}}"
+								}
+							],
+							"query": [
+								{
+									"key": "page",
+									"value": "1",
+									"disabled": true
+								},
+								{
+									"key": "limit",
+									"value": "10",
+									"disabled": true
+								}
+							]
+						},
+						"description": "Marketplace: active lessons for one coach (must be marketplace-eligible). Auth: student, coach, or admin. Booking still requires student role."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
 					"name": "Get Coach Reliability (Score Only)",
 					"request": {
 						"method": "GET",
@@ -2502,17 +2558,30 @@
 			"name": "Lessons",
 			"item": [
 				{
-					"name": "Get All Lessons (Filter by coach_id)",
+					"name": "Get Coach Lessons",
 					"request": {
 						"method": "GET",
-						"header": [],
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
 						"url": {
-							"raw": "{{api_url}}/lessons",
+							"raw": "{{api_url}}/coaches/:id/lessons",
 							"host": [
 								"{{api_url}}"
 							],
 							"path": [
+								"coaches",
+								":id",
 								"lessons"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "{{coach_id}}"
+								}
 							],
 							"query": [
 								{
@@ -2524,25 +2593,41 @@
 									"key": "limit",
 									"value": "10",
 									"disabled": true
-								},
-								{
-									"key": "coach_id",
-									"value": "{{coach_id}}",
-									"disabled": true
-								},
-								{
-									"key": "min_price",
-									"value": "20",
-									"disabled": true
-								},
-								{
-									"key": "max_price",
-									"value": "80",
-									"disabled": true
 								}
 							]
 						},
-						"description": "Roles: Any (no auth). Public lesson discovery — only lessons whose coach is marketplace-eligible (same as GET /coaches: stripe_ready + court + availability). Omit page/limit for all matching (capped), or paginate. Optional: coach_id, min_price, max_price. Coach inventory: GET /coaches/me/lessons."
+						"description": "Marketplace: active lessons for one coach (must be marketplace-eligible). Auth: student, coach, or admin. Booking still requires student role."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Get All Lessons (DEPRECATED — 410)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{api_url}}/lessons",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"lessons"
+							]
+						},
+						"description": "DEPRECATED. GET /api/lessons returns 410. Use Get Coach Lessons, Get My Lessons, or Get Lessons (Admin)."
 					},
 					"response": [],
 					"event": [
@@ -2597,7 +2682,7 @@
 								}
 							]
 						},
-						"description": "Roles: Any for **active** lessons whose coach is **marketplace-eligible** (no auth). Public **404** if coach is not listable (same as missing). **Inactive** / not-listable: owner or admin Bearer only. **Deleted** always **404**. Coach inventory: GET /coaches/me/lessons."
+						"description": "Owner coach or admin only (auth required). Not marketplace discovery — use Get Coach Lessons."
 					},
 					"response": [],
 					"event": [
@@ -5431,7 +5516,7 @@
 					]
 				},
 				{
-					"name": "Get Lessons (Admin)",
+					"name": "Get All Lessons (Admin)",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -5462,7 +5547,7 @@
 								},
 								{
 									"key": "include_deleted",
-									"value": "false",
+									"value": "true",
 									"disabled": true
 								},
 								{
@@ -5477,7 +5562,7 @@
 								}
 							]
 						},
-						"description": "Roles: Admin only. Lesson inventory across all coaches — **not** marketplace-gated (unlike GET /api/lessons). Optional filters: coach_id, is_active, include_deleted (default false), min_price, max_price, page, limit. Use lesson ids here, then GET /api/lessons/:id with admin token for detail."
+						"description": "Roles: Admin only. Complete lesson inventory (includes soft-deleted by default). Optional coach_id, is_active, include_deleted=false, deleted."
 					},
 					"response": [],
 					"event": [
@@ -5493,14 +5578,7 @@
 									"    var jsonData = pm.response.json();",
 									"    pm.expect(jsonData).to.have.property('data');",
 									"    pm.expect(jsonData.data).to.be.an('array');",
-									"});",
-									"",
-									"if (pm.response.code === 200) {",
-									"    var jsonData = pm.response.json();",
-									"    if (jsonData.data && jsonData.data.length > 0) {",
-									"        pm.collectionVariables.set('lesson_id', String(jsonData.data[0].id));",
-									"    }",
-									"}"
+									"});"
 								],
 								"type": "text/javascript"
 							}

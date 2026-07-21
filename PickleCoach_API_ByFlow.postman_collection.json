@@ -7,8 +7,8 @@
 	},
 	"item": [
 		{
-			"name": "1 \u2013 Flow: Admin",
-			"description": "All admin endpoints in user-flow order. Run in sequence: Health \u2192 Login (admin) \u2192 Profile \u2192 Dashboard \u2192 Users \u2192 Payments \u2192 Disputes \u2192 Notifications \u2192 Coach support \u2192 Auth extras. See backend/POSTMAN_TESTING_GUIDE.md.\n\nNote: The Stripe webhook (`POST /api/webhooks/stripe`) is documentation-only and lives under the top-level **Reference (Not for Manual Run)** folder. It is intentionally excluded from this flow so the runner stays green end-to-end.",
+			"name": "1 – Flow: Admin",
+			"description": "All admin endpoints in user-flow order. Run in sequence: Health → Login (admin) → Profile → Dashboard → Users → Payments → Disputes → Notifications → Coach support → Auth extras. See backend/POSTMAN_TESTING_GUIDE.md.\n\nNote: The Stripe webhook (`POST /api/webhooks/stripe`) is documentation-only and lives under the top-level **Reference (Not for Manual Run)** folder. It is intentionally excluded from this flow so the runner stays green end-to-end.",
 			"item": [
 				{
 					"name": "1. Health Check",
@@ -656,11 +656,11 @@
 								}
 							]
 						},
-						"description": "Roles: Admin. Adjust one user_reliability row (user_id + role). Body `role` defaults to **coach** \u2014 omit or set `coach` for the coach score. Student-only users must send `\"role\": \"student\"`. Dual-role users: call twice (coach default vs `student`) to set both scores."
+						"description": "Roles: Admin. Adjust one user_reliability row (user_id + role). Body `role` defaults to **coach** — omit or set `coach` for the coach score. Student-only users must send `\"role\": \"student\"`. Dual-role users: call twice (coach default vs `student`) to set both scores."
 					},
 					"response": [
 						{
-							"name": "200 OK \u2014 adjust reliability",
+							"name": "200 OK — adjust reliability",
 							"originalRequest": {
 								"method": "PUT",
 								"header": [
@@ -706,7 +706,7 @@
 								}
 							],
 							"cookie": [],
-							"body": "{\"success\":true,\"message\":\"Reliability score adjusted successfully\",\"data\":{\"user_id\":1,\"role\":\"coach\",\"user_roles\":[\"coach\",\"student\"],\"previous_score\":100,\"new_score\":85,\"adjusted_by\":10,\"reason\":\"Manual adjustment\",\"explanation\":\"Support override after review\",\"guidance\":\"Roles: Admin. Adjust one user_reliability row (user_id + role). Body `role` defaults to **coach** \u2014 omit or set `coach` for the coach score. Student-only users must send \\\"role\\\": \\\"student\\\". Dual-role users: call twice (coach default vs `student`) to set both scores.\"}}"
+							"body": "{\"success\":true,\"message\":\"Reliability score adjusted successfully\",\"data\":{\"user_id\":1,\"role\":\"coach\",\"user_roles\":[\"coach\",\"student\"],\"previous_score\":100,\"new_score\":85,\"adjusted_by\":10,\"reason\":\"Manual adjustment\",\"explanation\":\"Support override after review\",\"guidance\":\"Roles: Admin. Adjust one user_reliability row (user_id + role). Body `role` defaults to **coach** — omit or set `coach` for the coach score. Student-only users must send \\\"role\\\": \\\"student\\\". Dual-role users: call twice (coach default vs `student`) to set both scores.\"}}"
 						}
 					],
 					"event": [
@@ -916,7 +916,7 @@
 								}
 							]
 						},
-						"description": "**Admin flow** \u2014 uses the **same** By Type request as **Coaches \u2192 Get Coach Availability** (`GET /api/coaches/:id/availability`). Use an **admin** JWT to inspect a coach\u2019s weekly windows (support). Effective roles must include **student** or **admin**; coach-only tokens get **403**. Path `:id` = coach user id (`{{coach_id}}`). Edit the canonical request under **Coaches** only so Student and Admin flows stay in sync."
+						"description": "**Admin flow** — uses the **same** By Type request as **Coaches → Get Coach Availability** (`GET /api/coaches/:id/availability`). Use an **admin** JWT to inspect a coach’s weekly windows (support). Effective roles must include **student** or **admin**; coach-only tokens get **403**. Path `:id` = coach user id (`{{coach_id}}`). Edit the canonical request under **Coaches** only so Student and Admin flows stay in sync."
 					},
 					"response": [],
 					"event": [
@@ -1354,7 +1354,7 @@
 								"change-password"
 							]
 						},
-						"description": "Roles: Student, Coach, Admin. Change password using the current password and a new password. Bumps token_version (other sessions invalidated). Response includes a fresh JWT \u2014 test script saves it to auth_token like Login."
+						"description": "Roles: Student, Coach, Admin. Change password using the current password and a new password. Bumps token_version (other sessions invalidated). Response includes a fresh JWT — test script saves it to auth_token like Login."
 					},
 					"response": [],
 					"event": [
@@ -1645,7 +1645,7 @@
 								}
 							]
 						},
-						"description": "Roles: Any (no auth). **Public directory only** \u2014 results are **`is_private: false`** courts only (private courts are not discoverable here; use coach court endpoints). **No lat/lng, no page/limit** = all matching courts in `data` (capped server-side). **page** and/or **limit** = paginated list (`pagination`). **lat** + **lng** (+ optional **radius**) = nearby search; results ordered **closest first** (lazy OSM import if empty)."
+						"description": "Roles: Any (no auth). **Public directory only** — results are **`is_private: false`** courts only (private courts are not discoverable here; use coach court endpoints). **No lat/lng, no page/limit** = all matching courts in `data` (capped server-side). **page** and/or **limit** = paginated list (`pagination`). **lat** + **lng** (+ optional **radius**) = nearby search; results ordered **closest first** (lazy OSM import if empty)."
 					},
 					"response": [],
 					"event": [
@@ -1694,7 +1694,7 @@
 								}
 							]
 						},
-						"description": "Roles: Any (no auth). **Public directory only** \u2014 **`404`** for private courts or missing/deleted ids (same message; does not reveal private existence). Use **`GET /api/coaches/:id/courts`** to see where a coach teaches (includes private)."
+						"description": "Roles: Any (no auth). **Public directory only** — **`404`** for private courts or missing/deleted ids (same message; does not reveal private existence). Use **`GET /api/coaches/:id/courts`** to see where a coach teaches (includes private)."
 					},
 					"response": [],
 					"event": [
@@ -1718,7 +1718,7 @@
 					]
 				},
 				{
-					"name": "30. Get All Lessons (Filter by coach_id)",
+					"name": "30. Get All Lessons (DEPRECATED — 410) (DEPRECATED — 410)",
 					"request": {
 						"method": "GET",
 						"header": [],
@@ -1729,36 +1729,9 @@
 							],
 							"path": [
 								"lessons"
-							],
-							"query": [
-								{
-									"key": "page",
-									"value": "1",
-									"disabled": true
-								},
-								{
-									"key": "limit",
-									"value": "10",
-									"disabled": true
-								},
-								{
-									"key": "coach_id",
-									"value": "{{coach_id}}",
-									"disabled": true
-								},
-								{
-									"key": "min_price",
-									"value": "20",
-									"disabled": true
-								},
-								{
-									"key": "max_price",
-									"value": "80",
-									"disabled": true
-								}
 							]
 						},
-						"description": "Roles: Any (no auth). Public lesson discovery \u2014 only lessons whose coach is marketplace-eligible (same as GET /coaches: stripe_ready + court + availability). Omit page/limit for all matching (capped), or paginate. Optional: coach_id, min_price, max_price. Coach inventory: GET /coaches/me/lessons."
+						"description": "DEPRECATED. GET /api/lessons returns 410. Use Get Coach Lessons instead."
 					},
 					"response": [],
 					"event": [
@@ -1813,7 +1786,7 @@
 								}
 							]
 						},
-						"description": "Roles: Any for **active** lessons whose coach is **marketplace-eligible** (no auth). Public **404** if coach is not listable (same as missing). **Inactive** / not-listable: owner or admin Bearer only. **Deleted** always **404**. Coach inventory: GET /coaches/me/lessons."
+						"description": "Roles: Any for **active** lessons (no auth). **Inactive** returns **404** unless you send the **coach owner** or **admin** Bearer token. **Deleted** always **404** (same `Lesson not found`). Owner/admin only; not student discovery."
 					},
 					"response": [],
 					"event": [
@@ -1939,7 +1912,7 @@
 					]
 				},
 				{
-					"name": "34. Get Lessons (Admin)",
+					"name": "34. Get All Lessons (Admin)",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -1970,7 +1943,7 @@
 								},
 								{
 									"key": "include_deleted",
-									"value": "false",
+									"value": "true",
 									"disabled": true
 								},
 								{
@@ -1985,7 +1958,7 @@
 								}
 							]
 						},
-						"description": "Roles: Admin only. Lesson inventory across all coaches \u2014 **not** marketplace-gated (unlike GET /api/lessons). Optional filters: coach_id, is_active, include_deleted (default false), min_price, max_price, page, limit. Use lesson ids here, then GET /api/lessons/:id with admin token for detail."
+						"description": "Roles: Admin only. List lessons across all coaches (no marketplace gate). Soft-deleted excluded unless include_deleted=true. Use to discover lesson IDs for GET /api/lessons/:id as admin."
 					},
 					"response": [],
 					"event": [
@@ -2001,14 +1974,7 @@
 									"    var jsonData = pm.response.json();",
 									"    pm.expect(jsonData).to.have.property('data');",
 									"    pm.expect(jsonData.data).to.be.an('array');",
-									"});",
-									"",
-									"if (pm.response.code === 200) {",
-									"    var jsonData = pm.response.json();",
-									"    if (jsonData.data && jsonData.data.length > 0) {",
-									"        pm.collectionVariables.set('lesson_id', String(jsonData.data[0].id));",
-									"    }",
-									"}"
+									"});"
 								],
 								"type": "text/javascript"
 							}
@@ -2136,7 +2102,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"reason\": \"schedule_conflict\",\n  \"reason_notes\": \"Need a different time \u2014 will book another slot\"\n}"
+							"raw": "{\n  \"reason\": \"schedule_conflict\",\n  \"reason_notes\": \"Need a different time — will book another slot\"\n}"
 						},
 						"url": {
 							"raw": "{{api_url}}/admin/bookings/:id/cancel",
@@ -2156,7 +2122,7 @@
 								}
 							]
 						},
-						"description": "Roles: Admin only. Same as POST /api/bookings/:id/cancel: only pending or confirmed bookings (pre-lesson). Same cancellation/refund/void-PI behavior; cancelled_by is admin. Notifies the other party. Body: reason (required) + optional reason_notes. Excused reasons: weather, emergency, sickness; unexcused: travel_delay, schedule_conflict, forgot, other. Post-lesson bookings (e.g. awaiting_verification, disputed, student_no_show) are rejected \u2014 use dispute resolution, POST /api/admin/bookings/:id/refund, or other documented admin actions."
+						"description": "Roles: Admin only. Same as POST /api/bookings/:id/cancel: only pending or confirmed bookings (pre-lesson). Same cancellation/refund/void-PI behavior; cancelled_by is admin. Notifies the other party. Body: reason (required) + optional reason_notes. Excused reasons: weather, emergency, sickness; unexcused: travel_delay, schedule_conflict, forgot, other. Post-lesson bookings (e.g. awaiting_verification, disputed, student_no_show) are rejected — use dispute resolution, POST /api/admin/bookings/:id/refund, or other documented admin actions."
 					},
 					"response": [],
 					"event": [
@@ -2265,7 +2231,7 @@
 								}
 							]
 						},
-						"description": "Admin override: primary student did not attend \u2192 status student_no_show. Optional body field `notes` is for internal context/audit only (not required for state transition). For contested/financially sensitive cases, use dispute flow and treat disputes.notes/resolution_notes as canonical. For coach no-show use Mark Coach No-Show (Admin). "
+						"description": "Admin override: primary student did not attend → status student_no_show. Optional body field `notes` is for internal context/audit only (not required for state transition). For contested/financially sensitive cases, use dispute flow and treat disputes.notes/resolution_notes as canonical. For coach no-show use Mark Coach No-Show (Admin). "
 					},
 					"response": [],
 					"event": [
@@ -2457,11 +2423,11 @@
 								}
 							]
 						},
-						"description": "Roles: Admin. Superset body template; trim fields per dispute type. Attendance: required `outcome`; `rejected` uses contradicting outcome; `financial_action` must match outcome (coach_no_show \u2192 refund path, student_no_show \u2192 no_change). Behavior: omit `outcome`. `penalize_role` behavior only. `refund_amount` for `refund_student_partial`. Response: `data.dispute` carries the resolution on the row itself \u2014 `decision`, `outcome` (attendance only, otherwise null), and `refund_amount` (US dollar decimal string; populated only for partial refunds, null for full refunds and `no_change`). For full refunds the executed amount is filled on the linked `payment_actions` row (by `dispute_id`) once the worker runs. See `backend/API_ENDPOINTS.md`."
+						"description": "Roles: Admin. Superset body template; trim fields per dispute type. Attendance: required `outcome`; `rejected` uses contradicting outcome; `financial_action` must match outcome (coach_no_show → refund path, student_no_show → no_change). Behavior: omit `outcome`. `penalize_role` behavior only. `refund_amount` for `refund_student_partial`. Response: `data.dispute` carries the resolution on the row itself — `decision`, `outcome` (attendance only, otherwise null), and `refund_amount` (US dollar decimal string; populated only for partial refunds, null for full refunds and `no_change`). For full refunds the executed amount is filled on the linked `payment_actions` row (by `dispute_id`) once the worker runs. See `backend/API_ENDPOINTS.md`."
 					},
 					"response": [
 						{
-							"name": "200 OK \u2014 Attendance partial refund",
+							"name": "200 OK — Attendance partial refund",
 							"originalRequest": {
 								"method": "PUT",
 								"header": [
@@ -2506,7 +2472,7 @@
 								}
 							],
 							"cookie": [],
-							"body": "{\"success\":true,\"message\":\"Dispute resolved successfully\",\"data\":{\"dispute\":{\"id\":1,\"booking_id\":1,\"dispute_type_id\":1,\"notes\":\"Coach no-show \u2014 waited 20 min\",\"opened_by\":\"student\",\"status\":\"resolved\",\"resolution_action_id\":3,\"resolution_notes\":\"Coach was 35 minutes late; partial refund issued.\",\"decision\":\"partial\",\"outcome\":\"coach_no_show\",\"refund_amount\":\"20.00\",\"penalize_role\":\"none\",\"resolved_at\":\"2026-05-14T17:30:00.000Z\",\"escalated\":false,\"escalated_to\":null,\"escalation_triggered_at\":null,\"stripe_dispute_id\":null,\"stripe_dispute_status\":null,\"opened_at\":\"2026-05-14T16:00:00.000Z\",\"resolved_by_admin\":{\"id\":10,\"full_name\":\"Admin User\"}},\"resolution\":{\"decision\":\"partial\",\"financial_action\":\"refund_student_partial\",\"outcome\":\"coach_no_show\",\"derived_booking_status\":\"coach_no_show\"},\"refund\":{\"queued\":true,\"payment_action_id\":7,\"payment_id\":42,\"refund_amount\":\"20.00\",\"refund_status\":\"pending_stripe_execution\",\"stripe_refund_id\":null}}}"
+							"body": "{\"success\":true,\"message\":\"Dispute resolved successfully\",\"data\":{\"dispute\":{\"id\":1,\"booking_id\":1,\"dispute_type_id\":1,\"notes\":\"Coach no-show — waited 20 min\",\"opened_by\":\"student\",\"status\":\"resolved\",\"resolution_action_id\":3,\"resolution_notes\":\"Coach was 35 minutes late; partial refund issued.\",\"decision\":\"partial\",\"outcome\":\"coach_no_show\",\"refund_amount\":\"20.00\",\"penalize_role\":\"none\",\"resolved_at\":\"2026-05-14T17:30:00.000Z\",\"escalated\":false,\"escalated_to\":null,\"escalation_triggered_at\":null,\"stripe_dispute_id\":null,\"stripe_dispute_status\":null,\"opened_at\":\"2026-05-14T16:00:00.000Z\",\"resolved_by_admin\":{\"id\":10,\"full_name\":\"Admin User\"}},\"resolution\":{\"decision\":\"partial\",\"financial_action\":\"refund_student_partial\",\"outcome\":\"coach_no_show\",\"derived_booking_status\":\"coach_no_show\"},\"refund\":{\"queued\":true,\"payment_action_id\":7,\"payment_id\":42,\"refund_amount\":\"20.00\",\"refund_status\":\"pending_stripe_execution\",\"stripe_refund_id\":null}}}"
 						}
 					],
 					"event": [
@@ -2611,7 +2577,7 @@
 								}
 							]
 						},
-						"description": "**Admin flow** \u2014 same route as coach/student (`GET /api/payments/:id`). **Admin** may fetch any payment by ID. Path `:id` = payment row id; use `{{payment_id}}` from the previous **Get My Payments** step when available."
+						"description": "**Admin flow** — same route as coach/student (`GET /api/payments/:id`). **Admin** may fetch any payment by ID. Path `:id` = payment row id; use `{{payment_id}}` from the previous **Get My Payments** step when available."
 					},
 					"response": [],
 					"event": [
@@ -2636,8 +2602,8 @@
 			]
 		},
 		{
-			"name": "2 \u2013 Flow: Coach",
-			"description": "All coach endpoints in user-flow order. Run in sequence: Health \u2192 Register/Login \u2192 Profile \u2192 **GET /coaches/me/reliability** \u2192 Coach profile \u2192 Courts \u2192 Availability \u2192 Stripe Connect \u2192 Lessons \u2192 Bookings \u2192 Payments \u2192 **Get All Reviews** (read-only) \u2192 Messages \u2192 Disputes \u2192 Notifications \u2192 Auth extras. See backend/POSTMAN_TESTING_GUIDE.md.\n\nBooking MVP: student uses booking-intents + confirm; coach uses PUT .../accept or PUT .../decline only for pending requests (coach on that booking only). Schedule changes: cancel + book again (no reschedule API). Accept/decline/cancel notify the other party.\n\nReviews: coaches may **list** reviews (e.g. filter `target_user_id`); only the booking primary student creates/updates/deletes reviews \u2014 use **3 \u2013 Flow: Student** for those.",
+			"name": "2 – Flow: Coach",
+			"description": "All coach endpoints in user-flow order. Run in sequence: Health → Register/Login → Profile → **GET /coaches/me/reliability** → Coach profile → Courts → Availability → Stripe Connect → Lessons → Bookings → Payments → **Get All Reviews** (read-only) → Messages → Disputes → Notifications → Auth extras. See backend/POSTMAN_TESTING_GUIDE.md.\n\nBooking MVP: student uses booking-intents + confirm; coach uses PUT .../accept or PUT .../decline only for pending requests (coach on that booking only). Schedule changes: cancel + book again (no reschedule API). Accept/decline/cancel notify the other party.\n\nReviews: coaches may **list** reviews (e.g. filter `target_user_id`); only the booking primary student creates/updates/deletes reviews — use **3 – Flow: Student** for those.",
 			"item": [
 				{
 					"name": "1. Health Check",
@@ -2905,7 +2871,7 @@
 								"reliability"
 							]
 						},
-						"description": "Roles: Coach. Coach-facing reliability detail DTO (`data.reliability`): score, score_source, recent-window counters, last_updated \u2014 not a raw DB row."
+						"description": "Roles: Coach. Coach-facing reliability detail DTO (`data.reliability`): score, score_source, recent-window counters, last_updated — not a raw DB row."
 					},
 					"response": [],
 					"event": [
@@ -3069,7 +3035,7 @@
 								"change-password"
 							]
 						},
-						"description": "Roles: Student, Coach, Admin. Change password using the current password and a new password. Bumps token_version (other sessions invalidated). Response includes a fresh JWT \u2014 test script saves it to auth_token like Login."
+						"description": "Roles: Student, Coach, Admin. Change password using the current password and a new password. Bumps token_version (other sessions invalidated). Response includes a fresh JWT — test script saves it to auth_token like Login."
 					},
 					"response": [],
 					"event": [
@@ -3240,7 +3206,7 @@
 								"role"
 							]
 						},
-						"description": "PUT /auth/me/role \u2014 add one capability per request (`student` or `coach`). Additive only (does not remove roles). Admins get 403; governance may block. Body: `{ \"role\": \"student\" | \"coach\" }`. Response may include a new JWT \u2014 save it (test script sets auth_token)."
+						"description": "PUT /auth/me/role — add one capability per request (`student` or `coach`). Additive only (does not remove roles). Admins get 403; governance may block. Body: `{ \"role\": \"student\" | \"coach\" }`. Response may include a new JWT — save it (test script sets auth_token)."
 					},
 					"response": [],
 					"event": [
@@ -3353,7 +3319,7 @@
 								"profile"
 							]
 						},
-						"description": "Coach-only. Updates the logged-in coach\u2019s profile (`PUT /api/coaches/me/profile`). No `:id` in the path."
+						"description": "Coach-only. Updates the logged-in coach’s profile (`PUT /api/coaches/me/profile`). No `:id` in the path."
 					},
 					"response": [],
 					"event": [
@@ -3450,7 +3416,7 @@
 								"availability"
 							]
 						},
-						"description": "Roles: Coach. `GET /api/coaches/me/availability` \u2014 list **your** slots only (owner-scoped)."
+						"description": "Roles: Coach. `GET /api/coaches/me/availability` — list **your** slots only (owner-scoped)."
 					},
 					"response": [],
 					"event": [
@@ -3507,7 +3473,7 @@
 								}
 							]
 						},
-						"description": "Roles: Coach. `PUT /api/coaches/me/availability/:id` \u2014 update a row you own. `:id` = availability record id (from Create or Get My)."
+						"description": "Roles: Coach. `PUT /api/coaches/me/availability/:id` — update a row you own. `:id` = availability record id (from Create or Get My)."
 					},
 					"response": [],
 					"event": [
@@ -3552,7 +3518,7 @@
 								}
 							]
 						},
-						"description": "Roles: Coach. `DELETE /api/coaches/me/availability/:id` \u2014 hard delete **your** row only. Set `availability_id` from Create (data.id) or Get My Coach Availability. Admins: `DELETE /api/admin/coaches/:coachId/availability/:id`."
+						"description": "Roles: Coach. `DELETE /api/coaches/me/availability/:id` — hard delete **your** row only. Set `availability_id` from Create (data.id) or Get My Coach Availability. Admins: `DELETE /api/admin/coaches/:coachId/availability/:id`."
 					},
 					"response": [],
 					"event": [
@@ -3615,7 +3581,7 @@
 								}
 							]
 						},
-						"description": "Roles: Any (no auth). **Public directory only** \u2014 results are **`is_private: false`** courts only (private courts are not discoverable here; use coach court endpoints). **No lat/lng, no page/limit** = all matching courts in `data` (capped server-side). **page** and/or **limit** = paginated list (`pagination`). **lat** + **lng** (+ optional **radius**) = nearby search; results ordered **closest first** (lazy OSM import if empty)."
+						"description": "Roles: Any (no auth). **Public directory only** — results are **`is_private: false`** courts only (private courts are not discoverable here; use coach court endpoints). **No lat/lng, no page/limit** = all matching courts in `data` (capped server-side). **page** and/or **limit** = paginated list (`pagination`). **lat** + **lng** (+ optional **radius**) = nearby search; results ordered **closest first** (lazy OSM import if empty)."
 					},
 					"response": [],
 					"event": [
@@ -3664,7 +3630,7 @@
 								}
 							]
 						},
-						"description": "Roles: Any (no auth). **Public directory only** \u2014 **`404`** for private courts or missing/deleted ids (same message; does not reveal private existence). Use **`GET /api/coaches/:id/courts`** to see where a coach teaches (includes private)."
+						"description": "Roles: Any (no auth). **Public directory only** — **`404`** for private courts or missing/deleted ids (same message; does not reveal private existence). Use **`GET /api/coaches/:id/courts`** to see where a coach teaches (includes private)."
 					},
 					"response": [],
 					"event": [
@@ -3714,7 +3680,7 @@
 								"courts"
 							]
 						},
-						"description": "Roles: Coach. Create a new court location (**court fields only** \u2014 do not send `coach_notes` or `notes`; use Add Court to Coach for coach_notes). **Auto-link:** `coachCourt` in response has id/coach_id/court_id/timestamps only. **Distance rule:** if you already have courts, the new one must be within 100 miles of one of them."
+						"description": "Roles: Coach. Create a new court location (**court fields only** — do not send `coach_notes` or `notes`; use Add Court to Coach for coach_notes). **Auto-link:** `coachCourt` in response has id/coach_id/court_id/timestamps only. **Distance rule:** if you already have courts, the new one must be within 100 miles of one of them."
 					},
 					"response": [],
 					"event": [
@@ -3781,7 +3747,7 @@
 								"courts"
 							]
 						},
-						"description": "Roles: Coach. Link an **existing** court from the directory (not one you just created \u2014 POST /api/courts auto-links). Body: court_id (required), optional coach_notes. For admin fix use DELETE /api/admin/coaches/:coachId/courts/:courtId."
+						"description": "Roles: Coach. Link an **existing** court from the directory (not one you just created — POST /api/courts auto-links). Body: court_id (required), optional coach_notes. For admin fix use DELETE /api/admin/coaches/:coachId/courts/:courtId."
 					},
 					"response": [],
 					"event": [
@@ -3944,7 +3910,7 @@
 								"{{court_id}}"
 							]
 						},
-						"description": "Roles: Coach. Unlink from this court only (`coach_court_locations` row for your user + `courtId`). Does **not** delete the global court or other coaches' links. Use `court_locations.id` \u2014 same as `court_id` / `data[].court.id` from List My Courts. For admin global delete use `DELETE /api/courts/:id` (admin only); admin unlink another coach: `DELETE /api/admin/coaches/:coachId/courts/:courtId`."
+						"description": "Roles: Coach. Unlink from this court only (`coach_court_locations` row for your user + `courtId`). Does **not** delete the global court or other coaches' links. Use `court_locations.id` — same as `court_id` / `data[].court.id` from List My Courts. For admin global delete use `DELETE /api/courts/:id` (admin only); admin unlink another coach: `DELETE /api/admin/coaches/:coachId/courts/:courtId`."
 					},
 					"response": [],
 					"event": [
@@ -4067,17 +4033,75 @@
 					]
 				},
 				{
-					"name": "27. Get All Lessons (Filter by coach_id)",
+					"name": "26b. Get Marketplace Status",
 					"request": {
 						"method": "GET",
-						"header": [],
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
 						"url": {
-							"raw": "{{api_url}}/lessons",
+							"raw": "{{api_url}}/coaches/me/marketplace-status",
 							"host": [
 								"{{api_url}}"
 							],
 							"path": [
+								"coaches",
+								"me",
+								"marketplace-status"
+							]
+						},
+						"description": "Roles: Coach, Admin. Checklist: profile, stripe (`stripe_ready`), lesson, court, availability. `listed: true` means visible in student discovery."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Returns listed + steps checklist\", function () {",
+									"    var d = pm.response.json().data;",
+									"    pm.expect(d).to.have.property('listed');",
+									"    pm.expect(d).to.have.property('missing');",
+									"    pm.expect(d.steps).to.include.keys('profile', 'stripe', 'lesson', 'court', 'availability');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Get Coach Lessons",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{api_url}}/coaches/:id/lessons",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"coaches",
+								":id",
 								"lessons"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "{{coach_id}}"
+								}
 							],
 							"query": [
 								{
@@ -4089,25 +4113,41 @@
 									"key": "limit",
 									"value": "10",
 									"disabled": true
-								},
-								{
-									"key": "coach_id",
-									"value": "{{coach_id}}",
-									"disabled": true
-								},
-								{
-									"key": "min_price",
-									"value": "20",
-									"disabled": true
-								},
-								{
-									"key": "max_price",
-									"value": "80",
-									"disabled": true
 								}
 							]
 						},
-						"description": "Roles: Any (no auth). Public lesson discovery \u2014 only lessons whose coach is marketplace-eligible (same as GET /coaches: stripe_ready + court + availability). Omit page/limit for all matching (capped), or paginate. Optional: coach_id, min_price, max_price. Coach inventory: GET /coaches/me/lessons."
+						"description": "Marketplace: active lessons for one coach (must be marketplace-eligible). Auth: student, coach, or admin. Booking still requires student role."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "27. Get All Lessons (DEPRECATED — 410) (DEPRECATED — 410)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{api_url}}/lessons",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"lessons"
+							]
+						},
+						"description": "DEPRECATED. GET /api/lessons returns 410. Use Get Coach Lessons instead."
 					},
 					"response": [],
 					"event": [
@@ -4162,7 +4202,7 @@
 								}
 							]
 						},
-						"description": "Roles: Any for **active** lessons whose coach is **marketplace-eligible** (no auth). Public **404** if coach is not listable (same as missing). **Inactive** / not-listable: owner or admin Bearer only. **Deleted** always **404**. Coach inventory: GET /coaches/me/lessons."
+						"description": "Roles: Any for **active** lessons (no auth). **Inactive** returns **404** unless you send the **coach owner** or **admin** Bearer token. **Deleted** always **404** (same `Lesson not found`). Owner/admin only; not student discovery."
 					},
 					"response": [],
 					"event": [
@@ -4376,7 +4416,7 @@
 								}
 							]
 						},
-						"description": "Roles: Coach only. Coach dashboard inbox \u2014 bookings where coach_id is the authenticated user (not student-side bookings)."
+						"description": "Roles: Coach only. Coach dashboard inbox — bookings where coach_id is the authenticated user (not student-side bookings)."
 					},
 					"response": [],
 					"event": [
@@ -4483,7 +4523,7 @@
 								}
 							]
 						},
-						"description": "MVP \u2014 PUT /bookings/:id/accept. Roles: Coach only (booking coach_id = you). Confirms pending booking and captures payment when applicable. Notifies student (in-app + email when SendGrid is configured)."
+						"description": "MVP — PUT /bookings/:id/accept. Roles: Coach only (booking coach_id = you). Confirms pending booking and captures payment when applicable. Notifies student (in-app + email when SendGrid is configured)."
 					},
 					"response": [],
 					"event": [
@@ -4521,7 +4561,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"message_to_student\": \"This time no longer works for me\u2014please choose another slot.\",\n  \"decline_reason_code\": \"availability_conflict\"\n}"
+							"raw": "{\n  \"message_to_student\": \"This time no longer works for me—please choose another slot.\",\n  \"decline_reason_code\": \"availability_conflict\"\n}"
 						},
 						"url": {
 							"raw": "{{api_url}}/bookings/:id/decline",
@@ -4540,7 +4580,7 @@
 								}
 							]
 						},
-						"description": "MVP \u2014 PUT /bookings/:id/decline. Roles: Coach only. Declines pending booking; student not charged. Notifies student (in-app + email when SendGrid is configured)."
+						"description": "MVP — PUT /bookings/:id/decline. Roles: Coach only. Declines pending booking; student not charged. Notifies student (in-app + email when SendGrid is configured)."
 					},
 					"response": [],
 					"event": [
@@ -4578,7 +4618,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"reason\": \"schedule_conflict\",\n  \"reason_notes\": \"Need a different time \u2014 will book another slot\"\n}"
+							"raw": "{\n  \"reason\": \"schedule_conflict\",\n  \"reason_notes\": \"Need a different time — will book another slot\"\n}"
 						},
 						"url": {
 							"raw": "{{api_url}}/bookings/:id/cancel",
@@ -4597,7 +4637,7 @@
 								}
 							]
 						},
-						"description": "Roles: Student, Coach, Admin. Cancel a pending or confirmed booking (pre-lesson). Triggers refund/cancellation rules and notifies the other party (in-app + email when SendGrid is configured). **Schedule changes:** cancel, then POST /api/bookings for a new slot. Reasons \u2014 excused (no reliability): weather, emergency, sickness; unexcused: travel_delay, schedule_conflict, forgot, other."
+						"description": "Roles: Student, Coach, Admin. Cancel a pending or confirmed booking (pre-lesson). Triggers refund/cancellation rules and notifies the other party (in-app + email when SendGrid is configured). **Schedule changes:** cancel, then POST /api/bookings for a new slot. Reasons — excused (no reliability): weather, emergency, sickness; unexcused: travel_delay, schedule_conflict, forgot, other."
 					},
 					"response": [],
 					"event": [
@@ -4711,7 +4751,7 @@
 								}
 							]
 						},
-						"description": "Coach only. Records primary student did not attend; sets booking to student_no_show after lesson end. Not coach no-show \u2014 use POST /api/disputes with coach_no_show_claim. Admin: POST /admin/bookings/:id/student-no-show. "
+						"description": "Coach only. Records primary student did not attend; sets booking to student_no_show after lesson end. Not coach no-show — use POST /api/disputes with coach_no_show_claim. Admin: POST /admin/bookings/:id/student-no-show. "
 					},
 					"response": [],
 					"event": [
@@ -4816,7 +4856,7 @@
 								}
 							]
 						},
-						"description": "**Coach flow** \u2014 same route as admin (`GET /api/payments/:id`). Only payments where you are `coach_id` (or `student_id` if you have both roles). **403** if the ID is not one of your payments. Path `:id` = `{{payment_id}}` from **Get My Payments**."
+						"description": "**Coach flow** — same route as admin (`GET /api/payments/:id`). Only payments where you are `coach_id` (or `student_id` if you have both roles). **403** if the ID is not one of your payments. Path `:id` = `{{payment_id}}` from **Get My Payments**."
 					},
 					"response": [],
 					"event": [
@@ -4924,7 +4964,7 @@
 								}
 							]
 						},
-						"description": "Roles: Student, Coach, Admin. **Inbox / preview** \u2014 list booking-scoped conversation threads (newest first). Each row includes `latest_message` (object or `null`) and a lightweight `booking` DTO. Does **not** return full message history \u2014 use **Get Conversation By ID** for the complete thread. Omit page/limit to return all rows (server-capped), or enable page/limit for paged mode (`data` + `pagination`).\n\nExample row:\n```json\n{\n  \"id\": 1,\n  \"booking_id\": 5,\n  \"created_at\": \"2026-05-29T10:00:00.000Z\",\n  \"updated_at\": \"2026-06-01T09:00:00.000Z\",\n  \"latest_message\": {\n    \"id\": 42,\n    \"conversation_id\": 1,\n    \"sender_id\": 20,\n    \"message_text\": \"See you at court!\",\n    \"created_at\": \"2026-06-01T09:00:00.000Z\",\n    \"updated_at\": \"2026-06-01T09:00:00.000Z\",\n    \"sender\": { \"id\": 20, \"full_name\": \"Student User\", \"avatar_url\": null }\n  },\n  \"booking\": {\n    \"id\": 5,\n    \"lesson_id\": 12,\n    \"coach_id\": 10,\n    \"primary_student_id\": 20,\n    \"scheduled_at\": \"2026-06-01T10:00:00.000Z\",\n    \"duration_minutes\": 60,\n    \"price\": \"50.00\",\n    \"status\": \"confirmed\",\n    \"court_location_id\": 3,\n    \"messaging_locked\": false\n  }\n}\n```"
+						"description": "Roles: Student, Coach, Admin. **Inbox / preview** — list booking-scoped conversation threads (newest first). Each row includes `latest_message` (object or `null`) and a lightweight `booking` DTO. Does **not** return full message history — use **Get Conversation By ID** for the complete thread. Omit page/limit to return all rows (server-capped), or enable page/limit for paged mode (`data` + `pagination`).\n\nExample row:\n```json\n{\n  \"id\": 1,\n  \"booking_id\": 5,\n  \"created_at\": \"2026-05-29T10:00:00.000Z\",\n  \"updated_at\": \"2026-06-01T09:00:00.000Z\",\n  \"latest_message\": {\n    \"id\": 42,\n    \"conversation_id\": 1,\n    \"sender_id\": 20,\n    \"message_text\": \"See you at court!\",\n    \"created_at\": \"2026-06-01T09:00:00.000Z\",\n    \"updated_at\": \"2026-06-01T09:00:00.000Z\",\n    \"sender\": { \"id\": 20, \"full_name\": \"Student User\", \"avatar_url\": null }\n  },\n  \"booking\": {\n    \"id\": 5,\n    \"lesson_id\": 12,\n    \"coach_id\": 10,\n    \"primary_student_id\": 20,\n    \"scheduled_at\": \"2026-06-01T10:00:00.000Z\",\n    \"duration_minutes\": 60,\n    \"price\": \"50.00\",\n    \"status\": \"confirmed\",\n    \"court_location_id\": 3,\n    \"messaging_locked\": false\n  }\n}\n```"
 					},
 					"response": [],
 					"event": [
@@ -5259,7 +5299,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"booking_id\": \"{{booking_id}}\",\n  \"dispute_type_id\": 1,\n  \"notes\": \"Coach no-show \u2014 waited 20 min, coach never arrived (stored on dispute row).\"\n}"
+							"raw": "{\n  \"booking_id\": \"{{booking_id}}\",\n  \"dispute_type_id\": 1,\n  \"notes\": \"Coach no-show — waited 20 min, coach never arrived (stored on dispute row).\"\n}"
 						},
 						"url": {
 							"raw": "{{api_url}}/disputes",
@@ -5270,7 +5310,7 @@
 								"disputes"
 							]
 						},
-						"description": "Roles: Student, Coach, Admin (must be party to booking). POST /api/disputes \u2014 booking status unchanged. Admins can also use POST /api/admin/disputes as an explicit support route (same handler, opened_by=admin). Active dispute_type_id: 1 coach_no_show_claim (student), 8 student_no_show_claim (coach), 3 misconduct, 4 lesson_not_completed, 7 other. Optional notes persisted as TEXT."
+						"description": "Roles: Student, Coach, Admin (must be party to booking). POST /api/disputes — booking status unchanged. Admins can also use POST /api/admin/disputes as an explicit support route (same handler, opened_by=admin). Active dispute_type_id: 1 coach_no_show_claim (student), 8 student_no_show_claim (coach), 3 misconduct, 4 lesson_not_completed, 7 other. Optional notes persisted as TEXT."
 					},
 					"response": [],
 					"event": [
@@ -5568,8 +5608,8 @@
 			]
 		},
 		{
-			"name": "3 \u2013 Flow: Student",
-			"description": "All student endpoints in user-flow order. Run in sequence: Health \u2192 Register/Login \u2192 Profile \u2192 **GET /students/me/reliability** \u2192 Search coaches (each result includes **reliability** score) \u2192 Open coach (GET /coaches/:id, includes **reliability**) \u2192 Optional GET /coaches/:id/reliability \u2192 Get coach courts \u2192 Check availability \u2192 Create Booking Intent \u2192 Confirm Booking \u2192 Bookings \u2192 Payments \u2192 Reviews (create/update/delete after completed lesson) \u2192 Messages \u2192 Disputes \u2192 Notifications \u2192 Auth extras. See backend/POSTMAN_TESTING_GUIDE.md.\n\nBooking MVP: POST /booking-intents \u2192 Stripe authorize \u2192 POST /bookings/confirm creates a pending request; the coach accepts or declines with PUT .../accept | PUT .../decline. To change time: cancel this booking, then book again.",
+			"name": "3 – Flow: Student",
+			"description": "All student endpoints in user-flow order. Run in sequence: Health → Register/Login → Profile → **GET /students/me/reliability** → Search coaches (each result includes **reliability** score) → Open coach (GET /coaches/:id, includes **reliability**) → Optional GET /coaches/:id/reliability → Get coach courts → Check availability → Create Booking Intent → Confirm Booking → Bookings → Payments → Reviews (create/update/delete after completed lesson) → Messages → Disputes → Notifications → Auth extras. See backend/POSTMAN_TESTING_GUIDE.md.\n\nBooking MVP: POST /booking-intents → Stripe authorize → POST /bookings/confirm creates a pending request; the coach accepts or declines with PUT .../accept | PUT .../decline. To change time: cancel this booking, then book again.",
 			"item": [
 				{
 					"name": "1. Health Check",
@@ -6001,7 +6041,7 @@
 								"change-password"
 							]
 						},
-						"description": "Roles: Student, Coach, Admin. Change password using the current password and a new password. Bumps token_version (other sessions invalidated). Response includes a fresh JWT \u2014 test script saves it to auth_token like Login."
+						"description": "Roles: Student, Coach, Admin. Change password using the current password and a new password. Bumps token_version (other sessions invalidated). Response includes a fresh JWT — test script saves it to auth_token like Login."
 					},
 					"response": [],
 					"event": [
@@ -6172,7 +6212,7 @@
 								"role"
 							]
 						},
-						"description": "PUT /auth/me/role \u2014 add one capability per request (`student` or `coach`). Additive only (does not remove roles). Admins get 403; governance may block. Body: `{ \"role\": \"student\" | \"coach\" }`. Response may include a new JWT \u2014 save it (test script sets auth_token)."
+						"description": "PUT /auth/me/role — add one capability per request (`student` or `coach`). Additive only (does not remove roles). Admins get 403; governance may block. Body: `{ \"role\": \"student\" | \"coach\" }`. Response may include a new JWT — save it (test script sets auth_token)."
 					},
 					"response": [],
 					"event": [
@@ -6238,19 +6278,19 @@
 								{
 									"key": "min_skill_rating",
 									"value": "4.0",
-									"description": "Playing skill filter: coachProfile.skill_rating \u2265 this (2.0\u20136.0, 0.5 steps). Self-reported / DUPR / UTR-P level \u2014 not review stars. Excludes coaches with null skill_rating.",
+									"description": "Playing skill filter: coachProfile.skill_rating ≥ this (2.0–6.0, 0.5 steps). Self-reported / DUPR / UTR-P level — not review stars. Excludes coaches with null skill_rating.",
 									"disabled": true
 								},
 								{
 									"key": "max_skill_rating",
 									"value": "5.5",
-									"description": "Playing skill filter: coachProfile.skill_rating \u2264 this (2.0\u20136.0). Must be \u2265 min_skill_rating when both set. Not review stars.",
+									"description": "Playing skill filter: coachProfile.skill_rating ≤ this (2.0–6.0). Must be ≥ min_skill_rating when both set. Not review stars.",
 									"disabled": true
 								},
 								{
 									"key": "min_rating",
 									"value": "4",
-									"description": "Review filter: coachProfile.rating_average \u2265 this (0\u20135 star average from student reviews). Distinct from min/max_skill_rating.",
+									"description": "Review filter: coachProfile.rating_average ≥ this (0–5 star average from student reviews). Distinct from min/max_skill_rating.",
 									"disabled": true
 								},
 								{
@@ -6267,7 +6307,7 @@
 								}
 							]
 						},
-						"description": "Roles: Student, Admin (coaches get 403). **Marketplace eligibility (DB-only):** profile + `stripe_ready` + \u22651 active lesson + \u22651 court + \u22651 availability. Flattened cards: `headline`, `skill_rating`, `rating_average`, `reliability_score`, **`courts`**, and when lat/lng set **`distance_miles`**.\n\n**Radius fixtures:** `npm run seed:geosearch` then login as student. Default query downtown SF.\n- **radius=5** \u2192 SF Mission + Ferry (+ legacy SF)\n- **radius=10** \u2192 + Oakland (~9mi)\n- **radius=15** \u2192 + Berkeley\n- **radius=25** \u2192 + San Mateo\n- **radius=50** \u2192 + San Jose\n- Never: NYC, LA, NoCourts, SoftDeletedCourt coaches\n\nOther filters: **min_skill_rating / max_skill_rating** (playing skill), **min_rating** (review stars). Pass **page/limit** for `pagination`."
+						"description": "Roles: Student, Admin (coaches get 403). **Marketplace eligibility (DB-only):** profile + `stripe_ready` + ≥1 active lesson + ≥1 court + ≥1 availability. Flattened cards: `headline`, `skill_rating`, `rating_average`, `reliability_score`, **`courts`**, and when lat/lng set **`distance_miles`**.\n\n**Radius fixtures:** `npm run seed:geosearch` then login as student (testflow or `browse.geosearch@picklecoach.example.org` / `password123`). Default query is downtown SF.\n- **radius=5** → SF Mission + Ferry (+ legacy SF)\n- **radius=10** → + Oakland (~9mi)\n- **radius=15** → + Berkeley\n- **radius=25** → + San Mateo\n- **radius=50** → + San Jose\n- Never: NYC, LA, NoCourts, SoftDeletedCourt coaches\n\nOther filters: **min_skill_rating / max_skill_rating** (playing skill), **min_rating** (review stars). Pass **page/limit** for `pagination` (`totalItems`, `totalPages`, `currentPage`, `pageSize`)."
 					},
 					"response": [],
 					"event": [
@@ -6349,7 +6389,7 @@
 					]
 				},
 				{
-					"name": "13b. Get Coach Reliability (Student \u2014 detail)",
+					"name": "13b. Get Coach Reliability (Student — detail)",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -6494,7 +6534,7 @@
 								}
 							]
 						},
-						"description": "Roles: **student** or **admin** (JWT required). Student booking flow: load another coach\u2019s weekly windows. **Coach-only** tokens get **403** \u2014 add/switch to `student` role to browse. Anonymous: **401**. Path `:id` = coach user id. Omit page/limit for all rows (capped), or enable page/limit for paged mode.\n\n**Canonical By Type request** for `GET /api/coaches/:id/availability` \u2014 also pulled into **Admin** By Flow (same URL/tests); edit here only. Not in Coach flow."
+						"description": "Roles: **student** or **admin** (JWT required). Student booking flow: load another coach’s weekly windows. **Coach-only** tokens get **403** — add/switch to `student` role to browse. Anonymous: **401**. Path `:id` = coach user id. Omit page/limit for all rows (capped), or enable page/limit for paged mode.\n\n**Canonical By Type request** for `GET /api/coaches/:id/availability` — also pulled into **Admin** By Flow (same URL/tests); edit here only. Not in Coach flow."
 					},
 					"response": [],
 					"event": [
@@ -6509,6 +6549,62 @@
 									"pm.test(\"Returns availability data\", function () {",
 									"    var jsonData = pm.response.json();",
 									"    pm.expect(jsonData).to.have.property('data');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "15b. Get Coach Lessons",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{api_url}}/coaches/:id/lessons",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"coaches",
+								":id",
+								"lessons"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "{{coach_id}}"
+								}
+							],
+							"query": [
+								{
+									"key": "page",
+									"value": "1",
+									"disabled": true
+								},
+								{
+									"key": "limit",
+									"value": "10",
+									"disabled": true
+								}
+							]
+						},
+						"description": "Marketplace: active lessons for one coach (must be marketplace-eligible). Auth: student, coach, or admin. Booking still requires student role."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
 									"});"
 								],
 								"type": "text/javascript"
@@ -6562,7 +6658,7 @@
 								}
 							]
 						},
-						"description": "Roles: Any (no auth). **Public directory only** \u2014 results are **`is_private: false`** courts only (private courts are not discoverable here; use coach court endpoints). **No lat/lng, no page/limit** = all matching courts in `data` (capped server-side). **page** and/or **limit** = paginated list (`pagination`). **lat** + **lng** (+ optional **radius**) = nearby search; results ordered **closest first** (lazy OSM import if empty)."
+						"description": "Roles: Any (no auth). **Public directory only** — results are **`is_private: false`** courts only (private courts are not discoverable here; use coach court endpoints). **No lat/lng, no page/limit** = all matching courts in `data` (capped server-side). **page** and/or **limit** = paginated list (`pagination`). **lat** + **lng** (+ optional **radius**) = nearby search; results ordered **closest first** (lazy OSM import if empty)."
 					},
 					"response": [],
 					"event": [
@@ -6611,7 +6707,7 @@
 								}
 							]
 						},
-						"description": "Roles: Any (no auth). **Public directory only** \u2014 **`404`** for private courts or missing/deleted ids (same message; does not reveal private existence). Use **`GET /api/coaches/:id/courts`** to see where a coach teaches (includes private)."
+						"description": "Roles: Any (no auth). **Public directory only** — **`404`** for private courts or missing/deleted ids (same message; does not reveal private existence). Use **`GET /api/coaches/:id/courts`** to see where a coach teaches (includes private)."
 					},
 					"response": [],
 					"event": [
@@ -6635,7 +6731,7 @@
 					]
 				},
 				{
-					"name": "18. Get All Lessons (Filter by coach_id)",
+					"name": "18. Get All Lessons (DEPRECATED — 410) (DEPRECATED — 410)",
 					"request": {
 						"method": "GET",
 						"header": [],
@@ -6646,36 +6742,9 @@
 							],
 							"path": [
 								"lessons"
-							],
-							"query": [
-								{
-									"key": "page",
-									"value": "1",
-									"disabled": true
-								},
-								{
-									"key": "limit",
-									"value": "10",
-									"disabled": true
-								},
-								{
-									"key": "coach_id",
-									"value": "{{coach_id}}",
-									"disabled": true
-								},
-								{
-									"key": "min_price",
-									"value": "20",
-									"disabled": true
-								},
-								{
-									"key": "max_price",
-									"value": "80",
-									"disabled": true
-								}
 							]
 						},
-						"description": "Roles: Any (no auth). Public lesson discovery \u2014 only lessons whose coach is marketplace-eligible (same as GET /coaches: stripe_ready + court + availability). Omit page/limit for all matching (capped), or paginate. Optional: coach_id, min_price, max_price. Coach inventory: GET /coaches/me/lessons."
+						"description": "DEPRECATED. GET /api/lessons returns 410. Use Get Coach Lessons instead."
 					},
 					"response": [],
 					"event": [
@@ -6730,7 +6799,7 @@
 								}
 							]
 						},
-						"description": "Roles: Any for **active** lessons whose coach is **marketplace-eligible** (no auth). Public **404** if coach is not listable (same as missing). **Inactive** / not-listable: owner or admin Bearer only. **Deleted** always **404**. Coach inventory: GET /coaches/me/lessons."
+						"description": "Roles: Any for **active** lessons (no auth). **Inactive** returns **404** unless you send the **coach owner** or **admin** Bearer token. **Deleted** always **404** (same `Lesson not found`). Owner/admin only; not student discovery."
 					},
 					"response": [],
 					"event": [
@@ -6780,7 +6849,7 @@
 								"booking-intents"
 							]
 						},
-						"description": "POST /booking-intents. Student + verified email. **Required:** `lesson_id`, `scheduled_at`, `court_location_id` (one of coach's courts). Duration/price come from the lesson \u2014 do **not** send `duration_minutes` or `player_ids` (400). Creates manual-capture Stripe PaymentIntent; no booking row yet. Response: **`amount`** = USD dollars (e.g. 54), **`amount_cents`** = Stripe units (e.g. 5400), **`currency`**: `usd`. Then authorize with Stripe and POST /bookings/confirm."
+						"description": "POST /booking-intents. Student + verified email. **Required:** `lesson_id`, `scheduled_at`, `court_location_id` (one of coach's courts). Duration/price come from the lesson — do **not** send `duration_minutes` or `player_ids` (400). Creates manual-capture Stripe PaymentIntent; no booking row yet. Response: **`amount`** = USD dollars (e.g. 54), **`amount_cents`** = Stripe units (e.g. 5400), **`currency`**: `usd`. Then authorize with Stripe and POST /bookings/confirm."
 					},
 					"response": [],
 					"event": [
@@ -6897,7 +6966,7 @@
 								}
 							]
 						},
-						"description": "Roles: Student only. Student dashboard \u2014 bookings where primary_student_id is the authenticated user (not coach-side bookings)."
+						"description": "Roles: Student only. Student dashboard — bookings where primary_student_id is the authenticated user (not coach-side bookings)."
 					},
 					"response": [],
 					"event": [
@@ -6985,7 +7054,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"reason\": \"schedule_conflict\",\n  \"reason_notes\": \"Need a different time \u2014 will book another slot\"\n}"
+							"raw": "{\n  \"reason\": \"schedule_conflict\",\n  \"reason_notes\": \"Need a different time — will book another slot\"\n}"
 						},
 						"url": {
 							"raw": "{{api_url}}/bookings/:id/cancel",
@@ -7004,7 +7073,7 @@
 								}
 							]
 						},
-						"description": "Roles: Student, Coach, Admin. Cancel a pending or confirmed booking (pre-lesson). Triggers refund/cancellation rules and notifies the other party (in-app + email when SendGrid is configured). **Schedule changes:** cancel, then POST /api/bookings for a new slot. Reasons \u2014 excused (no reliability): weather, emergency, sickness; unexcused: travel_delay, schedule_conflict, forgot, other."
+						"description": "Roles: Student, Coach, Admin. Cancel a pending or confirmed booking (pre-lesson). Triggers refund/cancellation rules and notifies the other party (in-app + email when SendGrid is configured). **Schedule changes:** cancel, then POST /api/bookings for a new slot. Reasons — excused (no reliability): weather, emergency, sickness; unexcused: travel_delay, schedule_conflict, forgot, other."
 					},
 					"response": [],
 					"event": [
@@ -7109,7 +7178,7 @@
 								}
 							]
 						},
-						"description": "**Student flow** \u2014 same route as admin (`GET /api/payments/:id`). Only payments where you are `student_id` (or `coach_id` if you have both roles). **403** if the ID is not one of your payments. Path `:id` = `{{payment_id}}` from **Get My Payments**."
+						"description": "**Student flow** — same route as admin (`GET /api/payments/:id`). Only payments where you are `student_id` (or `coach_id` if you have both roles). **403** if the ID is not one of your payments. Path `:id` = `{{payment_id}}` from **Get My Payments**."
 					},
 					"response": [],
 					"event": [
@@ -7212,7 +7281,7 @@
 								"reviews"
 							]
 						},
-						"description": "Create a review for a completed booking. Caller must be the booking's primary student (`primary_student_id`). `target_user_id` is not accepted \u2014 the coach on the booking is reviewed automatically."
+						"description": "Create a review for a completed booking. Caller must be the booking's primary student (`primary_student_id`). `target_user_id` is not accepted — the coach on the booking is reviewed automatically."
 					},
 					"response": [],
 					"event": [
@@ -7371,7 +7440,7 @@
 								}
 							]
 						},
-						"description": "Roles: Student, Coach, Admin. **Inbox / preview** \u2014 list booking-scoped conversation threads (newest first). Each row includes `latest_message` (object or `null`) and a lightweight `booking` DTO. Does **not** return full message history \u2014 use **Get Conversation By ID** for the complete thread. Omit page/limit to return all rows (server-capped), or enable page/limit for paged mode (`data` + `pagination`).\n\nExample row:\n```json\n{\n  \"id\": 1,\n  \"booking_id\": 5,\n  \"created_at\": \"2026-05-29T10:00:00.000Z\",\n  \"updated_at\": \"2026-06-01T09:00:00.000Z\",\n  \"latest_message\": {\n    \"id\": 42,\n    \"conversation_id\": 1,\n    \"sender_id\": 20,\n    \"message_text\": \"See you at court!\",\n    \"created_at\": \"2026-06-01T09:00:00.000Z\",\n    \"updated_at\": \"2026-06-01T09:00:00.000Z\",\n    \"sender\": { \"id\": 20, \"full_name\": \"Student User\", \"avatar_url\": null }\n  },\n  \"booking\": {\n    \"id\": 5,\n    \"lesson_id\": 12,\n    \"coach_id\": 10,\n    \"primary_student_id\": 20,\n    \"scheduled_at\": \"2026-06-01T10:00:00.000Z\",\n    \"duration_minutes\": 60,\n    \"price\": \"50.00\",\n    \"status\": \"confirmed\",\n    \"court_location_id\": 3,\n    \"messaging_locked\": false\n  }\n}\n```"
+						"description": "Roles: Student, Coach, Admin. **Inbox / preview** — list booking-scoped conversation threads (newest first). Each row includes `latest_message` (object or `null`) and a lightweight `booking` DTO. Does **not** return full message history — use **Get Conversation By ID** for the complete thread. Omit page/limit to return all rows (server-capped), or enable page/limit for paged mode (`data` + `pagination`).\n\nExample row:\n```json\n{\n  \"id\": 1,\n  \"booking_id\": 5,\n  \"created_at\": \"2026-05-29T10:00:00.000Z\",\n  \"updated_at\": \"2026-06-01T09:00:00.000Z\",\n  \"latest_message\": {\n    \"id\": 42,\n    \"conversation_id\": 1,\n    \"sender_id\": 20,\n    \"message_text\": \"See you at court!\",\n    \"created_at\": \"2026-06-01T09:00:00.000Z\",\n    \"updated_at\": \"2026-06-01T09:00:00.000Z\",\n    \"sender\": { \"id\": 20, \"full_name\": \"Student User\", \"avatar_url\": null }\n  },\n  \"booking\": {\n    \"id\": 5,\n    \"lesson_id\": 12,\n    \"coach_id\": 10,\n    \"primary_student_id\": 20,\n    \"scheduled_at\": \"2026-06-01T10:00:00.000Z\",\n    \"duration_minutes\": 60,\n    \"price\": \"50.00\",\n    \"status\": \"confirmed\",\n    \"court_location_id\": 3,\n    \"messaging_locked\": false\n  }\n}\n```"
 					},
 					"response": [],
 					"event": [
@@ -7706,7 +7775,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"booking_id\": \"{{booking_id}}\",\n  \"dispute_type_id\": 1,\n  \"notes\": \"Coach no-show \u2014 waited 20 min, coach never arrived (stored on dispute row).\"\n}"
+							"raw": "{\n  \"booking_id\": \"{{booking_id}}\",\n  \"dispute_type_id\": 1,\n  \"notes\": \"Coach no-show — waited 20 min, coach never arrived (stored on dispute row).\"\n}"
 						},
 						"url": {
 							"raw": "{{api_url}}/disputes",
@@ -7717,7 +7786,7 @@
 								"disputes"
 							]
 						},
-						"description": "Roles: Student, Coach, Admin (must be party to booking). POST /api/disputes \u2014 booking status unchanged. Admins can also use POST /api/admin/disputes as an explicit support route (same handler, opened_by=admin). Active dispute_type_id: 1 coach_no_show_claim (student), 8 student_no_show_claim (coach), 3 misconduct, 4 lesson_not_completed, 7 other. Optional notes persisted as TEXT."
+						"description": "Roles: Student, Coach, Admin (must be party to booking). POST /api/disputes — booking status unchanged. Admins can also use POST /api/admin/disputes as an explicit support route (same handler, opened_by=admin). Active dispute_type_id: 1 coach_no_show_claim (student), 8 student_no_show_claim (coach), 3 misconduct, 4 lesson_not_completed, 7 other. Optional notes persisted as TEXT."
 					},
 					"response": [],
 					"event": [
@@ -8037,7 +8106,7 @@
 								"stripe"
 							]
 						},
-						"description": "**DO NOT RUN MANUALLY.**\n\nStripe calls this endpoint directly. It verifies the `Stripe-Signature` header using `STRIPE_WEBHOOK_SECRET`, so a hand-crafted body in Postman will return **400 Webhook Error: No signatures found matching the expected signature**.\n\n### How to actually test it\n1. Install the Stripe CLI.\n2. Run: `stripe listen --forward-to localhost:4000/api/webhooks/stripe`\n3. Copy the printed `whsec_...` into `.env.development` as `STRIPE_WEBHOOK_SECRET`, then restart the backend.\n4. Trigger events, e.g.:\n   - `stripe trigger payment_intent.succeeded`\n   - `stripe trigger charge.refunded`\n   - `stripe trigger charge.dispute.created`\n5. Or, in the Stripe Dashboard, use **Developers \u2192 Events \u2192 Resend** on a real event.\n\nHandled event types (see `backend/controllers/webhookController.js`):\n- payment_intent.succeeded / payment_failed / canceled\n- charge.refunded\n- charge.dispute.created / updated / closed\n- transfer.created / transfer.paid\n\nSuccess response: `{ \"received\": true }` (or `{ \"received\": true, \"duplicate\": true }`).\n\nRoles: System (Stripe webhook; no user auth; uses Stripe-Signature verification)."
+						"description": "**DO NOT RUN MANUALLY.**\n\nStripe calls this endpoint directly. It verifies the `Stripe-Signature` header using `STRIPE_WEBHOOK_SECRET`, so a hand-crafted body in Postman will return **400 Webhook Error: No signatures found matching the expected signature**.\n\n### How to actually test it\n1. Install the Stripe CLI.\n2. Run: `stripe listen --forward-to localhost:4000/api/webhooks/stripe`\n3. Copy the printed `whsec_...` into `.env.development` as `STRIPE_WEBHOOK_SECRET`, then restart the backend.\n4. Trigger events, e.g.:\n   - `stripe trigger payment_intent.succeeded`\n   - `stripe trigger charge.refunded`\n   - `stripe trigger charge.dispute.created`\n5. Or, in the Stripe Dashboard, use **Developers → Events → Resend** on a real event.\n\nHandled event types (see `backend/controllers/webhookController.js`):\n- payment_intent.succeeded / payment_failed / canceled\n- charge.refunded\n- charge.dispute.created / updated / closed\n- transfer.created / transfer.paid\n\nSuccess response: `{ \"received\": true }` (or `{ \"received\": true, \"duplicate\": true }`).\n\nRoles: System (Stripe webhook; no user auth; uses Stripe-Signature verification)."
 					},
 					"response": [],
 					"event": [
