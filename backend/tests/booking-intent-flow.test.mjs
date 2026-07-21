@@ -42,7 +42,6 @@ describe('booking intent metadata contract', () => {
       scheduledAt,
       durationMinutes: 60,
       courtLocationId: 9,
-      playerIds: [6, 7],
       idempotencyKey: 'idem_abc',
       paymentMethod: 'stripe',
     });
@@ -50,7 +49,7 @@ describe('booking intent metadata contract', () => {
     assert.equal(meta.student_id, '5');
     assert.equal(meta.lesson_id, '12');
     assert.equal(meta.court_location_id, '9');
-    assert.deepEqual(JSON.parse(meta.player_ids), [6, 7]);
+    assert.equal(meta.player_ids, undefined);
     assert.equal(isAuthorizeThenBookIntent(meta), true);
   });
 
@@ -62,6 +61,8 @@ describe('booking intent metadata contract', () => {
         lesson_id: '12',
         scheduled_at: scheduledAt.toISOString(),
         duration_minutes: '60',
+        court_location_id: '9',
+        // Legacy metadata may still contain player_ids; ignored
         player_ids: '[1,2]',
         idempotency_key: 'idem_abc',
         payment_method: 'stripe',
@@ -70,13 +71,35 @@ describe('booking intent metadata contract', () => {
     );
     assert.equal(parsed.ok, true);
     assert.equal(parsed.lessonId, 12);
-    assert.equal(parsed.playerIds.length, 2);
+    assert.equal(parsed.courtLocationId, 9);
+    assert.equal(parsed.playerIds, undefined);
     assert.equal(parsed.idempotencyKey, 'idem_abc');
+  });
+
+  it('rejects metadata missing court_location_id', () => {
+    const parsed = parseBookingIntentMetadata(
+      {
+        flow: BOOKING_INTENT_FLOW_METADATA,
+        student_id: '5',
+        lesson_id: '12',
+        scheduled_at: scheduledAt.toISOString(),
+        duration_minutes: '60',
+      },
+      5,
+    );
+    assert.equal(parsed.ok, false);
+    assert.equal(parsed.code, 'payment_intent_invalid_metadata');
   });
 
   it('rejects wrong student ownership', () => {
     const parsed = parseBookingIntentMetadata(
-      { flow: BOOKING_INTENT_FLOW_METADATA, student_id: '99', lesson_id: '1', scheduled_at: scheduledAt.toISOString() },
+      {
+        flow: BOOKING_INTENT_FLOW_METADATA,
+        student_id: '99',
+        lesson_id: '1',
+        scheduled_at: scheduledAt.toISOString(),
+        court_location_id: '9',
+      },
       5,
     );
     assert.equal(parsed.ok, false);
@@ -126,9 +149,28 @@ describe('authorization gate for confirm', () => {
 });
 
 describe('confirm service wiring', () => {
+  it('exposes amount in USD dollars and amount_cents for Stripe', () => {
+    const createIntentSection = bookingIntentServiceSrc.slice(
+      bookingIntentServiceSrc.indexOf('export async function createBookingIntent'),
+      bookingIntentServiceSrc.indexOf('export async function confirmBookingFromPaymentIntent'),
+    );
+    assert.match(createIntentSection, /amount: totalCharge/);
+    assert.match(createIntentSection, /amount_cents: dollarsToCents\(totalCharge\)/);
+    assert.match(createIntentSection, /currency: 'usd'/);
+  });
+
   it('creates payment as authorized immediately', () => {
     assert.match(bookingIntentServiceSrc, /payment_status: 'authorized'/);
     assert.match(bookingIntentServiceSrc, /flow: 'authorize_then_book'/);
+  });
+
+  it('marks coach notify claimed on confirm so webhook cannot double-send', () => {
+    assert.match(bookingIntentServiceSrc, /COACH_BOOKING_REQUEST_NOTIFIED_METADATA_KEY/);
+    const confirmSection = bookingIntentServiceSrc.slice(
+      bookingIntentServiceSrc.indexOf('export async function confirmBookingFromPaymentIntent'),
+      bookingIntentServiceSrc.length,
+    );
+    assert.match(confirmSection, /\[COACH_BOOKING_REQUEST_NOTIFIED_METADATA_KEY\]: true/);
   });
 
   it('notifies coach after confirm, not at intent creation', () => {

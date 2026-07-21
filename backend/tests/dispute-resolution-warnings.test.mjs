@@ -14,7 +14,7 @@ test('isBehaviorDisputeCode', () => {
 
 test('returns ambiguity warning for admin-opened sustained behavior disputes', () => {
   const warning = getBehaviorResolutionDirectionWarning({
-    disputeTypeCode: 'late_arrival',
+    disputeTypeCode: 'lesson_not_completed',
     decision: 'upheld',
     penalizeRole: 'coach',
     openedBy: 'admin',
@@ -60,7 +60,7 @@ test('behavior claim reversal advisory (student opener penalized as student)', (
 
 test('behavior claim reversal advisory (coach opener penalized as coach)', () => {
   const w = getBehaviorClaimReversalWarning({
-    disputeTypeCode: 'late_arrival',
+    disputeTypeCode: 'lesson_not_completed',
     decision: 'partial',
     penalizeRole: 'coach',
     openedBy: 'coach',
@@ -110,7 +110,7 @@ test('no behavior reversal warning when opener and penalize differ, or for admin
 test('no warning for rejected, non-behavior, or invalid penalize', () => {
   assert.equal(
     getBehaviorResolutionDirectionWarning({
-      disputeTypeCode: 'late_arrival',
+      disputeTypeCode: 'lesson_not_completed',
       decision: 'rejected',
       penalizeRole: 'none',
       openedBy: 'admin',

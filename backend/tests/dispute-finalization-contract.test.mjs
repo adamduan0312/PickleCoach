@@ -73,11 +73,25 @@ test('new attendance dispute resolve can override: completed → student_no_show
   assert.equal(t.ok, true, t.message || '');
 });
 
-test('behavior dispute codes are the three types that omit outcome on resolve (doc contract)', () => {
+test('behavior dispute codes are misconduct and lesson_not_completed (doc contract)', () => {
   const src = readFileSync(join(__dirname, '../config/validation.js'), 'utf8');
   assert.match(
     src,
-    /Joi\.valid\('late_arrival', 'misconduct', 'lesson_not_completed'\)/,
-    'resolveDisputeSchema must list the three behavior dispute codes',
+    /Joi\.valid\('misconduct', 'lesson_not_completed'\)/,
+    'resolveDisputeSchema must list behavior dispute codes that require penalize_role',
+  );
+});
+
+test('other resolve releases disputed bookings via deriveResolvedBookingStatusFromDisputeResolve', () => {
+  const src = readFileSync(disputeControllerPath, 'utf8');
+  assert.match(
+    src,
+    /deriveResolvedBookingStatusFromDisputeResolve/,
+    'resolveDispute must derive booking status through shared helper',
+  );
+  assert.match(
+    src,
+    /deriveDisputeResolveBookingTransitionVia/,
+    'resolveDispute must pick state-machine via through shared helper',
   );
 });

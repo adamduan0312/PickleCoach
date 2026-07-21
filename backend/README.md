@@ -127,7 +127,7 @@ Quick reference:
 - **Coaches**: `/api/coaches` - Coach profiles, availability, Stripe Connect
 - **Courts**: `/api/courts` - Court location search and management
 - **Lessons**: `/api/lessons` - Lesson creation and management
-- **Bookings**: `/api/bookings` - MVP: student `POST /bookings`, coach `PUT .../accept` | `PUT .../decline`; also list/detail, complete, `POST .../student-no-show`, cancel
+- **Bookings**: `/api/bookings` — MVP confirm/accept/decline/detail/complete/no-show/cancel; role dashboards: `GET /api/students/me/bookings`, `GET /api/coaches/me/bookings`
 - **Payments**: `/api/payments` - List and get payment records (created with bookings; refunds via booking flows / `paymentService`)
 - **Reviews**: `/api/reviews` - Review system
 - **Messages**: `/api/messages` - In-app messaging

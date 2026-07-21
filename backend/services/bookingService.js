@@ -1,4 +1,4 @@
-import { Booking, Lesson, BookingPlayer, CoachAvailability, User, sequelize } from '../models/index.js';
+import { Booking, Lesson, CoachAvailability, User, sequelize } from '../models/index.js';
 import { Op } from 'sequelize';
 import { calendarDateInTimezone, toYmdApi } from '../utils/dateOnly.js';
 

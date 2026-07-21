@@ -76,15 +76,40 @@ export const createBookingSchema = Joi.object({
   lesson_id: Joi.number().integer().positive().required(),
   scheduled_at: Joi.date().iso().greater('now').required(),
   duration_minutes: Joi.number().integer().min(15).optional(),
-  player_ids: Joi.array().items(Joi.number().integer()).optional(),
+  /** MVP: one student (JWT) per booking. Multi-player / group lessons are V2 — do not send. */
+  player_ids: Joi.any().forbidden().messages({
+    'any.unknown': 'player_ids is not supported in MVP (one student per booking). Omit this field.',
+    'any.forbidden': 'player_ids is not supported in MVP (one student per booking). Omit this field.',
+  }),
   court_location_id: Joi.number().integer().positive().optional(),
   payment_method: Joi.string().valid('stripe', 'apple_pay', 'google_pay', 'card').default('stripe'),
   payment_method_id: Joi.string().max(255).optional(),
   idempotency_key: Joi.string().trim().min(8).max(255).optional(),
 });
 
-/** Authorize-first flow: create PaymentIntent before any booking row exists. */
-export const createBookingIntentSchema = createBookingSchema;
+/**
+ * Authorize-first intent (MVP marketplace package):
+ * - Student buys a fixed lesson (price + duration from the lesson row).
+ * - Must pick one of the coach's courts (`court_location_id` required).
+ * - Do not send `duration_minutes` (lesson owns duration) or `player_ids`.
+ */
+export const createBookingIntentSchema = Joi.object({
+  lesson_id: Joi.number().integer().positive().required(),
+  scheduled_at: Joi.date().iso().greater('now').required(),
+  duration_minutes: Joi.any().forbidden().messages({
+    'any.unknown': 'duration_minutes is set by the lesson. Omit this field.',
+    'any.forbidden': 'duration_minutes is set by the lesson. Omit this field.',
+  }),
+  player_ids: Joi.any().forbidden().messages({
+    'any.unknown': 'player_ids is not supported in MVP (one student per booking). Omit this field.',
+    'any.forbidden': 'player_ids is not supported in MVP (one student per booking). Omit this field.',
+  }),
+  court_location_id: Joi.number().integer().positive().required()
+    .messages({ 'any.required': 'court_location_id is required — choose one of the coach\'s courts.' }),
+  payment_method: Joi.string().valid('stripe', 'apple_pay', 'google_pay', 'card').default('stripe'),
+  payment_method_id: Joi.string().max(255).optional(),
+  idempotency_key: Joi.string().trim().min(8).max(255).optional(),
+});
 
 export const confirmBookingSchema = Joi.object({
   payment_intent_id: Joi.string().trim().min(3).max(255).required(),
@@ -103,7 +128,6 @@ export const declineBookingSchema = Joi.object({
 
 export const reviewSchema = Joi.object({
   booking_id: Joi.number().integer().positive().required(),
-  target_user_id: Joi.number().integer().positive().optional(),
   rating: Joi.number().integer().min(1).max(5).required(),
   comment: Joi.string().max(1000).optional(),
   attendance_badges: Joi.array().items(Joi.string()).optional(),
@@ -166,7 +190,13 @@ export const updateUserSchema = Joi.object({
   phone: Joi.string().max(30).allow('').optional(),
   timezone: Joi.string().max(50).optional(),
   avatar_url: Joi.string().uri().max(255).allow('').optional(),
-  is_active: Joi.boolean().valid(true).optional(), // Only allow true (reactivation); use DELETE /api/users/:id to soft-delete
+  /**
+   * Account access flag (admin only).
+   * - `true` = reactivate (Active) — rejected if user is still soft-deleted unless `deleted_at: null` is also sent
+   * - `false` = suspend (Suspended) — does not set `deleted_at` or touch coach profile
+   * Soft-delete via DELETE /api/users/:id (sets deleted_at + is_active false).
+   */
+  is_active: Joi.boolean().optional(),
   /** Full role set to assign (replaces all `user_roles` rows). Omit to leave roles unchanged. Any non-empty subset of {student, coach, admin} with unique entries (1–3 roles). */
   roles: Joi.array()
     .items(Joi.string().valid('student', 'coach', 'admin'))
@@ -176,7 +206,8 @@ export const updateUserSchema = Joi.object({
     .optional(),
   /** Set `false` to re-open self-service `PUT /api/auth/me/role` (clears allow-list). Cannot be combined with `roles` in the same request. */
   role_governance_locked: Joi.boolean().optional(),
-  deleted_at: Joi.valid(null).optional(), // Allow setting to null to undelete; cannot set to a date (use DELETE endpoint)
+  /** Set to `null` to restore a soft-deleted user (+ coach profile). Cannot set to a date (use DELETE endpoint). */
+  deleted_at: Joi.valid(null).optional(),
   /** @deprecated Use `roles` (full set). Sending this field returns 400. */
   role: Joi.any().forbidden().messages({
     'any.unknown': 'Use "roles" (array) to set user roles, not "role".',
@@ -379,7 +410,7 @@ export const resolveDisputeSchema = Joi.object({
   penalize_role: Joi.string()
     .valid('coach', 'student', 'none')
     .when('dispute_type_code', {
-      is: Joi.valid('late_arrival', 'misconduct', 'lesson_not_completed'),
+      is: Joi.valid('misconduct', 'lesson_not_completed'),
       then: Joi.required(),
       otherwise: Joi.forbidden(),
     }),
@@ -430,6 +461,8 @@ export const createNotificationSchema = Joi.object({
   type: Joi.string().required(),
   channel: Joi.string().valid('email', 'sms', 'in_app').required(),
   payload: Joi.object().optional(),
+  entity_type: Joi.string().max(50).optional(),
+  entity_id: Joi.number().integer().positive().optional(),
 });
 
 // Query parameter validation for GET endpoints (pagination, filters, DoS prevention)
@@ -472,10 +505,11 @@ export const getCoachesQuerySchema = Joi.object({
   lat: Joi.number().min(-90).max(90).optional(),
   lng: Joi.number().min(-180).max(180).optional(),
   radius: Joi.number().positive().max(500).default(10), // miles, cap 500
-  /** Filter coaches whose `skill_rating` is >= this (excludes coaches with null skill_rating). */
+  /** Playing skill (`skill_rating` 2.0–6.0); excludes null skill_rating. Not review stars. */
   min_skill_rating: coachSkillRatingValueSchema.optional(),
-  /** Filter coaches whose `skill_rating` is <= this (excludes coaches with null skill_rating). */
+  /** Playing skill upper bound; not review stars. */
   max_skill_rating: coachSkillRatingValueSchema.optional(),
+  /** Review star average (`rating_average` 0–5); distinct from min/max_skill_rating. */
   min_rating: Joi.number().min(0).max(5).optional(),
 }).custom((value, helpers) => {
   if (
@@ -520,7 +554,7 @@ export const getDisputesQuerySchema = Joi.object({
 export const getNotificationsQuerySchema = Joi.object({
   page: Joi.number().integer().min(1).optional(),
   limit: Joi.number().integer().min(1).max(10000).optional(),
-  status: Joi.string().valid('pending', 'sent', 'failed', 'read').optional(),
+  status: Joi.string().valid('pending', 'sent', 'failed').optional(),
 });
 
 export const getPaymentsQuerySchema = Joi.object({

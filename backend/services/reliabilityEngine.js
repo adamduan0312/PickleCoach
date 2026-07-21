@@ -66,8 +66,6 @@ export const roundReliabilityScoreValue = (v) => {
  * @property {number} student_cancels_non_late_decayed
  * @property {number} no_shows_recent
  * @property {number} no_shows_decayed
- * @property {number} late_arrival_penalties_recent
- * @property {number} late_arrival_penalties_decayed
  * @property {number} misconduct_penalties_recent
  * @property {number} misconduct_penalties_decayed
  * @property {number} lesson_not_completed_penalties_recent
@@ -112,10 +110,6 @@ export const buildCanonicalReliabilityMetrics = (raw, config = {}) => {
     no_shows_decayed: roundReliabilityMetric(raw.no_shows_decayed),
     no_shows_total: pairTotal('no_shows_recent', 'no_shows_decayed'),
 
-    late_arrival_penalties_recent: intReliabilityCount(raw.late_arrival_penalties_recent),
-    late_arrival_penalties_decayed: roundReliabilityMetric(raw.late_arrival_penalties_decayed),
-    late_arrival_penalties_total: pairTotal('late_arrival_penalties_recent', 'late_arrival_penalties_decayed'),
-
     misconduct_penalties_recent: intReliabilityCount(raw.misconduct_penalties_recent),
     misconduct_penalties_decayed: roundReliabilityMetric(raw.misconduct_penalties_decayed),
     misconduct_penalties_total: pairTotal('misconduct_penalties_recent', 'misconduct_penalties_decayed'),
@@ -150,7 +144,6 @@ export const calculatePenaltyBreakdown = (role, canonical) => {
   if (role === 'coach') {
     const deductions = {
       late_cancels: ratio(canonical.late_cancels_total, 20),
-      late_arrival_penalties: ratio(canonical.late_arrival_penalties_total, BEHAVIOR_DISPUTE_PENALTY_WEIGHTS.late_arrival),
       no_shows: ratio(canonical.no_shows_total, COACH_ATTENDANCE_NO_SHOW_WEIGHT),
       coach_cancels_non_late: ratio(canonical.coach_cancels_non_late_total, 10),
       misconduct_penalties: ratio(canonical.misconduct_penalties_total, BEHAVIOR_DISPUTE_PENALTY_WEIGHTS.misconduct),
@@ -165,7 +158,6 @@ export const calculatePenaltyBreakdown = (role, canonical) => {
 
   const deductions = {
     late_cancels: ratio(canonical.late_cancels_total, 15),
-    late_arrival_penalties: ratio(canonical.late_arrival_penalties_total, BEHAVIOR_DISPUTE_PENALTY_WEIGHTS.late_arrival),
     no_shows: ratio(canonical.no_shows_total, STUDENT_ATTENDANCE_NO_SHOW_WEIGHT),
     student_cancels_non_late: ratio(canonical.student_cancels_non_late_total, 12),
     misconduct_penalties: ratio(canonical.misconduct_penalties_total, BEHAVIOR_DISPUTE_PENALTY_WEIGHTS.misconduct),
@@ -211,8 +203,6 @@ export const persistenceRowToCanonical = (role, row) =>
       student_cancels_non_late_decayed: row.student_cancels_non_late_decayed,
       no_shows_recent: intReliabilityCount(row.no_shows_recent),
       no_shows_decayed: row.no_shows_decayed,
-      late_arrival_penalties_recent: intReliabilityCount(row.late_arrival_penalties_recent),
-      late_arrival_penalties_decayed: row.late_arrival_penalties_decayed,
       misconduct_penalties_recent: intReliabilityCount(row.misconduct_penalties_recent),
       misconduct_penalties_decayed: row.misconduct_penalties_decayed,
       lesson_not_completed_penalties_recent: intReliabilityCount(row.lesson_not_completed_penalties_recent),
@@ -269,10 +259,6 @@ export const flattenCanonicalForPersistence = (role, canonical, score, meta = {}
     no_shows_decayed: roundReliabilityMetric(canonical.no_shows_decayed),
     no_shows_total: roundReliabilityMetric(canonical.no_shows_total),
 
-    late_arrival_penalties_recent: canonical.late_arrival_penalties_recent,
-    late_arrival_penalties_decayed: roundReliabilityMetric(canonical.late_arrival_penalties_decayed),
-    late_arrival_penalties_total: roundReliabilityMetric(canonical.late_arrival_penalties_total),
-
     misconduct_penalties_recent: canonical.misconduct_penalties_recent,
     misconduct_penalties_decayed: roundReliabilityMetric(canonical.misconduct_penalties_decayed),
     misconduct_penalties_total: roundReliabilityMetric(canonical.misconduct_penalties_total),
@@ -304,8 +290,6 @@ export const defaultCanonicalReliabilityRow = (userId, role) => {
     student_cancels_non_late_decayed: 0,
     no_shows_recent: 0,
     no_shows_decayed: 0,
-    late_arrival_penalties_recent: 0,
-    late_arrival_penalties_decayed: 0,
     misconduct_penalties_recent: 0,
     misconduct_penalties_decayed: 0,
     lesson_not_completed_penalties_recent: 0,
@@ -339,7 +323,6 @@ export const attachLegacyReliabilityAliases = (row) => {
     ...row,
     total_bookings: row.total_bookings_recent,
     late_cancels: row.late_cancels_recent,
-    late_arrival_penalties: row.late_arrival_penalties_recent,
     misconduct_penalties: row.misconduct_penalties_recent,
     lesson_not_completed_penalties: row.lesson_not_completed_penalties_recent,
     no_shows: row.no_shows_recent,

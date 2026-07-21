@@ -23,7 +23,7 @@ Attendance **source sets** and outcome validation still live in `utils/bookingAt
 | `awaiting_verification` | Lesson end passed; coach has not marked outcome |
 | `completed` | Lesson treated as completed |
 | `cancelled` | Pre-lesson cancel or coach decline / expiry |
-| `disputed` | Stripe chargeback / dispute sync parked the booking |
+| `disputed` | Stripe chargeback parking — operational warning that payment is contested (not an attendance outcome) |
 | `student_no_show` | Primary student did not attend |
 | `coach_no_show` | Coach did not attend |
 
@@ -63,9 +63,11 @@ Examples (non-exhaustive; see code for full graph):
 | `worker_lesson_end_to_awaiting_verification` | `autoConfirmWorker` bulk update |
 | `mark_completed` | coach complete, auto-complete worker |
 | `coach_mark_student_no_show` / `admin_mark_*` | No-show routes |
-| `stripe_dispute_open` | `stripeDisputeSyncService` |
+| `stripe_dispute_open` | `stripeDisputeSyncService` (non-terminal chargeback) |
+| `stripe_dispute_terminal` | `stripeDisputeSyncService` (terminal chargeback — release `disputed` → `completed`) |
 | `dispute_resolve_attendance` | `PUT /api/disputes/:id/resolve` (attendance types) |
 | `dispute_resolve_behavior_on_disputed_booking` | Resolve behavior dispute when booking was `disputed` → `completed` |
+| `dispute_resolve_catchall_on_disputed_booking` | Resolve `other` dispute when booking was `disputed` → `completed` |
 
 ## Invariants
 

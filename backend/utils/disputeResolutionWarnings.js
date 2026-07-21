@@ -1,4 +1,6 @@
-const BEHAVIOR_DISPUTE_CODES = new Set(['late_arrival', 'misconduct', 'lesson_not_completed']);
+import { BEHAVIOR_DISPUTE_TYPE_CODES } from './disputeTypeCatalog.js';
+
+const BEHAVIOR_DISPUTE_CODES = new Set(BEHAVIOR_DISPUTE_TYPE_CODES);
 const SUSTAINED_DECISIONS = new Set(['upheld', 'partial']);
 
 /**

@@ -6,15 +6,16 @@ import { logger } from '../config/logger.js';
 import { serializeAdminUserList, serializeAdminUserDetail } from '../utils/userDto.js';
 import { validateAdminRoleRemovalSafeguards, countOtherLiveAdmins } from '../utils/userRoleChangeGuards.js';
 import { effectiveRolesFromGovernance, serializeRoleState } from '../utils/roleGovernance.js';
+import { softDeleteUserAccount, restoreUserAccount } from '../utils/userLifecycle.js';
 
 export const getAllUsers = async (req, res) => {
   try {
     const { page, limit, role, include_deleted, search } = req.validated;
 
     const andConditions = [];
-    // By default only return active, non-deleted users; admin can pass include_deleted=true to see all (including soft-deleted/inactive)
+    // Default: non–soft-deleted users (Active + Suspended). Pass include_deleted=true for Deleted too.
     if (include_deleted !== 'true') {
-      andConditions.push({ deleted_at: null, is_active: true });
+      andConditions.push({ deleted_at: null });
     }
     // Always include user_roles so we can return roles for each user; filter by role when requested
     const includeForRole = role
@@ -130,29 +131,23 @@ export const updateUser = async (req, res) => {
       }
     }
 
-    // Guard: Prevent setting is_active: true on a deleted user (must undelete first)
-    if (user.deleted_at && is_active === true && deleted_at !== null) {
+    const restoring = deleted_at === null && user.deleted_at != null;
+    const activating = is_active === true;
+    const suspending = is_active === false;
+
+    // Cannot activate while still deleted (must restore with deleted_at: null first or in same request)
+    if (user.deleted_at && activating && !restoring) {
       logger.warn(`Admin ${req.user.id} attempted to activate deleted user ${userId} without undeleting`);
-      return errorResponse(res, 'Cannot activate a deleted user. Set deleted_at to null to undelete first, or undelete and activate in separate requests', 400);
+      return errorResponse(
+        res,
+        'Cannot activate a deleted user. Set deleted_at to null to restore first, or restore and activate in the same request',
+        400,
+      );
     }
 
-    const updateData = {
-      full_name: full_name || user.full_name,
-      email: email !== undefined ? email : user.email,
-      phone: phone !== undefined ? phone : user.phone,
-      timezone: timezone || user.timezone,
-      avatar_url: avatar_url !== undefined ? avatar_url : user.avatar_url,
-      is_active: is_active !== undefined ? is_active : user.is_active,
-    };
-
-    if (email !== undefined && email !== user.email) {
-      updateData.token_version = (user.token_version ?? 0) + 1;
-    }
-
-    // Allow explicit undelete by setting deleted_at to null
-    if (deleted_at === null) {
-      updateData.deleted_at = null;
-      logger.info(`Admin ${req.user.id} undeleted user ${userId} (cleared deleted_at)`);
+    // Suspension must not touch soft-delete fields / coach profile
+    if (suspending && user.deleted_at && !restoring) {
+      // Already deleted — is_active is already false; treat as no-op for access flag
     }
 
     let uniqueRoles;
@@ -180,10 +175,46 @@ export const updateUser = async (req, res) => {
       }
     }
 
-    await user.update(updateData);
+    await sequelize.transaction(async (transaction) => {
+      if (restoring) {
+        await restoreUserAccount(user, { transaction });
+        logger.info(`Admin ${req.user.id} restored user ${userId} (cleared deleted_at + coach profile)`);
+        // After restore, account is Active. Optional explicit suspend in same request:
+        if (suspending) {
+          await user.update({ is_active: false }, { transaction });
+          logger.info(`Admin ${req.user.id} suspended user ${userId} immediately after restore`);
+        }
+      } else if (is_active !== undefined) {
+        await user.update({ is_active }, { transaction });
+        if (suspending) {
+          logger.info(`Admin ${req.user.id} suspended user ${userId} (is_active=false; coach profile unchanged)`);
+        } else if (activating) {
+          logger.info(`Admin ${req.user.id} reactivated user ${userId}`);
+        }
+      }
 
-    if (roles !== undefined) {
-      await sequelize.transaction(async (transaction) => {
+      // Guard invariant: never leave is_active=true with deleted_at set
+      await user.reload({ transaction });
+      if (user.is_active && user.deleted_at) {
+        throw Object.assign(new Error('Invalid user state: cannot be active while deleted'), {
+          statusCode: 400,
+          clientMessage: 'Invalid state: an active user cannot have deleted_at set',
+        });
+      }
+
+      const profileFields = {
+        full_name: full_name || user.full_name,
+        email: email !== undefined ? email : user.email,
+        phone: phone !== undefined ? phone : user.phone,
+        timezone: timezone || user.timezone,
+        avatar_url: avatar_url !== undefined ? avatar_url : user.avatar_url,
+      };
+      if (email !== undefined && email !== user.email) {
+        profileFields.token_version = (user.token_version ?? 0) + 1;
+      }
+      await user.update(profileFields, { transaction });
+
+      if (roles !== undefined) {
         await UserRole.destroy({ where: { user_id: user.id }, transaction });
         if (uniqueRoles.length > 0) {
           await UserRole.bulkCreate(
@@ -198,13 +229,16 @@ export const updateUser = async (req, res) => {
           },
           { transaction },
         );
-      });
-    } else if (role_governance_locked === false) {
-      await user.update({
-        role_governance_locked: false,
-        admin_allowed_roles: null,
-      });
-    }
+      } else if (role_governance_locked === false) {
+        await user.update(
+          {
+            role_governance_locked: false,
+            admin_allowed_roles: null,
+          },
+          { transaction },
+        );
+      }
+    });
 
     await user.reload({
       include: [{ model: UserRole, as: 'userRoles', attributes: ['role'] }],
@@ -222,11 +256,15 @@ export const updateUser = async (req, res) => {
       roles: currentRoles,
       role_state: serializeRoleState(user, effective),
       is_active: user.is_active,
+      deleted_at: user.deleted_at ?? null,
       phone: user.phone ?? null,
       timezone: user.timezone ?? null,
       avatar_url: user.avatar_url ?? null,
     }, 'User updated successfully');
   } catch (error) {
+    if (error?.statusCode === 400 && error.clientMessage) {
+      return errorResponse(res, error.clientMessage, 400);
+    }
     logger.error('Update user error:', error);
     return errorResponse(res, 'Failed to update user', 500);
   }
@@ -261,11 +299,9 @@ export const deleteUser = async (req, res) => {
       }
     }
 
-    await user.update({ deleted_at: new Date(), is_active: false });
-    const coachProfile = await CoachProfile.findOne({ where: { user_id: user.id } });
-    if (coachProfile && !coachProfile.deleted_at) {
-      await coachProfile.update({ deleted_at: new Date() });
-    }
+    await sequelize.transaction(async (transaction) => {
+      await softDeleteUserAccount(user, { transaction });
+    });
     return successResponse(res, null, 'User deleted successfully');
   } catch (error) {
     logger.error('Delete user error:', error);

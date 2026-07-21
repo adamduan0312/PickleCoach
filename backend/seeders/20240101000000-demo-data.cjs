@@ -15,37 +15,47 @@ module.exports = {
       throw new Error('❌ Seeding is only allowed in development');
     }
 
-    const { sequelize } = await import('../models/sequelize.js');
-    const { User, UserRole, CoachProfile, CourtLocation, CoachCourtLocation, Lesson, Booking, Payment, Review, CoachAvailability, Payout, RescheduleHistory, CancellationHistory } = await import('../models/index.js');
+    const { User, UserRole, CoachProfile, CourtLocation, CoachCourtLocation, Lesson, Booking, Payment, Review, CoachAvailability, Payout, CancellationHistory, Dispute, Notification, Conversation, Message, PaymentAction, BookingPlayer, StudentFeedback, UserReliability, SystemJob, AuditLog } = await import('../models/index.js');
 
     // Clean up existing seed data first (idempotent seeding)
     // Delete in order to respect foreign key constraints (child tables first)
     console.log('🧹 Cleaning up existing seed data...');
     await Review.destroy({ where: {} });
-    await Payout.destroy({ where: {} }); // Delete before Payment (has FK to Payment)
-    await RescheduleHistory.destroy({ where: {} });
+    await StudentFeedback.destroy({ where: {} });
+    await Message.destroy({ where: {} });
+    await Conversation.destroy({ where: {} });
+    await Notification.destroy({ where: {} });
+    await Dispute.destroy({ where: {} });
+    await PaymentAction.destroy({ where: {} });
+    await Payout.destroy({ where: {} });
     await CancellationHistory.destroy({ where: {} });
     await Payment.destroy({ where: {} });
+    await BookingPlayer.destroy({ where: {} });
+    await SystemJob.destroy({ where: {} });
     await Booking.destroy({ where: {} });
     await Lesson.destroy({ where: {} });
     await CoachAvailability.destroy({ where: {} });
     await CoachCourtLocation.destroy({ where: {} });
     await CourtLocation.destroy({ where: {} });
     await CoachProfile.destroy({ where: {} });
+    await UserReliability.destroy({ where: {} });
+    await AuditLog.destroy({ where: {} });
     // Delete seed users (coaches, students, admin) but preserve any other users
     const { Op } = Sequelize;
-    await User.destroy({ 
-      where: { 
-        email: {
-          [Op.like]: '%@example.com'
-        }
-      } 
+    const seedUsers = await User.findAll({
+      where: {
+        [Op.or]: [
+          { email: { [Op.like]: '%@example.com' } },
+          { email: 'admin@picklecoach.com' },
+        ],
+      },
+      attributes: ['id'],
     });
-    await User.destroy({ 
-      where: { 
-        email: 'admin@picklecoach.com'
-      } 
-    });
+    const seedUserIds = seedUsers.map((u) => u.id);
+    if (seedUserIds.length) {
+      await UserRole.destroy({ where: { user_id: { [Op.in]: seedUserIds } } });
+      await User.destroy({ where: { id: { [Op.in]: seedUserIds } } });
+    }
     console.log('✅ Cleanup complete\n');
 
     // Major US cities with coordinates
@@ -95,6 +105,9 @@ module.exports = {
           rating_count: Math.floor(Math.random() * 50),
           location: city.name,
           coach_commission_percent: 92.0,
+          stripe_account_id: `acct_demo_seed_${i + 1}`,
+          stripe_ready: true,
+          stripe_onboarding_completed_at: new Date(),
         });
 
         coaches.push({ user, profile, city });

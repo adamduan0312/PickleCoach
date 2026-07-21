@@ -1,6 +1,10 @@
 /**
  * Seed a single booking for dispute testing (without going through booking/payment flow).
  *
+ * Prefer the modern pipeline for frontend/API work:
+ *   npm run seed:test-flows
+ *   npm run seed:all:dev
+ *
  * Usage:
  *   node scripts/seed-test-booking.js
  *   node scripts/seed-test-booking.js --lesson-id=2

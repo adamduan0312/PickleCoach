@@ -6,9 +6,10 @@ import { logger } from '../config/logger.js';
 import {
   canAccessBookingConversation,
   canSendBookingMessage,
-  isMessagingLocked,
 } from '../utils/bookingMessaging.js';
 import { ensureBookingConversation } from '../utils/bookingConversationSummary.js';
+import { serializeConversationInboxItem, serializeBookingForMessaging } from '../utils/conversationInboxDto.js';
+import * as notificationService from '../services/notificationService.js';
 
 const MAX_LIST_ALL_CONVERSATIONS = 10000;
 const MAX_LIST_ALL_MESSAGES = 10000;
@@ -18,10 +19,9 @@ function serializeMessage(message) {
   return plain;
 }
 
-function serializeConversation(conversation, { booking, messaging_locked } = {}) {
+function serializeConversation(conversation, { booking } = {}) {
   const plain = conversation?.toJSON ? conversation.toJSON() : { ...conversation };
   if (booking) plain.booking = booking;
-  if (messaging_locked != null) plain.messaging_locked = messaging_locked;
   return plain;
 }
 
@@ -78,13 +78,7 @@ export const getConversations = async (req, res) => {
       order: [['created_at', 'DESC']],
     });
 
-    const rows = conversations.rows.map((row) => {
-      const json = row.toJSON();
-      if (json.booking) {
-        json.messaging_locked = isMessagingLocked(json.booking);
-      }
-      return json;
-    });
+    const rows = conversations.rows.map((row) => serializeConversationInboxItem(row));
 
     if (!isPaginated) {
       return successResponse(res, rows, 'Conversations retrieved successfully');
@@ -129,8 +123,7 @@ export const getConversationById = async (req, res) => {
     });
 
     const payload = serializeConversation(conversation, {
-      booking: booking?.toJSON?.() ?? booking,
-      messaging_locked: isMessagingLocked(booking),
+      booking: serializeBookingForMessaging(booking),
     });
     payload.messages = messages.rows.map(serializeMessage);
     if (isPaginated) {
@@ -163,7 +156,9 @@ export const createConversation = async (req, res) => {
     if (existingConversation) {
       return successResponse(
         res,
-        serializeConversation(existingConversation, { messaging_locked: isMessagingLocked(booking) }),
+        serializeConversation(existingConversation, {
+          booking: serializeBookingForMessaging(booking),
+        }),
         'Conversation already exists',
       );
     }
@@ -171,7 +166,9 @@ export const createConversation = async (req, res) => {
     const conversation = await ensureBookingConversation(booking_id);
     return successResponse(
       res,
-      serializeConversation(conversation, { messaging_locked: isMessagingLocked(booking) }),
+      serializeConversation(conversation, {
+        booking: serializeBookingForMessaging(booking),
+      }),
       'Conversation created successfully',
       201,
     );
@@ -209,6 +206,23 @@ export const sendMessage = async (req, res) => {
     });
 
     await conversation.update({ updated_at: new Date() });
+
+    void notificationService
+      .notifyNewMessage({
+        booking: conversation.booking,
+        message,
+        sender: req.user,
+        conversationId: conversation.id,
+      })
+      .catch((err) => {
+        logger.warn({
+          component: 'messaging',
+          event: 'new_message_notify_failed',
+          conversationId: conversation.id,
+          messageId: message.id,
+          message: err?.message,
+        });
+      });
 
     return successResponse(res, serializeMessage(message), 'Message sent successfully', 201);
   } catch (error) {

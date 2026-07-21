@@ -2,6 +2,8 @@
 
 **Mindset:** Don’t just “test endpoints.” **Test user flows.** If every flow works from start to finish, your system works. This guide gives you a flow-based order, a checklist, and what to verify for each request (including Stripe, Twilio, SendGrid).
 
+**Scripts / seeds:** For *what each seed or helper does* and *which one to run*, see **[`scripts/README.md`](./scripts/README.md)** (catalog). This guide answers *testing workflow order* (e.g. accept → simulate-capture → assert confirmed). `package.json` only lists *how to invoke* (`npm run …`).
+
 **Why two guides?** This file (backend) is only for Postman/testing. For full API reference use **backend/API_ENDPOINTS.md**; for setup→production use **backend/ACTION_ITEMS.md**. The root **PICKLECOACH_API_AND_SETUP_GUIDE.md** combines Postman + API reference + action items in one long doc—use that for a single file, or use this plus API_ENDPOINTS and ACTION_ITEMS for focused docs.
 
 ---
@@ -27,7 +29,7 @@ You can test almost everything with just the server and database running. No Str
 
 **What will be limited in Phase 1:**
 
-- **Create Booking** (`POST /api/bookings`) — **Requires Stripe.** For paid lessons, Create Booking will fail without Stripe. In Phase 1 you can still test **Get My Bookings**, **Get Booking By ID**, **Cancel Booking** if you have existing bookings.
+- **Create Booking** (`POST /api/bookings`) — **Requires Stripe.** For paid lessons, Create Booking will fail without Stripe. In Phase 1 you can still test **List My Student Bookings**, **List My Coach Bookings**, **Get My Booking by ID**, **Cancel Booking** if you have existing bookings.
 - **Stripe Connect** — Needs Stripe keys until Phase 2.
 - **Stripe Webhook** — Needs webhook secret + test events.
 - **Real email/SMS** — API returns 200 but delivery requires SendGrid/Twilio in Phase 2. **Booking accepted/declined/cancelled** and **lesson reminders** now enqueue in-app + email notifications when SendGrid is configured.
@@ -116,7 +118,8 @@ Create a Postman **Environment** (e.g. “PickleCoach Dev”) with:
 | `coach_id`    | *(set after creating coach profile)* | Coach resource ID |
 | `court_id`    | *(set after creating court)* | For coach courts / bookings |
 | `lesson_id`   | *(set after creating lesson)* | For bookings |
-| `booking_id`  | *(set after creating booking)* | For cancel, payments |
+| `booking_id`  | *(set after creating booking)* | For cancel, disputes, reviews |
+| `payment_id`  | *(set by Get My Payments)* | For Get Payment By ID (`{{payment_id}}`) |
 
 The collection already uses `{{base_url}}` and `{{api_url}}`. Register, Login, **Change Password**, and **Confirm Email Change** save `auth_token` and `user_id` in the **Tests** tab (new JWT from those responses replaces the variable) so you don’t have to copy-paste. Token persistence runs **before** assertions and updates **collection, environment, and globals** so `{{auth_token}}` is not stuck on an old value from another scope.
 
@@ -131,6 +134,8 @@ The collection already uses `{{base_url}}` and `{{api_url}}`. Register, Login, *
 | Student | `student.testflow@picklecoach.example.org` | `Test1234!Ab` |
 
 **Demo seed** (`npm run db:seed`) alternate accounts: `coach1@example.com` / `student1@example.com` / `password123`; `admin@picklecoach.com` / `admin123`.
+
+**Coach radius / geo search fixtures** (`npm run seed:geosearch`): additive coaches + courts around SF (and NYC/LA controls). Login as any student (e.g. test-flow student or `browse.geosearch@picklecoach.example.org` / `password123`), then `GET /coaches?lat=37.78&lng=-122.41&radius=10`. Vary `radius` (5 / 10 / 15 / 25 / 50) to see the Bay Area ladder; NYC/LA / no-court / soft-deleted-court coaches must not appear. Re-run after `db:seed` wipe (demo seed clears coach_court_locations).
 
 If test-flow login returns **401 Invalid credentials**, run `npm run fix:invalid-emails` or `node scripts/reset-user-password.js <email> 'Test1234!Ab'`.
 
@@ -249,8 +254,9 @@ Use this as a living checklist. Check off each line as you verify it (happy path
 - [ ] **Coach notify on create** — After Create Booking, check logs for `new_booking_request_for_coach` and coach notifications/email if SendGrid is set
 - [ ] Create Booking — 201 (verified email); **requires Stripe** (PaymentIntent created in same transaction); 403 if email not verified
 - [ ] Double booking blocked — same slot → 409 or 400
-- [ ] Get My Bookings — 200
-- [ ] Get Booking By ID — 200
+- [ ] List My Student Bookings (Student Dashboard) — 200 (`GET /api/students/me/bookings`; student role)
+- [ ] List My Coach Bookings (Coach Dashboard) — 200 (`GET /api/coaches/me/bookings`; coach role)
+- [ ] Get My Booking by ID — 200
 - [ ] **Accept Booking** (coach only) — 200; confirms pending booking, captures payment; notifies student (in-app + email when SendGrid configured); use this (not PUT status) to confirm
 - [ ] **Decline Booking** (coach only) — 200; body: message_to_student (required), decline_reason_code (optional enum: availability_conflict, sickness, weather, outside_service_area, lesson_not_fit, other); cancels PaymentIntent; notifies student
 - [ ] Complete Booking (Coach only) — 200; use `POST /api/bookings/:id/complete`; only when lesson has ended; allowed from confirmed/awaiting_verification
@@ -263,28 +269,35 @@ Use this as a living checklist. Check off each line as you verify it (happy path
 
 ### PAYMENTS
 
-- [ ] Get My Payments — 200
-- [ ] Get Payment By ID — 200
+- [ ] Get My Payments — 200 (saves `payment_id` from first row when present)
+- [ ] **Admin flow:** Get Payment By ID (Admin) — 200 for any payment id
+- [ ] **Coach / Student flow:** Get My Payment By ID — 200 only when you are `coach_id` or `student_id` on that payment; **403** otherwise
 
 ### REVIEWS
 
+**Coach flow (`2 – Flow: Coach`)** — read-only:
+
+- [ ] Get All Reviews — 200 (e.g. `?target_user_id={{coach_id}}` for reviews about you)
+
+**Student flow (`3 – Flow: Student`)** — primary student on a **completed** booking:
+
 - [ ] Get All Reviews — 200
-- [ ] Create Review — 201 (e.g. after lesson); 403 if not verified
-- [ ] Update Review — 200
-- [ ] Delete Review — 200
+- [ ] Create Review — 201; caller must be `primary_student_id`; coach inferred from booking (`target_user_id` not accepted); 403 if not the booking student; 403 if email not verified
+- [ ] Update Review — 200 (reviewer only)
+- [ ] Delete Review — 200 (reviewer only)
 
 ### MESSAGES
 
 - [ ] Get Conversations — 200 (participant or admin)
 - [ ] Create Conversation — 201 on **confirmed** booking with `messaging_locked: false`; **409** when locked (`pending`, `cancelled`, `completed`, etc.)
-- [ ] Get Conversation By ID — 200; history readable when locked; includes `messaging_locked`
+- [ ] Get Conversation By ID — 200; history readable when locked; `booking.messaging_locked` (not root-level)
 - [ ] Send Message — 201 with `message_text` on unlocked booking; **409** when locked; **403** for non-participant
 - [ ] Non-participant access — **403** on conversation read/send
 - [ ] Admin — can **view** conversations; cannot send (403)
 
 ### DISPUTES
 
-- [ ] Create Dispute — 201; students/coaches get 403 if not verified, admins are exempt on dispute-create routes; optional `notes` persisted; MVP `dispute_type_id`: **1** `coach_no_show_claim` (student opens), **8** `student_no_show_claim` (coach opens), 2 late_arrival, 3 misconduct, 4 lesson_not_completed, 5 refund_request, 6 billing_issue, 7 other (after migrations `20260408120000-canonical-dispute-types-mvp` + `20260421120000-dispute-types-attendance-claims`)
+- [ ] Create Dispute — 201; students/coaches get 403 if not verified, admins are exempt on dispute-create routes; optional `notes` persisted; active `dispute_type_id`: **1** `coach_no_show_claim` (student opens), **8** `student_no_show_claim` (coach opens), **3** `misconduct`, **4** `lesson_not_completed`, **7** `other` (refunds go in notes + resolve `financial_action`, not a dispute type)
 - [ ] Get All Disputes — 200
 - [ ] Get Dispute By ID — 200
 - [ ] Resolve Dispute — attendance claim — 200 (admin); body must include `decision` + `outcome` + `financial_action` (no `resolution_action_id`) for types **1** / **8**; e.g. `{"decision":"upheld","outcome":"coach_no_show","financial_action":"refund_student","resolution_notes":"…"}`; optional `data.resolution` in response
@@ -296,7 +309,7 @@ Use this as a living checklist. Check off each line as you verify it (happy path
 - [ ] **After Accept Booking** — student sees `booking_confirmed` notification (and email when SendGrid configured)
 - [ ] **After Decline Booking** — student sees `booking_declined` notification with `decline_reason_code`, `message_to_student`, `reason_line`, and `summary`
 - [ ] **After Cancel Booking** — other party sees `booking_cancelled` notification
-- [ ] **Lesson reminders** — worker sends 48h / 24h / 1h reminders (in-app + email); verify via `GET /api/notifications` or SendGrid Activity after worker runs
+- [ ] **Lesson reminders** — worker sends **24h** (in-app + email) and **1h** (in-app only); verify via `GET /api/notifications` or SendGrid Activity after worker runs
 
 ### ADMIN
 

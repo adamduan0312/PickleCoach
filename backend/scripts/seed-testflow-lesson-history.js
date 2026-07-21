@@ -238,9 +238,10 @@ async function main() {
       login_coach: { email: COACH_EMAIL, password: 'Test1234!Ab' },
       login_student: { email: STUDENT_EMAIL, password: 'Test1234!Ab' },
       endpoints: [
-        'GET /api/bookings',
+        'GET /api/students/me/bookings',
+        'GET /api/coaches/me/bookings',
         'GET /api/bookings/:id',
-        'GET /api/coaches/bookings',
+        'GET /api/admin/bookings',
         'GET /api/admin/bookings',
         'GET /api/admin/bookings/:id',
       ],

@@ -2,7 +2,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import { Op } from 'sequelize';
-import { User, UserRole, CoachProfile, UserReliability } from '../models/index.js';
+import { User, UserRole, CoachProfile, UserReliability, sequelize } from '../models/index.js';
 import { successResponse, errorResponse } from '../utils/response.js';
 import { serializeAuthProfileUser, serializeAuthSessionUser } from '../utils/userDto.js';
 import { logAudit } from '../utils/audit.js';
@@ -10,6 +10,7 @@ import { logger } from '../config/logger.js';
 import * as notificationService from '../services/notificationService.js';
 import { canSelfServiceAddRole } from '../utils/roleGovernance.js';
 import { countOtherLiveAdmins } from '../utils/userRoleChangeGuards.js';
+import { softDeleteUserAccount } from '../utils/userLifecycle.js';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
@@ -98,9 +99,14 @@ export const login = async (req, res) => {
       return errorResponse(res, 'Invalid credentials', 401);
     }
 
+    if (user.deleted_at) {
+      await logAudit(user.id, 'login_failed', 'users', user.id, null, { reason: 'account_deleted' }, req);
+      return errorResponse(res, 'This account has been deleted. Please contact support.', 401);
+    }
+
     if (!user.is_active) {
-      await logAudit(user.id, 'login_failed', 'users', user.id, null, { reason: 'account_inactive' }, req);
-      return errorResponse(res, 'Invalid credentials', 401);
+      await logAudit(user.id, 'login_failed', 'users', user.id, null, { reason: 'account_suspended' }, req);
+      return errorResponse(res, 'This account has been suspended. Please contact support.', 401);
     }
 
     const isValidPassword = await bcrypt.compare(password, user.password_hash);
@@ -268,7 +274,7 @@ export const forgotPassword = async (req, res) => {
       return successResponse(res, null, 'If an account exists with this email, a password reset link has been sent', 200);
     }
 
-    if (!user.is_active) {
+    if (user.deleted_at || !user.is_active) {
       return successResponse(res, null, 'If an account exists with this email, a password reset link has been sent', 200);
     }
 
@@ -382,15 +388,10 @@ export const deleteMyAccount = async (req, res) => {
     }
 
     const beforeState = user.toJSON();
-    await user.update({
-      deleted_at: new Date(),
-      is_active: false,
+    await sequelize.transaction(async (transaction) => {
+      await softDeleteUserAccount(user, { transaction });
     });
-
-    const coachProfile = await CoachProfile.findOne({ where: { user_id: user.id } });
-    if (coachProfile) {
-      await coachProfile.update({ deleted_at: new Date() });
-    }
+    await user.reload();
 
     await logAudit(req.user.id, 'user_self_deleted', 'users', user.id, beforeState, { deleted_at: user.deleted_at }, req);
 

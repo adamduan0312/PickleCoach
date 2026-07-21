@@ -6,6 +6,8 @@ import { logger } from '../config/logger.js';
 import { courtCreatePayloadRejectsCoachCourtFields } from '../utils/validateCourtCreatePayload.js';
 import { parseCoachCourtLinkCoachNotesFromBody } from '../utils/coachCourtLinkNotes.js';
 import { publicCourtDirectoryWhere } from '../utils/courtPublicDirectory.js';
+import { findPublicActiveCoach } from '../utils/userLifecycle.js';
+import { serializeCourtForPublicViewer } from '../utils/courtAddressVisibility.js';
 
 /** Max miles a new court can be from a coach's existing courts (prevents linking/creating courts far away) */
 const MAX_COURT_DISTANCE_MILES = 100;
@@ -73,7 +75,10 @@ const sortCourtsByDistanceFrom = (courts, originLat, originLng) =>
 
 /**
  * GET /api/courts
- * Public directory only: excludes `is_private` courts (see `publicCourtDirectoryWhere`).
+ * Public directory only: excludes courts with `is_private: true` (discovery flag —
+ * see `publicCourtDirectoryWhere`). Does not affect coach/booking surfaces.
+ * Note: coach court lists still redact private *addresses* for students; that is
+ * address visibility, not directory discovery.
  * - No lat/lng: all courts (capped) when page & limit omitted; else paginated.
  * - With lat/lng (+ radius): bounding box; results ordered by distance; lazy import if empty.
  */
@@ -179,8 +184,9 @@ export const searchCourts = async (req, res) => {
 
 /**
  * GET /api/courts/:id
- * Public directory only: private courts return **404** (same message as missing) — not discoverable by id.
- * For coach-linked courts (including private), use `GET /api/coaches/:id/courts`.
+ * Public directory only: courts with `is_private: true` return **404** (same message
+ * as missing) — hidden from public discovery by id, not from coach-linked surfaces.
+ * For coach-linked courts (including discovery-hidden), use `GET /api/coaches/:id/courts`.
  */
 export const getCourt = async (req, res) => {
   try {
@@ -348,6 +354,7 @@ export const createCourt = async (req, res) => {
  * GET /api/coaches/:id/courts
  * List courts where a coach teaches (for students viewing a coach's profile).
  * Public endpoint; no auth required.
+ * Private-court exact address is always redacted here (booking endpoints unlock by status).
  */
 export const getCoachCourtsById = async (req, res) => {
   try {
@@ -361,8 +368,8 @@ export const getCoachCourtsById = async (req, res) => {
       return res.status(400).json(createErrorResponse('Valid coach ID is required'));
     }
 
-    const coachProfile = await CoachProfile.findOne({ where: { user_id: coachId } });
-    if (!coachProfile) {
+    const coach = await findPublicActiveCoach(coachId);
+    if (!coach) {
       return res.status(404).json(createErrorResponse('Coach not found'));
     }
 
@@ -384,14 +391,13 @@ export const getCoachCourtsById = async (req, res) => {
 
     const data = coachCourts.rows.map((link) => {
       const court = link.court;
-      return {
-        court_id: court.id,
-        name: court.name,
-        address: court.address ?? null,
-        lat: court.latitude != null ? parseFloat(court.latitude) : null,
-        lng: court.longitude != null ? parseFloat(court.longitude) : null,
-        is_private: court.is_private,
-      };
+      const serialized = serializeCourtForPublicViewer(court, {
+        includeId: true,
+        idKey: 'court_id',
+        latKey: 'lat',
+        lngKey: 'lng',
+      });
+      return serialized;
     });
 
     if (!isPaginated) {

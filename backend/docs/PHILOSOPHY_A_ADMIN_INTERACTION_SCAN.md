@@ -22,7 +22,7 @@ This document lists backend patterns after the **2026-06** alignment pass, and c
 | **Intentional security / product** | `authController.addUserRole` (**403** if session has `admin`); `authorize('admin')`; dispute resolve; `requireVerifiedEmailUnlessAdmin` | Keep. |
 | **Supervisor OR participant (additive)** | `paymentController.getPaymentById`, `reviewController`, `lessonController`/`courtController` ownership, `messageController` “admin OR on booking” | `admin` **adds** access; does not remove student/coach. |
 | **Omniscient read when admin** | `getConversations`, `getRescheduleHistory`, `getDisputes`, `getPayments` (admin branch) | Callers with **`admin`** skip narrow participant filters — **broader** than student-only; dual-role users keep **both** student/coach APIs and admin breadth. Optional future hardening: scope **`/api/*`** lists to participant-only when product wants data minimization on “student app” URLs (not required for Philosophy A). |
-| **Pure-admin booking redirect** | `getBookings` / `getBookingById` / `cancelBooking` on `/api/bookings` | **Intentional** — admin-without-capability uses admin APIs. |
+| **Pure-admin booking redirect** | `getBookingById` / `cancelBooking` on `/api/bookings/:id` (and related mutation routes) | **Intentional** — admin-without-capability uses admin APIs for detail/cancel where documented. |
 
 ### Violations fixed in this pass
 
@@ -40,7 +40,7 @@ This document lists backend patterns after the **2026-06** alignment pass, and c
 | Area | Change |
 |------|--------|
 | `bookingController.createBooking` | Requires **`student`** only; removed blanket denial when `admin` also present. |
-| `bookingController.getBookings` | **Pure admin** (admin without student/coach) on non-admin routes → still directed to admin list API. Users with **student or coach** use participant-scoped listing on `/api/bookings`. |
+| `bookingController.getAdminBookings` / role dashboards | Admin lists via **`GET /api/admin/bookings`**. Participant dashboards use **`GET /api/coaches/me/bookings`** and **`GET /api/students/me/bookings`** (no combined `/api/bookings` list). |
 | `bookingController.getBookingById` | **Participants** always allowed on non-admin routes; uninvolved admin still uses admin route. |
 | `bookingController.cancelBooking` | **Participants** cancel as coach/student (including admin+dual role); uninvolved admin on public route still told to use admin cancel. `cancelledBy` prefers coach/student when applicable. |
 | `bookingController` reliability after cancel / coach no-show | Removed skip when target had `admin` in effective roles. |

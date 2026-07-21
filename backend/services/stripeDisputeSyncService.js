@@ -6,6 +6,11 @@ import {
   BookingTransitionVia,
 } from './bookingStateMachine.js';
 import { applyDisputeStatusTransition, DisputeTransitionVia } from './disputeStateMachine.js';
+import {
+  buildStripeDisputePaymentPatch,
+  isTerminalStripeDisputeStatus,
+  shouldReleaseBookingFromStripeDisputeTerminal,
+} from './paymentStripeContract.js';
 
 /**
  * Map Stripe Dispute.status to in-app disputes.status enum.
@@ -45,28 +50,44 @@ export async function syncStripeDisputeToDatabase(stripeDispute, { eventType } =
   }
 
   const localStatus = mapStripeDisputeStatusToLocal(stripeDispute.status);
-  const isTerminal = ['won', 'lost', 'charge_refunded'].includes(stripeDispute.status);
+  const isTerminal = isTerminalStripeDisputeStatus(stripeDispute.status);
 
-  await payment.update({
-    escrow_status: 'disputed',
-    stripe_dispute_id: stripeDispute.id,
-    stripe_dispute_status: stripeDispute.status,
-  });
+  await payment.update(buildStripeDisputePaymentPatch(stripeDispute));
 
-  if (payment.booking && !isTerminal) {
-    try {
-      await applyBookingStatusTransition(payment.booking, {
-        toStatus: 'disputed',
-        via: BookingTransitionVia.STRIPE_DISPUTE_OPEN,
-      });
-    } catch (err) {
-      logger.warn({
-        component: 'stripe',
-        event: 'booking_disputed_transition_rejected',
-        bookingId: payment.booking_id,
-        message: err?.message || String(err),
-        code: err?.code,
-      });
+  if (payment.booking) {
+    if (isTerminal) {
+      if (shouldReleaseBookingFromStripeDisputeTerminal(payment.booking.status, stripeDispute.status)) {
+        try {
+          await applyBookingStatusTransition(payment.booking, {
+            toStatus: 'completed',
+            via: BookingTransitionVia.STRIPE_DISPUTE_TERMINAL,
+          });
+        } catch (err) {
+          logger.warn({
+            component: 'stripe',
+            event: 'booking_disputed_terminal_release_rejected',
+            bookingId: payment.booking_id,
+            stripeStatus: stripeDispute.status,
+            message: err?.message || String(err),
+            code: err?.code,
+          });
+        }
+      }
+    } else {
+      try {
+        await applyBookingStatusTransition(payment.booking, {
+          toStatus: 'disputed',
+          via: BookingTransitionVia.STRIPE_DISPUTE_OPEN,
+        });
+      } catch (err) {
+        logger.warn({
+          component: 'stripe',
+          event: 'booking_disputed_transition_rejected',
+          bookingId: payment.booking_id,
+          message: err?.message || String(err),
+          code: err?.code,
+        });
+      }
     }
   }
 
@@ -125,5 +146,6 @@ export async function syncStripeDisputeToDatabase(stripeDispute, { eventType } =
     localStatus,
     eventType,
     paymentId: payment.id,
+    terminal: isTerminal,
   });
 }

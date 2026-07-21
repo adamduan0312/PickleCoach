@@ -2,6 +2,7 @@ import { Op } from 'sequelize';
 import { Payment, Booking, User } from '../models/index.js';
 import { successResponse, errorResponse, paginatedResponse } from '../utils/response.js';
 import { getPagination, getPagingData } from '../utils/pagination.js';
+import { serializePaymentListItem } from '../utils/paymentDto.js';
 import { logger } from '../config/logger.js';
 
 const MAX_LIST_ALL_PAYMENTS = 10000;
@@ -21,7 +22,8 @@ export const getPayments = async (req, res) => {
     if (coach_id) where.coach_id = coach_id;
 
     const roles = req.user.roles || [];
-    if (!roles.includes('admin')) {
+    const isAdmin = roles.includes('admin');
+    if (!isAdmin) {
       const isCoach = roles.includes('coach');
       const isStudent = roles.includes('student');
       // Philosophy A: coach + student are additive — list payments where user is coach OR student (never pick only one role).
@@ -48,12 +50,23 @@ export const getPayments = async (req, res) => {
       order: [['created_at', 'DESC']],
     });
 
+    const mapRow = (row) => serializePaymentListItem(row, { isAdmin });
+
     if (!isPaginated) {
-      return successResponse(res, payments.rows, 'Payments retrieved successfully');
+      return successResponse(
+        res,
+        payments.rows.map(mapRow),
+        'Payments retrieved successfully',
+      );
     }
 
     const response = getPagingData(payments, page, queryLimit);
-    return paginatedResponse(res, response.items, response.pagination, 'Payments retrieved successfully');
+    return paginatedResponse(
+      res,
+      response.items.map(mapRow),
+      response.pagination,
+      'Payments retrieved successfully',
+    );
   } catch (error) {
     logger.error('Get payments error:', error);
     return errorResponse(res, 'Failed to retrieve payments', 500);
@@ -63,6 +76,7 @@ export const getPayments = async (req, res) => {
 export const getPaymentById = async (req, res) => {
   try {
     const { id } = req.params;
+    const isAdmin = (req.user.roles || []).includes('admin');
     const payment = await Payment.findByPk(id, {
       include: [
         { model: Booking, as: 'booking' },
@@ -75,11 +89,15 @@ export const getPaymentById = async (req, res) => {
       return errorResponse(res, 'Payment not found', 404);
     }
 
-    if (!(req.user.roles || []).includes('admin') && req.user.id !== payment.coach_id && req.user.id !== payment.student_id) {
+    if (!isAdmin && req.user.id !== payment.coach_id && req.user.id !== payment.student_id) {
       return errorResponse(res, 'Unauthorized', 403);
     }
 
-    return successResponse(res, payment, 'Payment retrieved successfully');
+    return successResponse(
+      res,
+      serializePaymentListItem(payment, { isAdmin }),
+      'Payment retrieved successfully',
+    );
   } catch (error) {
     logger.error('Get payment error:', error);
     return errorResponse(res, 'Failed to retrieve payment', 500);

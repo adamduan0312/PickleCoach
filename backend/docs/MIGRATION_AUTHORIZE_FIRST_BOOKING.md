@@ -75,9 +75,15 @@ Legacy `seed:test-flows` `pending_future` has no PaymentIntent — suitable for 
   "lesson_id": 1,
   "scheduled_at": "2026-07-01T15:00:00.000Z",
   "duration_minutes": 60,
-  "amount": 54
+  "court_location_id": 58,
+  "amount": 54,
+  "amount_cents": 5400,
+  "currency": "usd"
 }
 ```
+
+- **`amount`**: USD dollars (not Stripe cents). **`amount_cents`**: Stripe PaymentIntent units.
+Required body: `lesson_id`, `scheduled_at`, `court_location_id`. Duration/price come from the lesson — do not send `duration_minutes`.
 
 **`POST /api/bookings/confirm`** (201 / 200 idempotent):
 

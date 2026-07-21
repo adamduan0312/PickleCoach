@@ -11,7 +11,7 @@ Authorization: Bearer <token>
 
 **Response convention**: For create/update endpoints, the response body echoes all **safe** request-body fields (same keys, with `null` when optional and unset) so clients see a consistent shape and can easily compare request vs response in Postman. Sensitive fields (e.g. password) are never returned.
 
-**Delete behavior**: **Soft delete** (set `deleted_at` / `is_active: false`, row kept): users (self-delete `DELETE /api/auth/me`, admin `DELETE /api/users/:id`), coach profile (when user is deleted), **courts** (`DELETE /api/courts/:id` — **admin only**; removes the global `court_locations` row and all `coach_court_locations` for that court), lessons (`DELETE /api/lessons/:id`). **Hard delete** (row removed): coach availability (`DELETE /api/coaches/me/availability/:id` coach-only, or `DELETE /api/admin/coaches/:coachId/availability/:id` admin), coach–court **unlink** (`DELETE /api/coaches/me/courts/:courtId` — coach only; **only** your link, not the global court), admin unlink another coach (`DELETE /api/admin/coaches/:coachId/courts/:courtId`), reviews (`DELETE /api/reviews/:id`). Bookings are cancelled via `POST /api/bookings/:id/cancel`, not deleted.
+**Delete behavior**: **Soft delete** (set `deleted_at` / `is_active: false`, row kept): users (self-delete `DELETE /api/auth/me`, admin `DELETE /api/users/:id`). Through the current application, the only operation that soft-deletes a coach profile is soft-deleting the entire user account. Also soft-deleted: **courts** (`DELETE /api/courts/:id` — **admin only**; removes the global `court_locations` row and all `coach_court_locations` for that court), lessons (`DELETE /api/lessons/:id`). **Hard delete** (row removed): coach availability (`DELETE /api/coaches/me/availability/:id` coach-only, or `DELETE /api/admin/coaches/:coachId/availability/:id` admin), coach–court **unlink** (`DELETE /api/coaches/me/courts/:courtId` — coach only; **only** your link, not the global court), admin unlink another coach (`DELETE /api/admin/coaches/:coachId/courts/:courtId`), reviews (`DELETE /api/reviews/:id`). Bookings are cancelled via `POST /api/bookings/:id/cancel`, not deleted.
 
 ---
 
@@ -107,7 +107,11 @@ Authorization: Bearer <token>
   }
   ```
 - **Note**: The `user` object includes `email_verified_at` (ISO date or `null`) so the client can show verification status and avoid unnecessary verify-email calls.
-- **Error responses**: `400` (validation failed – invalid body), `401` (invalid credentials — same message for unknown email, wrong password, or inactive account), `500` (server error).
+- **Error responses**: `400` (validation), `401` with distinct messages:
+  - Invalid email/password → `Invalid credentials`
+  - Soft-deleted account → `This account has been deleted. Please contact support.`
+  - Suspended account (`is_active: false`, not deleted) → `This account has been suspended. Please contact support.`
+  - `500` (server error).
 
 ### `POST /api/auth/refresh`
 - **Auth**: None (body carries the JWT)
@@ -140,7 +144,7 @@ Authorization: Bearer <token>
     }
   }
   ```
-- **Error responses**: `400` (missing body token), `401` (**Authentication failed** — invalid signature, malformed token, **token revoked** / version mismatch, unknown user id, or account unusable). For unusable accounts the `error` string is more specific: **deleted** (`This account has been deleted…`) vs **inactive** (`This account is inactive…`) vs **unknown user** (`Invalid or inactive user`). Use login to obtain a new token.
+- **Error responses**: `400` (missing body token), `401` (**Authentication failed** — invalid signature, malformed token, **token revoked** / version mismatch, unknown user id, or account unusable). For unusable accounts the `error` string is more specific: **deleted** (`This account has been deleted. Please contact support.`) vs **suspended** (`This account has been suspended. Please contact support.`) vs **unknown user** (`Invalid or inactive user`). Use login to obtain a new token.
 
 ### `POST /api/auth/forgot-password`
 - **Auth**: None required
@@ -376,12 +380,11 @@ Authorization: Bearer <token>
         "late_cancels": 0,
         "no_shows": 0,
         "misconduct_penalties": 0,
-        "late_arrival_penalties": 0
       }
     }
   }
   ```
-- **Reliability** (optional): When a matching `user_reliability` row exists, **`reliability`** (coach role) and/or **`reliability_student`** (student role) include only a **lightweight summary** for session/profile state (`reliability_score`, `total_bookings`, `late_cancels`, `no_shows`, `misconduct_penalties`, `late_arrival_penalties`). **Coach-facing detail** (more counters, `score_source`, no engine internals): **`GET /api/coaches/me/reliability`**. **Student self** (full persisted coach-equivalent row for that role): **`GET /api/students/me/reliability`**. **Admin audit** (decay breakdowns, diagnostics, legacy aliases): **`GET /api/admin/users/:id/reliability`**.
+- **Reliability** (optional): When a matching `user_reliability` row exists, **`reliability`** (coach role) and/or **`reliability_student`** (student role) include only a **lightweight summary** for session/profile state (`reliability_score`, `total_bookings`, `late_cancels`, `no_shows`, `misconduct_penalties`). **Coach-facing detail** (more counters, `score_source`, no engine internals): **`GET /api/coaches/me/reliability`**. **Student self** (curated detail, same style as coach `/me`): **`GET /api/students/me/reliability`**. **Admin audit** (decay breakdowns, diagnostics, legacy aliases): **`GET /api/admin/users/:id/reliability`**.
 - **Notes**: `email_verified_at` supports verification UX. `coachProfile` is whitelisted public coach fields (or `null`). **`roles`** are **effective** (after admin governance filter when locked). **`role_state`** documents lock source and allow-list.
 - **Error responses**: `401` (missing or invalid token), `500` (server error).
 
@@ -480,6 +483,7 @@ Authorization: Bearer <token>
   - `GET /api/payments`, `GET /api/payments/:id` (payment history)
   - `GET|POST|PUT|DELETE /api/payment-methods/...` (saved payment methods)
   - `POST /api/coaches/me/stripe-connect/onboard`, `GET /api/coaches/me/stripe-connect/status` (Stripe Connect — admins exempt)
+  - `GET /api/coaches/me/marketplace-status` (listing checklist — separate from dashboard readiness)
   - The frontend should:
     - Show a non-blocking banner after signup/first login prompting verification.
     - Automatically call `POST /api/auth/verify-email/request` when the user asks to resend.
@@ -490,9 +494,19 @@ Authorization: Bearer <token>
 
 
 **User lifecycle (best practice):**
-- **`deleted_at`**: Soft-delete. When set, the account is treated as deleted (data kept for audit). Login and list endpoints exclude deleted users unless otherwise specified.
-- **`is_active`**: Whether the account can log in and appear in “active” lists (e.g. coach directory). When an admin or user deletes an account, the code sets both `deleted_at` and `is_active: false`, so **deleted ⇒ inactive**. The reverse is not required: an admin can set `is_active: false` without deleting (e.g. suspend). So **inactive does not imply deleted**.
-- **List behavior**: `GET /api/users` filters only by **deletion** (use `include_deleted=true` to include soft-deleted). Each user in the response includes `is_active`; filter or display active/inactive on the client if needed.
+
+| State | `is_active` | `deleted_at` | Meaning |
+|---|---|---|---|
+| **Active** | `true` | `null` | Can log in; appears in public coach discovery when applicable |
+| **Suspended** | `false` | `null` | Cannot log in; row and coach profile remain; reversible without data loss |
+| **Deleted** | `false` | set | Soft-deleted; coach profile soft-deleted; restorable by admin |
+
+- **`deleted_at`**: Soft-delete timestamp. When set, the account is Deleted (data kept for audit). Login and default list endpoints exclude deleted users unless `include_deleted=true`.
+- **`is_active`**: Access flag. **Suspension** sets `is_active: false` without setting `deleted_at` and **does not** touch `coach_profiles`, lessons, availability, or reviews. Soft-delete always sets both `deleted_at` and `is_active: false`.
+- **Invalid state**: `is_active: true` with `deleted_at` set is rejected.
+- **List behavior**: `GET /api/users` default returns non–soft-deleted users (**Active + Suspended**). Use `include_deleted=true` to include Deleted. Each row includes `is_active` / `deleted_at` for client filtering.
+- **Cascade on delete/restore**: Through the current application, the only operation that soft-deletes a coach profile is soft-deleting the entire user account (sets **`coach_profiles.deleted_at`**). Lessons, availability, reviews, bookings, and courts are **not** soft-deleted with the user (lessons remain for booking history). Restore clears **`users.deleted_at`**, sets **`is_active: true`**, and clears **`coach_profiles.deleted_at`** in the same transaction.
+
 
 ### `GET /api/users`
 - **Auth**: Required (Admin only)
@@ -501,7 +515,7 @@ Authorization: Bearer <token>
   - `page`: number (optional; used when `limit` is provided, default 1)
   - `limit`: number (optional; provide to paginate. Omit to return all matching users)
   - `role`: string (optional, filter by role: 'student' | 'coach' | 'admin')
-  - `include_deleted`: string `'true'` | `'false'` (optional). If `'true'`, includes soft-deleted users; default is non-deleted only.
+  - `include_deleted`: string `'true'` | `'false'` (optional). If `'true'`, includes soft-deleted users; default is non-deleted only (**Active + Suspended**).
   - `search`: string (optional). Filters users by **full name** or **email** (case-insensitive, partial match). Use for admin "find user" without scrolling the full list.
 - **Note**: Response items are a **whitelist** of admin fields (`id`, `full_name`, `email`, `avatar_url`, `phone`, `phone_verified`, `timezone`, `roles`, `is_active`, `deleted_at`, `email_verified_at`, `created_at`, `last_login`). **Omitted** from the list contract: `password_hash`, `token_version`, password-reset / email-verification / email-change tokens, `stripe_customer_id`, and other persistence-only columns.
 - **Pagination contract**: Paged mode includes `pagination` (`page`, `limit`, `total`, `totalPages`). All-results mode returns only `data`.
@@ -534,7 +548,7 @@ Authorization: Bearer <token>
 ### `GET /api/users/:id`
 - **Auth**: Required (Admin only)
 - **Description**: Get user by ID (admin only). Non-admins should use `GET /api/auth/profile` for their own profile.
-- **Response shape**: Whitelisted user fields plus `stripe_customer_id` (Stripe Customer id for payment/support lookup), `coachProfile` (when present), and **`reliability` / `reliability_student`** as **six-field summaries** only (`reliability_score`, `total_bookings`, `late_cancels`, `no_shows`, `misconduct_penalties`, `late_arrival_penalties`). **Not** included: auth/recovery tokens, `token_version`, `score_source`, timestamps on reliability blobs, decay/smoothing internals. Coaches who need more than that summary should use **`GET /api/coaches/me/reliability`** (curated coach detail). For persisted-row audit, decay/reconstruct diagnostics, and engine parameters use **`GET /api/admin/users/:id/reliability`**.
+- **Response shape**: Whitelisted user fields plus `stripe_customer_id` (Stripe Customer id for payment/support lookup), `coachProfile` (when present), and **`reliability` / `reliability_student`** as **five-field summaries** only (`reliability_score`, `total_bookings`, `late_cancels`, `no_shows`, `misconduct_penalties`). **Not** included: auth/recovery tokens, `token_version`, `score_source`, timestamps on reliability blobs, decay/smoothing internals. Coaches who need more than that summary should use **`GET /api/coaches/me/reliability`** (curated coach detail). For persisted-row audit, decay/reconstruct diagnostics, and engine parameters use **`GET /api/admin/users/:id/reliability`**.
 - **Reliability**: Users with the **coach** role may include **`reliability`**. Users with the **student** role may include **`reliability_student`**. Dual-role users can have both.
 - **Response** (Status: 200):
   ```json
@@ -579,7 +593,6 @@ Authorization: Bearer <token>
         "late_cancels": 0,
         "no_shows": 0,
         "misconduct_penalties": 0,
-        "late_arrival_penalties": 0
       }
     }
   }
@@ -587,7 +600,11 @@ Authorization: Bearer <token>
 
 ### `PUT /api/users/:id`
 - **Auth**: Required (Admin only)
-- **Description**: Update user (admin only - can update **roles** (full set), `is_active`, email, avatar_url, etc.). If **`email`** is changed to a new value, **`token_version`** is incremented so **all** of that user’s sessions (every device) are invalidated — the user must log in again.
+- **Description**: Update user (admin only - can update **roles** (full set), **`is_active`** (suspend/reactivate), **`deleted_at: null`** (restore), email, avatar_url, etc.). If **`email`** is changed to a new value, **`token_version`** is incremented so **all** of that user’s sessions (every device) are invalidated — the user must log in again.
+- **Lifecycle actions** (same endpoint):
+  - **Suspend**: `{ "is_active": false }` — blocks login; does **not** set `deleted_at`; does **not** touch coach profile / lessons / availability / reviews.
+  - **Reactivate**: `{ "is_active": true }` — only when `deleted_at` is already null (Suspended → Active). **400** if the user is still Deleted.
+  - **Restore**: `{ "deleted_at": null, "is_active": true }` — clears soft-delete, sets active, and restores soft-deleted **coach profile** in one transaction.
 - **Roles**: Send **`roles`** as the **complete** set to assign (e.g. `["student","coach"]` or `["admin","student","coach"]`). Omit **`roles`** to leave existing roles unchanged. Sending **`roles`** **replaces** all `user_roles` rows for that user (avoids accidentally dropping a role when editing other fields). Duplicates in the array are rejected by validation; use each of `student`, `coach`, `admin` at most once (1–3 roles). **Independent capabilities:** any non-empty subset is allowed — including **`admin`** with **`student`**, and all three together. The legacy field **`role`** is **not** accepted (returns **400** with a validation hint — use **`roles`**).
 - **Admin safeguards**: You **cannot** remove your **own** `admin` role via this endpoint (**400**, *You cannot remove your own admin role.*) — including when you still keep another role (e.g. you have `["admin","coach"]` and send `"roles": ["coach"]` on **your own** `PUT /api/users/:id`). Another admin must change your roles, or you must include **`admin`** in the array you submit for yourself. You **cannot** remove `admin` from the **last** admin user in the system when editing **someone else** (**409**, *At least one admin must remain in the system.*).
 - **Coach vs `user_roles`**: Stripping **`coach`** from **`roles`** revokes **coach API access** only; **`coach_profiles`**, **`stripe_account_id`**, bookings, payments, and payouts **are not deleted**. Clients should explain that to users (e.g. coach access removed by admin while marketplace/financial history remains).
@@ -600,7 +617,8 @@ Authorization: Bearer <token>
     "phone": "string (optional, max 30 chars)",
     "timezone": "string (optional)",
     "avatar_url": "string (optional, URI or empty string to clear)",
-    "is_active": "boolean (optional, admin only)",
+    "is_active": "boolean (optional): true = reactivate, false = suspend",
+    "deleted_at": "null only (optional): restore soft-deleted user + coach profile",
     "roles": ["optional: 1–3 unique entries: student | coach | admin"],
     "role_governance_locked": "boolean (optional): false alone clears lock + allow-list (must not be sent together with roles)"
   }
@@ -622,6 +640,7 @@ Authorization: Bearer <token>
         "source": "admin"
       },
       "is_active": true,
+      "deleted_at": null,
       "phone": "+1234567890",
       "timezone": "America/New_York",
       "avatar_url": null
@@ -629,11 +648,11 @@ Authorization: Bearer <token>
   }
   ```
 - **`data.roles` vs `data.role_state`**: **`roles`** is the **persisted `user_roles`** set after the update (assignment / audit). **`role_state.effective_roles`** is the **permission view** (same formula as `authorize()` / `GET /api/auth/profile` for a user with governance). They match when unlocked or when assignments ⊆ allow-list. See **`docs/ROLE_SYSTEM_REFERENCE.md`**.
-- **Error responses**: `400` (validation, email in use, cannot activate deleted user without undelete, **cannot remove your own admin role**), `404` (user not found), `409` (**last live admin** — cannot strip `admin` when no other **active, non-deleted** admin exists), `500` (server error).
+- **Error responses**: `400` (validation, email in use, cannot activate deleted user without restore, **cannot remove your own admin role**), `404` (user not found), `409` (**last live admin** — cannot strip `admin` when no other **active, non-deleted** admin exists), `500` (server error).
 
 ### `DELETE /api/users/:id`
 - **Auth**: Required (Admin only)
-- **Description**: **Soft delete** user (admin only). Sets `deleted_at` and `is_active: false` on the user; if the user has a coach profile, it is also soft-deleted. Deleted users are excluded from list/get and cannot log in.
+- **Description**: **Soft delete** user (admin only). Sets `deleted_at` and `is_active: false` on the user; if the user has a coach profile, it is also soft-deleted (same transaction). Lessons / availability / reviews are **not** removed. Deleted users are excluded from default lists and cannot log in. To reverse, use **Restore** on `PUT /api/users/:id` (`deleted_at: null`, `is_active: true`) — restores user **and** coach profile.
 - **Admin safeguard**: Cannot delete a user who still has the **`admin`** role in `user_roles` unless at least one **other live** admin remains (`users.deleted_at` is null, `is_active` is true, and that user has an `admin` row). Soft-deleted admins do **not** count — otherwise the guard could see “ghost” admin rows and allow wiping the last real admin. **409** response: `success: false`, `message` explains the rule, and **`code`: `"last_admin_required"`** for programmatic handling. (If you see **`401`** with `{ "error": "…" }` and no `success` field, that is **`authenticate`** — e.g. token for a **deleted** user — not this safeguard.)
 - **Response** (Status: 200):
   ```json
@@ -651,7 +670,15 @@ Authorization: Bearer <token>
 
 ### `GET /api/coaches` (List / search coaches)
 - **Auth**: Required (student or admin only). Coaches cannot use this endpoint (403).
-- **Description**: List/search coaches with optional filters. Use **lat**, **lng**, and **radius** to find coaches who have courts within that distance (e.g. "coaches near me"). If `page`/`limit` are omitted, returns all matching coaches in `data` (server-capped). If `page` or `limit` is provided, response includes `pagination`. **Each coach includes `reliability`**: `{ "reliability_score", "last_updated" }` for marketplace display. If there is no coach `user_reliability` row yet, **`reliability_score`** defaults to **100** and **`last_updated`** is **`null`**.
+- **Description**: List/search **marketplace-eligible** coaches with optional filters. Use **lat**, **lng**, and **radius** to find coaches who have courts within that distance (e.g. "coaches near me"). If `page`/`limit` are omitted, returns all matching coaches in `data` (server-capped). If `page` or `limit` is provided, response includes `pagination`.
+- **Marketplace eligibility (always enforced, DB-only — no Stripe API per coach)**: A coach appears only when **all** are true:
+  1. Active user + coach role + non-deleted **coach profile**
+  2. **`coach_profiles.stripe_ready = true`** (local cache; synced via Connect status / `account.updated` webhook)
+  3. **≥1 active lesson** (`is_active`, not soft-deleted)
+  4. **≥1 non-deleted court** linked via CoachCourt (**any** `is_private` value — discovery flag only; coaches who teach only at courts hidden from the public directory remain listable)
+  5. **≥1 availability** row
+  Geo search further restricts courts to those near `(lat, lng)`. This matches booking reality (intent needs lesson + court + schedule; payment needs Stripe).
+- **DTO contract (flattened list card)**: Marketplace-friendly shape — **no** nested `coachProfile` / `coachCourts` / join-table IDs. Fields: `id`, `full_name`, `avatar_url`, `timezone`, profile summary (`headline`, `bio`, `experience_years`, `skill_rating`, `rating_system`, `certifications`, `location`, `rating_average`, `rating_count`), `reliability_score`, `reliability_last_updated`, and **`courts`** (name/`area`/lat/lng/`is_private`/`address`; **private courts redact** exact `address` and coordinates — see Court address visibility). When **lat+lng** are set, also **`distance_miles`** (nearest included court, 1 decimal) and per-court `distance_miles` (computed server-side even when GPS is redacted). Never exposes credentials or Stripe/commission fields. Soft-deleted courts are omitted.
 - **Query Parameters**:
   - `lat` (optional) – latitude in degrees (center point for distance filter)
   - `lng` (optional) – longitude in degrees (center point for distance filter)
@@ -661,7 +688,7 @@ Authorization: Bearer <token>
   - `min_rating` (optional) – minimum **review** `rating_average` (0–5), distinct from skill
   - `page` (optional) – page number (used when paginating)
   - `limit` (optional) – items per page; provide to paginate (omit for all results)
-- **Pagination contract**: Paged mode includes `pagination` (`page`, `limit`, `total`, `totalPages`). All-results mode returns only `data`.
+- **Pagination contract**: Paged mode includes `pagination`: `{ "totalItems", "totalPages", "currentPage", "pageSize" }`. All-results mode returns only `data`.
 - **Response** (Status: 200):
   ```json
   {
@@ -669,28 +696,41 @@ Authorization: Bearer <token>
     "message": "Coaches retrieved successfully",
     "data": [
       {
-        "id": 2,
-        "full_name": "Jane Coach",
-        "email": "jane@example.com",
-        "coachProfile": {
-          "headline": "CPR certified",
-          "skill_rating": 4.5,
-          "rating_system": "self",
-          "rating_average": 4.8
-        },
-        "reliability": {
-          "reliability_score": 85.5,
-          "last_updated": "2026-03-16T18:42:26.000Z"
-        }
+        "id": 37,
+        "full_name": "GeoSearch Coach SF Mission",
+        "avatar_url": null,
+        "timezone": "America/Los_Angeles",
+        "headline": "~1.5mi — inside radius 5 from downtown SF",
+        "bio": "Fixture coach for GET /coaches radius / geo search tests.",
+        "experience_years": 7,
+        "skill_rating": 4.0,
+        "rating_system": "self",
+        "certifications": null,
+        "location": "San Francisco Mission",
+        "rating_average": 4.9,
+        "rating_count": 10,
+        "reliability_score": 100,
+        "reliability_last_updated": null,
+        "distance_miles": 1.6,
+        "courts": [
+          {
+            "name": "GeoSearch Fixture SF Mission Courts",
+            "address": "Dolores St & 19th St, San Francisco, CA",
+            "latitude": 37.7599,
+            "longitude": -122.425,
+            "is_private": false,
+            "distance_miles": 1.6
+          }
+        ]
       }
     ]
   }
   ```
-  (Actual objects include other user/profile/join fields; **`reliability`** is always present on each item as above.)
+  **Detail** (`GET /api/coaches/:id`) still uses the nested `coachProfile` + `reliability` shell (plus lessons/reviews/availability). Use **`GET /api/coaches/:id/courts`** when court IDs are needed for booking.
 
 ### `GET /api/coaches/:id`
 - **Auth**: Required. **Roles**: Student, Admin only (coaches get 403).
-- **Description**: Get coach details by ID (for students viewing a coach profile, or admins). Includes the same **`reliability`** summary as list search: **`reliability_score`** and **`last_updated`** (defaults **100** / **`null`** when no row).
+- **Description**: Get coach details by ID (for students viewing a coach profile, or admins). Includes **`reliability`**: `{ "reliability_score", "last_updated" }` (defaults **100** / **`null`** when no row). **DTO contract**: nested public discovery shell (`coachProfile` without Stripe/commission/`deleted_at`) — not the flattened list card from **`GET /api/coaches`**.
 - **Response** (Status: 200):
   ```json
   {
@@ -737,12 +777,13 @@ Authorization: Bearer <token>
 
 | Endpoint | Audience | Purpose |
 |----------|----------|---------|
-| **`GET /api/auth/profile`** | Authenticated user | Session/profile; optional **`reliability`** / **`reliability_student`** = **summary only** (`reliability_score`, `total_bookings`, `late_cancels`, `no_shows`, `misconduct_penalties`, `late_arrival_penalties`). |
+| **`GET /api/auth/profile`** | Authenticated user | Session/profile; optional **`reliability`** / **`reliability_student`** = **summary only** (`reliability_score`, `total_bookings`, `late_cancels`, `no_shows`, `misconduct_penalties`). |
 | **`GET /api/coaches/me/reliability`** | Coach | **Detail view**: adds `score_source`, lesson-not-completed count, coach/student non-late cancel counts, etc. **Omits** persistence/engine internals (decayed totals, baselines, smoothing, badges, …). |
 | **`GET /api/admin/users/:id/reliability`** | Admin | **Full audit**: decay triplets, reconstructed score, `legacy_aliases`, scoring parameters. |
 
 - **Counters** (recent-window, scoring impact): **late_cancels**, **no_shows**, behavior dispute penalties, **`coach_cancels`**, **`student_cancels_non_late`**, **`total_bookings`**. **`score_source`**: `computed` vs `admin_override`.
 - **`policy_notes.late_student_cancel`**: Coach-facing help text for student late-cancel compensation (50% refund; retained amount compensates coach + platform fees). Display in cancellation/payments help UI.
+- **Related**: Coach booking inbox is **`GET /api/coaches/me/bookings`** (see Bookings section).
 - **Response** (Status: 200):
   ```json
   {
@@ -755,7 +796,6 @@ Authorization: Bearer <token>
         "total_bookings": 10,
         "late_cancels": 0,
         "no_shows": 0,
-        "late_arrival_penalties": 1,
         "misconduct_penalties": 1,
         "lesson_not_completed_penalties": 0,
         "coach_cancels": 1,
@@ -960,7 +1000,7 @@ Authorization: Bearer <token>
 
 ### `GET /api/coaches/:id/courts`
 - **Auth**: None required
-- **Description**: List courts where the given coach teaches. For students viewing a coach's profile before booking. Omit `page`/`limit` to return all matching rows (server-capped). Provide `page` or `limit` for paged mode. Available in Postman under **3 – Flow: Student** (Get Coach Courts).
+- **Description**: List courts where the given coach teaches. For students viewing a coach's profile before booking. Omit `page`/`limit` to return all matching rows (server-capped). Provide `page` or `limit` for paged mode. **Private courts** (`is_private: true`): exact `address` / `lat` / `lng` are **always redacted** here (`null`), **even if** the caller has a confirmed booking with this coach — use **`GET /api/bookings/:id`** for that booking’s court exact location. `area` (city/state) is included when derivable. Students still receive `court_id` for booking selection. Available in Postman under **3 – Flow: Student** (Get Coach Courts).
 - **Query Parameters**: Optional `page`, optional `limit`.
 - **Pagination contract**: Paged mode includes `pagination` (`page`, `limit`, `total`, `totalPages`). All-results mode returns only `data`.
 - **Response** (Status: 200):
@@ -973,9 +1013,19 @@ Authorization: Bearer <token>
         "court_id": 4,
         "name": "Central Park Pickleball",
         "address": "123 Park Ave",
+        "area": null,
         "lat": 25.78,
         "lng": -80.19,
         "is_private": false
+      },
+      {
+        "court_id": 9,
+        "name": "Private Club Court",
+        "address": null,
+        "area": "Coral Springs, FL",
+        "lat": null,
+        "lng": null,
+        "is_private": true
       }
     ]
   }
@@ -1091,9 +1141,33 @@ Authorization: Bearer <token>
 - **Response `data`**: `court_id` — `court_locations.id` that was unlinked; `name` — court display name at unlink time (null only if unexpectedly unavailable).
 - **Error responses**: `400` (invalid **`courtId`**), `403` (not a coach), `404` (court not found / deleted globally, or you are not linked to this court).
 
+### `GET /api/coaches/me/marketplace-status`
+- **Auth**: Required (**coach** or **admin**). Admins may pass `?coach_id=` to inspect another coach.
+- **Description**: Checklist for whether this coach appears in student discovery (`GET /api/coaches`). Separate from coach **dashboard readiness** (role + profile + Stripe started).
+- **Stripe**: If the coach has a Connect account id, this endpoint **may** call Stripe once to refresh local `stripe_ready` — unlike discovery, which never calls Stripe.
+- **Response** (Status: 200):
+  ```json
+  {
+    "success": true,
+    "message": "Marketplace status retrieved successfully",
+    "data": {
+      "listed": false,
+      "missing": ["availability", "stripe"],
+      "steps": {
+        "profile": true,
+        "stripe": false,
+        "lesson": true,
+        "court": true,
+        "availability": false
+      }
+    }
+  }
+  ```
+- **Steps**: `profile`, `stripe` (`stripe_ready`), `lesson`, `court`, `availability` (≥1 row). `listed` is true only when `missing` is empty.
+
 ### `POST /api/coaches/me/stripe-connect/onboard`
 - **Auth**: Required
-- **Description**: Initiate Stripe Connect onboarding for coach payouts
+- **Description**: Initiate Stripe Connect onboarding for coach payouts. Creates/links `stripe_account_id` with **`stripe_ready: false`** until onboarding completes.
 - **Request Body**:
   ```json
   {
@@ -1113,28 +1187,29 @@ Authorization: Bearer <token>
 
 ### `GET /api/coaches/me/stripe-connect/status`
 - **Auth**: Required
-- **Description**: Check Stripe Connect onboarding status
+- **Description**: Check Stripe Connect onboarding status and **sync** local `coach_profiles.stripe_ready` (`payouts_enabled` + `details_submitted`). That flag drives marketplace discovery.
 - **Response** (Status: 200):
   ```json
   {
     "success": true,
     "message": "Stripe Connect status retrieved",
     "data": {
-      "stripe_account_id": "acct_...",
+      "onboarded": true,
+      "account_id": "acct_...",
       "charges_enabled": true,
       "payouts_enabled": true,
-      "details_submitted": true
+      "details_submitted": true,
+      "stripe_ready": true
     }
   }
   ```
-
 ---
 
 ## Students (`/api/students`)
 
 ### `GET /api/students/me/reliability`
 - **Auth**: Required (**student** role only).
-- **Description**: Same purpose as **`GET /api/coaches/me/reliability`**, for the authenticated **student**: full penalized-impact reliability breakdown + score (`user_reliability` row with `role: student`).
+- **Description**: Same purpose as **`GET /api/coaches/me/reliability`**, for the authenticated **student**: curated penalized-impact reliability breakdown + score (no persistence/engine internals).
 - **Response** (Status: 200):
   ```json
   {
@@ -1142,17 +1217,15 @@ Authorization: Bearer <token>
     "message": "Student reliability retrieved successfully",
     "data": {
       "reliability": {
-        "user_id": 3,
-        "role": "student",
+        "reliability_score": 96.0,
+        "score_source": "computed",
         "total_bookings": 8,
         "late_cancels": 0,
-        "late_arrival_penalties": 0,
         "misconduct_penalties": 0,
         "lesson_not_completed_penalties": 0,
         "no_shows": 0,
         "coach_cancels": 0,
-        "reliability_score": 96.0,
-        "badges": null,
+        "student_cancels_non_late": 2,
         "last_updated": "2026-03-16T18:42:26.000Z"
       }
     }
@@ -1160,22 +1233,43 @@ Authorization: Bearer <token>
   ```
 - **Error responses**: `400` (user is not a student), `401`, `500`.
 
+### `GET /api/students/me/bookings`
+- **Auth**: Required (**student** role only). Coach-only sessions receive **403**. Dual-role users with **student** may call this endpoint.
+- **Description**: **Student dashboard** — list bookings where the authenticated user is the **primary student** (`primary_student_id = me` only). Does **not** include bookings where the user is only the coach.
+- **Contrast**:
+  - `GET /api/coaches/me/bookings` — bookings where the user is the coach
+- **DTO contract**: Same booking list DTO as coach inbox (`serializeBookingListItem`). **`primaryStudent.reliability_score` is not included** (student viewer).
+- **Query Parameters**: status, optional `page`, optional `limit` (omit both for all matching rows; provide either to paginate)
+- **Pagination contract**: Same as other booking list endpoints.
+
 ---
 
 ## Courts (`/api/courts`)
 
 **Court field notes (MVP)**
 
+`is_private` is a **discovery flag**, not a permissions flag. It does **not** mean invitation-only, restricted booking access, or that customers cannot see the court.
+
+**Address visibility (separate from discovery):** Exact street address and GPS for **`is_private: true`** courts are revealed **only on booking endpoints**, and only when that booking’s status allows it (**`confirmed`** or later: `awaiting_verification`, `completed`, no-shows, `disputed`).
+
+| Endpoint | Student before confirm | Student after confirm |
+|----------|------------------------|------------------------|
+| `GET /api/coaches/:id/courts` (and marketplace coach `courts[]`) | Private address hidden | **Still hidden** — discovery/selection surface; no booking context |
+| `GET /api/bookings/:id` | Hidden | Visible **for that booking’s court only** |
+| Student/coach booking lists (`…/bookings`) | Hidden | Visible for confirmed+ rows that include `courtLocation` |
+
+Before confirmation (browse, intent, authorized/`pending`), students see `name`, `area` (city/state derived from the address), optional `distance_miles`, and `is_private` — with `address` / coordinates `null`. **Public** courts (`is_private: false`) always expose exact address. **Coaches** (own courts / booking coach) and **admins** always see exact location. MVP maps “address_visibility = booking_confirmed” onto `is_private` in DTO logic (no separate DB column yet). `cancelled` and `pending` do **not** unlock exact private addresses (avoids leaking home addresses on declined/expired requests). Do **not** unlock all of a coach’s private courts just because the student has one confirmed booking — that would expose unrelated teaching locations.
+
 | Field | Where | MVP behavior |
 |-------|--------|----------------|
-| `is_private` | `court_locations` | Coach sets at create (`POST /api/courts`). **Private courts are excluded from public court discovery** (`GET /api/courts`, `GET /api/courts/:id` — private rows return **`404`** on by-id lookup, same as missing). Private courts **remain** visible on coach-profile court lists (`GET /api/coaches/:id/courts`, `GET /api/coaches/me/courts`), in booking payloads, and in admin coach-court tools. |
+| `is_private` | `court_locations` | Coach sets at create (`POST /api/courts`). When `true`, the court is **hidden from public court discovery** only (`GET /api/courts`, `GET /api/courts/:id` — returns **`404`** on by-id lookup, same as missing). **`is_private` affects only public court discovery.** Once a court is linked to a coach, it remains available for coach profiles, marketplace eligibility, and booking regardless of its privacy setting. Coach-profile court lists (`GET /api/coaches/:id/courts`, `GET /api/coaches/me/courts`), booking payloads, and admin coach-court tools still expose the court row (exact address may be redacted for students — see above). |
 | `rate_modifier` | `coach_court_locations` | **Reserved** for future per-court pricing (`booking_price = lesson.price * rate_modifier`). Stored in DB; **not** exposed on coach/student APIs until pricing ships. Admin endpoints may include it for support. |
 | `coach_notes` | `coach_court_locations` | Coach-specific notes on the coach–court relationship. **Only** via `POST /api/coaches/me/courts` (and returned on `GET /api/coaches/me/courts`). **`POST /api/courts` rejects `coach_notes` or legacy `notes`** — court creation is court entity only. |
 | `created_by_user_id` | `court_locations` | Internal ownership for delete authorization; not returned on public court endpoints. |
 
 ### `GET /api/courts`
 - **Auth**: None required
-- **Description**: **Public directory only** — returns courts with **`is_private: false`** and **`deleted_at: null`** only. **List all** when **lat** and **lng** are omitted. **No `page` and no `limit`** → return **all** matching courts in `data` (server-capped at **10,000** for safety). **Either `page` or `limit`** (or both) → **paginated** list (`data` + `pagination`); per-page max **100**. **Search near a point** when both **lat** and **lng** are provided (bounding box + **radius** in miles, default 10); results are ordered **closest to the search point first** (Haversine). If no courts match, may **lazy-import** from OpenStreetMap and re-query (still distance-ordered, up to 100 rows; re-fetch also excludes private courts).
+- **Description**: **Public directory only** — returns courts with **`is_private: false`** and **`deleted_at: null`** only (courts with `is_private: true` are hidden from this shared catalog, not from coach/booking surfaces). **List all** when **lat** and **lng** are omitted. **No `page` and no `limit`** → return **all** matching courts in `data` (server-capped at **10,000** for safety). **Either `page` or `limit`** (or both) → **paginated** list (`data` + `pagination`); per-page max **100**. **Search near a point** when both **lat** and **lng** are provided (bounding box + **radius** in miles, default 10); results are ordered **closest to the search point first** (Haversine). If no courts match, may **lazy-import** from OpenStreetMap and re-query (still distance-ordered, up to 100 rows; re-fetch also excludes courts hidden from public discovery).
 - **Query Parameters**:
   - **List all**: `page`, `limit` — optional; omit both to fetch the full capped list (no `pagination` object).
   - **Geo search**: `lat`, `lng` (both required together), `radius` (miles, default 10, max 100).
@@ -1194,8 +1288,8 @@ Authorization: Bearer <token>
 
 ### `GET /api/courts/:id`
 - **Auth**: None required
-- **Description**: Get court details by ID (**public directory only**). **Private courts** (`is_private: true`) are **not discoverable** here: response is **`404`** with the same **`Court not found`** shape as a missing or deleted id (the API does **not** indicate that the row exists). Use **`GET /api/coaches/:id/courts`** (or **`GET /api/coaches/me/courts`**) to see courts a coach teaches at, including private locations.
-- **Error responses**: **`400`** (invalid id), **`404`** (not found, deleted, or **private**).
+- **Description**: Get court details by ID (**public directory only**). Courts with **`is_private: true`** are **hidden from public discovery** here: response is **`404`** with the same **`Court not found`** shape as a missing or deleted id (the API does **not** indicate that the row exists). Use **`GET /api/coaches/:id/courts`** (or **`GET /api/coaches/me/courts`**) to see courts a coach teaches at, including locations hidden from the public directory.
+- **Error responses**: **`400`** (invalid id), **`404`** (not found, deleted, or hidden from public discovery).
 - **Response** (Status: 200):
   ```json
   {
@@ -1294,16 +1388,17 @@ Authorization: Bearer <token>
 | API category | Endpoints | Deleted lessons |
 |--------------|-----------|-----------------|
 | Marketplace discovery | `GET /api/lessons`, `GET /api/lessons/:id`, `GET /api/coaches/:id` (lesson embed), `GET /api/coaches/me/lessons` | Hidden (`404` or omitted) |
-| Historical context | `GET /api/bookings`, `GET /api/bookings/:id`, `GET /api/coaches/bookings`, `GET /api/admin/bookings` | Nested `lesson` allowed on existing bookings |
+| Historical context | `GET /api/bookings/:id`, `GET /api/coaches/me/bookings`, `GET /api/students/me/bookings`, `GET /api/admin/bookings` | Nested `lesson` allowed on existing bookings |
 | Mutations | `PUT /api/lessons/:id`, `DELETE /api/lessons/:id` | **`404`** — not editable after delete |
 
 **Inactive** (`is_active: false`, not deleted) = recoverable via coach APIs. **Deleted** = no longer a listing; row kept for booking history only.
 
 ### `GET /api/lessons`
 - **Auth**: None required
-- **Description**: Get lessons (public). If `page` and `limit` are omitted, returns all matching lessons in `data` (server-capped at 10,000). If `page` or `limit` is provided, returns the requested page size (max 100 per page).
+- **Description**: Public **lesson discovery**. Returns active lessons whose coach is **marketplace-eligible** (same definition as `GET /api/coaches`: profile + `stripe_ready` + court + availability; the listed lesson itself satisfies the lesson step). Coaches who are not yet listable do not appear here. Owner inventory remains **`GET /api/coaches/me/lessons`**. If `page` and `limit` are omitted, returns all matching lessons in `data` (server-capped at 10,000). If `page` or `limit` is provided, returns the requested page size (max 100 per page).
 - **Query Parameters**: Optional filters: `coach_id`, `min_price`, `max_price`; optional pagination: `page`, `limit`.
 - **Pagination contract**: Paged mode includes `pagination` (`page`, `limit`, `total`, `totalPages`). All-results mode returns only `data`.
+- **Note**: **`GET /api/lessons/:id`** uses the same public rule for students/anonymous: coach must be **marketplace-eligible** (otherwise **`404`**, same as missing). **Owner coach** and **admin** can still load by id regardless of marketplace status (and for inactive lessons). Booking still uses transactional validation, not the marketplace helper. **`GET /api/coaches/:id`** remains looser for profile deep links.
 - **Response** (Status: 200):
   ```json
   {
@@ -1326,17 +1421,18 @@ Authorization: Bearer <token>
   ```
 
 ### `GET /api/lessons/:id`
-- **Auth**: Optional. No token required for **active** public lessons. Send a Bearer token when the **coach owner** or an **admin** needs to load an **inactive** lesson by id (same **`404`** as missing for everyone else).
-- **Description**: Get lesson by ID. Visibility by state:
+- **Auth**: Optional. No token required for **active** public lessons whose coach is marketplace-eligible. Send a Bearer token when the **coach owner** or an **admin** needs to load a lesson that is inactive or whose coach is not yet listable (same **`404`** as missing for everyone else).
+- **Description**: Get lesson by ID. **MVP Option A**: if a student can open a lesson page publicly, they should be able to book it — so public access requires the coach to be marketplace-eligible (same checklist as `GET /api/lessons` / `GET /api/coaches`). Visibility:
 
   | State | Owner coach | Admin | Everyone else |
   |-------|-------------|-------|----------------|
-  | **Active** (`is_active: true`, `deleted_at: null`) | ✅ | ✅ | ✅ |
+  | **Active** + coach **marketplace-eligible** | ✅ | ✅ | ✅ |
+  | **Active** + coach **not** marketplace-eligible | ✅ (token) | ✅ (token) | ❌ **`404`** |
   | **Inactive** (`is_active: false`, not deleted) | ✅ (token) | ✅ (token) | ❌ **`404`** |
   | **Deleted** (`deleted_at` set) | ❌ **`404`** | ❌ **`404`** | ❌ **`404`** |
 
-  **Inactive** = temporarily hidden (recoverable via **`PUT`** / **`GET /api/coaches/me/lessons`**). **Deleted** = removed from coach APIs; row retained for booking history only. Non-owners always get **`Lesson not found`** for inactive lessons (does not reveal the row exists).
-- **Error responses**: **`404`** — missing id, **deleted**, or **inactive** without owner/admin token.
+  **Inactive** = temporarily hidden (recoverable via **`PUT`** / **`GET /api/coaches/me/lessons`**). **Deleted** = removed from coach APIs; row retained for booking history only. Non-owners always get **`Lesson not found`** when the lesson is not publicly bookable (does not reveal the row exists).
+- **Error responses**: **`404`** — missing id, **deleted**, **inactive**, or **not marketplace-eligible** without owner/admin token.
 - **Response** (Status: 200):
   ```json
   {
@@ -1453,6 +1549,17 @@ Authorization: Bearer <token>
 | 4 | `PUT` | `/api/bookings/:id/accept` | **Coach only** — capture funds and confirm booking. |
 | 5 | `PUT` | `/api/bookings/:id/decline` | **Coach only** — void authorization; booking cancelled. |
 
+**Booking lists are role-dashboard only** (matches Student Mode / Coach Mode in the client; the API does not store active role):
+
+| Method | Path | Scope |
+|--------|------|-------|
+| `GET` | `/api/students/me/bookings` | `primary_student_id = me` |
+| `GET` | `/api/coaches/me/bookings` | `coach_id = me` |
+| `GET` | `/api/bookings/:id` | Detail for an authorized participant |
+| `GET` | `/api/admin/bookings` | Admin list (optional filters) |
+
+There is **no** `GET /api/bookings` combined participant list.
+
 `POST /api/bookings` (legacy create) returns **410 Gone** with code `booking_create_deprecated_use_intent_flow`. Use the intent + confirm flow instead.
 
 See `backend/docs/MIGRATION_AUTHORIZE_FIRST_BOOKING.md` for migration notes.
@@ -1475,8 +1582,8 @@ Only **`pending`** and **`confirmed`** are cancellable through these endpoints (
 |--------|-------------------|------------------|----------------------------|-----------------|
 | `pending` | Student confirmed authorization; waiting for coach decision | `POST /api/bookings/confirm` | **Yes** (student, coach on booking, or admin) | Pre-lesson; payment already `authorized`; cancel voids or refunds per policy |
 | `confirmed` | Coach accepted; lesson not yet ended (or still in coach-action window before worker moves it) | `PUT /api/bookings/:id/accept` | **Yes** (same callers), only while **`scheduled_at` is still in the future** | Pre-lesson; same **`payment_actions`**-backed cancel refund path as **`pending`**. After lesson start → **400** `lesson_started_cancellation_unavailable` |
-| `awaiting_verification` | Lesson **end** time has passed while still `confirmed`; worker moved booking here until coach marks complete / no-show or **auto-complete** runs | Background worker (`autoConfirmWorker`, ~every 5 min): `confirmed` → `awaiting_verification` when `scheduled_at + duration` ≤ now (typically 0-5 minutes after lesson end when workers are healthy) | **No** | **400** `booking_in_post_lesson_phase` — use complete, no-show, or dispute workflows |
-| `completed` | Lesson treated as completed (coach `POST .../complete`, or auto worker **24h after lesson end** if still `awaiting_verification` and no open dispute) | Coach or `autoConfirmWorker` | **No** | Terminal |
+| `awaiting_verification` | Lesson **end** time has passed while still `confirmed`; worker moved booking here until coach marks complete / no-show or **auto-complete** runs (**24h after lesson end**) | Background worker (`autoConfirmWorker`, ~every 5 min): `confirmed` → `awaiting_verification` when `scheduled_at + duration` ≤ now (typically 0-5 minutes after lesson end when workers are healthy) | **No** | **400** `booking_in_post_lesson_phase` — use complete, no-show, or dispute workflows. **No coach payout** while in this status — escrow stays held until `completed` (or `student_no_show`) |
+| `completed` | Lesson treated as completed (coach `POST .../complete`, or auto worker **24h after lesson end** if still `awaiting_verification` and no open dispute) | Coach or `autoConfirmWorker` | **No** | Terminal. Coach payout eligible via **`payoutWorker`** (~every 10 min) once `payout_status` is `pending` and guards pass |
 | `cancelled` | Booking cancelled | `POST .../cancel`, coach decline, coach acceptance timeout worker, etc. | **No** | Terminal |
 | `disputed` | Chargeback / dispute workflow tied to payment (e.g. Stripe dispute sync may set this on the booking) | `stripeDisputeSyncService` (webhook path); seeds/tests | **No** | Cancel endpoint rejects; resolve dispute and handle funds via documented dispute/refund flows |
 | `student_no_show` | Primary **student** did not attend | `POST .../student-no-show` (coach or admin) | **No** | Terminal attendance outcome; **not** reversible via cancel (no `reason_notes` token path). Coach payout is eligible; adjust with dispute/admin override if contested |
@@ -1487,25 +1594,47 @@ The sections below document the **authorize-first write flow** first, then **bey
 ## Booking intents (`/api/booking-intents`)
 
 ### `POST /api/booking-intents` (MVP — student)
-- **Auth**: Required (email must be verified)
-- **Description**: Validate lesson, schedule, and availability (no slot reservation). Create a manual-capture Stripe PaymentIntent. **No booking row is created.** After the client authorizes the card, call `POST /api/bookings/confirm`.
-- **Request Body**: Same fields as legacy create booking (`lesson_id`, `scheduled_at`, optional `duration_minutes`, `player_ids`, `court_location_id`, `payment_method`, optional `payment_method_id`, optional `idempotency_key`).
+- **Auth**: Required (email must be verified); **student** role.
+- **Description**: Validate lesson, **coach court**, schedule, and availability (no slot reservation). Create a manual-capture Stripe PaymentIntent. **No booking row is created.** After the client authorizes the card, call `POST /api/bookings/confirm`.
+- **MVP product model**: Student buys a **fixed lesson package** (`lessons.price` + `lessons.duration_minutes`). No hourly billing. No student duration override. JWT user becomes `primary_student_id` (do not send user ids).
+- **Request Body**:
+  ```json
+  {
+    "lesson_id": 14,
+    "scheduled_at": "2026-07-01T15:00:00.000Z",
+    "court_location_id": 58,
+    "payment_method": "stripe",
+    "payment_method_id": "pm_xxx",
+    "idempotency_key": "optional-client-key"
+  }
+  ```
+  - **Required**: `lesson_id`, `scheduled_at` (ISO, future), `court_location_id` (must exist, not deleted, and linked to the lesson’s coach via `coach_court_locations`).
+  - **Optional**: `payment_method` (default `stripe`; also `card` | `apple_pay` | `google_pay`), `payment_method_id`, `idempotency_key` (or `Idempotency-Key` header).
+  - **Forbidden (400)**: `duration_minutes` (lesson owns duration), `player_ids` (MVP is one student).
+- **Pricing**: Charge = `calculatePaymentAmounts(lesson.price)` (lesson + ~8% platform fee). Coach expected payout ~92% of lesson price. Display-only `effective_hourly_rate` on lessons does not affect checkout.
 - **Response** (Status: 201):
   ```json
   {
     "success": true,
-    "message": "Booking intent created. Authorize payment, then POST /api/bookings/confirm.",
+    "message": "Booking authorization created.",
     "data": {
       "client_secret": "pi_..._secret_...",
       "payment_intent_id": "pi_...",
-      "lesson_id": 1,
+      "lesson_id": 14,
       "scheduled_at": "2026-07-01T15:00:00.000Z",
       "duration_minutes": 60,
-      "amount": 54
+      "court_location_id": 58,
+      "amount": 54,
+      "amount_cents": 5400,
+      "currency": "usd"
     }
   }
   ```
-
+  - `duration_minutes` in the response is always **`lesson.duration_minutes`**.
+  - **`amount`**: total charge to the student in **USD dollars** (e.g. `54` for a $50 lesson + 8% fee). This is **not** Stripe’s integer unit — do not pass `amount` to Stripe APIs that expect cents.
+  - **`amount_cents`**: same total in **Stripe smallest currency units** (e.g. `5400` for $54.00 USD). Matches PaymentIntent `amount`.
+  - **`currency`**: lowercase ISO code (`usd`).
+- **Intended client flow**: view coach → pick lesson → pick time → pick one of coach’s courts → intent → Stripe authorize → confirm.
 ### `POST /api/bookings/confirm` (MVP — student)
 - **Auth**: Required (email must be verified)
 - **Description**: After Stripe authorization (`requires_capture`), creates the booking and payment in one transaction. Re-checks slot availability; on conflict cancels the PaymentIntent and returns **409** `slot_no_longer_available`. Idempotent per `payment_intent_id`.
@@ -1559,48 +1688,17 @@ The sections below document the **authorize-first write flow** first, then **bey
   - `message_to_student` — required, 10–500 chars (shown to the student).
   - `decline_reason_code` — optional enum for analytics: `availability_conflict`, `sickness`, `weather`, `outside_service_area`, `lesson_not_fit`, `other`. Invalid values return **400**.
 - **Response** (Status: 200): Booking object with related lesson/coach/student (same shape as accept/get-by-id). Decline fields on the booking: `declined_at`, `decline_message_to_student`, `decline_reason_code`, `status: cancelled`, `cancelled_by: coach`. Client displays `decline_message_to_student` directly; no duplicate top-level message fields.
-- **Student notification** (`booking_declined`, in-app + email when configured): payload includes `decline_reason_code`, `message_to_student`, plus display helpers `headline`, `reason_line`, and `summary` (e.g. headline “Coach declined your booking.”, `reason_line` “Reason: Weather”, message body on its own line).
+- **Student notification** (`booking_declined`, in-app + email when configured): payload includes `decline_reason_code`, `message_to_student`, plus display helpers `headline`, `summary` (one sentence for the bell), and `reason_line`. Extra detail stays in structured fields — not stuffed into `summary`.
 
 ---
 
 ### Beyond MVP
 
-### `GET /api/bookings`
-- **Auth**: Required
-- **Description**: List your own bookings (student/coach only). Admin must use `GET /api/admin/bookings`. Each row includes a **`conversation`** summary.
-- **Query Parameters**: status, coach_id (admin only), student_id (admin only), optional `page`, optional `limit` (omit both for all matching rows; provide either to paginate)
-- **Pagination contract**: Paged mode includes `pagination` (`page`, `limit`, `total`, `totalPages`). All-results mode returns only `data`.
-- **Response** (Status: 200):
-  ```json
-  {
-    "success": true,
-    "message": "Bookings retrieved successfully",
-    "data": [
-      {
-        "id": 1,
-        "lesson_id": 1,
-        "coach_id": 2,
-        "primary_student_id": 1,
-        "scheduled_at": "2026-02-01T10:00:00.000Z",
-        "duration_minutes": 60,
-        "price": 50.00,
-        "status": "pending",
-        "conversation": {
-          "id": null,
-          "can_send_messages": false,
-          "message_count": 0
-        },
-        "lesson": {
-          "title": "Beginner Pickleball Lesson"
-        }
-      }
-    ]
-  }
-  ```
-
 ### `GET /api/bookings/:id`
 - **Auth**: Required
 - **Description**: Get booking details by ID (participant access). Admin must use `GET /api/admin/bookings/:id`. Includes **`conversation`** summary (`id`, `can_send_messages`, `message_count`) so the client knows chat availability without extra round trips.
+- **List endpoints (role dashboards)**: There is **no** participant-wide `GET /api/bookings` list. Use **`GET /api/students/me/bookings`** (student mode) or **`GET /api/coaches/me/bookings`** (coach mode).
+- **DTO contract**: Summary fields plus lifecycle fields (`attendance_finalized`, `cancelled_by`, `cancelled_at`, `payout_status`, decline fields, `created_at`, `updated_at`). Nested **`lesson`**, **`coach`**, **`primaryStudent`**, **`courtLocation`**, **`payments[]`**, optional **`cancellationHistory`**, **`conversation`**. **No `players` array** — MVP is one student (`primary_student_id` / `primaryStudent`) per booking; group attendees are V2. **`payments[]`** uses the participant payment DTO (no Stripe IDs / `metadata`); admin routes include Stripe reconciliation fields on payments. When the viewer is the booking’s coach, **`primaryStudent.reliability_score`** is included (score only — see coach inbox list docs).
 - **Response** (Status: 200):
   ```json
   {
@@ -1726,11 +1824,11 @@ The sections below document the **authorize-first write flow** first, then **bey
 
 ### `POST /api/admin/bookings/:id/student-no-show`
 - **Auth**: Required (`admin`)
-- **Description**: Admin override for **student** no-show. Lesson must have ended; allowed source statuses are `confirmed`, `awaiting_verification`, `student_no_show`, or `coach_no_show` **when there is no active dispute** and **`bookings.attendance_finalized` is false**. After any dispute has been resolved on the booking, this endpoint returns **`409`** with **`code: attendance_finalized_locked`** — attendance changes must go through a **new** dispute + **`PUT /api/disputes/:id/resolve`**. While the booking is not finalized, this endpoint sets `bookings.status` → `student_no_show` and can correct an earlier admin attendance mark (including `coach_no_show` → `student_no_show`) subject to payment/attendance-lock guards. If disputed (or any open/under_review dispute exists), this endpoint returns conflict and you should resolve through **`PUT /api/disputes/:id/resolve`** so final status + financial outcome are decided in one path. Coach payout is handled by the payout worker as a payable attendance outcome: once eligible (no open dispute, no pending refund, escrow still `held`), payout proceeds on the next worker cycle (`~10 minutes`); the 24-hour hold applies to `awaiting_verification`, not `student_no_show`.
+- **Description**: Admin override for **student** no-show. Lesson must have ended; allowed source statuses are `confirmed`, `awaiting_verification`, `student_no_show`, or `coach_no_show` **when there is no active dispute** and **`bookings.attendance_finalized` is false**. After any dispute has been resolved on the booking, this endpoint returns **`409`** with **`code: attendance_finalized_locked`** — attendance changes must go through a **new** dispute + **`PUT /api/disputes/:id/resolve`**. While the booking is not finalized, this endpoint sets `bookings.status` → `student_no_show` and can correct an earlier admin attendance mark (including `coach_no_show` → `student_no_show`) subject to payment/attendance-lock guards. If disputed (or any open/under_review dispute exists), this endpoint returns conflict and you should resolve through **`PUT /api/disputes/:id/resolve`** so final status + financial outcome are decided in one path. Coach payout is handled by the payout worker as a payable attendance outcome: once eligible (no open dispute, no pending refund, escrow still `held`), payout proceeds on the next worker cycle (`~10 minutes`); **`student_no_show` is payable immediately** — unlike the default post-lesson path, which waits for **`completed`** after the 24h verification window.
 
 - **Side effects — reliability & payments (read this carefully)**:
   - **Reliability — YES, student only.** After the status flip, the controller calls `updateUserReliability(primary_student_id, 'student')`. The new `student_no_show` row is picked up by `calculateStudentMetrics` → `calculateStudentReliabilityScore`, so the **student's** score recomputes (a no-show is a negative signal). **Coach reliability is not touched** by this endpoint. Recalculation is skipped only when the student user also has the `admin` role.
-  - **Refund — NO, no automatic refund.** The student is **not** refunded by this endpoint. The booking is treated as a payable attendance outcome: coach payout proceeds via the normal payout worker once the booking is eligible (escrow still `held`, no open dispute, no pending refund). The 24-hour payout hold applies to `awaiting_verification`, not to `student_no_show` set here.
+  - **Refund — NO, no automatic refund.** The student is **not** refunded by this endpoint. The booking is treated as a payable attendance outcome: coach payout proceeds via the normal payout worker once the booking is eligible (escrow still `held`, no open dispute, no pending refund). **`student_no_show` pays out on the next worker cycle** — there is no 24h verification hold for this attendance outcome.
   - **Need a refund anyway?** Use **`POST /api/admin/bookings/:id/refund`** (enqueues a `booking_admin_refund` `payment_actions` row), or open/resolve a dispute via **`POST /api/admin/disputes`** + **`PUT /api/disputes/:id/resolve`** with the appropriate `financial_action`.
 
 - **Execution rule (required)**: status alone is not sufficient. Admin no-show is allowed only when **both** conditions are true:
@@ -1881,13 +1979,16 @@ Use this section as the admin decision guide for incidents, payouts/refunds, dis
 - **Auth**: Required (`admin`)
 - **Description**: Admin get any booking by ID.
 
-### `GET /api/coaches/bookings`
+### `GET /api/coaches/me/bookings`
 - **Auth**: Required (`coach`)
-- **Description**: Coach-only booking inbox/list (bookings where `coach_id` is the authenticated coach).
+- **Description**: **Coach dashboard / inbox** — bookings where `coach_id` is the authenticated coach only. Each **`primaryStudent`** includes informational **`reliability_score`** (defaults to **100** when no student reliability row exists). Preserves coach-inbox pending visibility rules (pending rows require latest payment `authorized`).
+- **Contrast**: `GET /api/students/me/bookings` — bookings where the user is the primary student (student dashboard). There is no combined participant list endpoint.
+- **DTO contract**: Booking list uses **`serializeBookingListItem`** — summary fields plus trimmed nested **`lesson`**, **`coach`**, **`primaryStudent`**, **`courtLocation`**, and **`conversation`**.
+- **Query Parameters**: status, optional `page`, optional `limit` (omit both for all matching rows; provide either to paginate)
 
 **Schedule changes:** There is no reschedule API. To move a lesson, **cancel** the booking (`POST /api/bookings/:id/cancel`) and **book a new slot** (`POST /api/booking-intents` → authorize → `POST /api/bookings/confirm`). Cancellation reasons: excused (`weather`, `emergency`, `sickness`) vs unexcused (`travel_delay`, `schedule_conflict`, `forgot`, `other`) for reliability. Cancel notifies the other party with `cancelled_by`, `reason`, and optional `reason_notes`.
 
-**Notifications (email + in-app when configured):** booking accepted (`booking_confirmed`), declined (`booking_declined`), cancelled (`booking_cancelled`), lesson reminders (`pre_lesson_24h`, `pre_lesson_1h`, `pre_lesson_48h`).
+**Notifications (email + in-app when configured):** booking accepted (`booking_confirmed`), declined (`booking_declined`), cancelled (`booking_cancelled`). **Lesson reminders (MVP):** `pre_lesson_24h` — in-app + email; `pre_lesson_1h` — in-app only (no 1h email). Chat: in-app only `new_message` when the other participant sends a message.
 
 ---
 
@@ -1896,6 +1997,7 @@ Use this section as the admin decision guide for incidents, payouts/refunds, dis
 ### `GET /api/payments`
 - **Auth**: Required
 - **Description**: Get payments visible to the caller. **Non-admin:** scoped by participation — if the user has **both** `coach` and `student`, rows where they are **either** `coach_id` **or** `student_id` are included (additive capabilities). If only `coach` or only `student`, that side applies. Users with neither role see an empty list. **Admin:** no participant filter (full list subject to query params).
+- **DTO contract**: Participant-facing responses expose business payment fields (`payment_status`, `escrow_status`, `refund_status`, amounts, `booking` summary, coach/student names). **Omits** `payment_intent_id`, `charge_id`, `transfer_id`, `metadata`, and other Stripe reconciliation fields unless the caller is **admin**.
 - **Query Parameters**: Filters (`status`, `escrow_status`, `student_id`, `coach_id`), optional `page`, optional `limit` (omit both for all matching rows; provide either to paginate)
 - **Pagination contract**: Paged mode includes `pagination` (`page`, `limit`, `total`, `totalPages`). All-results mode returns only `data`.
 - **Response** (Status: 200):
@@ -1909,11 +2011,18 @@ Use this section as the admin decision guide for incidents, payouts/refunds, dis
         "booking_id": 1,
         "student_id": 1,
         "coach_id": 2,
-        "total_charge_to_student": 50.00,
-        "platform_fee_amount": 4.00,
-        "coach_payout_amount": 46.00,
+        "total_charge_to_student": "50.00",
+        "platform_fee_amount": "4.00",
+        "coach_payout_expected": "46.00",
         "payment_status": "captured",
-        "escrow_status": "released"
+        "escrow_status": "released",
+        "refund_status": "none",
+        "booking": {
+          "id": 1,
+          "scheduled_at": "2026-02-01T10:00:00.000Z",
+          "status": "completed",
+          "messaging_locked": true
+        }
       }
     ]
   }
@@ -1978,18 +2087,18 @@ Use this section as the admin decision guide for incidents, payouts/refunds, dis
 
 ### `POST /api/reviews`
 - **Auth**: Required (email must be verified)
-- **Description**: Create a review
+- **Description**: Create a review for a **completed** booking. Only the booking's **`primary_student_id`** may create a review (authorization is based on booking participation, not account roles — a dual-role coach+student user may review when they were the student on that booking). **`target_user_id` is not accepted**; the reviewed coach is always **`booking.coach_id`**. Admins cannot create reviews on behalf of users.
 - **Request Body**:
   ```json
   {
     "booking_id": "number (required, positive integer)",
-    "target_user_id": "number (optional, positive integer)",
     "rating": "number (required, 1-5 integer)",
     "comment": "string (optional, max 1000 chars)",
     "attendance_badges": "array (optional, array of strings)",
     "visibility": "string (optional, 'public' | 'private' | 'semi_public', defaults to 'public')"
   }
   ```
+- **Errors**: **403** if caller is not `primary_student_id`; **400** if booking is not `completed` or self-review would occur (`code: cannot_review_self`); **409** if a review already exists for the booking.
 - **Response** (Status: 201):
   ```json
   {
@@ -2050,7 +2159,7 @@ Use this section as the admin decision guide for incidents, payouts/refunds, dis
 
 ## Messages (`/api/messages`)
 
-**Booking-scoped messaging (V1).** One conversation per booking (`conversations.booking_id` unique). Text only — no attachments, edits, deletes, reactions, typing indicators, or read receipts.
+**Booking-scoped messaging (V1).** One conversation per booking (`conversations.booking_id` unique). Text only — no attachments, edits, deletes, reactions, typing indicators, or read receipts. Sending a message creates an in-app `new_message` notification for the other participant (no realtime push; poll notifications).
 
 **Messaging lifecycle** (derived from `booking.status` via `utils/bookingMessaging.js`; `messaging_locked` column synced on every status transition):
 
@@ -2067,13 +2176,53 @@ Use this section as the admin decision guide for incidents, payouts/refunds, dis
 
 ### `GET /api/messages/conversations`
 - **Auth**: Required
-- **Description**: List conversations for bookings the caller participated in (admin: all, optional `booking_id` filter). Each row includes `booking` and latest message preview when present.
+- **Description**: **Inbox / preview endpoint** — list booking-scoped conversation threads for the caller. Returns one row per conversation (newest conversations first). Does **not** return full message history; use `GET /api/messages/conversations/:id` for the complete thread.
+- **Scope**: Non-admin — conversations for bookings where the caller is `coach_id` or `primary_student_id`. Admin — all conversations (optional `booking_id` filter). If a non-admin filters by `booking_id` for a booking they are not on, returns an empty list (**200**).
 - **Query Parameters**: `booking_id` (optional), optional `page`, optional `limit`
+- **Response** (Status: 200) — each item in `data`:
+  ```json
+  {
+    "id": 1,
+    "booking_id": 5,
+    "created_at": "2026-05-29T10:00:00.000Z",
+    "updated_at": "2026-06-01T09:00:00.000Z",
+    "latest_message": {
+      "id": 42,
+      "conversation_id": 1,
+      "sender_id": 20,
+      "message_text": "See you at court!",
+      "created_at": "2026-06-01T09:00:00.000Z",
+      "updated_at": "2026-06-01T09:00:00.000Z",
+      "sender": {
+        "id": 20,
+        "full_name": "Student User",
+        "avatar_url": null
+      }
+    },
+    "booking": {
+      "id": 5,
+      "lesson_id": 12,
+      "coach_id": 10,
+      "primary_student_id": 20,
+      "scheduled_at": "2026-06-01T10:00:00.000Z",
+      "duration_minutes": 60,
+      "price": "50.00",
+      "status": "confirmed",
+      "court_location_id": 3,
+      "messaging_locked": false
+    }
+  }
+  ```
+  - **`latest_message`**: newest message in the thread, or **`null`** when the conversation has no messages (never an array).
+  - **`booking`**: shared trimmed messaging DTO — `id`, `lesson_id`, `coach_id`, `primary_student_id`, `scheduled_at`, `duration_minutes`, `price`, `status`, `court_location_id`, `messaging_locked`. Omits internal fields such as `idempotency_key`, `cancelled_by`, `declined_at`, `payout_status`, and booking timestamps.
 
 ### `GET /api/messages/conversations/:id`
 - **Auth**: Required
-- **Description**: Get conversation with messages (oldest first). Readable even when messaging is locked. Response includes `messaging_locked` for the booking.
+- **Description**: Get conversation with messages (oldest first). Readable even when messaging is locked. **`messaging_locked`** is on **`booking`** (status-derived), same as the inbox list — not at the conversation root.
 - **Query Parameters**: Optional `page`, optional `limit` (paginate messages)
+- **Response notes**:
+  - **`booking`**: same trimmed DTO as the inbox list (see above).
+  - **`messages`**: full thread (unlike the inbox list).
 
 ### `POST /api/messages/conversations`
 - **Auth**: Required (email verified)
@@ -2084,6 +2233,7 @@ Use this section as the admin decision guide for incidents, payouts/refunds, dis
 ### `POST /api/messages/send`
 - **Auth**: Required (email verified)
 - **Description**: Send a text message in a booking conversation.
+- **Notification**: After the message is saved, the API creates an **in-app** notification (`type: new_message`) for the **other** booking participant (coach ↔ student). No email/SMS. Payload includes `route` (`/messages/:conversation_id`), `conversation_id`, `booking_id`, `message_id`, `sender_id`, `sender_name`, `headline`, `preview`, and `summary` for a notification bell / deep link. Frontend can poll `GET /api/notifications` (e.g. every 30s); unread ≈ `read_at` is null; tap → `navigate(payload.route)`.
 - **Request Body**:
   ```json
   {
@@ -2098,28 +2248,24 @@ Use this section as the admin decision guide for incidents, payouts/refunds, dis
 
 ## Disputes (`/api/disputes`)
 
-**Dispute types (`dispute_types` table)** — use `dispute_type_id` when creating a dispute. Canonical **MVP set** (after migrations `20260408120000-canonical-dispute-types-mvp` and `20260421120000-dispute-types-attendance-claims`):
+**Dispute types (`dispute_types` table)** — use `dispute_type_id` when creating a dispute. **Five active types** (after migration `20260706153000-simplify-dispute-types-catalog`):
 
 | `id` | `code` | Meaning |
 |------|--------|---------|
 | 1 | `coach_no_show_claim` | **Claim:** student alleges the coach did not attend (final outcome is `bookings.status`, set on `PUT /api/disputes/:id/resolve`) |
-| 2 | `late_arrival` | Coach late or lesson started late |
 | 3 | `misconduct` | Conduct / safety issue |
-| 4 | `lesson_not_completed` | Lesson did not complete as expected (other than simple no-show) |
-| 5 | `refund_request` | Refund or compensation request (non–chargeback) |
-| 6 | `billing_issue` | Charge amount, double charge, payment processing |
-| 7 | `other` | Catch-all |
-| 8 | `student_no_show_claim` | **Claim:** coach alleges the primary student did not attend (final outcome is `bookings.status`, set on dispute resolve) |
+| 4 | `lesson_not_completed` | Lesson did not complete as expected (includes late arrival / quality issues) |
+| 7 | `other` | Catch-all — describe refund requests or edge cases in `notes`. Preserves lesson outcome (no attendance/reliability change); releases Stripe-parked `disputed` → `completed` on resolve only. |
+| 8 | `student_no_show_claim` | **Claim:** coach alleges the primary student did not attend |
 
-**Booking outcomes** (`student_no_show`, `coach_no_show`) are **not** dispute type codes — they are set from resolution + claim type. Older docs referring to `dispute_type_id` **1** as “coach did not attend” meant the same **claim** row after rename.
-
-Older `service_issue` / `billing` labels are replaced in place by this migration (same numeric ids; existing `disputes` rows keep their `dispute_type_id` but the type **meaning** changes — acceptable for pre-launch MVP).
+**Removed from catalog** (migrated on existing rows): `refund_request` / `billing_issue` → `other` (late-arrival quality issues fold into `lesson_not_completed`). **Refunds are not a dispute type** — use `financial_action` on resolve (`refund_student`, `refund_student_partial`, `no_change`). Payment/billing support issues should use admin payment tools, not a separate dispute type.
 
 ### `GET /api/disputes`
 - **Auth**: Required
 - **Description**: Get disputes (filtered by user role). If `page` and `limit` are omitted, returns all matching disputes in `data` (server-capped at 10,000). If `page` or `limit` is provided, returns the requested page size.
 - **Query Parameters**: Filters such as `status`, `booking_id`; optional `page`, optional `limit`.
 - **Resolver field**: `resolved_by_admin` only (`{ id, full_name }` or `null`). No separate `admin_id` / `resolved_by_admin_id` in JSON (use `resolved_by_admin.id` when present).
+- **Nested DTOs** (when associations are loaded — list and detail endpoints): embedded `booking`, `disputeType`, and `resolutionAction` are trimmed purpose-built objects, not raw Sequelize rows. `booking` matches the messaging booking shape (`id`, `lesson_id`, `coach_id`, `primary_student_id`, `scheduled_at`, `duration_minutes`, `price`, `status`, `court_location_id`, `messaging_locked`). `disputeType` is `{ id, code, name, description? }`. `resolutionAction` is `{ id, code, name, description? }` or `null` when unresolved.
 - **Pagination contract**: Paged mode includes `pagination` (`page`, `limit`, `total`, `totalPages`). All-results mode returns only `data`.
 - **Response** (Status: 200):
   ```json
@@ -2138,6 +2284,25 @@ Older `service_issue` / `billing` labels are replaced in place by this migration
         "outcome": null,
         "refund_amount": null,
         "resolved_by_admin": null,
+        "booking": {
+          "id": 352,
+          "lesson_id": 61,
+          "coach_id": 77,
+          "primary_student_id": 2,
+          "scheduled_at": "2026-06-01T10:00:00.000Z",
+          "duration_minutes": 60,
+          "price": "80.00",
+          "status": "disputed",
+          "court_location_id": 75,
+          "messaging_locked": true
+        },
+        "disputeType": {
+          "id": 1,
+          "code": "coach_no_show_claim",
+          "name": "Coach no-show (claim)",
+          "description": "Student claims the coach did not attend"
+        },
+        "resolutionAction": null,
         "opened_at": "2026-01-01T00:00:00.000Z"
       }
     ]
@@ -2170,7 +2335,27 @@ Older `service_issue` / `billing` labels are replaced in place by this migration
       "refund_amount": "20.00",
       "booking": {
         "id": 1,
-        "scheduled_at": "2026-02-01T10:00:00.000Z"
+        "lesson_id": 12,
+        "coach_id": 10,
+        "primary_student_id": 20,
+        "scheduled_at": "2026-02-01T10:00:00.000Z",
+        "duration_minutes": 60,
+        "price": "50.00",
+        "status": "coach_no_show",
+        "court_location_id": 3,
+        "messaging_locked": true
+      },
+      "disputeType": {
+        "id": 1,
+        "code": "coach_no_show_claim",
+        "name": "Coach no-show (claim)",
+        "description": "Student claims the coach did not attend"
+      },
+      "resolutionAction": {
+        "id": 2,
+        "code": "partial_refund",
+        "name": "Partial refund",
+        "description": "Partial refund to student"
       },
       "resolved_by_admin": {
         "id": 10,
@@ -2186,7 +2371,22 @@ Older `service_issue` / `billing` labels are replaced in place by this migration
 
 ### `POST /api/disputes`
 - **Auth**: Required. **Students and coaches** must have **verified email**. **Admins** may create disputes without email verification; the row is stored with **`opened_by` → `admin`** (same as **`POST /api/admin/disputes`**).
-- **Description**: Create a dispute. **Student/coach** callers get **`opened_by` → `student`** or **`coach`** as appropriate. **Admin** callers get **`opened_by` → `admin`** — use this when support opens a case the user never filed in-app. Does **not** change `bookings.status` by itself; admin resolves via **`PUT /api/disputes/:id/resolve`** using **`decision` + `financial_action`** for all dispute types, and **`outcome`** only for attendance claims (`coach_no_show_claim`, `student_no_show_claim`).
+- **Description**: Create a dispute. **Student/coach** callers get **`opened_by` → `student`** or **`coach`** as appropriate. **Admin** callers get **`opened_by` → `admin`**. Active types only: `coach_no_show_claim`, `student_no_show_claim`, `misconduct`, `lesson_not_completed`, `other`. Types outside the active catalog (including removed codes such as `refund_request` / `billing_issue`) return **400** `dispute_type_deprecated` when still referenced. Refund intent belongs in **`notes`** and admin **`financial_action`** on resolve — not a separate dispute type.
+- **Booking status guard**: Disputes are **post-lesson** case records. The booking must be in an eligible status before create succeeds (**400** with `booking_status` in the error payload):
+
+  | Booking status | Can create? |
+  |----------------|-------------|
+  | `awaiting_verification` | **Yes** |
+  | `completed` | **Yes** |
+  | `student_no_show` | **Yes** (e.g. second dispute after a prior resolve) |
+  | `coach_no_show` | **Yes** |
+  | `disputed` | **Yes** when no other active in-app dispute exists |
+  | `confirmed` | **Yes** only after lesson end time (`scheduled_at + duration_minutes`) |
+  | `pending` | **No** — `dispute_create_pre_lesson_booking` |
+  | `confirmed` (lesson not ended) | **No** — `dispute_create_lesson_not_ended` |
+  | `cancelled` | **No** — `dispute_create_cancelled_booking` |
+
+  Also blocked: **409** when another dispute on the same booking is `open` or `under_review`.
 - **Request Body**:
   ```json
   {
@@ -2224,7 +2424,7 @@ Older `service_issue` / `billing` labels are replaced in place by this migration
 
 Dispute resolution is the **authoritative adjudication boundary** for whether the booking’s attendance outcome may still be changed **outside** the dispute flow.
 
-- **On every successful resolve** (all dispute types: attendance claims **`coach_no_show_claim`**, **`student_no_show_claim`**, and behavior **`misconduct`**, **`late_arrival`**, **`lesson_not_completed`**), the server sets **`bookings.attendance_finalized` → `true`**. This is **intentional** for behavior disputes too: resolving any dispute finalizes that the incident has been adjudicated; it does **not** delete the booking, invalidate it, or imply mutable attendance via admin shortcuts afterward.
+- **On every successful resolve** (all dispute types: attendance claims **`coach_no_show_claim`**, **`student_no_show_claim`**, behavior **`misconduct`**, **`lesson_not_completed`**, and catch-all **`other`**), the server sets **`bookings.attendance_finalized` → `true`**.
 - **What the flag means**: it does **not** freeze the entire booking row forever. It means **attendance outcome** cannot be mutated via **`POST /api/admin/bookings/:id/student-no-show`** or **`POST /api/admin/bookings/:id/coach-no-show`** — those return **`409`** with **`code: attendance_finalized_locked`** once the flag is true.
 - **Changing attendance after finalization**: open a **new** dispute on the same booking (when no dispute is active) and resolve it via this endpoint. Resolve may still update **`bookings.status`** from allowed source statuses (including `student_no_show`, `coach_no_show`, `completed`, `disputed` per `DISPUTE_RESOLVE_ATTENDANCE_SOURCE_STATUSES` for attendance outcomes) and always re-affirms **`attendance_finalized`**.
 - **Canonical records**: **`disputes.outcome`** is the historical attendance determination for that dispute row (attendance types only). **`bookings.status`** is the operational final state for product/UI. **`attendance_finalized`** is the guardrail preventing post-resolution drift from admin no-show endpoints.
@@ -2237,7 +2437,7 @@ Dispute resolution is the **authoritative adjudication boundary** for whether th
   - **`outcome`** (attendance claims only — dispute types **`coach_no_show_claim`**, **`student_no_show_claim`**): **`student_no_show`** | **`coach_no_show`**. **Always required** for attendance disputes (factual determination on every resolve). Non-attendance disputes must omit **`outcome`**.
     - **`decision`** **`upheld`** or **`partial`**: **`outcome`** may be either value; it is validated against **`financial_action`** per the alignment matrix below, then mapped **one-to-one** onto **`bookings.status`**.
     - **`decision`** **`rejected`**: **`outcome`** must be the **contradicting** factual result — **`coach_no_show_claim`** → **`student_no_show`** only; **`student_no_show_claim`** → **`coach_no_show`** only. Any other **`outcome`** for **`rejected`** is **`400`** with **`attendance_rejected_outcome_aligns_with_claim`**. **`financial_action`** follows the same **outcome ↔ money** rules as **`upheld`**/**`partial`** (see **Attendance outcome ↔ financial_action** below): **`coach_no_show`** requires a student refund; **`student_no_show`** requires **`no_change`** (no refund on resolve).
-  - **`penalize_role`** (behavior disputes only): **`coach`** | **`student`** | **`none`** for `late_arrival`, `misconduct`, `lesson_not_completed`.
+  - **`penalize_role`** (behavior disputes only): **`coach`** | **`student`** | **`none`** for `misconduct`, `lesson_not_completed`. Must be **`none`** for `other`.
     - `decision = upheld|partial` -> must be `coach` or `student`
     - `decision = rejected` -> must be `none`
     - attendance claims must omit `penalize_role`
@@ -2246,13 +2446,13 @@ Dispute resolution is the **authoritative adjudication boundary** for whether th
       - Admin-opened sustained behavior disputes (`opened_by=admin`) → `behavior_resolution_direction_ambiguous`, because claimant-vs-accused is not inferable from `opened_by`; the admin must consciously pick a side.
 
   **Alignment (Layer 3) — strict consistency rules (returned as `400` with `code`):**
-  - **Unsupported / unknown `dispute_type_code`** → `unsupported_dispute_alignment_type`. Alignment is only defined for `coach_no_show_claim`, `student_no_show_claim`, `late_arrival`, `misconduct`, `lesson_not_completed`.
+  - **Unsupported / unknown `dispute_type_code`** → `unsupported_dispute_alignment_type`. Alignment is only defined for `coach_no_show_claim`, `student_no_show_claim`, `misconduct`, `lesson_not_completed`, `other`.
   - **Attendance claims (`coach_no_show_claim`, `student_no_show_claim`):**
     - Missing **`outcome`** (any **`decision`**) → **`attendance_outcome_required`**.
     - `decision = rejected` + **`outcome`** that is not the required contradicting fact (`coach_no_show_claim` requires `student_no_show`; `student_no_show_claim` requires `coach_no_show`) → **`attendance_rejected_outcome_aligns_with_claim`**.
     - **Attendance outcome ↔ financial_action** (all of **`upheld`**, **`partial`**, **`rejected`** after the rejected-outcome check above): **`outcome = coach_no_show`** requires **`financial_action`** of **`refund_student`** or **`refund_student_partial`** (student must be compensated). **`outcome = student_no_show`** requires **`financial_action = no_change`** (no refund on resolve; coach payout follows normal booking rules). Any other pairing → **`attendance_financial_mismatch`**.
     - When **`outcome`** contradicts the opener's claim (student-opened `coach_no_show_claim` resolved as `student_no_show`, or coach-opened `student_no_show_claim` resolved as `coach_no_show`), including **`decision = rejected`** with that **`outcome`**: allowed, but adds advisory **`attendance_claim_reversal`** to `data.warnings[]` when the opener is student/coach (not admin).
-  - **Behavior disputes (`late_arrival`, `misconduct`, `lesson_not_completed`):**
+  - **Behavior disputes (`misconduct`, `lesson_not_completed`):**
     - `decision = rejected` + any refund → `behavior_rejected_financial`.
     - `decision = rejected` + `penalize_role` not `none` → `behavior_rejected_penalize`.
     - `decision = upheld|partial` + `penalize_role` not `coach`/`student` → `behavior_penalize_required`.
@@ -2274,9 +2474,11 @@ Dispute resolution is the **authoritative adjudication boundary** for whether th
 
   **Reliability:**  
   - **Attendance claims** (`coach_no_show_claim`, `student_no_show_claim`): scoring uses **`bookings.status`** after resolve — **not** dispute **`notes`**, **not** who opened the dispute, and **not** **`penalize_role`**. Every attendance resolve supplies **`outcome`**; **`bookings.status`** is updated to match **`outcome`** (subject to transition rules), so reliability and payouts stay tied to a single factual attendance row.
-  - Behavior disputes (`late_arrival`, `misconduct`, `lesson_not_completed`): two fields work together; **`financial_action` does not** decide whether reliability is penalized.
-    - **`decision`** — **eligibility:** only **`upheld`** and **`partial`** apply behavior penalty metrics (**`late_arrival_penalties`**, **`misconduct_penalties`**, **`lesson_not_completed_penalties`**). **`rejected`** applies **no** behavior penalty (`penalize_role` must be `none`).
+  - Behavior disputes (`misconduct`, `lesson_not_completed`): two fields work together; **`financial_action` does not** decide whether reliability is penalized.
+    - **`decision`** — **eligibility:** only **`upheld`** and **`partial`** apply behavior penalty metrics (**`misconduct_penalties`**, **`lesson_not_completed_penalties`**). **`rejected`** applies **no** behavior penalty (`penalize_role` must be `none`).
     - **`penalize_role`** — **who is penalized:** when `decision` is `upheld` or `partial`, set to **`coach`** or **`student`** to select **which user’s** reliability score is updated and which party’s metrics include the incident. The API **does not** infer this from who opened the dispute or the narrative of the claim—admins must set `penalize_role` deliberately. Hybrid validation warnings are **advisory only** and preserve moderator override flexibility; they do not auto-correct or block submission.
+  - **`other`** (catch-all support cases): admin reads create-time **`notes`** and optional resolve **`resolution_notes`**. Does **not** redefine attendance (**`outcome`** forbidden), does **not** affect reliability (**`penalize_role`** must be **`none`** / omitted). Any **`financial_action`** is allowed when **`decision`** is **`upheld`** or **`partial`**; **`rejected`** requires **`no_change`**. Use **`notes`** for refund rationale.
+    - **Booking status:** **`other`** disputes preserve the lesson outcome — they do not redefine attendance. The only exception is when the booking is temporarily parked in the special **`disputed`** state by the Stripe dispute workflow; resolving an **`other`** dispute releases that temporary parking state and returns the booking to **`completed`**. All other statuses (`completed`, `awaiting_verification`, `student_no_show`, `coach_no_show`, etc.) remain unchanged on resolve.
 
   **Attendance vs behavior:** Attendance penalties use **`bookings.status`** (`coach_no_show`, `student_no_show`, …) only—attendance disputes do **not** add a parallel reliability bucket; resolving **`coach_no_show_claim` / `student_no_show_claim`** with **`outcome`** updates **`bookings.status`** and scoring reads that row.
 
@@ -2388,9 +2590,18 @@ Dispute resolution is the **authoritative adjudication boundary** for whether th
 
 ## Notifications (`/api/notifications`)
 
+**In-app navigation convention:** For the notification bell, filter `channel === 'in_app'`. Render with `payload.headline` / `payload.summary` / optional `payload.preview`; on tap, `if (notification.payload?.route) navigate(notification.payload.route)` — no per-type copy or routing on the client.
+
+**In-app UI contract:** Every in-app notification payload includes **`headline`** and **`summary`** (and usually **`route`**). Optional **`preview`**. Keep **`summary`** to one short sentence for the bell; put reasons, notes, and refunds in structured fields (`reason_line`, `message_to_student`, `refund_line`, etc.). Extra keys (`booking_id`, `coach_name`, …) are metadata only. Types covered: `booking_confirmed`, `booking_request_coach`, `booking_declined`, `booking_cancelled`, `pre_lesson_24h`, `pre_lesson_1h`, `new_message`.
+
+**Code layout (MVP):** Orchestration in `services/notificationService.js`. Presentation under `notifications/` — `payloadBuilders.js` (in-app copy), `emailTemplates.js` / `smsTemplates.js` (delivery copy), `notificationRoutes.js` (`payload.route`).
+
+**Backend convention (new types):** Set `headline`, `summary`, and `payload.route` when creating the row unless there is intentionally nowhere to go. Explicit `route` is preferred (`/reviews/15`, `/disputes/21`, etc.). Existing booking and chat types may rely on fallbacks (`booking_id`, `conversation_id`) via `withNotificationRoute`. Email-only auth notifications (password reset, verify email) typically omit the in-app UI fields.
+
 ### `GET /api/notifications`
 - **Auth**: Required
 - **Description**: Get user's notifications. Omit `page`/`limit` to return all matching notifications (server-capped). Provide `page` or `limit` to paginate and include `pagination`.
+- **DTO contract**: **`payload`** is redacted before returning to clients — tokens and magic-link URLs (`reset_token`, `verify_url`, `reset_url`, `confirm_url`, etc.) are stripped. Business context (booking id, coach name, lesson title) is preserved. **`payload.route`** drives in-app navigation: explicit `route` wins; otherwise derived (`new_message` → `/messages/:conversation_id`, booking events → `/bookings/:booking_id`). Older rows without `route` are enriched on read. Future types (e.g. `review_received` → `/reviews/15`, `dispute_resolved` → `/disputes/21`) only need `route` in the payload — no helper change.
 - **Query Parameters**: Optional `status`, optional `page`, optional `limit`
 - **Pagination contract**: Paged mode includes `pagination` (`page`, `limit`, `total`, `totalPages`). All-results mode returns only `data`.
 - **Response** (Status: 200):
@@ -2417,14 +2628,16 @@ Dispute resolution is the **authoritative adjudication boundary** for whether th
 
 ### `POST /api/notifications`
 - **Auth**: Required (Admin only)
-- **Description**: Create a notification (admin only)
+- **Description**: Create and **send** a notification (admin only). Creates the row then calls `sendNotification()` so `in_app` becomes `sent` immediately; `email`/`sms` attempt delivery via the configured provider (may end `sent` or `failed`).
 - **Request Body**:
   ```json
   {
     "user_id": "number (required)",
     "type": "string (required)",
     "channel": "string (required)",
-    "payload": "object (required)"
+    "payload": "object (optional)",
+    "entity_type": "string (optional)",
+    "entity_id": "number (optional)"
   }
   ```
 - **Response** (Status: 201):
@@ -2438,10 +2651,11 @@ Dispute resolution is the **authoritative adjudication boundary** for whether th
       "type": "system",
       "channel": "in_app",
       "payload": {
-        "title": "System Notification",
-        "message": "This is a system notification"
+        "headline": "System Notification",
+        "summary": "This is a system notification"
       },
-      "status": "pending",
+      "status": "sent",
+      "sent_at": "2026-01-01T00:00:00.000Z",
       "created_at": "2026-01-01T00:00:00.000Z"
     }
   }
@@ -2449,8 +2663,8 @@ Dispute resolution is the **authoritative adjudication boundary** for whether th
 
 ### `PUT /api/notifications/:id/read`
 - **Auth**: Required
-- **Description**: Mark notification as read (own notification or admin)
-- **Response** (Status: 200): Notification object with updated status.
+- **Description**: Mark notification as read (own notification or admin). Sets `read_at` (if not already set) and keeps `status` as `sent`. Unread for a bell UI ≈ `read_at` is null.
+- **Response** (Status: 200): Notification object with updated `read_at` / status.
 
 ### `DELETE /api/notifications/:id`
 - **Auth**: Required
@@ -2611,7 +2825,7 @@ Dispute resolution is the **authoritative adjudication boundary** for whether th
 - **Description**: Full reliability breakdown for support and investigation. This is **not** the same as a coach’s self-service read: authenticated coaches use **`GET /api/coaches/me/reliability`** for a **curated detail DTO** without decay triplets or engine diagnostics. Response is always **`data.reliability`**, with a **`role`** field (**`"coach"`** or **`"student"`**). **`reliability_score`**, canonical **`user_reliability`** metrics (recent / decayed / total per penalty bucket, booking baseline, smoothing metadata), and **`penalties.points`** are all derived from the **same** math as `reliabilityEngine.calculateReliabilityScoreFromPersistenceRow` (see **`docs/reliability-system.md`**). **`legacy_aliases`** mirrors older JSON field names (`total_bookings`, `late_cancels`, …) for backward-compatible clients.
 - **Coach (`data.reliability.role` = `"coach"`)** — **`penalties`**:
   - Each scored category is an object **`{ recent, decayed, total }`** matching persisted `user_reliability` columns (`late_cancels_*`, `coach_cancels_non_late_*`, `no_shows_*`, behavior dispute buckets, etc.).
-  - **`penalties.points`** lists per-bucket **point deductions** (same weights as the scorer). Coach includes **`late_cancels`**, **`late_arrival_penalties`**, **`no_shows`**, **`coach_cancels_non_late`**, **`misconduct_penalties`**, **`lesson_not_completed_penalties`**.
+  - **`penalties.points`** lists per-bucket **point deductions** (same weights as the scorer). Coach includes **`late_cancels`**, **`no_shows`**, **`coach_cancels_non_late`**, **`misconduct_penalties`**, **`lesson_not_completed_penalties`**.
   - **`scoring`**: **`denominator`** = `max(1, booking_baseline_total + smoothing_k)` as stored; **`reconstructed_from_metrics`** reproduces the score from persisted columns alone; **`score_matches_recomputed`** is true when **`score_source`** is **`computed`** and the persisted score matches reconstruction (within tolerance).
 - **Student (`data.reliability.role` = `"student"`)** — same shape; **`penalties.student_cancels_non_late`** uses **`student_cancels_non_late_*`** columns (no overloaded coach column). Student **`penalties.points`** includes **`late_cancels`**, behavior keys, **`attendance_no_show`**, and **`student_cancels_non_late`**.
 - **Response** (Status: 200): **`message`** is **`Reliability retrieved successfully`**. Example (**coach**):
@@ -2628,13 +2842,11 @@ Dispute resolution is the **authoritative adjudication boundary** for whether th
         "total_bookings": 10,
         "penalties": {
           "late_cancels": 0,
-          "late_arrival_penalties": 1,
           "misconduct_penalties": 1,
           "lesson_not_completed_penalties": 0,
           "no_shows": 0,
           "coach_cancels_non_late": 1,
           "points": {
-            "late_arrival": 0.5,
             "misconduct": 2.5,
             "lesson_not_completed": 0,
             "attendance_no_show": 0

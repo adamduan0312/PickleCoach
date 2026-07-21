@@ -186,7 +186,7 @@ See **`POSTMAN_TESTING_GUIDE.md`** for flow-based testing order, checklist, and 
    - User profile: `GET /api/auth/profile` (with token)
    - Coach endpoints: `GET /api/coaches`, `POST /api/coaches/profile`, `PUT /api/coaches/me/profile`
    - Lesson endpoints: `POST /api/lessons`, `GET /api/lessons`
-   - Booking endpoints: `POST /api/bookings`, `GET /api/bookings`
+   - Booking endpoints: `POST /api/bookings/confirm`, `GET /api/students/me/bookings`, `GET /api/coaches/me/bookings`, `GET /api/bookings/:id`
 
 5. **Test with Authentication:**
    - Add header to requests: `Authorization: Bearer {{student_token}}`

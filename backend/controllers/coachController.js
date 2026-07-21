@@ -13,47 +13,20 @@ import {
 import { successResponse, errorResponse, paginatedResponse } from '../utils/response.js';
 import { getPagination, getPagingData } from '../utils/pagination.js';
 import { Op } from 'sequelize';
-import { sequelize } from '../models/sequelize.js';
 import { logger } from '../config/logger.js';
 import { getEffectiveRolesForUserRecord } from '../utils/roleGovernance.js';
+import { serializeCoachPublicUser, serializeCoachListItem, distanceMiles } from '../utils/userDto.js';
 import { toYmdApi } from '../utils/dateOnly.js';
-
-/**
- * Calculate distance between two lat/lng points using Haversine formula
- * Returns distance in miles
- */
-const calculateDistance = (lat1, lng1, lat2, lng2) => {
-  const R = 3959; // Earth's radius in miles
-  const dLat = (lat2 - lat1) * Math.PI / 180;
-  const dLng = (lng2 - lng1) * Math.PI / 180;
-  const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
-    Math.sin(dLng / 2) * Math.sin(dLng / 2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return R * c;
-};
+import { PUBLIC_ACTIVE_USER_WHERE, findPublicActiveCoach } from '../utils/userLifecycle.js';
+import {
+  marketplaceDiscoveryIncludes,
+  marketplaceDiscoveryProfileWhereBase,
+  getCoachMarketplaceEligibility,
+  syncCoachStripeReadyFromAccount,
+} from '../services/coachMarketplaceEligibility.js';
 
 const MAX_LIST_ALL_COACHES = 10000;
 const MAX_LIST_ALL_AVAILABILITY = 10000;
-
-const slimCoachReliabilityFromRows = (reliabilityRows) => {
-  const rel = (reliabilityRows || []).find((r) => r.role === 'coach');
-  if (!rel) {
-    return { reliability_score: 100, last_updated: null };
-  }
-  return {
-    reliability_score: parseFloat(rel.reliability_score),
-    last_updated: rel.last_updated,
-  };
-};
-
-const shapeCoachForListing = (coachInstance) => {
-  const json = coachInstance.toJSON();
-  const relRows = json.reliabilities;
-  delete json.reliabilities;
-  json.reliability = slimCoachReliabilityFromRows(relRows);
-  return json;
-};
 
 export const getCoaches = async (req, res) => {
   try {
@@ -68,10 +41,13 @@ export const getCoaches = async (req, res) => {
     const { limit: queryLimit, offset } = isPaginated
       ? getPagination(page, limit)
       : { limit: MAX_LIST_ALL_COACHES, offset: 0 };
+    const isGeoSearch = lat != null && lng != null;
 
-    const where = { is_active: true };
+    // Public discovery: Active accounts only (exclude Suspended + Deleted)
+    const where = { ...PUBLIC_ACTIVE_USER_WHERE };
 
-    const profileWhereParts = [];
+    // Marketplace eligibility (DB-only): stripe_ready + later includes for lesson/court/availability
+    const profileWhereParts = [{ ...marketplaceDiscoveryProfileWhereBase() }];
     if (min_rating) {
       profileWhereParts.push({ rating_average: { [Op.gte]: parseFloat(min_rating) } });
     }
@@ -85,18 +61,24 @@ export const getCoaches = async (req, res) => {
       }
     }
     const profileWhere =
-      profileWhereParts.length === 0
-        ? {}
-        : profileWhereParts.length === 1
-          ? profileWhereParts[0]
-          : { [Op.and]: profileWhereParts };
+      profileWhereParts.length === 1
+        ? profileWhereParts[0]
+        : { [Op.and]: profileWhereParts };
+
+    const courtWhere = { deleted_at: null };
+    if (isGeoSearch) {
+      const latRange = radius / 69;
+      const lngRange = radius / (69 * Math.cos(lat * Math.PI / 180));
+      courtWhere.latitude = { [Op.between]: [lat - latRange, lat + latRange] };
+      courtWhere.longitude = { [Op.between]: [lng - lngRange, lng + lngRange] };
+    }
 
     const includes = [
       { model: UserRole, as: 'userRoles', where: { role: 'coach' }, required: true, attributes: [] },
       {
         model: CoachProfile,
         as: 'coachProfile',
-        where: profileWhereParts.length > 0 ? profileWhere : undefined,
+        where: profileWhere,
         required: true,
       },
       {
@@ -106,38 +88,8 @@ export const getCoaches = async (req, res) => {
         required: false,
         attributes: ['role', 'reliability_score', 'last_updated'],
       },
+      ...marketplaceDiscoveryIncludes({ courtWhere }),
     ];
-
-    // If GPS coordinates provided, filter by courts within radius
-    if (lat != null && lng != null) {
-      const latitude = lat;
-      const longitude = lng;
-      const radiusMiles = radius;
-
-      // Calculate bounding box (rough approximation for initial filtering)
-      const latRange = radiusMiles / 69; // ~69 miles per degree latitude
-      const lngRange = radiusMiles / (69 * Math.cos(latitude * Math.PI / 180));
-
-      includes.push({
-        model: CoachCourtLocation,
-        as: 'coachCourts',
-        required: true,
-        include: [{
-          model: CourtLocation,
-          as: 'court',
-          where: {
-            deleted_at: null,
-            latitude: {
-              [Op.between]: [latitude - latRange, latitude + latRange],
-            },
-            longitude: {
-              [Op.between]: [longitude - lngRange, longitude + lngRange],
-            },
-          },
-        required: true,
-      }],
-      });
-    }
 
     // Avoid Sequelize DISTINCT-subquery + ORDER BY on included CoachProfile (MySQL: unknown column in order clause).
     const coaches = await User.findAndCountAll({
@@ -150,30 +102,26 @@ export const getCoaches = async (req, res) => {
       distinct: true, // Count query still uses COUNT(DISTINCT User.id); row query needs accurate ordering
     });
 
-    // If GPS search, filter by exact distance (post-query filtering for accuracy)
     let filteredCoaches = coaches.rows;
-    if (lat && lng) {
-      const latitude = parseFloat(lat);
-      const longitude = parseFloat(lng);
+    if (isGeoSearch) {
       const radiusMiles = parseFloat(radius);
-
-      filteredCoaches = coaches.rows.filter(coach => {
-        // Check if coach has any court within radius
+      filteredCoaches = coaches.rows.filter((coach) => {
         if (!coach.coachCourts || coach.coachCourts.length === 0) return false;
-        
-        return coach.coachCourts.some(coachCourt => {
+        return coach.coachCourts.some((coachCourt) => {
           const court = coachCourt.court;
-          if (!court || !court.latitude || !court.longitude) return false;
-          const distance = calculateDistance(latitude, longitude, court.latitude, court.longitude);
-          return distance <= radiusMiles;
+          if (!court || court.latitude == null || court.longitude == null) return false;
+          return distanceMiles(lat, lng, court.latitude, court.longitude) <= radiusMiles;
         });
       });
-
-      // Update count for pagination
       coaches.count = filteredCoaches.length;
     }
 
-    const shaped = filteredCoaches.map((c) => shapeCoachForListing(c));
+    const shaped = filteredCoaches.map((c) =>
+      serializeCoachListItem(c, {
+        searchLat: isGeoSearch ? lat : null,
+        searchLng: isGeoSearch ? lng : null,
+      }),
+    );
 
     if (!isPaginated) {
       return successResponse(res, shaped, 'Coaches retrieved successfully');
@@ -195,10 +143,10 @@ export const getCoachById = async (req, res) => {
   try {
     const { id } = req.params;
     const coach = await User.findOne({
-      where: { id, is_active: true, deleted_at: null },
+      where: { id, ...PUBLIC_ACTIVE_USER_WHERE },
       include: [
         { model: UserRole, as: 'userRoles', where: { role: 'coach' }, required: true, attributes: [] },
-        { model: CoachProfile, as: 'coachProfile' },
+        { model: CoachProfile, as: 'coachProfile', where: { deleted_at: null }, required: false },
         { model: CoachAvailability, as: 'availabilities' },
         { model: Lesson, as: 'lessons', where: { is_active: true, deleted_at: null }, required: false },
         { model: Review, as: 'reviewsReceived', limit: 10, order: [['created_at', 'DESC']] },
@@ -216,9 +164,7 @@ export const getCoachById = async (req, res) => {
       return errorResponse(res, 'Coach not found', 404);
     }
 
-    const payload = coach.toJSON();
-    payload.reliability = slimCoachReliabilityFromRows(payload.reliabilities);
-    delete payload.reliabilities;
+    const payload = serializeCoachPublicUser(coach);
     if (Array.isArray(payload.availabilities)) {
       payload.availabilities = payload.availabilities.map(shapeAvailabilityForApi);
     }
@@ -474,6 +420,10 @@ export const getCoachAvailability = async (req, res) => {
     if (!Number.isFinite(coachId) || coachId < 1) {
       return errorResponse(res, 'Invalid coach ID', 400);
     }
+    const coach = await findPublicActiveCoach(coachId);
+    if (!coach) {
+      return errorResponse(res, 'Coach not found', 404);
+    }
     return await listCoachAvailabilityForResponse(req, res, coachId);
   } catch (error) {
     logger.error('Get availability error:', error);
@@ -609,6 +559,48 @@ export const deleteAvailability = async (req, res) => {
 };
 
 /**
+ * GET /api/coaches/me/marketplace-status
+ * Checklist for whether this coach appears in student discovery.
+ * Optionally refreshes local stripe_ready from Stripe (single coach — OK to call Stripe).
+ */
+export const getMyMarketplaceStatus = async (req, res) => {
+  try {
+    if (!(req.user.roles || []).includes('coach') && !(req.user.roles || []).includes('admin')) {
+      return errorResponse(res, 'Only coaches can check marketplace status', 403);
+    }
+
+    const coachId = (req.user.roles || []).includes('admin') && req.query.coach_id
+      ? Number(req.query.coach_id)
+      : req.user.id;
+    if (!Number.isFinite(coachId)) {
+      return errorResponse(res, 'Coach ID is required', 400);
+    }
+
+    const coachProfile = await CoachProfile.findOne({ where: { user_id: coachId } });
+    if (coachProfile?.stripe_account_id) {
+      try {
+        const stripe = (await import('../services/stripeService.js')).default;
+        const account = await stripe.accounts.retrieve(coachProfile.stripe_account_id);
+        await syncCoachStripeReadyFromAccount(coachProfile, account);
+      } catch (syncErr) {
+        logger.warn('Marketplace status: Stripe sync failed; using DB stripe_ready', {
+          coachId,
+          message: syncErr.message,
+        });
+      }
+    } else if (coachProfile?.stripe_ready) {
+      await coachProfile.update({ stripe_ready: false, stripe_onboarding_completed_at: null });
+    }
+
+    const eligibility = await getCoachMarketplaceEligibility(coachId);
+    return successResponse(res, eligibility, 'Marketplace status retrieved successfully');
+  } catch (error) {
+    logger.error('Get marketplace status error:', error);
+    return errorResponse(res, 'Failed to retrieve marketplace status', 500);
+  }
+};
+
+/**
  * POST /api/coaches/me/stripe-connect/onboard
  * Initiate Stripe Connect onboarding for coach
  */
@@ -650,9 +642,11 @@ export const initiateStripeConnectOnboarding = async (req, res) => {
       coach_profile_id: coachProfile.id.toString(),
     });
 
-    // Update coach profile with Stripe account ID
+    // Update coach profile with Stripe account ID (not yet ready for marketplace)
     await coachProfile.update({
       stripe_account_id: account.id,
+      stripe_ready: false,
+      stripe_onboarding_completed_at: null,
     });
 
     // Create onboarding link
@@ -678,7 +672,7 @@ export const initiateStripeConnectOnboarding = async (req, res) => {
 
 /**
  * GET /api/coaches/me/stripe-connect/status
- * Get Stripe Connect account status
+ * Get Stripe Connect account status and sync local stripe_ready for discovery.
  */
 export const getStripeConnectStatus = async (req, res) => {
   try {
@@ -697,15 +691,20 @@ export const getStripeConnectStatus = async (req, res) => {
     }
 
     if (!coachProfile.stripe_account_id) {
+      if (coachProfile.stripe_ready) {
+        await coachProfile.update({ stripe_ready: false, stripe_onboarding_completed_at: null });
+      }
       return successResponse(res, {
         onboarded: false,
         account_id: null,
+        stripe_ready: false,
       }, 'Coach not onboarded with Stripe Connect');
     }
 
-    // Get account details from Stripe
+    // Get account details from Stripe and sync local readiness cache
     const stripe = (await import('../services/stripeService.js')).default;
     const account = await stripe.accounts.retrieve(coachProfile.stripe_account_id);
+    const stripeReady = await syncCoachStripeReadyFromAccount(coachProfile, account);
 
     return successResponse(res, {
       onboarded: true,
@@ -714,6 +713,7 @@ export const getStripeConnectStatus = async (req, res) => {
       payouts_enabled: account.payouts_enabled,
       details_submitted: account.details_submitted,
       email: account.email,
+      stripe_ready: stripeReady,
     }, 'Stripe Connect status retrieved successfully');
   } catch (error) {
     logger.error('Get Stripe Connect status error:', error);

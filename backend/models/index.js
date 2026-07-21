@@ -112,7 +112,7 @@ Booking.belongsTo(Lesson, { foreignKey: 'lesson_id', as: 'lesson' });
 Booking.belongsTo(User, { foreignKey: 'coach_id', as: 'coach' });
 Booking.belongsTo(User, { foreignKey: 'primary_student_id', as: 'primaryStudent' });
 Booking.belongsTo(CourtLocation, { foreignKey: 'court_location_id', as: 'courtLocation' });
-Booking.hasMany(BookingPlayer, { foreignKey: 'booking_id', as: 'players' });
+Booking.hasMany(BookingPlayer, { foreignKey: 'booking_id', as: 'players' }); // V2 only; MVP DTOs omit `players`
 Booking.hasMany(Payment, { foreignKey: 'booking_id', as: 'payments' });
 Booking.hasMany(CancellationHistory, { foreignKey: 'booking_id', as: 'cancellationHistory' });
 Booking.hasMany(Dispute, { foreignKey: 'booking_id', as: 'disputes' });
@@ -121,7 +121,7 @@ Booking.hasOne(Conversation, { foreignKey: 'booking_id', as: 'conversation' });
 Booking.hasMany(Review, { foreignKey: 'booking_id', as: 'reviews' });
 Booking.hasMany(StudentFeedback, { foreignKey: 'booking_id', as: 'feedback' });
 
-// BookingPlayer associations
+// BookingPlayer associations (table kept for V2 group lessons; not used in MVP API)
 BookingPlayer.belongsTo(Booking, { foreignKey: 'booking_id', as: 'booking' });
 BookingPlayer.belongsTo(User, { foreignKey: 'player_id', as: 'player' });
 

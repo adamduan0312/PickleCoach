@@ -54,7 +54,7 @@ const APPLY = process.argv.includes('--apply');
 
 const ACTIVE_STATUSES = new Set(['open', 'under_review']);
 const ATTENDANCE_TYPE_CODES = new Set(['coach_no_show_claim', 'student_no_show_claim']);
-const BEHAVIOR_TYPE_CODES = new Set(['late_arrival', 'misconduct', 'lesson_not_completed']);
+const BEHAVIOR_TYPE_CODES = new Set(['misconduct', 'lesson_not_completed']);
 
 /** Sort key: prefer active disputes, then the most recently opened. */
 function disputeRank(d) {

@@ -5,7 +5,7 @@
 import assert from 'node:assert/strict';
 import { describe, it, afterEach } from 'node:test';
 import { Op } from 'sequelize';
-import { CourtLocation, CoachCourtLocation, CoachProfile } from '../models/index.js';
+import { CourtLocation, CoachCourtLocation, CoachProfile, User } from '../models/index.js';
 import { searchCourts, getCourt, getCoachCourtsById, getMyCoachCourts } from '../controllers/courtController.js';
 import { publicCourtDirectoryWhere } from '../utils/courtPublicDirectory.js';
 
@@ -14,6 +14,7 @@ const origFindAndCountAll = CourtLocation.findAndCountAll;
 const origFindOne = CourtLocation.findOne;
 const origCoachProfileFindOne = CoachProfile.findOne;
 const origCoachCourtFAC = CoachCourtLocation.findAndCountAll;
+const origUserFindOne = User.findOne;
 
 afterEach(() => {
   CourtLocation.findAll = origFindAll;
@@ -21,6 +22,7 @@ afterEach(() => {
   CourtLocation.findOne = origFindOne;
   CoachProfile.findOne = origCoachProfileFindOne;
   CoachCourtLocation.findAndCountAll = origCoachCourtFAC;
+  User.findOne = origUserFindOne;
 });
 
 describe('publicCourtDirectoryWhere', () => {
@@ -175,7 +177,13 @@ describe('GET /api/courts/:id (getCourt)', () => {
 describe('Coach court lists (no public-directory privacy filter on court rows)', () => {
   it('GET /api/coaches/:id/courts — CourtLocation include only filters deleted_at', async () => {
     let courtIncludeWhere;
-    CoachProfile.findOne = async () => ({ user_id: 1 });
+    User.findOne = async () => ({
+      id: 1,
+      is_active: true,
+      deleted_at: null,
+      userRoles: [{ role: 'coach' }],
+      coachProfile: { deleted_at: null },
+    });
     CoachCourtLocation.findAndCountAll = async (opts) => {
       const courtInc = opts.include.find((i) => i.as === 'court');
       courtIncludeWhere = courtInc.where;
@@ -191,6 +199,23 @@ describe('Coach court lists (no public-directory privacy filter on court rows)',
     };
     await getCoachCourtsById(req, res);
     assert.deepEqual(courtIncludeWhere, { deleted_at: null });
+  });
+
+  it('GET /api/coaches/:id/courts — 404 when coach is suspended', async () => {
+    User.findOne = async () => null; // findPublicActiveCoach finds nothing
+    const req = { params: { id: '1' }, validated: {} };
+    const res = {
+      statusCode: 200,
+      status(c) {
+        this.statusCode = c;
+        return this;
+      },
+      json(payload) {
+        this.payload = payload;
+      },
+    };
+    await getCoachCourtsById(req, res);
+    assert.equal(res.statusCode, 404);
   });
 
   it('GET /api/coaches/me/courts — CourtLocation include only filters deleted_at', async () => {

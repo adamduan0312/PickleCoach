@@ -109,6 +109,24 @@ describe('bookingStateMachine', () => {
     );
     assert.equal(r.ok, true);
   });
+
+  it('catchall other release: disputed → completed', () => {
+    const r = canTransitionBookingStatus(
+      'disputed',
+      'completed',
+      BookingTransitionVia.DISPUTE_RESOLVE_CATCHALL_ON_DISPUTED_BOOKING,
+    );
+    assert.equal(r.ok, true);
+  });
+
+  it('Stripe terminal release: disputed → completed', () => {
+    const r = canTransitionBookingStatus(
+      'disputed',
+      'completed',
+      BookingTransitionVia.STRIPE_DISPUTE_TERMINAL,
+    );
+    assert.equal(r.ok, true);
+  });
 });
 
 describe('conversation auto-create (only on → confirmed)', () => {

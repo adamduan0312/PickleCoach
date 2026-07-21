@@ -26,15 +26,15 @@ async function loadUserForRequest(token) {
     const err = new Error('User deleted');
     err.authStatus = 401;
     err.authBody = {
-      error: 'This account has been deleted. Log in with a different account or ask an administrator to restore access.',
+      error: 'This account has been deleted. Please contact support.',
     };
     throw err;
   }
   if (!user.is_active) {
-    const err = new Error('User inactive');
+    const err = new Error('User suspended');
     err.authStatus = 401;
     err.authBody = {
-      error: 'This account is inactive. Contact support if you need access restored.',
+      error: 'This account has been suspended. Please contact support.',
     };
     throw err;
   }

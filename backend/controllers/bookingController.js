@@ -4,7 +4,7 @@ import {
   Lesson,
   User,
   UserRole,
-  BookingPlayer,
+  UserReliability,
   Payment,
   CancellationHistory,
   CourtLocation,
@@ -35,6 +35,13 @@ import { ACTIVE_DISPUTE_STATUSES } from '../services/disputeStateMachine.js';
 import { getEffectiveRolesForUserRecord } from '../utils/roleGovernance.js';
 import { attachConversationSummaries, attachConversationSummaryToBookingJson } from '../utils/bookingConversationSummary.js';
 import {
+  serializeBookingDetailPayload,
+  serializeBookingListItem,
+  serializeBookingResponse,
+  serializeBookingSummary,
+} from '../utils/bookingDto.js';
+import { serializePaymentSummary } from '../utils/paymentDto.js';
+import {
   shouldQueueLateCancelCoachPayout,
   cancellationFinancialsForHistory,
 } from '../utils/lateCancelPayout.js';
@@ -42,6 +49,53 @@ import {
   assertPreLessonCancelAllowed,
   assertBookingStatusAllowsPreLessonCancel,
 } from '../utils/bookingCancelEligibility.js';
+import {
+  buildAdminBookingsWhere,
+  buildCoachInboxBookingsWhere,
+  buildStudentBookingsWhere,
+} from '../utils/bookingListQuery.js';
+
+/** Nested student party for booking responses — optional student reliability score for coaches. */
+function primaryStudentInclude() {
+  return {
+    model: User,
+    as: 'primaryStudent',
+    attributes: ['id', 'full_name', 'avatar_url'],
+    include: [
+      {
+        model: UserReliability,
+        as: 'reliabilities',
+        required: false,
+        where: { role: 'student' },
+        attributes: ['user_id', 'role', 'reliability_score'],
+      },
+    ],
+  };
+}
+
+/** Privileged court-address viewers: booking coach or admin. */
+function coachViewerSerializeOptions(viewerUserId, booking, roles = []) {
+  const isCoach = Number(viewerUserId) === Number(booking?.coach_id);
+  const isAdmin = Array.isArray(roles) && roles.includes('admin');
+  return {
+    includeStudentReliability: isCoach,
+    viewerIsPrivileged: isCoach || isAdmin,
+  };
+}
+
+/** Student booking viewers: follow booking status unless privileged. */
+function bookingCourtAddressOptions(viewerUserId, roles, booking) {
+  return coachViewerSerializeOptions(viewerUserId, booking, roles);
+}
+
+function bookingListIncludes() {
+  return [
+    { model: Lesson, as: 'lesson' },
+    { model: User, as: 'coach', attributes: ['id', 'full_name', 'avatar_url'] },
+    primaryStudentInclude(),
+    { model: CourtLocation, as: 'courtLocation' },
+  ];
+}
 
 function respondIfBookingStateMachineError(res, error) {
   if (error?.statusCode === 400 && error?.code) {
@@ -52,119 +106,96 @@ function respondIfBookingStateMachineError(res, error) {
 
 const MAX_LIST_ALL_BOOKINGS = 10000;
 
-export const getBookings = async (req, res) => {
+/**
+ * Shared list responder for coach / student / admin booking lists.
+ * @param {'per_row_coach' | true | false} studentReliabilityMode
+ */
+async function respondWithBookingList(req, res, {
+  where,
+  successMessage,
+  failureMessage,
+  logLabel,
+  studentReliabilityMode,
+}) {
   try {
-    const { page, limit, status, coach_id, student_id } = req.validated;
+    const { page, limit } = req.validated;
     const roles = req.user.roles || [];
-    const isAdmin = roles.includes('admin');
-    const hasParticipantRole = roles.includes('student') || roles.includes('coach');
-    const isAdminRoute = (req.baseUrl || '').includes('/admin');
-    /** Pure admin (no student/coach capability) must use admin list API, not participant-scoped `/api/bookings`. */
-    if (isAdmin && !hasParticipantRole && !isAdminRoute) {
-      return errorResponse(res, 'Use /api/admin/bookings for admin booking list access', 403);
-    }
     const isPaginated = page != null || limit != null;
     const { limit: queryLimit, offset } = isPaginated
       ? getPagination(page, limit)
       : { limit: MAX_LIST_ALL_BOOKINGS, offset: 0 };
 
-    const where = {};
-    if (status) where.status = status;
-
-    if (isAdminRoute && isAdmin) {
-      if (coach_id) where.coach_id = coach_id;
-      if (student_id) where.primary_student_id = student_id;
-    } else {
-      where[Op.or] = [{ coach_id: req.user.id }, { primary_student_id: req.user.id }];
-    }
-
     const bookings = await Booking.findAndCountAll({
       where,
-      include: [
-        { model: Lesson, as: 'lesson' },
-        { model: User, as: 'coach', attributes: ['id', 'full_name', 'avatar_url'] },
-        { model: User, as: 'primaryStudent', attributes: ['id', 'full_name', 'avatar_url'] },
-        { model: CourtLocation, as: 'courtLocation' },
-      ],
+      include: bookingListIncludes(),
       limit: queryLimit,
       offset,
       order: [['scheduled_at', 'DESC']],
     });
 
+    const serializeOpts = (row) => {
+      if (studentReliabilityMode === true) {
+        return { includeStudentReliability: true, viewerIsPrivileged: true };
+      }
+      if (studentReliabilityMode === false) {
+        return {
+          includeStudentReliability: false,
+          ...bookingCourtAddressOptions(req.user.id, roles, row),
+        };
+      }
+      // per_row_coach (admin list): admins always privileged for court address
+      const base = coachViewerSerializeOptions(req.user.id, row, req.user.roles || []);
+      if (roles.includes('admin')) {
+        return { ...base, viewerIsPrivileged: true };
+      }
+      return base;
+    };
+
     if (!isPaginated) {
       const data = await attachConversationSummaries(bookings.rows, req.user.id, roles);
-      return successResponse(res, data, 'Bookings retrieved successfully');
+      return successResponse(
+        res,
+        data.map((row) => serializeBookingListItem(row, serializeOpts(row))),
+        successMessage,
+      );
     }
 
     const response = getPagingData(bookings, page, queryLimit);
     response.items = await attachConversationSummaries(response.items, req.user.id, roles);
-    return paginatedResponse(res, response.items, response.pagination, 'Bookings retrieved successfully');
+    return paginatedResponse(
+      res,
+      response.items.map((row) => serializeBookingListItem(row, serializeOpts(row))),
+      response.pagination,
+      successMessage,
+    );
   } catch (error) {
-    logger.error('Get bookings error:', error);
-    return errorResponse(res, 'Failed to retrieve bookings', 500);
+    logger.error(`${logLabel}:`, error);
+    return errorResponse(res, failureMessage, 500);
   }
+}
+
+/** Coach dashboard: bookings where I am the coach. */
+export const getCoachBookings = async (req, res) => {
+  const { status } = req.validated;
+  return respondWithBookingList(req, res, {
+    where: buildCoachInboxBookingsWhere({ userId: req.user.id, status }),
+    successMessage: 'Coach bookings retrieved successfully',
+    failureMessage: 'Failed to retrieve coach bookings',
+    logLabel: 'Get coach bookings error',
+    studentReliabilityMode: true,
+  });
 };
 
-export const getCoachBookings = async (req, res) => {
-  try {
-    const { page, limit, status } = req.validated;
-    const isPaginated = page != null || limit != null;
-    const { limit: queryLimit, offset } = isPaginated
-      ? getPagination(page, limit)
-      : { limit: MAX_LIST_ALL_BOOKINGS, offset: 0 };
-
-    const where = { coach_id: req.user.id };
-    if (status) where.status = status;
-
-    const latestAuthorizedPaymentExists = sequelize.literal(`EXISTS (
-      SELECT 1 FROM payments p
-      WHERE p.booking_id = bookings.id
-        AND p.payment_status = 'authorized'
-        AND p.id = (SELECT MAX(p2.id) FROM payments p2 WHERE p2.booking_id = bookings.id)
-    )`);
-
-    if (status === 'pending') {
-      where[Op.and] = [latestAuthorizedPaymentExists];
-    } else if (!status) {
-      where[Op.and] = [
-        sequelize.literal(`(
-          bookings.status != 'pending'
-          OR NOT EXISTS (SELECT 1 FROM payments p WHERE p.booking_id = bookings.id)
-          OR EXISTS (
-            SELECT 1 FROM payments p
-            WHERE p.booking_id = bookings.id
-              AND p.payment_status = 'authorized'
-              AND p.id = (SELECT MAX(p2.id) FROM payments p2 WHERE p2.booking_id = bookings.id)
-          )
-        )`),
-      ];
-    }
-
-    const bookings = await Booking.findAndCountAll({
-      where,
-      include: [
-        { model: Lesson, as: 'lesson' },
-        { model: User, as: 'coach', attributes: ['id', 'full_name', 'avatar_url'] },
-        { model: User, as: 'primaryStudent', attributes: ['id', 'full_name', 'avatar_url'] },
-        { model: CourtLocation, as: 'courtLocation' },
-      ],
-      limit: queryLimit,
-      offset,
-      order: [['scheduled_at', 'DESC']],
-    });
-
-    if (!isPaginated) {
-      const data = await attachConversationSummaries(bookings.rows, req.user.id, req.user.roles || []);
-      return successResponse(res, data, 'Coach bookings retrieved successfully');
-    }
-
-    const response = getPagingData(bookings, page, queryLimit);
-    response.items = await attachConversationSummaries(response.items, req.user.id, req.user.roles || []);
-    return paginatedResponse(res, response.items, response.pagination, 'Coach bookings retrieved successfully');
-  } catch (error) {
-    logger.error('Get coach bookings error:', error);
-    return errorResponse(res, 'Failed to retrieve coach bookings', 500);
-  }
+/** Student dashboard: bookings where I am the primary student. */
+export const getStudentBookings = async (req, res) => {
+  const { status } = req.validated;
+  return respondWithBookingList(req, res, {
+    where: buildStudentBookingsWhere({ userId: req.user.id, status }),
+    successMessage: 'Student bookings retrieved successfully',
+    failureMessage: 'Failed to retrieve student bookings',
+    logLabel: 'Get student bookings error',
+    studentReliabilityMode: false,
+  });
 };
 
 export const getBookingById = async (req, res) => {
@@ -174,9 +205,8 @@ export const getBookingById = async (req, res) => {
       include: [
         { model: Lesson, as: 'lesson' },
         { model: User, as: 'coach', attributes: ['id', 'full_name', 'avatar_url'] },
-        { model: User, as: 'primaryStudent', attributes: ['id', 'full_name', 'avatar_url'] },
+        primaryStudentInclude(),
         { model: CourtLocation, as: 'courtLocation' },
-        { model: BookingPlayer, as: 'players', include: [{ model: User, as: 'player', attributes: ['id', 'full_name'] }] },
         { model: Payment, as: 'payments' },
         {
           model: CancellationHistory,
@@ -210,13 +240,24 @@ export const getBookingById = async (req, res) => {
       bookingJson.cancellationHistory = bookingJson.cancellationHistory.map(record => sanitizeResponse(record));
     }
 
+    const isAdminViewer = isAdmin && isAdminRoute;
+
     const payload = await attachConversationSummaryToBookingJson(
       bookingJson,
       req.user.id,
       req.user.roles || [],
     );
 
-    return successResponse(res, payload, 'Booking retrieved successfully');
+    return successResponse(
+      res,
+      serializeBookingDetailPayload(payload, {
+        serializePayment: (payment) => serializePaymentSummary(payment, { isAdmin: isAdminViewer }),
+        includeStudentReliability: Number(req.user.id) === Number(booking.coach_id),
+        viewerIsPrivileged:
+          Number(req.user.id) === Number(booking.coach_id) || isAdminViewer,
+      }),
+      'Booking retrieved successfully',
+    );
   } catch (error) {
     logger.error('Get booking error:', error);
     return errorResponse(res, 'Failed to retrieve booking', 500);
@@ -224,7 +265,14 @@ export const getBookingById = async (req, res) => {
 };
 
 export const getAdminBookings = async (req, res) => {
-  return getBookings(req, res);
+  const { status, coach_id, student_id } = req.validated;
+  return respondWithBookingList(req, res, {
+    where: buildAdminBookingsWhere({ status, coach_id, student_id }),
+    successMessage: 'Bookings retrieved successfully',
+    failureMessage: 'Failed to retrieve bookings',
+    logLabel: 'Get admin bookings error',
+    studentReliabilityMode: 'per_row_coach',
+  });
 };
 
 export const getAdminBookingById = async (req, res) => {
@@ -249,9 +297,9 @@ export const confirmBooking = async (req, res) => {
       paymentIntentId: payment_intent_id,
     });
 
-    const bookingData = result.booking.get({ plain: true });
-    const paymentData = result.payment?.get
-      ? result.payment.get({ plain: true })
+    const bookingData = serializeBookingSummary(result.booking);
+    const paymentData = result.payment
+      ? serializePaymentSummary(result.payment, { isAdmin: false })
       : result.payment;
 
     const message = result.idempotentReplay
@@ -384,10 +432,14 @@ export const completeBooking = async (req, res) => {
       include: [
         { model: Lesson, as: 'lesson' },
         { model: User, as: 'coach', attributes: ['id', 'full_name', 'avatar_url'] },
-        { model: User, as: 'primaryStudent', attributes: ['id', 'full_name', 'avatar_url'] },
+        primaryStudentInclude(),
       ],
     });
-    return successResponse(res, updated, 'Booking marked as completed');
+    return successResponse(
+      res,
+      serializeBookingListItem(updated, coachViewerSerializeOptions(req.user.id, updated, req.user.roles || [])),
+      'Booking marked as completed',
+    );
   } catch (error) {
     const sm = respondIfBookingStateMachineError(res, error);
     if (sm) return sm;
@@ -475,7 +527,7 @@ export const markBookingNoShow = async (req, res) => {
       include: [
         { model: Lesson, as: 'lesson' },
         { model: User, as: 'coach', attributes: ['id', 'full_name', 'avatar_url'] },
-        { model: User, as: 'primaryStudent', attributes: ['id', 'full_name', 'avatar_url'] },
+        primaryStudentInclude(),
       ],
     });
     if (booking.primary_student_id != null) {
@@ -483,11 +535,14 @@ export const markBookingNoShow = async (req, res) => {
         logger.error('Failed to update student reliability after student_no_show:', err),
       );
     }
-    const responseData = {
-      ...updated.toJSON(),
-      attendance_outcome: 'student_no_show',
-      no_show_party: 'student',
-    };
+    const responseData = serializeBookingResponse(
+      updated,
+      {
+        attendance_outcome: 'student_no_show',
+        no_show_party: 'student',
+      },
+      coachViewerSerializeOptions(req.user.id, updated, req.user.roles || []),
+    );
     return successResponse(res, responseData, 'Booking marked as student_no_show');
   } catch (error) {
     const sm = respondIfBookingStateMachineError(res, error);
@@ -535,7 +590,7 @@ export const acceptBooking = async (req, res) => {
       include: [
         { model: Lesson, as: 'lesson' },
         { model: User, as: 'coach', attributes: ['id', 'full_name', 'avatar_url'] },
-        { model: User, as: 'primaryStudent', attributes: ['id', 'full_name', 'avatar_url'] },
+        primaryStudentInclude(),
       ],
     });
 
@@ -551,7 +606,7 @@ export const acceptBooking = async (req, res) => {
 
     return successResponse(
       res,
-      payload,
+      serializeBookingListItem(payload, { includeStudentReliability: true, viewerIsPrivileged: true }),
       'Booking accepted. If payment was pending capture, confirmation completes when Stripe sends payment_intent.succeeded.'
     );
   } catch (error) {
@@ -623,7 +678,7 @@ export const declineBooking = async (req, res) => {
       include: [
         { model: Lesson, as: 'lesson' },
         { model: User, as: 'coach', attributes: ['id', 'full_name', 'avatar_url'] },
-        { model: User, as: 'primaryStudent', attributes: ['id', 'full_name', 'avatar_url'] },
+        primaryStudentInclude(),
       ],
     });
 
@@ -631,7 +686,11 @@ export const declineBooking = async (req, res) => {
       logger.warn({ component: 'booking', event: 'decline_notify_failed', bookingId: id, message: err?.message });
     });
 
-    return successResponse(res, updated, 'Booking declined');
+    return successResponse(
+      res,
+      serializeBookingListItem(updated, { includeStudentReliability: true, viewerIsPrivileged: true }),
+      'Booking declined',
+    );
   } catch (error) {
     const sm = respondIfBookingStateMachineError(res, error);
     if (sm) return sm;
@@ -916,7 +975,13 @@ export const cancelBooking = async (req, res) => {
       });
     });
 
-    afterBooking = await Booking.findByPk(id);
+    afterBooking = await Booking.findByPk(id, {
+      include: [
+        { model: Lesson, as: 'lesson' },
+        { model: User, as: 'coach', attributes: ['id', 'full_name', 'avatar_url'] },
+        primaryStudentInclude(),
+      ],
+    });
     await logAudit(req.user.id, 'booking_cancelled', 'bookings', id, beforeState, afterBooking.toJSON(), req);
     await logAudit(req.user.id, 'cancellation_recorded', 'cancellation_history', cancellationHistory.id, null, cancellationHistory.toJSON(), req);
 
@@ -980,7 +1045,7 @@ export const cancelBooking = async (req, res) => {
     return successResponse(
       res,
       {
-        booking: afterBooking.toJSON(),
+        booking: serializeBookingListItem(afterBooking, coachViewerSerializeOptions(req.user.id, afterBooking, req.user.roles || [])),
         cancellation: cancellationPayload,
         ...(queuedCancelRefundPaymentActionId
           ? {
@@ -1179,7 +1244,7 @@ export const adminMarkCoachNoShow = async (req, res) => {
       include: [
         { model: Lesson, as: 'lesson' },
         { model: User, as: 'coach', attributes: ['id', 'full_name', 'avatar_url'] },
-        { model: User, as: 'primaryStudent', attributes: ['id', 'full_name', 'avatar_url'] },
+        primaryStudentInclude(),
       ],
     });
 
@@ -1224,12 +1289,15 @@ export const adminMarkCoachNoShow = async (req, res) => {
       refund_status: coachRefundPaymentActionId ? 'pending_stripe_execution' : null,
     };
 
-    const responseData = {
-      ...updated.toJSON(),
-      attendance_outcome: 'coach_no_show',
-      no_show_party: 'coach',
-      auto_refund: autoRefund,
-    };
+    const responseData = serializeBookingResponse(
+      updated,
+      {
+        attendance_outcome: 'coach_no_show',
+        no_show_party: 'coach',
+        auto_refund: autoRefund,
+      },
+      coachViewerSerializeOptions(req.user.id, updated, req.user.roles || []),
+    );
     return successResponse(res, responseData, 'Booking marked as coach_no_show');
   } catch (error) {
     if (error.statusCode === 404) {
@@ -1372,7 +1440,7 @@ export const adminMarkBookingNoShow = async (req, res) => {
       include: [
         { model: Lesson, as: 'lesson' },
         { model: User, as: 'coach', attributes: ['id', 'full_name', 'avatar_url'] },
-        { model: User, as: 'primaryStudent', attributes: ['id', 'full_name', 'avatar_url'] },
+        primaryStudentInclude(),
       ],
     });
     if (booking.primary_student_id != null) {
@@ -1380,11 +1448,14 @@ export const adminMarkBookingNoShow = async (req, res) => {
         logger.error('Failed to update student reliability after admin student_no_show:', err),
       );
     }
-    const responseData = {
-      ...updated.toJSON(),
-      attendance_outcome: 'student_no_show',
-      no_show_party: 'student',
-    };
+    const responseData = serializeBookingResponse(
+      updated,
+      {
+        attendance_outcome: 'student_no_show',
+        no_show_party: 'student',
+      },
+      coachViewerSerializeOptions(req.user.id, updated, req.user.roles || []),
+    );
     return successResponse(res, responseData, 'Booking marked as student_no_show');
   } catch (error) {
     const sm = respondIfBookingStateMachineError(res, error);

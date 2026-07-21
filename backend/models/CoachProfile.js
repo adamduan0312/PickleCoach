@@ -59,6 +59,19 @@ const CoachProfile = sequelize.define('coach_profiles', {
     type: DataTypes.STRING(255),
     allowNull: true,
   },
+  /**
+   * Local cache: Stripe Connect can receive payouts (synced via status endpoint / account.updated).
+   * Used by GET /api/coaches — never call Stripe per coach in discovery.
+   */
+  stripe_ready: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: false,
+  },
+  stripe_onboarding_completed_at: {
+    type: DataTypes.DATE,
+    allowNull: true,
+  },
   deleted_at: {
     type: DataTypes.DATE,
     allowNull: true,
@@ -71,6 +84,7 @@ const CoachProfile = sequelize.define('coach_profiles', {
   indexes: [
     { fields: ['skill_rating', 'location', 'rating_average'] },
     { fields: ['stripe_account_id'] },
+    { fields: ['stripe_ready'] },
   ],
 });
 

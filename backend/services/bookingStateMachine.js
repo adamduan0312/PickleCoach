@@ -57,10 +57,14 @@ export const BookingTransitionVia = Object.freeze({
   ADMIN_MARK_COACH_NO_SHOW: 'admin_mark_coach_no_show',
   /** Stripe chargeback / dispute sync (booking parked in disputed) */
   STRIPE_DISPUTE_OPEN: 'stripe_dispute_open',
+  /** Stripe terminal chargeback — release booking from disputed parking */
+  STRIPE_DISPUTE_TERMINAL: 'stripe_dispute_terminal',
   /** `PUT /api/disputes/:id/resolve` attendance outcome */
   DISPUTE_RESOLVE_ATTENDANCE: 'dispute_resolve_attendance',
   /** Behavior dispute resolve when booking was `disputed` → release to completed */
   DISPUTE_RESOLVE_BEHAVIOR_ON_DISPUTED_BOOKING: 'dispute_resolve_behavior_on_disputed_booking',
+  /** `other` dispute resolve when booking was `disputed` → release to completed */
+  DISPUTE_RESOLVE_CATCHALL_ON_DISPUTED_BOOKING: 'dispute_resolve_catchall_on_disputed_booking',
 });
 
 /** @type {Map<string, Set<string>>} key = `${from}\t${to}` */
@@ -135,7 +139,11 @@ function buildEdges() {
     }
   }
 
-  addEdge('disputed', 'completed', [BookingTransitionVia.DISPUTE_RESOLVE_BEHAVIOR_ON_DISPUTED_BOOKING]);
+  addEdge('disputed', 'completed', [
+    BookingTransitionVia.DISPUTE_RESOLVE_BEHAVIOR_ON_DISPUTED_BOOKING,
+    BookingTransitionVia.DISPUTE_RESOLVE_CATCHALL_ON_DISPUTED_BOOKING,
+    BookingTransitionVia.STRIPE_DISPUTE_TERMINAL,
+  ]);
 }
 
 buildEdges();

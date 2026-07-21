@@ -65,7 +65,14 @@ If `from === to`:
 
 ## Booking coupling
 
-When a Stripe dispute is **non-terminal**, the related booking may move to **`disputed`** (`BookingTransitionVia.STRIPE_DISPUTE_OPEN`).  
-When an admin resolves an in-app dispute, booking updates go through `bookingStateMachine.js` (`DISPUTE_RESOLVE_*` vias).
+When a Stripe dispute is **non-terminal**, the related booking may move to **`disputed`** (`BookingTransitionVia.STRIPE_DISPUTE_OPEN`). This is a **payment-problem parking state**, not an attendance outcome.
+
+When Stripe reports a **terminal** outcome (`won`, `lost`, `charge_refunded`):
+
+- **`disputes.status`** → `resolved` (existing `STRIPE_SYNC` behavior).
+- **`payments.escrow_status`** → reconciled per outcome (`held` for `won`; `refunded` for `lost` / `charge_refunded`) via `paymentStripeContract.buildStripeDisputePaymentPatch`.
+- **`bookings.status`** → if still **`disputed`**, released to **`completed`** via `BookingTransitionVia.STRIPE_DISPUTE_TERMINAL` (separate from admin resolve vias).
+
+When an admin resolves an **in-app** dispute, booking updates go through `bookingStateMachine.js` (`DISPUTE_RESOLVE_*` vias).
 
 See `booking-state-machine.md` and `dispute-finalization.md`.

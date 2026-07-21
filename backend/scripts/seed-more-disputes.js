@@ -65,7 +65,7 @@ async function loadDisputeTypesByCode() {
  */
 function pickDisputeTypeForBooking(bookingStatus, typesByCode) {
   const attendancePool = ['coach_no_show_claim', 'student_no_show_claim'];
-  const behaviorPool = ['misconduct', 'late_arrival', 'lesson_not_completed'];
+  const behaviorPool = ['misconduct', 'lesson_not_completed', 'other'];
   const preferred =
     bookingStatus === 'awaiting_verification' ? attendancePool : behaviorPool;
 

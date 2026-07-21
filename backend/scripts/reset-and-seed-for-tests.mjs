@@ -1,20 +1,23 @@
 #!/usr/bin/env node
 /**
- * Reset database and run migrations + demo seed (e.g. before manual Postman testing).
+ * Reset database and run migrations + demo seed + frontend-ready fixtures.
  *
  * Prerequisites:
  *   - MySQL running; credentials in config/config.json (development) must match your DB.
  *   - Stop the API server before a full reset so DROP DATABASE can succeed.
  *
  * Demo seed (seeders/20240101000000-demo-data.cjs) only runs when NODE_ENV=development.
+ * After demo seed, runs seed:all:dev (test-flows + action/cancel + notification/dispute fixtures).
  *
  * Usage (from backend/):
  *   node scripts/reset-and-seed-for-tests.mjs
  *   RESET_MODE=reseed node scripts/reset-and-seed-for-tests.mjs   # faster: undo seeds + re-seed only
+ *   SKIP_DEV_FIXTURES=1 node scripts/reset-and-seed-for-tests.mjs # demo seed only
  *
  * Env:
  *   NODE_ENV     default development (required for seed)
  *   RESET_MODE   "full" (default) | "reseed"
+ *   SKIP_DEV_FIXTURES  set to 1 to skip seed:all:dev
  */
 
 import { spawnSync } from 'node:child_process';
@@ -30,6 +33,7 @@ const nodeEnv = process.env.NODE_ENV || 'development';
 dotenv.config({ path: path.join(backendRoot, `.env.${nodeEnv}`) });
 
 const resetMode = (process.env.RESET_MODE || 'full').toLowerCase();
+const skipDevFixtures = process.env.SKIP_DEV_FIXTURES === '1';
 
 const env = {
   ...process.env,
@@ -78,10 +82,19 @@ if (resetMode === 'reseed') {
   process.exit(1);
 }
 
-console.log(`
-✅ Database ready for tests.
+if (!skipDevFixtures) {
+  run('npm run seed:all:dev', 'npm', ['run', 'seed:all:dev']);
+}
 
-   Admin login (Postman): admin@picklecoach.com / admin123
-   Coach: coach1@example.com / password123
-   Student: student1@example.com / password123
+console.log(`
+✅ Database ready for tests / frontend.
+
+   Demo admin: admin@picklecoach.com / admin123
+   Demo coach: coach1@example.com / password123
+   Demo student: student1@example.com / password123
+
+   Testflow (preferred for API/UI work):
+     admin.testflow@picklecoach.example.org / Test1234!Ab
+     coach.testflow@picklecoach.example.org / Test1234!Ab
+     student.testflow@picklecoach.example.org / Test1234!Ab
 `);

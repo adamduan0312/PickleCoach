@@ -110,7 +110,10 @@ describe('getConversationById access', () => {
     const res = mockRes();
     await getConversationById(req, res);
     assert.equal(res.statusCode, 200);
-    assert.equal(res.body.data.messaging_locked, true);
+    assert.equal(res.body.data.booking.messaging_locked, true);
+    assert.equal(res.body.data.messaging_locked, undefined);
+    assert.equal(res.body.data.booking.idempotency_key, undefined);
+    assert.equal(res.body.data.booking.cancelled_by, undefined);
     assert.equal(res.body.data.messages.length, 2);
   });
 });

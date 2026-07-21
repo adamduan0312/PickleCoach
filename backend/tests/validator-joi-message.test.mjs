@@ -97,3 +97,37 @@ test('resolveDisputeSchema rejected+outcome aligned with claim fails alignment',
     /outcome must be student_no_show/,
   );
 });
+
+test('createBookingIntentSchema requires court; forbids duration and player_ids', async () => {
+  const { createBookingIntentSchema } = await import('../config/validation.js');
+  const future = new Date(Date.now() + 864e5).toISOString();
+
+  const ok = createBookingIntentSchema.validate(
+    { lesson_id: 14, scheduled_at: future, court_location_id: 58 },
+    { abortEarly: false, stripUnknown: true },
+  );
+  assert.equal(ok.error, undefined);
+  assert.equal(ok.value.payment_method, 'stripe');
+  assert.equal(ok.value.duration_minutes, undefined);
+
+  const noCourt = createBookingIntentSchema.validate(
+    { lesson_id: 14, scheduled_at: future },
+    { abortEarly: false },
+  );
+  assert.ok(noCourt.error);
+  assert.match(joiDetailMessage(noCourt.error.details[0]), /court_location_id/i);
+
+  const withDuration = createBookingIntentSchema.validate(
+    { lesson_id: 14, scheduled_at: future, court_location_id: 58, duration_minutes: 90 },
+    { abortEarly: false },
+  );
+  assert.ok(withDuration.error);
+  assert.match(joiDetailMessage(withDuration.error.details[0]), /duration_minutes/i);
+
+  const withPlayers = createBookingIntentSchema.validate(
+    { lesson_id: 14, scheduled_at: future, court_location_id: 58, player_ids: [1] },
+    { abortEarly: false },
+  );
+  assert.ok(withPlayers.error);
+  assert.match(joiDetailMessage(withPlayers.error.details[0]), /player_ids/i);
+});

@@ -1,6 +1,6 @@
 import { User, UserRole, UserReliability } from '../models/index.js';
 import { successResponse, errorResponse } from '../utils/response.js';
-import { serializeCoachReliabilityDetail } from '../utils/userDto.js';
+import { serializeCoachReliabilityDetail, serializeStudentReliabilityDetail } from '../utils/userDto.js';
 import { logger } from '../config/logger.js';
 import {
   attachLegacyReliabilityAliases,
@@ -11,6 +11,7 @@ import {
 } from '../services/reliabilityEngine.js';
 import { getEffectiveRolesForUserRecord } from '../utils/roleGovernance.js';
 import { COACH_LATE_STUDENT_CANCEL_HELP_TEXT } from '../utils/lateCancelPayout.js';
+import { isPubliclyActiveUser } from '../utils/userLifecycle.js';
 
 /**
  * Coach reliability payload (penalized-impact metrics + score).
@@ -45,7 +46,11 @@ export const getStudentReliabilityForMe = async (req, res) => {
     }
 
     const payload = await getStudentPenalizedReliabilityPayload(studentId);
-    return successResponse(res, { reliability: payload }, 'Student reliability retrieved successfully');
+    return successResponse(
+      res,
+      { reliability: serializeStudentReliabilityDetail(payload) },
+      'Student reliability retrieved successfully',
+    );
   } catch (error) {
     logger.error('Get student self reliability error:', error);
     return errorResponse(res, 'Failed to retrieve student reliability', 500);
@@ -68,6 +73,10 @@ export const getCoachReliabilityForStudent = async (req, res) => {
     });
 
     if (!coach) {
+      return errorResponse(res, 'Coach not found', 404);
+    }
+
+    if (!isPubliclyActiveUser(coach)) {
       return errorResponse(res, 'Coach not found', 404);
     }
 
@@ -136,12 +145,6 @@ const buildAdminReliabilityPayload = (role, userId, stored) => {
 
   const penalties = {
     late_cancels: penaltyTriplet(stored, 'late_cancels_recent', 'late_cancels_decayed', 'late_cancels_total'),
-    late_arrival_penalties: penaltyTriplet(
-      stored,
-      'late_arrival_penalties_recent',
-      'late_arrival_penalties_decayed',
-      'late_arrival_penalties_total',
-    ),
     misconduct_penalties: penaltyTriplet(
       stored,
       'misconduct_penalties_recent',

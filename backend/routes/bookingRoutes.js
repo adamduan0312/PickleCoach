@@ -1,12 +1,18 @@
 import express from 'express';
 import * as bookingController from '../controllers/bookingController.js';
 import { authenticate, requireVerifiedEmail } from '../middleware/auth.js';
-import { validateRequest, validateQuery } from '../middleware/validator.js';
-import { cancellationSchema, createBookingSchema, confirmBookingSchema, getBookingsQuerySchema, declineBookingSchema, completeBookingSchema, noShowBookingSchema } from '../config/validation.js';
+import { validateRequest } from '../middleware/validator.js';
+import {
+  cancellationSchema,
+  createBookingSchema,
+  confirmBookingSchema,
+  declineBookingSchema,
+  completeBookingSchema,
+  noShowBookingSchema,
+} from '../config/validation.js';
 
 const router = express.Router();
 
-router.get('/', authenticate, validateQuery(getBookingsQuerySchema), bookingController.getBookings);
 router.post(
   '/confirm',
   authenticate,

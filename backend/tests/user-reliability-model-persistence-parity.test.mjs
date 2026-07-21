@@ -24,8 +24,6 @@ describe('UserReliability model vs persistence flatten', () => {
       student_cancels_non_late_decayed: 0,
       no_shows_recent: 0,
       no_shows_decayed: 0,
-      late_arrival_penalties_recent: 0,
-      late_arrival_penalties_decayed: 0,
       misconduct_penalties_recent: 0,
       misconduct_penalties_decayed: 0,
       lesson_not_completed_penalties_recent: 0,

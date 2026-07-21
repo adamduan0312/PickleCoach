@@ -1,13 +1,31 @@
+/**
+ * Notification orchestration: create, send, channel decisions, feature notify* helpers.
+ *
+ * Presentation lives under ../notifications/:
+ * - emailTemplates.js / smsTemplates.js — delivery copy
+ * - payloadBuilders.js — in-app headline/summary/preview
+ * - notificationRoutes.js — payload.route deep links
+ */
 import { Notification, User } from '../models/index.js';
 import { logger } from '../config/logger.js';
-import { formatDeclineReasonLabel } from '../utils/declineReasonCodes.js';
+import { withNotificationRoute } from '../notifications/notificationRoutes.js';
+import { getEmailSubject, getEmailContent } from '../notifications/emailTemplates.js';
+import { getSMSContent } from '../notifications/smsTemplates.js';
+import {
+  buildBookingConfirmedNotificationContent,
+  buildBookingRequestCoachNotificationContent,
+  buildPreLessonReminderNotificationContent,
+  buildBookingDeclinedNotificationContent,
+  buildBookingCancelledNotificationContent,
+  buildNewMessageNotificationPayload,
+} from '../notifications/payloadBuilders.js';
 
 /**
  * Send email via SendGrid (if configured)
  */
 const sendEmail = async (to, subject, htmlContent) => {
   const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY;
-  
+
   if (!SENDGRID_API_KEY) {
     logger.warn('SendGrid API key not configured, skipping email send');
     return false;
@@ -17,7 +35,7 @@ const sendEmail = async (to, subject, htmlContent) => {
     const response = await fetch('https://api.sendgrid.com/v3/mail/send', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${SENDGRID_API_KEY}`,
+        Authorization: `Bearer ${SENDGRID_API_KEY}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
@@ -61,7 +79,7 @@ const sendSMS = async (to, message) => {
       {
         method: 'POST',
         headers: {
-          'Authorization': `Basic ${auth}`,
+          Authorization: `Basic ${auth}`,
           'Content-Type': 'application/x-www-form-urlencoded',
         },
         body: new URLSearchParams({
@@ -69,7 +87,7 @@ const sendSMS = async (to, message) => {
           To: to,
           Body: message,
         }),
-      }
+      },
     );
 
     if (!response.ok) {
@@ -85,12 +103,16 @@ const sendSMS = async (to, message) => {
   }
 };
 
-export const createNotification = async (userId, type, channel, payload) => {
+export const createNotification = async (userId, type, channel, payload, options = {}) => {
+  // In-app: include payload.route at the call site when adding new types (see notifications/notificationRoutes.js).
+  const { entity_type = null, entity_id = null } = options;
   return await Notification.create({
     user_id: userId,
     type,
     channel,
-    payload,
+    entity_type,
+    entity_id,
+    payload: withNotificationRoute(type, payload || {}),
     status: 'pending',
   });
 };
@@ -99,7 +121,7 @@ export const sendNotification = async (notificationId) => {
   const notification = await Notification.findByPk(notificationId, {
     include: [{ model: User, as: 'user', attributes: ['email', 'phone'] }],
   });
-  
+
   if (!notification) {
     throw new Error('Notification not found');
   }
@@ -137,175 +159,6 @@ export const sendNotification = async (notificationId) => {
 };
 
 /**
- * Get email subject based on notification type
- */
-const getEmailSubject = (type, payload) => {
-  const subjects = {
-    'pre_lesson_48h': 'Reminder: Your Pickleball Lesson in 48 Hours',
-    'pre_lesson_24h': 'Reminder: Your Pickleball Lesson Tomorrow',
-    'pre_lesson_1h': 'Reminder: Your Pickleball Lesson in 1 Hour',
-    'booking_confirmed': 'Booking Confirmed',
-    'booking_declined': 'Booking Declined',
-    'booking_cancelled': 'Booking Cancelled',
-    'payment_received': 'Payment Received',
-    'payout_processed': 'Payout Processed',
-    'password_reset': 'Reset Your PickleCoach Password',
-    'email_verification': 'Verify Your PickleCoach Email',
-    'email_change_confirm': 'Confirm Your New PickleCoach Email',
-    'email_changed_notification': 'Your PickleCoach Email Was Changed',
-    booking_request_coach: 'New booking request — PickleCoach',
-  };
-  return subjects[type] || 'Notification from PickleCoach';
-};
-
-/**
- * Get email content based on notification type
- */
-const getEmailContent = (type, payload) => {
-  const scheduledAt = payload?.scheduled_at ? new Date(payload.scheduled_at).toLocaleString() : 'N/A';
-  
-  const templates = {
-    'pre_lesson_48h': `
-      <h2>Lesson Reminder</h2>
-      <p>This is a reminder that you have a pickleball lesson scheduled for ${scheduledAt}.</p>
-      <p>Coach: ${payload?.coach_name || 'Your coach'}</p>
-      <p>See you soon!</p>
-    `,
-    'pre_lesson_24h': `
-      <h2>Lesson Reminder - Tomorrow</h2>
-      <p>Your pickleball lesson is scheduled for tomorrow at ${scheduledAt}.</p>
-      <p>Coach: ${payload?.coach_name || 'Your coach'}</p>
-      <p>Don't forget!</p>
-    `,
-    'pre_lesson_1h': `
-      <h2>Lesson Starting Soon</h2>
-      <p>Your pickleball lesson starts in 1 hour at ${scheduledAt}.</p>
-      <p>Coach: ${payload?.coach_name || 'Your coach'}</p>
-      <p>See you there!</p>
-    `,
-    booking_confirmed: `
-      <h2>Booking Confirmed</h2>
-      <p>Your lesson with <strong>${payload?.coach_name || 'your coach'}</strong> is confirmed.</p>
-      <p><strong>${payload?.lesson_title || 'Lesson'}</strong> — ${scheduledAt}</p>
-      <p>Booking ID: ${payload?.booking_id ?? ''}</p>
-    `,
-    booking_declined: `
-      <h2>Booking Declined</h2>
-      <p>${payload?.headline || 'Coach declined your booking.'}</p>
-      <p><strong>${payload?.lesson_title || 'your lesson'}</strong> — ${scheduledAt}</p>
-      ${payload?.reason_line ? `<p><strong>${payload.reason_line}</strong></p>` : ''}
-      ${payload?.message_to_student ? `<p><strong>Message:</strong><br>${payload.message_to_student}</p>` : ''}
-      <p>You can book another available slot in PickleCoach.</p>
-    `,
-    booking_cancelled: `
-      <h2>Booking Cancelled</h2>
-      <p>${payload?.headline || `The lesson <strong>${payload?.lesson_title || 'Lesson'}</strong> scheduled for ${scheduledAt} was cancelled.`}</p>
-      ${payload?.reason_line ? `<p><strong>${payload.reason_line}</strong></p>` : ''}
-      ${payload?.reason_notes ? `<p>${payload.reason_notes}</p>` : ''}
-      ${payload?.refund_line ? `<p>${payload.refund_line}</p>` : ''}
-      <p>Booking ID: ${payload?.booking_id ?? ''}</p>
-    `,
-    'password_reset': `
-      <h2>Reset Your Password</h2>
-      <p>You requested to reset your password for your PickleCoach account.</p>
-      <p>Click the link below to reset your password (expires in ${payload?.expires_in || '1 hour'}):</p>
-      <p><a href="${payload?.reset_url || '#'}" style="background-color: #4CAF50; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block;">Reset Password</a></p>
-      <p>Or copy and paste this URL into your browser:</p>
-      <p>${payload?.reset_url || ''}</p>
-      <p>If you didn't request this, please ignore this email.</p>
-      <p><small>This link will expire in ${payload?.expires_in || '1 hour'}.</small></p>
-    `,
-    'email_verification': `
-      <h2>Verify Your Email</h2>
-      <p>Thanks for creating a PickleCoach account.</p>
-      <p>Click the link below to verify your email address (expires in ${payload?.expires_in || '24 hours'}):</p>
-      <p><a href="${payload?.verify_url || '#'}" style="background-color: #4CAF50; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block;">Verify Email</a></p>
-      <p>Or copy and paste this URL into your browser:</p>
-      <p>${payload?.verify_url || ''}</p>
-      <p>If you didn't create this account, you can ignore this email.</p>
-    `,
-    'email_change_confirm': `
-      <h2>Confirm Your New Email</h2>
-      <p>You requested to change the email address on your PickleCoach account to <strong>${payload?.new_email || ''}</strong>.</p>
-      <p>Click the link below to confirm this change (expires in ${payload?.expires_in || '24 hours'}):</p>
-      <p><a href="${payload?.confirm_url || '#'}" style="background-color: #4CAF50; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block;">Confirm Email Change</a></p>
-      <p>Or copy and paste this URL into your browser:</p>
-      <p>${payload?.confirm_url || ''}</p>
-      <p>If you did not request this change, you can ignore this email.</p>
-    `,
-    'email_changed_notification': `
-      <h2>Your Email Address Was Changed</h2>
-      <p>The email address on your PickleCoach account was changed from <strong>${payload?.old_email || ''}</strong> to <strong>${payload?.new_email || ''}</strong>.</p>
-      <p>If you made this change, no further action is needed.</p>
-      <p>If you did <strong>not</strong> make this change, please contact support immediately.</p>
-    `,
-    booking_request_coach: `
-      <h2>You have a new booking request</h2>
-      <p><strong>${payload?.student_name || 'A student'}</strong> requested a lesson: <strong>${payload?.lesson_title || 'Lesson'}</strong>.</p>
-      <p>Scheduled: ${scheduledAt}</p>
-      <p>Booking ID: ${payload?.booking_id ?? ''}</p>
-      <p>Please open PickleCoach and accept or decline this request before it expires.</p>
-    `,
-  };
-  
-  return templates[type] || `<p>You have a new notification from PickleCoach.</p>`;
-};
-
-/**
- * Get SMS content based on notification type
- */
-const getSMSContent = (type, payload) => {
-  const scheduledAt = payload?.scheduled_at ? new Date(payload.scheduled_at).toLocaleString() : 'N/A';
-  
-  const messages = {
-    'pre_lesson_48h': `PickleCoach: Lesson reminder - ${scheduledAt} with ${payload?.coach_name || 'your coach'}`,
-    'pre_lesson_24h': `PickleCoach: Lesson tomorrow at ${scheduledAt}`,
-    'pre_lesson_1h': `PickleCoach: Lesson in 1 hour at ${scheduledAt}`,
-    booking_confirmed: `PickleCoach: Booking confirmed — ${payload?.lesson_title || 'lesson'} with ${payload?.coach_name || 'your coach'} at ${scheduledAt}.`,
-    booking_declined: [
-      `PickleCoach: ${payload?.headline || 'Coach declined your booking.'}`,
-      payload?.reason_line,
-      payload?.message_to_student ? `Message: ${payload.message_to_student}` : 'Book another slot in the app.',
-    ].filter(Boolean).join(' '),
-    booking_cancelled: `PickleCoach: ${payload?.headline || `Booking cancelled — ${payload?.lesson_title || 'lesson'} at ${scheduledAt}.`}${payload?.reason_line ? ` ${payload.reason_line}.` : ''}`,
-    booking_request_coach: `PickleCoach: New booking request from ${payload?.student_name || 'a student'} — ${payload?.lesson_title || 'lesson'} at ${scheduledAt}. Accept or decline in the app.`,
-  };
-  
-  return messages[type] || 'You have a new notification from PickleCoach.';
-};
-
-export const sendBookingReminder = async (bookingId, hoursBefore = 48) => {
-  try {
-    const { Booking } = await import('../models/index.js');
-    
-    const booking = await Booking.findByPk(bookingId, {
-      include: [
-        { model: (await import('../models/index.js')).User, as: 'coach', attributes: ['id', 'full_name', 'email'] },
-        { model: (await import('../models/index.js')).User, as: 'primaryStudent', attributes: ['id', 'full_name', 'email'] },
-      ],
-    });
-
-    if (!booking) {
-      logger.warn(`Booking ${bookingId} not found for reminder`);
-      return;
-    }
-
-    // Determine reminder type based on hours before
-    let reminderType = '48h';
-    if (hoursBefore <= 1) {
-      reminderType = '1h';
-    } else if (hoursBefore <= 24) {
-      reminderType = '24h';
-    }
-
-    await sendReminderNotification(booking, reminderType);
-  } catch (error) {
-    logger.error(`Error sending booking reminder for booking ${bookingId}:`, error);
-    throw error;
-  }
-};
-
-/**
  * Deliver in-app notification always; email when the user has an email on file.
  */
 const deliverDualChannel = async (userId, type, payload, { email } = {}) => {
@@ -326,50 +179,69 @@ const deliverDualChannel = async (userId, type, payload, { email } = {}) => {
   }
 };
 
+/** MVP lesson reminders: email only at 24h; 1h is in-app only (avoids late, low-value emails). */
+export function reminderIncludesEmail(reminderType) {
+  return reminderType === '24h';
+}
+
 /**
- * Send reminder notification for a booking (email + in-app for student and coach).
+ * Send reminder notification for a booking.
+ * MVP: 24h → in-app + email; 1h → in-app only (student and coach).
  * @param {Object} booking - Booking object with coach and primaryStudent
- * @param {string} reminderType - '48h', '24h', or '1h'
+ * @param {string} reminderType - '24h' or '1h'
  */
 export const sendReminderNotification = async (booking, reminderType) => {
   try {
     const hoursMap = {
-      '48h': 48,
       '24h': 24,
       '1h': 1,
     };
 
-    const hours = hoursMap[reminderType] || 48;
+    const hours = hoursMap[reminderType];
+    if (!hours) {
+      logger.warn({ component: 'notification', event: 'unknown_reminder_type', reminderType });
+      return;
+    }
+
+    const includeEmail = reminderIncludesEmail(reminderType);
 
     if (booking.primaryStudent) {
-      const studentPayload = {
+      const studentBase = {
         booking_id: booking.id,
         scheduled_at: booking.scheduled_at,
         coach_name: booking.coach?.full_name || 'Coach',
         lesson_title: booking.lesson?.title,
         reminder_type: reminderType,
+        audience: 'student',
       };
       await deliverDualChannel(
         booking.primary_student_id,
         `pre_lesson_${hours}h`,
-        studentPayload,
-        { email: booking.primaryStudent.email },
+        {
+          ...studentBase,
+          ...buildPreLessonReminderNotificationContent(studentBase),
+        },
+        { email: includeEmail ? booking.primaryStudent.email : undefined },
       );
     }
 
     if (booking.coach) {
-      const coachPayload = {
+      const coachBase = {
         booking_id: booking.id,
         scheduled_at: booking.scheduled_at,
         student_name: booking.primaryStudent?.full_name || 'Student',
         lesson_title: booking.lesson?.title,
         reminder_type: reminderType,
+        audience: 'coach',
       };
       await deliverDualChannel(
         booking.coach_id,
         `pre_lesson_${hours}h`,
-        coachPayload,
-        { email: booking.coach.email },
+        {
+          ...coachBase,
+          ...buildPreLessonReminderNotificationContent(coachBase),
+        },
+        { email: includeEmail ? booking.coach.email : undefined },
       );
     }
   } catch (error) {
@@ -397,12 +269,16 @@ export const notifyCoachNewBookingRequest = async (bookingId) => {
     return;
   }
 
-  const payload = {
+  const basePayload = {
     booking_id: booking.id,
     scheduled_at: booking.scheduled_at,
     student_name: booking.primaryStudent?.full_name || 'A student',
     lesson_title: booking.lesson?.title || 'Lesson',
     coach_name: booking.coach?.full_name,
+  };
+  const payload = {
+    ...basePayload,
+    ...buildBookingRequestCoachNotificationContent(basePayload),
   };
 
   logger.info({
@@ -414,31 +290,12 @@ export const notifyCoachNewBookingRequest = async (bookingId) => {
     scheduled_at: booking.scheduled_at,
   });
 
-  const inApp = await createNotification(booking.coach_id, 'booking_request_coach', 'in_app', payload);
-  try {
-    await sendNotification(inApp.id);
-  } catch (error) {
-    logger.warn({
-      component: 'booking',
-      event: 'coach_new_booking_in_app_notify_failed',
-      bookingId,
-      message: error?.message,
-    });
-  }
-
-  if (booking.coach?.email) {
-    const emailNotif = await createNotification(booking.coach_id, 'booking_request_coach', 'email', payload);
-    try {
-      await sendNotification(emailNotif.id);
-    } catch (error) {
-      logger.warn({
-        component: 'booking',
-        event: 'coach_new_booking_email_failed',
-        bookingId,
-        message: error?.message,
-      });
-    }
-  }
+  await deliverDualChannel(
+    booking.coach_id,
+    'booking_request_coach',
+    payload,
+    { email: booking.coach?.email },
+  );
 };
 
 const loadBookingNotificationContext = async (bookingId) => {
@@ -457,11 +314,15 @@ export const notifyBookingAccepted = async (bookingId) => {
   const booking = await loadBookingNotificationContext(bookingId);
   if (!booking?.primary_student_id) return;
 
-  const payload = {
+  const basePayload = {
     booking_id: booking.id,
     scheduled_at: booking.scheduled_at,
     coach_name: booking.coach?.full_name || 'Your coach',
     lesson_title: booking.lesson?.title || 'Lesson',
+  };
+  const payload = {
+    ...basePayload,
+    ...buildBookingConfirmedNotificationContent(basePayload),
   };
 
   await deliverDualChannel(
@@ -470,36 +331,6 @@ export const notifyBookingAccepted = async (bookingId) => {
     payload,
     { email: booking.primaryStudent?.email },
   );
-};
-
-/** Notify student when coach declines a pending booking. */
-export const buildBookingDeclinedNotificationContent = (payload = {}) => {
-  const reasonKey = payload.decline_reason_code;
-  const reasonLabel = formatDeclineReasonLabel(reasonKey);
-  const messageLine =
-    payload.message_to_student != null && String(payload.message_to_student).trim()
-      ? String(payload.message_to_student).trim()
-      : payload.decline_message != null && String(payload.decline_message).trim()
-        ? String(payload.decline_message).trim()
-        : null;
-
-  const headline = 'Coach declined your booking.';
-  const reasonLine = reasonLabel ? `Reason: ${reasonLabel}` : null;
-
-  const summaryParts = [headline];
-  if (reasonLine) summaryParts.push(reasonLine);
-  if (messageLine) {
-    summaryParts.push('Message:');
-    summaryParts.push(messageLine);
-  }
-
-  return {
-    headline,
-    reason_line: reasonLine,
-    message_to_student: messageLine,
-    decline_message: messageLine,
-    summary: summaryParts.join('\n'),
-  };
 };
 
 export const notifyBookingDeclined = async (bookingId) => {
@@ -526,65 +357,6 @@ export const notifyBookingDeclined = async (bookingId) => {
     payload,
     { email: booking.primaryStudent?.email },
   );
-};
-
-/** Notify the other party when a booking is cancelled. */
-export const CANCELLATION_REASON_LABELS = {
-  weather: 'Weather',
-  emergency: 'Emergency',
-  sickness: 'Sickness',
-  travel_delay: 'Travel delay',
-  schedule_conflict: 'Schedule conflict',
-  forgot: 'Forgot',
-  other: 'Other',
-};
-
-const CANCELLED_BY_PHRASE = {
-  student: 'the student',
-  coach: 'the coach',
-  admin: 'an administrator',
-  system: 'the system',
-};
-
-/**
- * Build human-readable cancellation notification copy (in-app summary + email body fragments).
- */
-export const buildBookingCancelledNotificationContent = (payload = {}) => {
-  const byKey = payload.cancelled_by || payload.cancelledBy;
-  const byPhrase = CANCELLED_BY_PHRASE[byKey] || byKey || 'the other party';
-  const reasonKey = payload.reason;
-  const reasonLabel = reasonKey ? (CANCELLATION_REASON_LABELS[reasonKey] || reasonKey) : null;
-
-  const headline = `Your lesson was cancelled by ${byPhrase}.`;
-  const reasonLine = reasonLabel ? `Reason: ${reasonLabel}` : null;
-  const notesLine =
-    payload.reason_notes && String(payload.reason_notes).trim()
-      ? String(payload.reason_notes).trim()
-      : null;
-
-  let refundLine = null;
-  const refundAmount = payload.refund_amount;
-  if (refundAmount != null && Number(refundAmount) > 0) {
-    refundLine = `Refund: $${Number(refundAmount).toFixed(2)}`;
-    if (payload.refund_status === 'pending_stripe_execution') {
-      refundLine += ' (processing)';
-    }
-  } else if (payload.refund_status === 'voided_authorization') {
-    refundLine = 'Your payment authorization was released.';
-  }
-
-  const summaryParts = [headline];
-  if (reasonLine) summaryParts.push(reasonLine);
-  if (notesLine) summaryParts.push(notesLine);
-  if (refundLine) summaryParts.push(refundLine);
-
-  return {
-    headline,
-    reason_line: reasonLine,
-    reason_notes: notesLine,
-    refund_line: refundLine,
-    summary: summaryParts.join('\n'),
-  };
 };
 
 export const notifyBookingCancelled = async (bookingId, {
@@ -640,4 +412,56 @@ export const notifyBookingCancelled = async (bookingId, {
       { email: booking.coach?.email },
     );
   }
+};
+
+/**
+ * Other booking participant who should receive a new-message ping (in-app only).
+ * @returns {number|null}
+ */
+export const resolveMessageNotificationRecipient = (booking, senderId) => {
+  if (!booking || senderId == null) return null;
+  const coachId = booking.coach_id;
+  const studentId = booking.primary_student_id;
+  if (senderId === coachId && studentId != null && studentId !== coachId) return studentId;
+  if (senderId === studentId && coachId != null && coachId !== studentId) return coachId;
+  return null;
+};
+
+/**
+ * In-app only: notify the other booking participant that a new chat message arrived.
+ * No email/SMS — chat volume would be noisy; the frontend can poll GET /notifications.
+ */
+export const notifyNewMessage = async ({ booking, message, sender, conversationId } = {}) => {
+  const recipientId = resolveMessageNotificationRecipient(booking, sender?.id ?? message?.sender_id);
+  if (!recipientId) return null;
+
+  const notification = await createNotification(
+    recipientId,
+    'new_message',
+    'in_app',
+    buildNewMessageNotificationPayload({
+      message,
+      booking,
+      sender,
+      conversationId,
+    }),
+    {
+      entity_type: 'message',
+      entity_id: message?.id ?? null,
+    },
+  );
+
+  try {
+    await sendNotification(notification.id);
+  } catch (error) {
+    logger.warn({
+      component: 'notification',
+      event: 'new_message_in_app_send_failed',
+      recipientId,
+      messageId: message?.id,
+      message: error?.message,
+    });
+  }
+
+  return notification;
 };

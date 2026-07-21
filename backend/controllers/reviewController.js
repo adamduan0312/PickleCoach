@@ -2,6 +2,7 @@ import { Review, Booking, User, CoachProfile } from '../models/index.js';
 import { successResponse, errorResponse, paginatedResponse } from '../utils/response.js';
 import { getPagination, getPagingData } from '../utils/pagination.js';
 import { logAudit } from '../utils/audit.js';
+import { validateReviewCreateAuthorization } from '../utils/reviewCreateAuthorization.js';
 import { Op } from 'sequelize';
 import { logger } from '../config/logger.js';
 
@@ -53,33 +54,33 @@ export const getReviews = async (req, res) => {
 
 export const createReview = async (req, res) => {
   try {
-    const { booking_id, target_user_id, rating, comment, attendance_badges, visibility } = req.validated;
+    const { booking_id, rating, comment, attendance_badges, visibility } = req.validated;
 
     const booking = await Booking.findByPk(booking_id);
-    if (!booking) {
-      return errorResponse(res, 'Booking not found', 404);
-    }
 
-    if (req.user.id !== booking.primary_student_id && !(req.user.roles || []).includes('admin')) {
-      return errorResponse(res, 'Only the student who booked can leave a review', 403);
-    }
+    const existingReview = booking
+      ? await Review.findOne({ where: { booking_id } })
+      : null;
 
-    if (booking.status !== 'completed') {
-      return errorResponse(res, 'Can only review completed bookings', 400);
-    }
-
-    const existingReview = await Review.findOne({
-      where: { booking_id, reviewer_id: req.user.id },
+    const auth = validateReviewCreateAuthorization({
+      userId: req.user.id,
+      booking,
+      hasExistingReview: Boolean(existingReview),
     });
-
-    if (existingReview) {
-      return errorResponse(res, 'Review already exists for this booking', 409);
+    if (!auth.ok) {
+      return errorResponse(
+        res,
+        auth.message,
+        auth.statusCode,
+        null,
+        auth.code ? { code: auth.code } : null,
+      );
     }
 
     const review = await Review.create({
       booking_id,
       reviewer_id: req.user.id,
-      target_user_id: target_user_id || booking.coach_id,
+      target_user_id: auth.targetUserId,
       rating,
       comment,
       attendance_badges,

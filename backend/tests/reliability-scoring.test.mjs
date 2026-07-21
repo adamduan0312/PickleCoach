@@ -17,7 +17,6 @@ const baseCoachMetrics = (overrides = {}) => ({
   total_bookings: 10,
   _booking_baseline: 10,
   late_cancels: 0,
-  late_arrival_penalties: 0,
   misconduct_penalties: 0,
   lesson_not_completed_penalties: 0,
   no_shows: 0,
@@ -48,7 +47,6 @@ describe('reliability scoring (pure)', () => {
       total_bookings: 8,
       _booking_baseline: 8,
       late_cancels: 0,
-      late_arrival_penalties: 0,
       misconduct_penalties: 0,
       lesson_not_completed_penalties: 0,
       no_shows: 2,
@@ -61,21 +59,19 @@ describe('reliability scoring (pure)', () => {
     assert.equal(score, roundReliabilityScoreValue(raw));
   });
 
-  it('student: late_arrival_penalties use behavior late_arrival weight', () => {
-    const m = {
+  it('student: lesson_not_completed penalties use behavior weight', () => {
+    const denom = 10 + RELIABILITY_SMOOTHING_K;
+    const score = calculateStudentReliabilityScore({
       total_bookings: 10,
       _booking_baseline: 10,
       late_cancels: 0,
-      late_arrival_penalties: 1,
       misconduct_penalties: 0,
-      lesson_not_completed_penalties: 0,
+      lesson_not_completed_penalties: 1,
       no_shows: 0,
       student_cancels: 0,
       _decayed: {},
-    };
-    const denom = 10 + RELIABILITY_SMOOTHING_K;
-    const score = calculateStudentReliabilityScore(m);
-    const raw = 100 - (1 / denom) * BEHAVIOR_DISPUTE_PENALTY_WEIGHTS.late_arrival;
+    });
+    const raw = 100 - (1 / denom) * BEHAVIOR_DISPUTE_PENALTY_WEIGHTS.lesson_not_completed;
     assert.equal(score, roundReliabilityScoreValue(raw));
   });
 });

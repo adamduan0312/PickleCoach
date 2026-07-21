@@ -24,8 +24,6 @@ export const createBookingIntent = async (req, res) => {
     const {
       lesson_id,
       scheduled_at,
-      duration_minutes,
-      player_ids,
       court_location_id,
       payment_method = 'stripe',
       payment_method_id,
@@ -42,15 +40,13 @@ export const createBookingIntent = async (req, res) => {
       studentRoles: req.user.roles || [],
       lessonId: lesson_id,
       scheduledAt: scheduled_at,
-      durationMinutes: duration_minutes,
       courtLocationId: court_location_id,
-      playerIds: player_ids,
       paymentMethod: payment_method,
       paymentMethodId: payment_method_id || null,
       idempotencyKey: requestIdempotencyKey,
     });
 
-    return successResponse(res, result, 'Booking intent created. Authorize payment, then POST /api/bookings/confirm.', 201);
+    return successResponse(res, result, 'Booking authorization created.', 201);
   } catch (error) {
     if (error.statusCode && error.code) {
       return errorResponse(res, error.message, error.statusCode, null, { code: error.code });

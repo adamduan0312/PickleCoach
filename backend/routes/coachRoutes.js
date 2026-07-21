@@ -46,10 +46,18 @@ router.put(
   coachController.updateMyAvailability,
 );
 router.delete('/me/availability/:id', authenticate, authorize('coach'), coachController.deleteAvailability);
-router.get('/bookings', authenticate, authorize('coach'), validateQuery(getBookingsQuerySchema), bookingController.getCoachBookings);
+/** Canonical coach dashboard inbox — bookings where authenticated user is the coach. */
+router.get(
+  '/me/bookings',
+  authenticate,
+  authorize('coach'),
+  validateQuery(getBookingsQuerySchema),
+  bookingController.getCoachBookings,
+);
 // Student-facing: coach reliability (score only)
 // Must be declared before `/:id` route to avoid matching `reliability` as an `:id` param.
 router.get('/me/reliability', authenticate, authorize('coach'), reliabilityController.getCoachReliabilityForMe);
+router.get('/me/marketplace-status', authenticate, authorize('coach', 'admin'), coachController.getMyMarketplaceStatus);
 router.get('/:id/reliability', authenticate, authorize('student', 'admin'), reliabilityController.getCoachReliabilityForStudent);
 router.get('/:id', authenticate, authorize('student', 'admin'), coachController.getCoachById);
 router.get('/:id/courts', validateQuery(getCoachCourtsQuerySchema), courtController.getCoachCourtsById);

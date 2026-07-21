@@ -189,7 +189,7 @@ const ADMIN_ORDER = [
   ['Admin', 'Refund Booking (Admin)'],
   ['Disputes', 'Resolve Dispute (Admin)'],
   ['Payments', 'Get My Payments'],
-  ['Payments', 'Get Payment By ID'],
+  ['Payments', 'Get Payment By ID', null, 'Get Payment By ID (Admin)'],
   // Note: Stripe Webhook is intentionally excluded from the Admin flow.
   // It lives in the top-level "Reference (Not for Manual Run)" folder
   // (built by buildReferenceFolder below) and cannot be tested from Postman
@@ -229,19 +229,16 @@ const COACH_ORDER = [
   ['Lessons', 'Create Lesson'],
   ['Lessons', 'Update Lesson'],
   ['Lessons', 'Delete Lesson'],
-  ['Coaches', 'Get Coach Bookings'],
-  ['Bookings', 'Get Booking By ID'],
+  ['Coaches', 'List My Coach Bookings (Coach Dashboard)'],
+  ['Bookings', 'Get My Booking by ID'],
   ['Bookings', 'Accept Booking'],
   ['Bookings', 'Decline Booking'],
   ['Bookings', 'Cancel Booking'],
   ['Bookings', 'Complete Booking'],
   ['Bookings', 'Mark Student No-Show'],
   ['Payments', 'Get My Payments'],
-  ['Payments', 'Get Payment By ID'],
+  ['Payments', 'Get Payment By ID', null, 'Get My Payment By ID'],
   ['Reviews', 'Get All Reviews'],
-  ['Reviews', 'Create Review'],
-  ['Reviews', 'Update Review'],
-  ['Reviews', 'Delete Review'],
   ['Messages', 'Get Conversations'],
   ['Messages', 'Create Conversation'],
   ['Messages', 'Get Conversation By ID'],
@@ -279,13 +276,14 @@ const STUDENT_ORDER = [
   ['Courts', 'Get Court By ID'],
   ['Lessons', 'Get All Lessons (Filter by coach_id)'],
   ['Lessons', 'Get Lesson By ID'],
-  ['Bookings', 'Create Booking'],
-  ['Bookings', 'Get My Bookings'],
-  ['Bookings', 'Get Booking By ID'],
+  ['Bookings', 'Create Booking Intent'],
+  ['Bookings', 'Confirm Booking'],
+  ['Students', 'List My Student Bookings (Student Dashboard)', '22'],
+  ['Bookings', 'Get My Booking by ID'],
   // Students do not get coach/admin booking override endpoints in flow ordering
   ['Bookings', 'Cancel Booking'],
   ['Payments', 'Get My Payments'],
-  ['Payments', 'Get Payment By ID'],
+  ['Payments', 'Get Payment By ID', null, 'Get My Payment By ID'],
   ['Reviews', 'Get All Reviews'],
   ['Reviews', 'Create Review'],
   ['Reviews', 'Update Review'],
@@ -315,13 +313,13 @@ const adminFolder = buildFlowFolder(
 
 const coachFolder = buildFlowFolder(
   '2 – Flow: Coach',
-  'All coach endpoints in user-flow order. Run in sequence: Health → Register/Login → Profile → **GET /coaches/me/reliability** → Coach profile → Courts → Availability → Stripe Connect → Lessons → Bookings → Payments → Reviews → Messages → Disputes → Notifications → Auth extras. See backend/POSTMAN_TESTING_GUIDE.md.\n\nBooking MVP: student uses POST /bookings; coach uses PUT .../accept or PUT .../decline only for pending requests (coach on that booking only). Schedule changes: cancel + book again (no reschedule API). Accept/decline/cancel notify the other party.',
+  'All coach endpoints in user-flow order. Run in sequence: Health → Register/Login → Profile → **GET /coaches/me/reliability** → Coach profile → Courts → Availability → Stripe Connect → Lessons → Bookings → Payments → **Get All Reviews** (read-only) → Messages → Disputes → Notifications → Auth extras. See backend/POSTMAN_TESTING_GUIDE.md.\n\nBooking MVP: student uses booking-intents + confirm; coach uses PUT .../accept or PUT .../decline only for pending requests (coach on that booking only). Schedule changes: cancel + book again (no reschedule API). Accept/decline/cancel notify the other party.\n\nReviews: coaches may **list** reviews (e.g. filter `target_user_id`); only the booking primary student creates/updates/deletes reviews — use **3 – Flow: Student** for those.',
   COACH_ORDER
 );
 
 const studentFolder = buildFlowFolder(
   '3 – Flow: Student',
-  'All student endpoints in user-flow order. Run in sequence: Health → Register/Login → Profile → **GET /students/me/reliability** → Search coaches (each result includes **reliability** score) → Open coach (GET /coaches/:id, includes **reliability**) → Optional GET /coaches/:id/reliability → Get coach courts → Check availability → Create Booking → Bookings → Payments → Reviews → Messages → Disputes → Notifications → Auth extras. See backend/POSTMAN_TESTING_GUIDE.md.\n\nBooking MVP: POST /bookings creates a pending request; the coach accepts or declines with PUT .../accept | PUT .../decline. To change time: cancel this booking, then POST /bookings again.',
+  'All student endpoints in user-flow order. Run in sequence: Health → Register/Login → Profile → **GET /students/me/reliability** → Search coaches (each result includes **reliability** score) → Open coach (GET /coaches/:id, includes **reliability**) → Optional GET /coaches/:id/reliability → Get coach courts → Check availability → Create Booking Intent → Confirm Booking → Bookings → Payments → Reviews (create/update/delete after completed lesson) → Messages → Disputes → Notifications → Auth extras. See backend/POSTMAN_TESTING_GUIDE.md.\n\nBooking MVP: POST /booking-intents → Stripe authorize → POST /bookings/confirm creates a pending request; the coach accepts or declines with PUT .../accept | PUT .../decline. To change time: cancel this booking, then book again.',
   STUDENT_ORDER
 );
 
@@ -431,6 +429,21 @@ applyDescriptionOverride(
   adminFolder,
   'Get Coach Availability (Admin)',
   '**Admin flow** — uses the **same** By Type request as **Coaches → Get Coach Availability** (`GET /api/coaches/:id/availability`). Use an **admin** JWT to inspect a coach’s weekly windows (support). Effective roles must include **student** or **admin**; coach-only tokens get **403**. Path `:id` = coach user id (`{{coach_id}}`). Edit the canonical request under **Coaches** only so Student and Admin flows stay in sync.',
+);
+applyDescriptionOverride(
+  adminFolder,
+  'Get Payment By ID (Admin)',
+  '**Admin flow** — same route as coach/student (`GET /api/payments/:id`). **Admin** may fetch any payment by ID. Path `:id` = payment row id; use `{{payment_id}}` from the previous **Get My Payments** step when available.',
+);
+applyDescriptionOverride(
+  coachFolder,
+  'Get My Payment By ID',
+  '**Coach flow** — same route as admin (`GET /api/payments/:id`). Only payments where you are `coach_id` (or `student_id` if you have both roles). **403** if the ID is not one of your payments. Path `:id` = `{{payment_id}}` from **Get My Payments**.',
+);
+applyDescriptionOverride(
+  studentFolder,
+  'Get My Payment By ID',
+  '**Student flow** — same route as admin (`GET /api/payments/:id`). Only payments where you are `student_id` (or `coach_id` if you have both roles). **403** if the ID is not one of your payments. Path `:id` = `{{payment_id}}` from **Get My Payments**.',
 );
 applySeededRegisterExample(adminFolder, 'admin');
 applySeededRegisterExample(coachFolder, 'coach');

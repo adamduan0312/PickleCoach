@@ -63,9 +63,9 @@ const Booking = sequelize.define('bookings', {
    *
    * Set exclusively by `PUT /api/disputes/:id/resolve` after any dispute
    * resolution (attendance claims and behavior types: `misconduct`,
-   * `late_arrival`, `lesson_not_completed`). Behavior resolutions also set
-   * this flag intentionally: dispute resolution is the authoritative
-   * adjudication boundary for the booking incident.
+   * `lesson_not_completed`). Behavior resolutions also set this flag
+   * intentionally: dispute resolution is the authoritative adjudication
+   * boundary for the booking incident.
    */
   attendance_finalized: {
     type: DataTypes.BOOLEAN,

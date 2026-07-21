@@ -45,14 +45,25 @@
  * shape consistency so the boundaries above stay clean and testable.
  */
 
-const ATTENDANCE_TYPES = new Set(['coach_no_show_claim', 'student_no_show_claim']);
-const BEHAVIOR_TYPES = new Set(['late_arrival', 'misconduct', 'lesson_not_completed']);
-const SUSTAINED = new Set(['upheld', 'partial']);
+import {
+  ATTENDANCE_DISPUTE_TYPES,
+  BEHAVIOR_DISPUTE_TYPES,
+  CATCHALL_DISPUTE_TYPES,
+  RESOLVABLE_DISPUTE_TYPE_CODES,
+} from './disputeTypeCatalog.js';
 
-const SUPPORTED_DISPUTE_TYPES = [...ATTENDANCE_TYPES, ...BEHAVIOR_TYPES];
+const SUSTAINED = new Set(['upheld', 'partial']);
 
 const isRefund = (financialAction) =>
   financialAction === 'refund_student' || financialAction === 'refund_student_partial';
+
+function isResolvableType(disputeTypeCode) {
+  return (
+    ATTENDANCE_DISPUTE_TYPES.has(disputeTypeCode) ||
+    BEHAVIOR_DISPUTE_TYPES.has(disputeTypeCode) ||
+    CATCHALL_DISPUTE_TYPES.has(disputeTypeCode)
+  );
+}
 
 /**
  * @param {object} p
@@ -74,15 +85,15 @@ export function validateDisputeResolutionPayload({
   // eslint-disable-next-line no-unused-vars
   openedBy,
 }) {
-  if (!disputeTypeCode || (!ATTENDANCE_TYPES.has(disputeTypeCode) && !BEHAVIOR_TYPES.has(disputeTypeCode))) {
+  if (!disputeTypeCode || !isResolvableType(disputeTypeCode)) {
     return {
       ok: false,
       code: 'unsupported_dispute_alignment_type',
-      message: `Unsupported dispute_type_code${disputeTypeCode ? ` "${disputeTypeCode}"` : ''}. Resolution alignment is only defined for: ${SUPPORTED_DISPUTE_TYPES.join(', ')}.`,
+      message: `Unsupported dispute_type_code${disputeTypeCode ? ` "${disputeTypeCode}"` : ''}. Resolution alignment is only defined for: ${RESOLVABLE_DISPUTE_TYPE_CODES.join(', ')}.`,
     };
   }
 
-  if (ATTENDANCE_TYPES.has(disputeTypeCode)) {
+  if (ATTENDANCE_DISPUTE_TYPES.has(disputeTypeCode)) {
     if (outcome == null || outcome === '') {
       return {
         ok: false,
@@ -111,7 +122,6 @@ export function validateDisputeResolutionPayload({
       }
     }
 
-    // Factual attendance outcome drives money the same way for upheld, partial, and rejected.
     const refund = isRefund(financialAction);
     const noChange = financialAction === 'no_change';
 
@@ -135,7 +145,7 @@ export function validateDisputeResolutionPayload({
     return { ok: true };
   }
 
-  if (BEHAVIOR_TYPES.has(disputeTypeCode)) {
+  if (BEHAVIOR_DISPUTE_TYPES.has(disputeTypeCode)) {
     if (decision === 'rejected') {
       if (financialAction !== 'no_change') {
         return {
@@ -176,6 +186,23 @@ export function validateDisputeResolutionPayload({
     return { ok: true };
   }
 
-  // Unreachable: dispute type is in one of the supported sets above.
+  if (CATCHALL_DISPUTE_TYPES.has(disputeTypeCode)) {
+    if (decision === 'rejected' && financialAction !== 'no_change') {
+      return {
+        ok: false,
+        code: 'catchall_rejected_financial',
+        message: 'When decision is rejected, financial_action must be no_change.',
+      };
+    }
+    if (penalizeRole != null && penalizeRole !== 'none') {
+      return {
+        ok: false,
+        code: 'catchall_penalize_forbidden',
+        message: 'penalize_role must be none for other disputes (no reliability penalty bucket).',
+      };
+    }
+    return { ok: true };
+  }
+
   return { ok: true };
 }

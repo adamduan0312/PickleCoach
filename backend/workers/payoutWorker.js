@@ -7,13 +7,18 @@ import {
   isLateCancelRetainedRevenueEligibleFromHistory,
   isLateCancelRefundSettledForPayout,
 } from '../utils/lateCancelPayout.js';
+import { isPaymentEscrowPayable } from '../utils/payoutEscrowEligibility.js';
 
 /**
  * Process payouts for completed bookings and student late-cancels with retained revenue.
  * Runs every 10 minutes
  *
- * Selection: payments with booking.status in completed / awaiting_verification / student_no_show,
+ * Selection: payments with booking.status in completed / student_no_show,
  * or cancelled with a student late-cancel penalty on cancellation_history (coach compensation).
+ *
+ * `awaiting_verification` is intentionally excluded: the 24h post-lesson window ends when
+ * `autoConfirmWorker` moves the booking to `completed` (lesson end + 24h). Payout runs on
+ * `completed` so lifecycle, dispute window, and money stay aligned.
  */
 export const processPayouts = async () => {
   try {
@@ -28,7 +33,7 @@ export const processPayouts = async () => {
           as: 'booking',
           where: {
             status: {
-              [Op.in]: ['completed', 'awaiting_verification', 'student_no_show', 'cancelled'],
+              [Op.in]: ['completed', 'student_no_show', 'cancelled'],
             },
             payout_status: { [Op.in]: ['none', 'pending', 'awaiting_verification'] },
           },
@@ -55,6 +60,17 @@ export const processPayouts = async () => {
 
     for (const payment of payments) {
       try {
+        // Defense-in-depth: never release money on booking status alone. A
+        // `completed` booking can still have `escrow_status = 'disputed'`
+        // (chargeback-opened dispute resolved back to completed without Stripe
+        // escrow reconciliation). Escrow state is the payout authority.
+        if (!isPaymentEscrowPayable(payment)) {
+          logger.info(
+            `Skipping payout for payment ${payment.id} - escrow_status "${payment.escrow_status}" not payable`,
+          );
+          continue;
+        }
+
         if (payment.booking.status === 'cancelled') {
           const history = await CancellationHistory.findOne({
             where: { booking_id: payment.booking_id },
@@ -100,19 +116,6 @@ export const processPayouts = async () => {
         if (payment.refund_status === 'pending') {
           logger.info(`Skipping payout for payment ${payment.id} - refund pending`);
           continue;
-        }
-
-        // completed and student_no_show are payable immediately once selected.
-        // awaiting_verification keeps the 24h delay fallback.
-        if (payment.booking.status === 'awaiting_verification') {
-          // Only process if it's been 24 hours since scheduled time
-          const scheduledTime = new Date(payment.booking.scheduled_at);
-          const now = new Date();
-          const hoursSinceScheduled = (now - scheduledTime) / (1000 * 60 * 60);
-
-          if (hoursSinceScheduled < 24) {
-            continue; // Not ready yet
-          }
         }
 
         // Get coach's Stripe Connect account ID from coach profile

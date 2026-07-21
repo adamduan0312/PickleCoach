@@ -209,7 +209,7 @@ test('behavior rejected', () => {
   );
   bad(
     {
-      disputeTypeCode: 'late_arrival',
+      disputeTypeCode: 'lesson_not_completed',
       decision: 'rejected',
       financialAction: 'no_change',
       penalizeRole: 'coach',
@@ -295,4 +295,39 @@ test('openedBy undefined accepted (no longer drives errors)', () => {
     penalizeRole: 'student',
     openedBy: undefined,
   });
+});
+
+test('catchall other: refunds allowed without penalize_role', () => {
+  ok({
+    disputeTypeCode: 'other',
+    decision: 'upheld',
+    financialAction: 'refund_student_partial',
+    penalizeRole: 'none',
+    openedBy: 'student',
+  });
+  bad(
+    {
+      disputeTypeCode: 'other',
+      decision: 'rejected',
+      financialAction: 'refund_student',
+      penalizeRole: 'none',
+      openedBy: 'student',
+    },
+    'catchall_rejected_financial',
+  );
+  bad(
+    {
+      disputeTypeCode: 'other',
+      decision: 'upheld',
+      financialAction: 'no_change',
+      penalizeRole: 'coach',
+      openedBy: 'student',
+    },
+    'catchall_penalize_forbidden',
+  );
+});
+
+test('deprecated catalog codes are not resolvable', () => {
+  bad({ disputeTypeCode: 'unknown_removed_type', decision: 'upheld', financialAction: 'no_change' }, 'unsupported_dispute_alignment_type');
+  bad({ disputeTypeCode: 'refund_request', decision: 'upheld', financialAction: 'no_change' }, 'unsupported_dispute_alignment_type');
 });

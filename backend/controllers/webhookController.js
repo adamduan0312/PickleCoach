@@ -1,9 +1,10 @@
 import express from 'express';
 import { UniqueConstraintError } from 'sequelize';
-import { WebhookLog, Payment } from '../models/index.js';
+import { WebhookLog, Payment, CoachProfile } from '../models/index.js';
 import * as stripeService from '../services/stripeService.js';
 import * as paymentService from '../services/paymentService.js';
 import { syncStripeDisputeToDatabase } from '../services/stripeDisputeSyncService.js';
+import { syncCoachStripeReadyFromAccount } from '../services/coachMarketplaceEligibility.js';
 import { logger } from '../config/logger.js';
 import * as paymentAuthorizationService from '../services/paymentAuthorizationService.js';
 import { shouldStripeWebhookSkipAsDuplicate } from '../services/paymentStripeContract.js';
@@ -144,6 +145,10 @@ export const handleStripeWebhook = async (req, res) => {
       case 'transfer.created':
       case 'transfer.paid':
         await handleTransferFinalized(event.data.object);
+        break;
+
+      case 'account.updated':
+        await handleConnectAccountUpdated(event.data.object);
         break;
 
       default:
@@ -329,6 +334,30 @@ const handleTransferFinalized = async (transfer) => {
     Number.isFinite(paymentId) ? paymentId : null,
     'transfer.finalized'
   );
+};
+
+/** Keep local stripe_ready in sync when Connect onboarding / capability changes. */
+const handleConnectAccountUpdated = async (account) => {
+  if (!account?.id) return;
+  const coachProfile = await CoachProfile.findOne({
+    where: { stripe_account_id: account.id },
+  });
+  if (!coachProfile) {
+    logger.info({
+      component: 'stripe',
+      event: 'account_updated_no_coach_profile',
+      accountId: account.id,
+    });
+    return;
+  }
+  const ready = await syncCoachStripeReadyFromAccount(coachProfile, account);
+  logger.info({
+    component: 'stripe',
+    event: 'account_updated_stripe_ready_synced',
+    accountId: account.id,
+    coachProfileId: coachProfile.id,
+    stripe_ready: ready,
+  });
 };
 
 export const stripeWebhookMiddleware = express.raw({ type: 'application/json' });

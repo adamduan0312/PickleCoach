@@ -10,7 +10,7 @@ This document describes how **`bookings.attendance_finalized`** interacts with d
 | The booking is deleted or invalidated | The booking incident has passed an authoritative resolve boundary |
 | Only attendance disputes set the flag | **Every** successful resolve sets the flag (attendance + behavior types) |
 
-**Behavior disputes** (`misconduct`, `late_arrival`, `lesson_not_completed`) intentionally set **`attendance_finalized = true`** as well: any dispute resolution is treated as the adjudication boundary for the incident, not only attendance claims. **`lesson_not_completed`** does not imply booking deletion or that attendance stays editable via admin shortcuts after resolve.
+**Behavior disputes** (`misconduct`, `lesson_not_completed`) intentionally set **`attendance_finalized = true`** as well: any dispute resolution is treated as the adjudication boundary for the incident, not only attendance claims. **`lesson_not_completed`** does not imply booking deletion or that attendance stays editable via admin shortcuts after resolve.
 
 ## Precedence: who may change attendance outcome
 

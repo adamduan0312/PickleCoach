@@ -1,17 +1,17 @@
 import {
   sequelize,
   Booking,
-  BookingPlayer,
   Lesson,
   User,
   UserRole,
   Payment,
   CourtLocation,
   CoachCourtLocation,
+  CoachProfile,
 } from '../models/index.js';
 import * as stripeService from './stripeService.js';
 import { checkBookingAvailability } from './bookingService.js';
-import { calculatePaymentAmounts, MIN_LESSON_PRICE_USD } from './paymentEngine.js';
+import { calculatePaymentAmounts, MIN_LESSON_PRICE_USD, dollarsToCents } from './paymentEngine.js';
 import { MIN_CHARGE_USD } from './paymentConstants.js';
 import { createAuditLog } from '../utils/audit.js';
 import { logger } from '../config/logger.js';
@@ -23,6 +23,8 @@ import {
   parseBookingIntentMetadata,
   SLOT_NO_LONGER_AVAILABLE_CODE,
 } from '../utils/bookingIntentContract.js';
+import { COACH_BOOKING_REQUEST_NOTIFIED_METADATA_KEY } from '../utils/paymentAuthorizationGate.js';
+import { isPubliclyActiveUser } from '../utils/userLifecycle.js';
 
 async function ensureStripeCustomer(student, transaction = null) {
   let stripeCustomerId = student.stripe_customer_id || null;
@@ -42,13 +44,14 @@ async function ensureStripeCustomer(student, transaction = null) {
 
 /**
  * Shared validation for booking intent + confirm (lesson, roles, court, schedule).
+ * Duration always comes from the lesson package (not a student override).
+ * Court is required for MVP (one of the coach's linked courts).
  */
 export async function validateBookingRequestContext({
   studentId,
   studentRoles,
   lessonId,
   scheduledAt,
-  durationMinutes,
   courtLocationId,
 }) {
   const lesson = await Lesson.findByPk(lessonId);
@@ -65,6 +68,23 @@ export async function validateBookingRequestContext({
   if (!lessonCoachUser || !lessonCoachEffective.includes('coach')) {
     return { ok: false, status: 400, message: 'Lesson coach account is not a valid coach' };
   }
+  if (!isPubliclyActiveUser(lessonCoachUser)) {
+    return { ok: false, status: 404, message: 'Lesson not found or inactive' };
+  }
+  const coachProfile = await CoachProfile.findOne({
+    where: { user_id: lesson.coach_id, deleted_at: null },
+  });
+  if (!coachProfile) {
+    return { ok: false, status: 400, message: 'Coach profile is not available for booking' };
+  }
+  if (!coachProfile.stripe_ready) {
+    return {
+      ok: false,
+      status: 400,
+      message: 'This coach is not yet available for booking (payments setup incomplete)',
+      code: 'coach_not_marketplace_ready',
+    };
+  }
   if (lesson.coach_id === studentId) {
     return {
       ok: false,
@@ -76,19 +96,30 @@ export async function validateBookingRequestContext({
   if (Number.isNaN(scheduledDate.getTime()) || scheduledDate < new Date()) {
     return { ok: false, status: 400, message: 'Cannot book in the past' };
   }
-  if (courtLocationId) {
-    const court = await CourtLocation.findByPk(courtLocationId);
-    if (!court || court.deleted_at) {
-      return { ok: false, status: 404, message: 'Court location not found' };
-    }
-    const coachCourtLink = await CoachCourtLocation.findOne({
-      where: { coach_id: lesson.coach_id, court_id: courtLocationId },
-    });
-    if (!coachCourtLink) {
-      return { ok: false, status: 400, message: 'Selected court is not available for this coach' };
-    }
+  if (courtLocationId == null) {
+    return {
+      ok: false,
+      status: 400,
+      message: 'court_location_id is required — choose one of the coach\'s courts.',
+      code: 'court_required',
+    };
   }
-  const finalDuration = durationMinutes || lesson.duration_minutes;
+  const court = await CourtLocation.findByPk(courtLocationId);
+  if (!court || court.deleted_at) {
+    return { ok: false, status: 404, message: 'Court location not found' };
+  }
+  const coachCourtLink = await CoachCourtLocation.findOne({
+    where: { coach_id: lesson.coach_id, court_id: courtLocationId },
+  });
+  if (!coachCourtLink) {
+    return {
+      ok: false,
+      status: 400,
+      message: 'Selected court is not available for this coach',
+      code: 'court_not_linked_to_coach',
+    };
+  }
+  const finalDuration = lesson.duration_minutes;
   const availabilityCheck = await checkBookingAvailability(
     lessonId,
     scheduledDate.toISOString(),
@@ -107,6 +138,7 @@ export async function validateBookingRequestContext({
     lesson,
     scheduledDate,
     finalDuration,
+    courtLocationId: Number(courtLocationId),
     coachId: lesson.coach_id,
   };
 }
@@ -119,9 +151,7 @@ export async function createBookingIntent({
   studentRoles,
   lessonId,
   scheduledAt,
-  durationMinutes,
   courtLocationId,
-  playerIds,
   paymentMethod = 'stripe',
   paymentMethodId = null,
   idempotencyKey,
@@ -131,7 +161,6 @@ export async function createBookingIntent({
     studentRoles,
     lessonId,
     scheduledAt,
-    durationMinutes,
     courtLocationId,
   });
   if (!ctx.ok) {
@@ -141,7 +170,7 @@ export async function createBookingIntent({
     throw err;
   }
 
-  const { lesson, scheduledDate, finalDuration } = ctx;
+  const { lesson, scheduledDate, finalDuration, courtLocationId: validatedCourtId } = ctx;
   const amounts = calculatePaymentAmounts(lesson.price);
   const totalCharge = Number(amounts.total_charge_to_student) || 0;
   if (totalCharge < MIN_CHARGE_USD) {
@@ -160,8 +189,7 @@ export async function createBookingIntent({
     coachId: lesson.coach_id,
     scheduledAt: scheduledDate,
     durationMinutes: finalDuration,
-    courtLocationId: courtLocationId || null,
-    playerIds: playerIds || [],
+    courtLocationId: validatedCourtId,
     idempotencyKey,
     paymentMethod,
   });
@@ -184,7 +212,12 @@ export async function createBookingIntent({
     lesson_id: lesson.id,
     scheduled_at: scheduledDate.toISOString(),
     duration_minutes: finalDuration,
+    court_location_id: validatedCourtId,
+    /** Total charge to student in USD dollars (e.g. 54 for $50 lesson + 8% fee). */
     amount: totalCharge,
+    /** Same amount in Stripe's smallest currency unit (cents for USD). */
+    amount_cents: dollarsToCents(totalCharge),
+    currency: 'usd',
   };
 }
 
@@ -245,7 +278,15 @@ export async function confirmBookingFromPaymentIntent({ studentId, paymentIntent
     throw err;
   }
 
-  const finalDuration = parsedMeta.durationMinutes || lesson.duration_minutes;
+  if (parsedMeta.courtLocationId == null) {
+    const err = new Error('PaymentIntent is missing court_location_id.');
+    err.statusCode = 400;
+    err.code = 'payment_intent_invalid_metadata';
+    throw err;
+  }
+
+  // Duration always from the lesson package (ignore any stale metadata override)
+  const finalDuration = lesson.duration_minutes;
   const availabilityCheck = await checkBookingAvailability(
     lesson.id,
     parsedMeta.scheduledAt.toISOString(),
@@ -292,13 +333,6 @@ export async function confirmBookingFromPaymentIntent({ studentId, paymentIntent
       { transaction },
     );
 
-    if (parsedMeta.playerIds?.length) {
-      await BookingPlayer.bulkCreate(
-        parsedMeta.playerIds.map((player_id) => ({ booking_id: booking.id, player_id })),
-        { transaction },
-      );
-    }
-
     payment = await Payment.create(
       {
         booking_id: booking.id,
@@ -319,6 +353,9 @@ export async function confirmBookingFromPaymentIntent({ studentId, paymentIntent
           capture_on_accept: true,
           authorization_succeeded_at: new Date().toISOString(),
           flow: 'authorize_then_book',
+          // Confirm owns coach notify; webhook must not send a second booking_request_coach.
+          [COACH_BOOKING_REQUEST_NOTIFIED_METADATA_KEY]: true,
+          coach_booking_request_notified_at: new Date().toISOString(),
         },
       },
       { transaction },

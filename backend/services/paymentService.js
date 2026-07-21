@@ -468,8 +468,9 @@ export const expirePendingBookingNoCoachResponse = async (bookingId) => {
 
 /**
  * Release escrow and create payout (called by worker).
- * Payable when booking is completed / awaiting_verification / student_no_show,
+ * Payable when booking is completed / student_no_show,
  * or cancelled after a student late cancel with retained penalty revenue.
+ * (`awaiting_verification` waits for auto-complete → `completed` first.)
  */
 export const releaseEscrow = async (paymentId, coachStripeAccountId = null) => {
   const payment = await Payment.findByPk(paymentId, {
@@ -488,7 +489,7 @@ export const releaseEscrow = async (paymentId, coachStripeAccountId = null) => {
   }
 
   const bookingStatus = payment.booking.status;
-  const standardPayableStatuses = ['completed', 'awaiting_verification', 'student_no_show'];
+  const standardPayableStatuses = ['completed', 'student_no_show'];
   if (bookingStatus === 'cancelled') {
     const history = await CancellationHistory.findOne({
       where: { booking_id: payment.booking_id },
@@ -514,7 +515,7 @@ export const releaseEscrow = async (paymentId, coachStripeAccountId = null) => {
       throw new Error('Late-cancel coach payout blocked until partial refund is settled (partially_refunded + refund_status succeeded)');
     }
   } else if (!standardPayableStatuses.includes(bookingStatus)) {
-    throw new Error('Booking must be completed, awaiting_verification, student_no_show, or a student late cancel with retained revenue before payout');
+    throw new Error('Booking must be completed, student_no_show, or a student late cancel with retained revenue before payout');
   }
 
   const { payoutCents, netRetainedCents, coachShareRatio } = computeCoachEscrowPayoutFromPaymentSnapshot({

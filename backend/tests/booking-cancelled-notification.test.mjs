@@ -1,12 +1,12 @@
 /**
- * Cancellation notification copy includes cancelled_by, reason, and optional notes/refund.
+ * Cancellation notification copy: short bell summary; details in structured fields.
  */
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   buildBookingCancelledNotificationContent,
   CANCELLATION_REASON_LABELS,
-} from '../services/notificationService.js';
+} from '../notifications/payloadBuilders.js';
 
 describe('buildBookingCancelledNotificationContent', () => {
   it('coach cancel with weather reason', () => {
@@ -15,6 +15,7 @@ describe('buildBookingCancelledNotificationContent', () => {
       reason: 'weather',
     });
     assert.match(content.headline, /cancelled by the coach/i);
+    assert.equal(content.summary, content.headline);
     assert.equal(content.reason_line, 'Reason: Weather');
     assert.equal(CANCELLATION_REASON_LABELS.weather, 'Weather');
   });
@@ -26,9 +27,10 @@ describe('buildBookingCancelledNotificationContent', () => {
       reason_notes: 'Family emergency',
     });
     assert.match(content.headline, /cancelled by the student/i);
+    assert.equal(content.summary, content.headline);
     assert.equal(content.reason_line, 'Reason: Emergency');
     assert.equal(content.reason_notes, 'Family emergency');
-    assert.match(content.summary, /Family emergency/);
+    assert.doesNotMatch(content.summary, /Family emergency/);
   });
 
   it('includes refund line when refund_amount present', () => {
@@ -40,6 +42,8 @@ describe('buildBookingCancelledNotificationContent', () => {
     });
     assert.match(content.refund_line, /\$45\.50/);
     assert.match(content.refund_line, /processing/);
+    assert.equal(content.summary, content.headline);
+    assert.doesNotMatch(content.summary, /Refund:/);
   });
 
   it('travel_delay is a penalized reason label', () => {

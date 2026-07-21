@@ -1,6 +1,12 @@
 import { DataTypes } from 'sequelize';
 import { sequelize } from './sequelize.js';
 
+/**
+ * Additional lesson participants beyond `bookings.primary_student_id`.
+ *
+ * MVP: not written by the booking-intent flow (one student per booking).
+ * Table + associations kept for possible V2 group / doubles lessons.
+ */
 const BookingPlayer = sequelize.define('booking_players', {
   booking_id: {
     type: DataTypes.INTEGER,

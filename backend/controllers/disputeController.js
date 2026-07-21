@@ -21,7 +21,6 @@ import {
 } from '../utils/bookingAttendanceStatus.js';
 import {
   applyBookingStatusTransition,
-  BookingTransitionVia,
 } from '../services/bookingStateMachine.js';
 import {
   applyDisputeStatusTransition,
@@ -33,29 +32,21 @@ import {
   getAttendanceClaimReversalWarning,
   getBehaviorClaimReversalWarning,
 } from '../utils/disputeResolutionWarnings.js';
+import {
+  BEHAVIOR_DISPUTE_TYPE_CODES,
+  isActiveDisputeTypeCode,
+} from '../utils/disputeTypeCatalog.js';
 import { validateDisputeResolutionPayload } from '../utils/disputeResolutionAlignment.js';
+import { checkDisputeCreateBookingEligibility } from '../utils/disputeCreateEligibility.js';
+import {
+  deriveDisputeResolveBookingTransitionVia,
+  deriveResolvedBookingStatusFromDisputeResolve,
+} from '../utils/disputeResolveBookingStatus.js';
+import { formatDisputeResponse } from '../utils/disputeDto.js';
+
+export { formatDisputeResponse };
 
 const MAX_LIST_ALL_DISPUTES = 10000;
-
-/**
- * Public dispute JSON:
- *   - Resolver is only `resolved_by_admin` (id + full_name); DB `admin_id` /
- *     `admin` are not exposed.
- *   - `refund_cents` (internal, integer cents) is replaced with `refund_amount`
- *     (US dollars decimal string, e.g. "12.34") so the API surface stays in the
- *     same units admins type into the resolve endpoint.
- */
-export function formatDisputeResponse(dispute) {
-  if (!dispute) return dispute;
-  const json = typeof dispute.toJSON === 'function' ? dispute.toJSON() : dispute;
-  const { admin, admin_id, refund_cents, ...rest } = json;
-  return {
-    ...rest,
-    refund_amount:
-      refund_cents != null ? paymentService.centsToDecimalString(refund_cents) : null,
-    resolved_by_admin: admin ?? null,
-  };
-}
 
 async function findDisputeResolutionActionByCode(code) {
   const row = await DisputeResolutionAction.findOne({ where: { code } });
@@ -180,12 +171,30 @@ export const createDispute = async (req, res) => {
       return errorResponse(res, 'Unauthorized', 403);
     }
 
+    const createEligibility = checkDisputeCreateBookingEligibility(booking);
+    if (!createEligibility.ok) {
+      return errorResponse(res, createEligibility.message, 400, null, {
+        code: createEligibility.code,
+        booking_status: booking.status,
+      });
+    }
+
     const disputeType = await DisputeType.findByPk(dispute_type_id);
     if (!disputeType) {
       return errorResponse(
         res,
         'Invalid dispute_type_id: that dispute type does not exist. Ensure migrations have run (including seed for dispute_types) or use an id that exists in the dispute_types table.',
         400,
+      );
+    }
+
+    if (!isActiveDisputeTypeCode(disputeType.code)) {
+      return errorResponse(
+        res,
+        `Dispute type "${disputeType.code}" is no longer available. Active types: coach_no_show_claim, student_no_show_claim, misconduct, lesson_not_completed, other.`,
+        400,
+        null,
+        { code: 'dispute_type_deprecated' },
       );
     }
 
@@ -306,7 +315,7 @@ export const resolveDispute = async (req, res) => {
     });
     const typeCode = disputeType?.code;
     const isAttendanceClaim = typeCode === 'coach_no_show_claim' || typeCode === 'student_no_show_claim';
-    const isBehaviorDispute = ['late_arrival', 'misconduct', 'lesson_not_completed'].includes(typeCode);
+    const isBehaviorDispute = BEHAVIOR_DISPUTE_TYPE_CODES.includes(typeCode);
 
     const alignment = validateDisputeResolutionPayload({
       disputeTypeCode: typeCode,
@@ -364,19 +373,16 @@ export const resolveDispute = async (req, res) => {
 
     // Dispute resolution is the final authority for adjudication and refund intent.
     // Attendance disputes always carry a factual `outcome`; booking status follows it.
-    // Behavior disputes don't change the attendance outcome — but if the booking was
+    // Behavior and `other` disputes don't change attendance — but if the booking was
     // parked in `disputed` (Stripe chargeback path or seed data; in-app `createDispute`
-    // never sets it), resolving the dispute should release it back to `completed` so
-    // the booking stops looking "in flight" forever.
-    let resolvedBookingStatus = booking.status;
+    // never sets it), resolving releases it back to `completed` so the booking stops
+    // looking "in flight" forever.
     const shouldApplyAttendanceOutcome = isAttendanceClaim;
-    if (isAttendanceClaim) {
-      if (shouldApplyAttendanceOutcome) {
-        resolvedBookingStatus = outcome === 'student_no_show' ? 'student_no_show' : 'coach_no_show';
-      }
-    } else if (isBehaviorDispute && booking.status === 'disputed') {
-      resolvedBookingStatus = 'completed';
-    }
+    const resolvedBookingStatus = deriveResolvedBookingStatusFromDisputeResolve({
+      disputeTypeCode: typeCode,
+      bookingStatus: booking.status,
+      outcome,
+    });
 
     if (shouldApplyAttendanceOutcome) {
       const transition = validateAttendanceOutcomeTransition(
@@ -446,11 +452,11 @@ export const resolveDispute = async (req, res) => {
 
     const beforeState = dispute.toJSON();
     // `attendance_finalized` always flips to true on every resolve — attendance
-    // claims AND behavior disputes (`misconduct`, `late_arrival`,
-    // `lesson_not_completed`). Semantics: lock direct admin/coach attendance
-    // mutations outside dispute adjudication; it does NOT freeze unrelated
-    // booking columns. Behavior resolves intentionally participate so dispute
-    // resolution is the single authoritative boundary for the incident.
+    // claims AND behavior disputes (`misconduct`, `lesson_not_completed`).
+    // Semantics: lock direct admin/coach attendance mutations outside dispute
+    // adjudication; it does NOT freeze unrelated booking columns. Behavior
+    // resolves intentionally participate so dispute resolution is the single
+    // authoritative boundary for the incident.
     const bookingStatusChanging = resolvedBookingStatus !== booking.status;
     const bookingFinalizationChanging = !booking.attendance_finalized;
     const bookingBeforeForAudit =
@@ -485,10 +491,11 @@ export const resolveDispute = async (req, res) => {
 
       if (bookingStatusChanging || bookingFinalizationChanging) {
         if (bookingStatusChanging) {
-          const via =
-            isBehaviorDispute && resolvedBookingStatus === 'completed'
-              ? BookingTransitionVia.DISPUTE_RESOLVE_BEHAVIOR_ON_DISPUTED_BOOKING
-              : BookingTransitionVia.DISPUTE_RESOLVE_ATTENDANCE;
+          const via = deriveDisputeResolveBookingTransitionVia({
+            disputeTypeCode: typeCode,
+            fromStatus: booking.status,
+            toStatus: resolvedBookingStatus,
+          });
           await applyBookingStatusTransition(booking, {
             toStatus: resolvedBookingStatus,
             via,
@@ -588,7 +595,7 @@ export const resolveDispute = async (req, res) => {
       }
     } else if (
       Boolean(disputeType?.affects_reliability_score) &&
-      ['late_arrival', 'misconduct', 'lesson_not_completed'].includes(disputeType.code) &&
+      BEHAVIOR_DISPUTE_TYPE_CODES.includes(disputeType.code) &&
       ['upheld', 'partial'].includes(decision)
     ) {
       if (penalizeRole === 'coach' && booking.coach_id != null) {

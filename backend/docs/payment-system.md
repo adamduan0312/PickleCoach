@@ -41,6 +41,17 @@ Implemented as `calculatePaymentAmounts(lessonPrice)` in `paymentEngine.js`. Per
 - **Student late cancel (<24h) retained revenue**: After the partial refund executes on a **captured** charge, the remaining charge balance is treated as lesson revenue. **`payoutWorker`** releases escrow to the coach using the normal capture-time coach/platform ratio. **Uncaptured** authorize-only PaymentIntents (`pending`, no `charge_id`) are **voided in full** on cancel — no retained funds, no coach payout (common on **`pending`** bookings before coach accept).
 - **Payout ordering (late cancel)**: Cancel → enqueue `booking_cancel_refund` → Stripe partial refund → `charge.refunded` mirror sets `payment_status: partially_refunded` and `refund_status: succeeded` → **only then** may `payoutWorker` call `releaseEscrow`. Guards block payout while a cancel refund `payment_actions` row is pending, while `refund_status === pending`, or before `partially_refunded` + succeeded.
 
+## Post-lesson coach payout (completed lessons)
+
+Timeline is aligned with **`autoConfirmWorker`** (lesson **end** + 24h verification window):
+
+1. Lesson ends → `confirmed` → `awaiting_verification` (worker, ~5 min).
+2. During `awaiting_verification`: escrow stays **held**; open in-app disputes block auto-complete and payout.
+3. **24h after lesson end** with no open dispute → `autoConfirmWorker` sets `completed` + `payout_status: pending`.
+4. **`payoutWorker`** (~10 min) releases escrow only when `bookings.status` is **`completed`** (or **`student_no_show`** for immediate attendance payout, or late-cancel `cancelled`).
+
+Coach **`POST .../complete`** can skip the wait by setting `completed` + `payout_status: pending` earlier. **`awaiting_verification` is not a payable status** — payout never runs before the booking reaches a terminal payable outcome.
+
 ## Post-refund coach vs platform split
 
 When mirroring Stripe refund state or computing escrow payout:

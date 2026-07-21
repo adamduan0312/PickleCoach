@@ -24,7 +24,7 @@ export const RELIABILITY_SMOOTHING_K = parseEnvFloat('RELIABILITY_SMOOTHING_K', 
  * Bump when penalty weights, decay model, smoothing, or window semantics change.
  * Persisted on each `user_reliability` row so historical rows stay interpretable.
  */
-export const SCORE_FORMULA_VERSION = 3;
+export const SCORE_FORMULA_VERSION = 5;
 
 /** Decimal places for persisted fractional metrics (decayed weights, totals, baseline decay). */
 export const RELIABILITY_METRIC_DECIMAL_PLACES = 6;
@@ -35,9 +35,10 @@ export const getReliabilityConfig = () => ({
   smoothingK: RELIABILITY_SMOOTHING_K,
 });
 
-/** Weights for behavior types only (sustained disputes: late_arrival, misconduct, lesson_not_completed). */
+/**
+ * Weights for active behavior dispute types (sustained: misconduct, lesson_not_completed).
+ */
 export const BEHAVIOR_DISPUTE_PENALTY_WEIGHTS = {
-  late_arrival: 5,
   lesson_not_completed: 10,
   misconduct: 25,
 };

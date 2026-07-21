@@ -3,8 +3,29 @@ import { successResponse, errorResponse, paginatedResponse } from '../utils/resp
 import { getPagination, getPagingData } from '../utils/pagination.js';
 import { Op } from 'sequelize';
 import { logger } from '../config/logger.js';
+import { isPubliclyActiveUser } from '../utils/userLifecycle.js';
+import * as coachMarketplaceEligibility from '../services/coachMarketplaceEligibility.js';
 
 const MAX_LIST_ALL_LESSONS = 10000;
+
+/** Mutable deps for unit tests (ESM named exports are read-only). */
+export const lessonByIdDeps = {
+  getCoachMarketplaceEligibility: (coachId) =>
+    coachMarketplaceEligibility.getCoachMarketplaceEligibility(coachId),
+};
+
+/** Strip eligibility join clutter; public lesson cards only need coach id/name/avatar. */
+function shapePublicLessonRow(lessonInstance) {
+  const json = lessonInstance.get ? lessonInstance.get({ plain: true }) : { ...lessonInstance };
+  if (json.coach && typeof json.coach === 'object') {
+    json.coach = {
+      id: json.coach.id,
+      full_name: json.coach.full_name,
+      avatar_url: json.coach.avatar_url ?? null,
+    };
+  }
+  return json;
+}
 
 /** Coach owner or admin may view **inactive** (not deleted) lessons by id — unpublished, recoverable. */
 function canViewInactiveLessonById(user, lesson) {
@@ -38,27 +59,40 @@ export const getLessons = async (req, res) => {
       if (max_price) where.price[Op.lte] = parseFloat(max_price);
     }
 
+    const coachInclude = coachMarketplaceEligibility.marketplaceEligibleCoachIncludeForLessonBrowse();
+
     if (page == null && limit == null) {
       const lessons = await Lesson.findAll({
         where,
-        include: [{ model: User, as: 'coach', attributes: ['id', 'full_name', 'avatar_url'] }],
+        include: [coachInclude],
         limit: MAX_LIST_ALL_LESSONS,
         order: [['created_at', 'DESC']],
+        subQuery: false,
       });
-      return successResponse(res, lessons, 'Lessons retrieved successfully');
+      return successResponse(
+        res,
+        lessons.map(shapePublicLessonRow),
+        'Lessons retrieved successfully',
+      );
     }
 
     const { limit: queryLimit, offset } = getPagination(page, limit);
 
     const lessons = await Lesson.findAndCountAll({
       where,
-      include: [{ model: User, as: 'coach', attributes: ['id', 'full_name', 'avatar_url'] }],
+      include: [coachInclude],
       limit: queryLimit,
       offset,
+      distinct: true,
+      subQuery: false,
       order: [['created_at', 'DESC']],
     });
 
-    const response = getPagingData(lessons, page, queryLimit);
+    const response = getPagingData(
+      { count: lessons.count, rows: lessons.rows.map(shapePublicLessonRow) },
+      page,
+      queryLimit,
+    );
     return paginatedResponse(res, response.items, response.pagination, 'Lessons retrieved successfully');
   } catch (error) {
     logger.error('Get lessons error:', error);
@@ -106,7 +140,11 @@ export const getLessonById = async (req, res) => {
     const { id } = req.params;
     const lesson = await Lesson.findByPk(id, {
       include: [
-        { model: User, as: 'coach', attributes: ['id', 'full_name', 'avatar_url'] },
+        {
+          model: User,
+          as: 'coach',
+          attributes: ['id', 'full_name', 'avatar_url', 'is_active', 'deleted_at'],
+        },
         { model: Booking, as: 'bookings', limit: 5, order: [['scheduled_at', 'DESC']] },
       ],
     });
@@ -120,11 +158,33 @@ export const getLessonById = async (req, res) => {
       return errorResponse(res, 'Lesson not found', 404);
     }
 
-    if (!isLessonPubliclyVisibleById(lesson) && !canViewInactiveLessonById(req.user, lesson)) {
+    const privileged = canViewInactiveLessonById(req.user, lesson);
+    if (!isLessonPubliclyVisibleById(lesson) && !privileged) {
       return errorResponse(res, 'Lesson not found', 404);
     }
 
-    return successResponse(res, lesson, 'Lesson retrieved successfully');
+    // Suspended/deleted coaches: hide from public/student browse; owner/admin may still load by id.
+    if (!isPubliclyActiveUser(lesson.coach) && !privileged) {
+      return errorResponse(res, 'Lesson not found', 404);
+    }
+
+    // Option A MVP: public lesson pages only for marketplace-eligible coaches
+    // (same definition as GET /api/lessons / GET /api/coaches). Owner/admin always allowed.
+    if (!privileged) {
+      const eligibility = await lessonByIdDeps.getCoachMarketplaceEligibility(lesson.coach_id);
+      if (!eligibility.listed) {
+        return errorResponse(res, 'Lesson not found', 404);
+      }
+    }
+
+    const payload = typeof lesson.toJSON === 'function' ? lesson.toJSON() : { ...lesson };
+    if (payload.coach) {
+      // Keep public coach shape aligned with list endpoints (no lifecycle internals).
+      delete payload.coach.is_active;
+      delete payload.coach.deleted_at;
+    }
+
+    return successResponse(res, payload, 'Lesson retrieved successfully');
   } catch (error) {
     logger.error('Get lesson error:', error);
     return errorResponse(res, 'Failed to retrieve lesson', 500);

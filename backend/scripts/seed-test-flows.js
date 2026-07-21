@@ -28,6 +28,9 @@
  *   Coach   coach.testflow@picklecoach.example.org    / Test1234!Ab
  *   Student student.testflow@picklecoach.example.org  / Test1234!Ab
  *
+ * Preserves demo-seed coach profiles (coachN@example.com) so student
+ * `GET /api/coaches` still returns marketplace results after this reseed.
+ *
  * Run from `backend/`:
  *   npm run seed:test-flows
  */
@@ -113,8 +116,24 @@ async function checkReferenceData() {
 async function wipe() {
   console.log('Wiping booking/payment/dispute data...');
 
-  // FK-safe order: leaves first, parents last. We deliberately wipe ALL rows
-  // in these tables (dev only) so reseeded IDs are predictable.
+  // Only delete users we created (preserve demo coaches/students and any real admin).
+  const testUsers = await User.findAll({
+    where: { email: { [Op.like]: `%@${TEST_EMAIL_DOMAIN}` } },
+    attributes: ['id'],
+  });
+  // Also pick up a renamed/suspended leftover that still owns the test-flow profile
+  // (e.g. email changed during admin UX testing → coach disappears from GET /api/coaches).
+  const leftoverProfiles = await CoachProfile.findAll({
+    where: { headline: 'Test Flow Coach Pro' },
+    attributes: ['user_id'],
+  });
+  const testIds = [...new Set([
+    ...testUsers.map((u) => u.id),
+    ...leftoverProfiles.map((p) => p.user_id),
+  ])];
+
+  // FK-safe order: leaves first, parents last. Booking/payment/dispute tables are
+  // wiped fully (dev only) so reseeded fixture IDs stay predictable.
   await Notification.destroy({ where: {} });
   await AuditLog.destroy({ where: {} });
   await Review.destroy({ where: {} });
@@ -128,25 +147,59 @@ async function wipe() {
   await Dispute.destroy({ where: {} });
   await BookingPlayer.destroy({ where: {} });
   await Booking.destroy({ where: {} });
-  await Lesson.destroy({ where: {} });
-  await CoachAvailability.destroy({ where: {} });
-  await CoachCourtLocation.destroy({ where: {} });
-  await CoachProfile.destroy({ where: {} });
-  await CourtLocation.destroy({ where: {} });
-  await UserReliability.destroy({ where: {} });
 
-  // Only delete users we created (preserve any real users such as your admin).
-  const testUsers = await User.findAll({
-    where: { email: { [Op.like]: `%@${TEST_EMAIL_DOMAIN}` } },
-    attributes: ['id'],
-  });
-  const testIds = testUsers.map((u) => u.id);
+  // Marketplace rows for *testflow* coaches only. Do NOT wipe demo coach_profiles —
+  // otherwise GET /api/coaches (student discovery) returns empty after this seed.
   if (testIds.length > 0) {
-    await UserRole.destroy({ where: { user_id: testIds } });
-    await User.destroy({ where: { id: testIds } });
+    await Lesson.destroy({ where: { coach_id: { [Op.in]: testIds } } });
+    await CoachAvailability.destroy({ where: { coach_id: { [Op.in]: testIds } } });
+    await CoachCourtLocation.destroy({ where: { coach_id: { [Op.in]: testIds } } });
+    await CoachProfile.destroy({ where: { user_id: { [Op.in]: testIds } } });
+    await CourtLocation.destroy({ where: { created_by_user_id: { [Op.in]: testIds } } });
+    await UserReliability.destroy({ where: { user_id: { [Op.in]: testIds } } });
+    await UserRole.destroy({ where: { user_id: { [Op.in]: testIds } } });
+    await User.destroy({ where: { id: { [Op.in]: testIds } } });
   }
 
   console.log('Wipe complete.');
+}
+
+/**
+ * Demo seed coaches can be left without profiles if an older test-flow wipe
+ * deleted every coach_profiles row. Recreate bare profiles so student search works.
+ */
+async function ensureOrphanCoachProfiles() {
+  const coaches = await User.findAll({
+    where: { is_active: true, deleted_at: null },
+    include: [
+      { model: UserRole, as: 'userRoles', where: { role: 'coach' }, required: true, attributes: ['role'] },
+      { model: CoachProfile, as: 'coachProfile', required: false },
+    ],
+  });
+
+  let created = 0;
+  for (const coach of coaches) {
+    if (coach.coachProfile) continue;
+    await CoachProfile.create({
+      user_id: coach.id,
+      headline: `${coach.full_name} — Pickleball Coach`,
+      bio: 'Profile restored for marketplace discovery after test-flow reseed.',
+      experience_years: 3,
+      skill_rating: 3.5,
+      rating_system: 'self',
+      rating_average: 4.5,
+      rating_count: 0,
+      location: 'New York',
+      coach_commission_percent: 92.0,
+      stripe_account_id: `acct_restored_${coach.id}`,
+      stripe_ready: true,
+      stripe_onboarding_completed_at: new Date(),
+    });
+    created += 1;
+  }
+  if (created > 0) {
+    console.log(`Restored ${created} missing coach profile(s) for marketplace discovery.`);
+  }
 }
 
 async function createUsers() {
@@ -201,6 +254,9 @@ async function createCoachStack(coach) {
     rating_count: 12,
     location: 'New York',
     coach_commission_percent: 92.0,
+    stripe_account_id: 'acct_testflow_seed',
+    stripe_ready: true,
+    stripe_onboarding_completed_at: new Date(),
   });
 
   const court = await CourtLocation.create({
@@ -643,6 +699,7 @@ async function main() {
 
     const users = await createUsers();
     const { court, lesson } = await createCoachStack(users.coach);
+    await ensureOrphanCoachProfiles();
     const bookings = await createBookings({
       coach: users.coach,
       student: users.student,

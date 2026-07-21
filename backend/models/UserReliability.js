@@ -41,10 +41,6 @@ const UserReliability = sequelize.define('user_reliability', {
   no_shows_decayed: { type: decimal(20, 10), allowNull: false, defaultValue: 0 },
   no_shows_total: { type: decimal(20, 10), allowNull: false, defaultValue: 0 },
 
-  late_arrival_penalties_recent: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
-  late_arrival_penalties_decayed: { type: decimal(20, 10), allowNull: false, defaultValue: 0 },
-  late_arrival_penalties_total: { type: decimal(20, 10), allowNull: false, defaultValue: 0 },
-
   misconduct_penalties_recent: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
   misconduct_penalties_decayed: { type: decimal(20, 10), allowNull: false, defaultValue: 0 },
   misconduct_penalties_total: { type: decimal(20, 10), allowNull: false, defaultValue: 0 },

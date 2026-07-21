@@ -82,8 +82,6 @@ const calculateCoachRawSplits = async (userId, cfg) => {
       student_cancels_non_late_decayed: 0,
       no_shows_recent: 0,
       no_shows_decayed: 0,
-      late_arrival_penalties_recent: 0,
-      late_arrival_penalties_decayed: 0,
       misconduct_penalties_recent: 0,
       misconduct_penalties_decayed: 0,
       lesson_not_completed_penalties_recent: 0,
@@ -116,38 +114,6 @@ const calculateCoachRawSplits = async (userId, cfg) => {
     if (hoursBefore < 0 || hoursBefore >= 24) {
       coach_cancels_non_late += split.recent;
       decayed_coach_cancels_non_late += split.decayed;
-    }
-  }
-
-  const lateArrivalDisputeType = await DisputeType.findOne({
-    attributes: ['id'],
-    where: { code: 'late_arrival', affects_reliability_score: true },
-  });
-  let late_arrival_penalties = 0;
-  let decayed_late_arrival_penalties = 0;
-  if (lateArrivalDisputeType && coachBookingIds.length) {
-    const rows = await Dispute.findAll({
-      where: {
-        [Op.and]: [
-          { booking_id: { [Op.in]: coachBookingIds } },
-          { dispute_type_id: lateArrivalDisputeType.id },
-          { penalize_role: 'coach' },
-          { status: 'resolved' },
-          sustainedBehaviorDecisionLiteral(),
-        ],
-      },
-      attributes: ['booking_id', 'resolved_at', 'opened_at'],
-    });
-    const latestByBooking = new Map();
-    for (const row of rows) {
-      const prev = latestByBooking.get(row.booking_id);
-      const at = new Date(row.resolved_at || row.opened_at || now);
-      if (!prev || at > prev) latestByBooking.set(row.booking_id, at);
-    }
-    for (const at of latestByBooking.values()) {
-      const split = splitRecencyWeight(at, now, windowStart, cfg.decayLambda);
-      late_arrival_penalties += split.recent;
-      decayed_late_arrival_penalties += split.decayed;
     }
   }
 
@@ -225,8 +191,6 @@ const calculateCoachRawSplits = async (userId, cfg) => {
     student_cancels_non_late_decayed: 0,
     no_shows_recent: no_shows,
     no_shows_decayed: decayed_no_shows,
-    late_arrival_penalties_recent: late_arrival_penalties,
-    late_arrival_penalties_decayed: decayed_late_arrival_penalties,
     misconduct_penalties_recent: misconductPenaltiesAgg.recent,
     misconduct_penalties_decayed: misconductPenaltiesAgg.decayed,
     lesson_not_completed_penalties_recent: lessonNotCompletedPenaltiesAgg.recent,
@@ -265,8 +229,6 @@ const calculateStudentRawSplits = async (userId, cfg) => {
       student_cancels_non_late_decayed: 0,
       no_shows_recent: 0,
       no_shows_decayed: 0,
-      late_arrival_penalties_recent: 0,
-      late_arrival_penalties_decayed: 0,
       misconduct_penalties_recent: 0,
       misconduct_penalties_decayed: 0,
       lesson_not_completed_penalties_recent: 0,
@@ -299,38 +261,6 @@ const calculateStudentRawSplits = async (userId, cfg) => {
     if (hoursBefore < 0 || hoursBefore >= 24) {
       student_cancels += split.recent;
       decayed_student_cancels += split.decayed;
-    }
-  }
-
-  const lateArrivalDisputeType = await DisputeType.findOne({
-    attributes: ['id'],
-    where: { code: 'late_arrival', affects_reliability_score: true },
-  });
-  let late_arrival_penalties = 0;
-  let decayed_late_arrival_penalties = 0;
-  if (lateArrivalDisputeType && studentBookingIds.length) {
-    const rows = await Dispute.findAll({
-      where: {
-        [Op.and]: [
-          { booking_id: { [Op.in]: studentBookingIds } },
-          { dispute_type_id: lateArrivalDisputeType.id },
-          { penalize_role: 'student' },
-          { status: 'resolved' },
-          sustainedBehaviorDecisionLiteral(),
-        ],
-      },
-      attributes: ['booking_id', 'resolved_at', 'opened_at'],
-    });
-    const latestByBooking = new Map();
-    for (const row of rows) {
-      const prev = latestByBooking.get(row.booking_id);
-      const at = new Date(row.resolved_at || row.opened_at || now);
-      if (!prev || at > prev) latestByBooking.set(row.booking_id, at);
-    }
-    for (const at of latestByBooking.values()) {
-      const split = splitRecencyWeight(at, now, windowStart, cfg.decayLambda);
-      late_arrival_penalties += split.recent;
-      decayed_late_arrival_penalties += split.decayed;
     }
   }
 
@@ -408,8 +338,6 @@ const calculateStudentRawSplits = async (userId, cfg) => {
     student_cancels_non_late_decayed: decayed_student_cancels,
     no_shows_recent: no_shows,
     no_shows_decayed: decayed_no_shows,
-    late_arrival_penalties_recent: late_arrival_penalties,
-    late_arrival_penalties_decayed: decayed_late_arrival_penalties,
     misconduct_penalties_recent: misconductPenaltiesAgg.recent,
     misconduct_penalties_decayed: misconductPenaltiesAgg.decayed,
     lesson_not_completed_penalties_recent: lessonNotCompletedPenaltiesAgg.recent,

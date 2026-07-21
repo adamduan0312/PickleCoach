@@ -23,6 +23,7 @@ import {
   Dispute,
   DisputeType,
 } from '../models/index.js';
+import { ACTIVE_DISPUTE_TYPE_CODES } from '../utils/disputeTypeCatalog.js';
 
 const env = process.env.NODE_ENV || 'development';
 dotenv.config({ path: `.env.${env}` });
@@ -228,9 +229,13 @@ async function main() {
       process.exit(1);
     }
 
-    const disputeType = await DisputeType.findOne({ order: [['id', 'ASC']] });
+    const disputeType = await DisputeType.findOne({
+      where: { code: ACTIVE_DISPUTE_TYPE_CODES[0] },
+    });
     if (!disputeType) {
-      console.error('No dispute types found. Run migrations/seeds first.');
+      console.error(
+        `No active dispute type "${ACTIVE_DISPUTE_TYPE_CODES[0]}" found. Run migrations first.`,
+      );
       process.exit(1);
     }
 
