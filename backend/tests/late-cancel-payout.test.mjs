@@ -94,9 +94,10 @@ describe('isLateCancelRefundSettledForPayout', () => {
 });
 
 describe('COACH_LATE_STUDENT_CANCEL_HELP_TEXT', () => {
-  it('includes 50% refund and coach compensation', () => {
+  it('includes 50% refund and coach / platform split', () => {
     assert.match(COACH_LATE_STUDENT_CANCEL_HELP_TEXT, /50%/);
-    assert.match(COACH_LATE_STUDENT_CANCEL_HELP_TEXT, /compensate the coach/i);
+    assert.match(COACH_LATE_STUDENT_CANCEL_HELP_TEXT, /coach payout/i);
+    assert.match(COACH_LATE_STUDENT_CANCEL_HELP_TEXT, /platform commission/i);
   });
 });
 
@@ -149,14 +150,14 @@ describe('late-cancel coach payout split (actual retained after refund)', () => 
 
     const { payoutCents, netRetainedCents, coachShareRatio } =
       computeCoachEscrowPayoutFromPaymentSnapshot({
-        totalChargeToStudent: '108.00',
-        refundedAmount: '54.00',
+        totalChargeToStudent: '100.00',
+        refundedAmount: '50.00',
         lessonPrice: 100,
       });
 
-    assert.equal(netRetainedCents, 5400);
+    assert.equal(netRetainedCents, 5000);
     assert.equal(payoutCents, 4600);
-    assert.equal(5400 - payoutCents, 800);
+    assert.equal(5000 - payoutCents, 400);
     assert.ok(payoutCents < fullCaptureCoach, 'must not pay full capture coach share after partial refund');
     assert.equal(payoutCents, Math.round(netRetainedCents * coachShareRatio));
   });
@@ -164,8 +165,8 @@ describe('late-cancel coach payout split (actual retained after refund)', () => 
   it('regression: post-refund coach_payout_expected must not be used as ratio input (would underpay)', () => {
     const wrongRatioInput = 4600;
     const { payoutCents: wrongPayout } = computeEscrowCoachTransferCents({
-      totalChargeCents: 10_800,
-      refundedCents: 5400,
+      totalChargeCents: 10_000,
+      refundedCents: 5000,
       coachPayoutExpectedCents: wrongRatioInput,
     });
     assert.equal(wrongPayout, 2300);
@@ -175,8 +176,8 @@ describe('late-cancel coach payout split (actual retained after refund)', () => 
   it('regression: paying full capture coach share without subtracting refund would overpay', () => {
     const fullCaptureCoach = resolveCaptureCoachPayoutCents(100);
     const { payoutCents } = computeCoachEscrowPayoutFromPaymentSnapshot({
-      totalChargeToStudent: '108.00',
-      refundedAmount: '54.00',
+      totalChargeToStudent: '100.00',
+      refundedAmount: '50.00',
       lessonPrice: 100,
     });
     assert.equal(payoutCents, 4600);

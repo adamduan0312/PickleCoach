@@ -53,7 +53,18 @@ test('serializeBookingListItem trims nested associations', () => {
     ...fullBooking,
     lesson: { id: 1, title: 'Basics', deleted_at: 'x' },
     coach: { id: 77, full_name: 'Coach', avatar_url: '/a.png', email: 'c@x.com' },
-    courtLocation: { id: 75, name: 'Court', address: '1 Main', latitude: 1, longitude: 2, is_private: false },
+    courtLocation: {
+      id: 75,
+      name: 'Court',
+      address_line1: '1 Main',
+      city: 'Miami',
+      state: 'FL',
+      postal_code: '33101',
+      country: 'US',
+      latitude: 1,
+      longitude: 2,
+      is_private: false,
+    },
     conversation: { id: 9, can_send_messages: false, message_count: 2 },
   });
   assert.equal(dto.lesson.title, 'Basics');
@@ -292,29 +303,38 @@ test('serializeNotification adds payload.route for deep links', () => {
   assert.equal(out.payload.route, '/messages/42');
 });
 
-test('serializeCoachPublicUser omits credentials and operational profile fields', () => {
+test('serializeCoachPublicUser maps lessons through public marketplace DTO', () => {
   const out = serializeCoachPublicUser({
-    id: 10,
-    full_name: 'Coach',
-    email: 'coach@example.com',
-    password_hash: 'hash',
-    avatar_url: '/a.png',
+    id: 37,
+    full_name: 'Coach Bob',
+    avatar_url: null,
     timezone: 'UTC',
-    coachProfile: {
-      id: 1,
-      user_id: 10,
-      headline: 'Pro',
-      stripe_account_id: 'acct_123',
-      coach_commission_percent: 8,
-      deleted_at: null,
-    },
-    reliabilities: [{ role: 'coach', reliability_score: 95, last_updated: '2026-01-01T00:00:00.000Z' }],
+    coachProfile: { headline: 'Pro' },
+    reliabilities: [{ role: 'coach', reliability_score: 90 }],
+    lessons: [
+      {
+        id: 29,
+        coach_id: 37,
+        title: 'Beginner',
+        description: 'Basics',
+        duration_minutes: 60,
+        price: '60.00',
+        effective_hourly_rate: 60,
+        max_students: 1,
+        is_active: true,
+        deleted_at: null,
+        created_at: '2026-01-01T00:00:00.000Z',
+        coach: { id: 37, full_name: 'Coach Bob' },
+      },
+    ],
   });
-  assert.equal(out.email, undefined);
-  assert.equal(out.password_hash, undefined);
-  assert.equal(out.coachProfile.stripe_account_id, undefined);
-  assert.equal(out.coachProfile.headline, 'Pro');
-  assert.equal(out.reliability.reliability_score, 95);
+  assert.equal(out.lessons.length, 1);
+  assert.equal(out.lessons[0].id, 29);
+  assert.equal(out.lessons[0].price, '60.00');
+  assert.equal(out.lessons[0].is_active, undefined);
+  assert.equal(out.lessons[0].deleted_at, undefined);
+  assert.equal(out.lessons[0].created_at, undefined);
+  assert.equal(out.lessons[0].coach, undefined);
 });
 
 test('serializeCoachListItem flattens profile, renames courts, drops join IDs', () => {
@@ -348,7 +368,11 @@ test('serializeCoachListItem flattens profile, renames courts, drops join IDs', 
         court: {
           id: 58,
           name: 'Mission Courts',
-          address: '1 Mission',
+          address_line1: '1 Mission',
+          city: 'San Francisco',
+          state: 'CA',
+          postal_code: '94103',
+          country: 'US',
           latitude: 37.7599,
           longitude: -122.425,
           is_private: false,
@@ -367,8 +391,9 @@ test('serializeCoachListItem flattens profile, renames courts, drops join IDs', 
   assert.equal(out.courts.length, 1);
   assert.equal(out.courts[0].name, 'Mission Courts');
   assert.equal(out.courts[0].id, undefined);
-  assert.equal(out.courts[0].address, '1 Mission');
-  assert.equal(out.courts[0].area, null);
+  assert.equal(out.courts[0].address_line1, '1 Mission');
+  assert.equal(out.courts[0].city, 'San Francisco');
+  assert.equal(out.courts[0].area, 'San Francisco, CA 94103');
   assert.equal(out.distance_miles, undefined);
 });
 
@@ -384,7 +409,11 @@ test('serializeCoachListItem adds distance_miles for geo search', () => {
         {
           court: {
             name: 'Near Court',
-            address: 'A',
+            address_line1: '1 Near St',
+            city: 'San Francisco',
+            state: 'CA',
+            postal_code: '94103',
+            country: 'US',
             latitude: 37.78,
             longitude: -122.41,
             is_private: false,

@@ -4,7 +4,7 @@ export const LATE_CANCELLATION_PENALTY_REASON = 'Late cancellation';
 
 /** Coach-facing copy for cancellation policy UI / help screens. */
 export const COACH_LATE_STUDENT_CANCEL_HELP_TEXT =
-  'Student cancellations made within 24 hours of the lesson start time receive a 50% refund when payment was captured. The remaining amount is used to compensate the coach for reserved time and cover platform fees. If payment was only authorized and not yet captured (e.g. pending booking before coach accept), the authorization is released in full and no coach payout applies.';
+  'Student cancellations made within 24 hours of the lesson start time receive a 50% refund when payment was captured. The remaining amount is split between coach payout and the platform commission (same ratio as a completed lesson). If payment was only authorized and not yet captured (e.g. pending booking before coach accept), the authorization is released in full and no coach payout applies.';
 
 /** Student late cancel with retained penalty — coach receives normal payout share of net retained. */
 export const isLateCancelRetainedRevenueEligible = ({

@@ -15,9 +15,10 @@ import { getPagination, getPagingData } from '../utils/pagination.js';
 import { Op } from 'sequelize';
 import { logger } from '../config/logger.js';
 import { getEffectiveRolesForUserRecord } from '../utils/roleGovernance.js';
-import { serializeCoachPublicUser, serializeCoachListItem, distanceMiles } from '../utils/userDto.js';
+import { serializeCoachPublicUser, serializeCoachListItem, serializeCoachProfilePublic, distanceMiles } from '../utils/userDto.js';
 import { toYmdApi } from '../utils/dateOnly.js';
 import { PUBLIC_ACTIVE_USER_WHERE, findPublicActiveCoach } from '../utils/userLifecycle.js';
+import { serializeAvailability } from '../utils/availabilityDto.js';
 import {
   marketplaceDiscoveryIncludes,
   marketplaceDiscoveryProfileWhereBase,
@@ -31,12 +32,22 @@ const MAX_LIST_ALL_AVAILABILITY = 10000;
 export const getCoaches = async (req, res) => {
   try {
     const roles = req.user.roles || [];
-    /** Coach-only accounts use coach tooling to find students; student + coach and admins may browse. */
-    if (!roles.includes('student') && !roles.includes('admin')) {
-      return errorResponse(res, 'Only students and admins can search for coaches', 403);
+    /** Marketplace browse: same public cards for students, coaches, and admins. Booking still requires student. */
+    if (!roles.includes('student') && !roles.includes('coach') && !roles.includes('admin')) {
+      return errorResponse(res, 'Authentication with a student, coach, or admin role is required', 403);
     }
 
-    const { page, limit, lat, lng, radius, min_skill_rating, max_skill_rating, min_rating } = req.validated;
+    const {
+      page,
+      limit,
+      lat,
+      lng,
+      radius,
+      min_skill_rating,
+      max_skill_rating,
+      min_rating,
+      court_location_id,
+    } = req.validated;
     const isPaginated = page != null || limit != null;
     const { limit: queryLimit, offset } = isPaginated
       ? getPagination(page, limit)
@@ -66,6 +77,16 @@ export const getCoaches = async (req, res) => {
         : { [Op.and]: profileWhereParts };
 
     const courtWhere = { deleted_at: null };
+    if (court_location_id != null) {
+      const courtExists = await CourtLocation.findOne({
+        where: { id: court_location_id, deleted_at: null },
+        attributes: ['id'],
+      });
+      if (!courtExists) {
+        return errorResponse(res, 'Court not found', 404);
+      }
+      courtWhere.id = court_location_id;
+    }
     if (isGeoSearch) {
       const latRange = radius / 69;
       const lngRange = radius / (69 * Math.cos(lat * Math.PI / 180));
@@ -74,7 +95,8 @@ export const getCoaches = async (req, res) => {
     }
 
     const includes = [
-      { model: UserRole, as: 'userRoles', where: { role: 'coach' }, required: true, attributes: [] },
+      // attributes: ['role'] is required — the effective-roles filter below reads coach.userRoles.
+      { model: UserRole, as: 'userRoles', where: { role: 'coach' }, required: true, attributes: ['role'] },
       {
         model: CoachProfile,
         as: 'coachProfile',
@@ -102,10 +124,15 @@ export const getCoaches = async (req, res) => {
       distinct: true, // Count query still uses COUNT(DISTINCT User.id); row query needs accurate ordering
     });
 
-    let filteredCoaches = coaches.rows;
+    let filteredCoaches = coaches.rows.filter((coach) =>
+      getEffectiveRolesForUserRecord(coach).includes('coach'),
+    );
+    if (filteredCoaches.length !== coaches.rows.length) {
+      coaches.count = Math.max(0, coaches.count - (coaches.rows.length - filteredCoaches.length));
+    }
     if (isGeoSearch) {
       const radiusMiles = parseFloat(radius);
-      filteredCoaches = coaches.rows.filter((coach) => {
+      filteredCoaches = filteredCoaches.filter((coach) => {
         if (!coach.coachCourts || coach.coachCourts.length === 0) return false;
         return coach.coachCourts.some((coachCourt) => {
           const court = coachCourt.court;
@@ -145,11 +172,12 @@ export const getCoachById = async (req, res) => {
     const coach = await User.findOne({
       where: { id, ...PUBLIC_ACTIVE_USER_WHERE },
       include: [
-        { model: UserRole, as: 'userRoles', where: { role: 'coach' }, required: true, attributes: [] },
+        // attributes: ['role'] is required — the effective-roles check below reads coach.userRoles.
+        { model: UserRole, as: 'userRoles', where: { role: 'coach' }, required: true, attributes: ['role'] },
         { model: CoachProfile, as: 'coachProfile', where: { deleted_at: null }, required: false },
         { model: CoachAvailability, as: 'availabilities' },
         { model: Lesson, as: 'lessons', where: { is_active: true, deleted_at: null }, required: false },
-        { model: Review, as: 'reviewsReceived', limit: 10, order: [['created_at', 'DESC']] },
+        { model: Review, as: 'reviewsReceived', required: false, limit: 10, order: [['created_at', 'DESC']], include: [{ model: User, as: 'student', attributes: ['id', 'full_name', 'avatar_url'] }] },
         {
           model: UserReliability,
           as: 'reliabilities',
@@ -163,10 +191,13 @@ export const getCoachById = async (req, res) => {
     if (!coach) {
       return errorResponse(res, 'Coach not found', 404);
     }
+    if (!getEffectiveRolesForUserRecord(coach).includes('coach')) {
+      return errorResponse(res, 'Coach not found', 404);
+    }
 
     const payload = serializeCoachPublicUser(coach);
     if (Array.isArray(payload.availabilities)) {
-      payload.availabilities = payload.availabilities.map(shapeAvailabilityForApi);
+      payload.availabilities = payload.availabilities.map(serializeAvailability);
     }
 
     // Coach-first marketplace: only expose lesson offerings when coach is listable.
@@ -211,7 +242,12 @@ export const createCoachProfile = async (req, res) => {
       location,
     });
 
-    return successResponse(res, profile, 'Coach profile created successfully', 201);
+    return successResponse(
+      res,
+      serializeCoachProfilePublic(profile),
+      'Coach profile created successfully',
+      201,
+    );
   } catch (error) {
     logger.error('Create coach profile error:', error);
     // Include error details in response for debugging
@@ -252,7 +288,11 @@ export const updateMyCoachProfile = async (req, res) => {
       return errorResponse(res, 'Coach profile not found', 404);
     }
     await applyCoachProfileUpdate(profile, req.validated);
-    return successResponse(res, profile, 'Coach profile updated successfully');
+    return successResponse(
+      res,
+      serializeCoachProfilePublic(profile),
+      'Coach profile updated successfully',
+    );
   } catch (error) {
     logger.error('Update my coach profile error:', error);
     return errorResponse(res, 'Failed to update coach profile', 500);
@@ -273,7 +313,11 @@ export const updateCoachProfile = async (req, res) => {
     }
 
     await applyCoachProfileUpdate(profile, req.validated);
-    return successResponse(res, profile, 'Coach profile updated successfully');
+    return successResponse(
+      res,
+      serializeCoachProfilePublic(profile),
+      'Coach profile updated successfully',
+    );
   } catch (error) {
     logger.error('Update coach profile error:', error);
     return errorResponse(res, 'Failed to update coach profile', 500);
@@ -293,12 +337,7 @@ function normalizeTimeOfDay(str) {
 
 /** JSON shape for availability rows (stable DATEONLY strings). */
 function shapeAvailabilityForApi(row) {
-  const plain = row && typeof row.get === 'function' ? row.get({ plain: true }) : { ...row };
-  return {
-    ...plain,
-    start_date: toYmdApi(plain.start_date),
-    end_date: toYmdApi(plain.end_date),
-  };
+  return serializeAvailability(row);
 }
 
 /** Normalize time string to "HH:mm:ss" for comparison. */
@@ -606,9 +645,20 @@ export const getMyMarketplaceStatus = async (req, res) => {
   }
 };
 
+/** Mutable deps for unit tests (ESM named exports are read-only). */
+export const stripeConnectOnboardDeps = {
+  loadStripeService: () => import('../services/stripeService.js'),
+  loadAudit: () => import('../utils/audit.js'),
+};
+
 /**
  * POST /api/coaches/me/stripe-connect/onboard
- * Initiate Stripe Connect onboarding for coach
+ * Initiate or resume Stripe Connect onboarding for coach.
+ *
+ * The Connect account is created exactly once; Account Links are single-use and
+ * expire (~5 min), so every call while `stripe_ready` is false mints a fresh link
+ * for the existing account (Stripe's `refresh_url` pattern). Coaches who abandon
+ * onboarding mid-flow can always come back — never 409 on an unfinished account.
  */
 export const initiateStripeConnectOnboarding = async (req, res) => {
   try {
@@ -634,42 +684,60 @@ export const initiateStripeConnectOnboarding = async (req, res) => {
       return errorResponse(res, 'Coach profile not found', 404);
     }
 
-    // Check if already onboarded
-    if (coachProfile.stripe_account_id) {
-      return errorResponse(res, 'Coach already has a Stripe Connect account', 409);
+    // Finished accounts manage themselves via the Express Dashboard — nothing to onboard.
+    if (coachProfile.stripe_ready) {
+      return errorResponse(res, 'Stripe Connect onboarding is already complete', 409);
     }
 
-    const { createConnectAccount, createAccountLink } = await import('../services/stripeService.js');
-    const { logAudit } = await import('../utils/audit.js');
+    const { createConnectAccount, createAccountLink } = await stripeConnectOnboardDeps.loadStripeService();
+    const { logAudit } = await stripeConnectOnboardDeps.loadAudit();
 
-    // Create Stripe Connect account
-    const account = await createConnectAccount(coach.email, {
-      user_id: coachId.toString(),
-      coach_profile_id: coachProfile.id.toString(),
-    });
+    // Create the Connect account only on the first call; reuse it on retries.
+    let accountId = coachProfile.stripe_account_id;
+    const isNewAccount = !accountId;
+    if (isNewAccount) {
+      const account = await createConnectAccount(coach.email, {
+        user_id: coachId.toString(),
+        coach_profile_id: coachProfile.id.toString(),
+      });
+      accountId = account.id;
 
-    // Update coach profile with Stripe account ID (not yet ready for marketplace)
-    await coachProfile.update({
-      stripe_account_id: account.id,
-      stripe_ready: false,
-      stripe_onboarding_completed_at: null,
-    });
+      // Not yet ready for marketplace until hosted onboarding completes
+      await coachProfile.update({
+        stripe_account_id: accountId,
+        stripe_ready: false,
+        stripe_onboarding_completed_at: null,
+      });
+    }
 
-    // Create onboarding link
+    // Always mint a fresh onboarding link (previous links may be used or expired)
     const returnUrl = process.env.STRIPE_CONNECT_RETURN_URL || `${process.env.APP_URL || 'http://localhost:3000'}/coach/onboarding/return`;
     const refreshUrl = process.env.STRIPE_CONNECT_REFRESH_URL || `${process.env.APP_URL || 'http://localhost:3000'}/coach/onboarding/refresh`;
-    
-    const accountLink = await createAccountLink(account.id, returnUrl, refreshUrl);
 
-    await logAudit(req.user.id, 'stripe_connect_onboarding_initiated', 'coach_profiles', coachProfile.id, null, {
-      stripe_account_id: account.id,
-    }, req);
+    const accountLink = await createAccountLink(accountId, returnUrl, refreshUrl);
 
-    return successResponse(res, {
-      account_id: account.id,
-      onboarding_url: accountLink.url,
-      expires_at: accountLink.expires_at,
-    }, 'Stripe Connect onboarding initiated successfully', 201);
+    await logAudit(
+      req.user.id,
+      isNewAccount ? 'stripe_connect_onboarding_initiated' : 'stripe_connect_onboarding_link_refreshed',
+      'coach_profiles',
+      coachProfile.id,
+      null,
+      { stripe_account_id: accountId },
+      req,
+    );
+
+    return successResponse(
+      res,
+      {
+        account_id: accountId,
+        onboarding_url: accountLink.url,
+        expires_at: accountLink.expires_at,
+      },
+      isNewAccount
+        ? 'Stripe Connect onboarding initiated successfully'
+        : 'Stripe Connect onboarding link refreshed successfully',
+      isNewAccount ? 201 : 200,
+    );
   } catch (error) {
     logger.error('Stripe Connect onboarding error:', error);
     return errorResponse(res, 'Failed to initiate Stripe Connect onboarding', 500);

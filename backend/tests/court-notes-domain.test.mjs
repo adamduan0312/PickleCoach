@@ -20,8 +20,24 @@ describe('courtCreatePayloadRejectsCoachCourtFields', () => {
   });
 
   it('allows court-only payloads', () => {
-    assert.equal(courtCreatePayloadRejectsCoachCourtFields({ name: 'A', latitude: 1 }).rejected, false);
+    assert.equal(
+      courtCreatePayloadRejectsCoachCourtFields({
+        name: 'A',
+        address_line1: '1 Main',
+        city: 'NYC',
+        state: 'NY',
+        postal_code: '10001',
+        latitude: 1,
+      }).rejected,
+      false,
+    );
     assert.equal(courtCreatePayloadRejectsCoachCourtFields({}).rejected, false);
+  });
+
+  it('rejects legacy free-text address', () => {
+    const r = courtCreatePayloadRejectsCoachCourtFields({ name: 'A', address: '1 Main' });
+    assert.equal(r.rejected, true);
+    assert.match(r.message, /structured address/i);
   });
 });
 

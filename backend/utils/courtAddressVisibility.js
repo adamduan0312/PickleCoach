@@ -2,7 +2,7 @@
  * Court address visibility — separate from discovery (`is_private`).
  *
  * MVP policy (no extra DB column):
- * - `is_private: false` → exact address always visible (already public places)
+ * - `is_private: false` → exact structured address always visible (already public places)
  * - `is_private: true` → exact address / GPS revealed **only on booking DTOs**,
  *   and only when that booking’s status is confirmed (or a later post-confirm
  *   status). Coach discovery surfaces (`GET /api/coaches/:id/courts`, marketplace
@@ -29,20 +29,36 @@ export const PRIVATE_COURT_ADDRESS_REVEAL_STATUSES = Object.freeze([
 const REVEAL_SET = new Set(PRIVATE_COURT_ADDRESS_REVEAL_STATUSES);
 
 /**
- * Coarse area label from a US-style address without exposing the street line.
- * "123 Oak Lane, Coral Springs, FL 33065" → "Coral Springs, FL 33065"
- * @param {string|null|undefined} address
+ * Coarse area label from structured address fields (no street line).
+ * "Coral Springs, FL 33065"
+ * @param {{ city?: string|null, state?: string|null, postal_code?: string|null }|null|undefined} court
  * @returns {string|null}
  */
-export function approximateAreaFromAddress(address) {
-  if (address == null || typeof address !== 'string') return null;
-  const trimmed = address.trim();
-  if (!trimmed) return null;
-  const parts = trimmed.split(',').map((p) => p.trim()).filter(Boolean);
-  if (parts.length >= 2) {
-    return parts.slice(1).join(', ');
-  }
-  return null;
+export function buildCourtArea(court) {
+  if (court == null || typeof court !== 'object') return null;
+  const city = court.city != null ? String(court.city).trim() : '';
+  const state = court.state != null ? String(court.state).trim() : '';
+  const postal = court.postal_code != null ? String(court.postal_code).trim() : '';
+  if (!city || !state || !postal) return null;
+  return `${city}, ${state} ${postal}`;
+}
+
+/**
+ * Full single-line address from structured fields (for logs / display helpers).
+ * @param {{
+ *   address_line1?: string|null,
+ *   city?: string|null,
+ *   state?: string|null,
+ *   postal_code?: string|null,
+ * }|null|undefined} court
+ * @returns {string|null}
+ */
+export function buildFullCourtAddress(court) {
+  if (court == null || typeof court !== 'object') return null;
+  const line1 = court.address_line1 != null ? String(court.address_line1).trim() : '';
+  const area = buildCourtArea(court);
+  if (!line1 || !area) return null;
+  return `${line1}, ${area}`;
 }
 
 /**
@@ -88,9 +104,33 @@ export function distanceMiles(lat1, lng1, lat2, lng2) {
   return R * c;
 }
 
+function structuredAddressFields(plain, { reveal }) {
+  const area = buildCourtArea(plain);
+  if (reveal) {
+    return {
+      address_line1: plain.address_line1 ?? null,
+      city: plain.city ?? null,
+      state: plain.state ?? null,
+      postal_code: plain.postal_code ?? null,
+      country: plain.country ?? null,
+      area,
+    };
+  }
+  // Redacted: only coarse `area` — structured components stay null so clients
+  // cannot reconstruct a street address from partial fields.
+  return {
+    address_line1: null,
+    city: null,
+    state: null,
+    postal_code: null,
+    country: null,
+    area,
+  };
+}
+
 /**
  * Student/public discovery shape for a court (coach profile / marketplace card).
- * Private courts: redact address + coordinates; keep id/name/area/is_private;
+ * Private courts: redact structured address + coordinates; keep id/name/area/is_private;
  * optional server-computed distance when search origin is provided.
  *
  * @param {object|null|undefined} court
@@ -101,6 +141,7 @@ export function distanceMiles(lat1, lng1, lat2, lng2) {
  *   latKey?: 'latitude' | 'lat',
  *   lngKey?: 'longitude' | 'lng',
  *   includeId?: boolean,
+ *   viewerIsPrivileged?: boolean,
  * }} [opts]
  */
 export function serializeCourtForPublicViewer(court, opts = {}) {
@@ -114,6 +155,11 @@ export function serializeCourtForPublicViewer(court, opts = {}) {
   const idKey = opts.idKey || 'id';
   const latKey = opts.latKey || 'latitude';
   const lngKey = opts.lngKey || 'longitude';
+  const reveal = shouldRevealPrivateCourtExactAddress({
+    isPrivate,
+    bookingStatus: null,
+    viewerIsPrivileged: Boolean(opts.viewerIsPrivileged),
+  });
 
   let distance = null;
   if (
@@ -129,7 +175,7 @@ export function serializeCourtForPublicViewer(court, opts = {}) {
   const base = {
     name: plain.name ?? null,
     is_private: isPrivate,
-    area: approximateAreaFromAddress(plain.address),
+    ...structuredAddressFields(plain, { reveal }),
   };
   if (opts.includeId !== false && plain.id != null) {
     base[idKey] = plain.id;
@@ -137,18 +183,13 @@ export function serializeCourtForPublicViewer(court, opts = {}) {
     base[idKey] = plain.court_id;
   }
 
-  if (!isPrivate) {
-    base.address = plain.address ?? null;
+  if (reveal) {
     base[latKey] = lat;
     base[lngKey] = lng;
-    if (distance != null) base.distance_miles = distance;
-    return base;
+  } else {
+    base[latKey] = null;
+    base[lngKey] = null;
   }
-
-  // Private: discovery-safe — no street / GPS on the wire
-  base.address = null;
-  base[latKey] = null;
-  base[lngKey] = null;
   if (distance != null) base.distance_miles = distance;
   return base;
 }
@@ -173,27 +214,13 @@ export function serializeCourtLocationForBooking(courtLocation, opts = {}) {
 
   const lat = toNum(plain.latitude);
   const lng = toNum(plain.longitude);
-  const area = approximateAreaFromAddress(plain.address);
-
-  if (reveal) {
-    return {
-      id: plain.id,
-      name: plain.name ?? null,
-      address: plain.address ?? null,
-      latitude: lat,
-      longitude: lng,
-      is_private: isPrivate,
-      area,
-    };
-  }
 
   return {
     id: plain.id,
     name: plain.name ?? null,
-    address: null,
-    latitude: null,
-    longitude: null,
     is_private: isPrivate,
-    area,
+    ...structuredAddressFields(plain, { reveal }),
+    latitude: reveal ? lat : null,
+    longitude: reveal ? lng : null,
   };
 }

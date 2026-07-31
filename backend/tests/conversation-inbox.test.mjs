@@ -3,7 +3,7 @@
  */
 import assert from 'node:assert/strict';
 import { afterEach, describe, it } from 'node:test';
-import { Conversation, Booking } from '../models/index.js';
+import { Conversation, Booking, sequelize } from '../models/index.js';
 import { getConversations } from '../controllers/messageController.js';
 import {
   serializeBookingForMessaging,
@@ -13,10 +13,12 @@ import {
 
 const origBookingFindAll = Booking.findAll;
 const origConvFindAndCountAll = Conversation.findAndCountAll;
+const origSequelizeQuery = sequelize.query;
 
 afterEach(() => {
   Booking.findAll = origBookingFindAll;
   Conversation.findAndCountAll = origConvFindAndCountAll;
+  sequelize.query = origSequelizeQuery;
 });
 
 function mockRes() {
@@ -81,16 +83,25 @@ describe('conversationInboxDto serialization', () => {
     assert.equal(serializeLatestMessage(undefined), null);
   });
 
-  it('serializeBookingForMessaging trims internal booking fields', () => {
+  it('serializeBookingForMessaging keeps only messaging UI booking fields', () => {
     const dto = serializeBookingForMessaging(fullBooking);
+    assert.deepEqual(Object.keys(dto).sort(), [
+      'id',
+      'lesson_id',
+      'messaging_locked',
+      'scheduled_at',
+      'status',
+    ]);
     assert.equal(dto.id, 5);
     assert.equal(dto.lesson_id, 12);
     assert.equal(dto.status, 'confirmed');
     assert.equal(dto.messaging_locked, false);
+    assert.equal(dto.coach_id, undefined);
+    assert.equal(dto.duration_minutes, undefined);
+    assert.equal(dto.price, undefined);
+    assert.equal(dto.court_location_id, undefined);
     assert.equal(dto.cancelled_by, undefined);
     assert.equal(dto.idempotency_key, undefined);
-    assert.equal(dto.created_at, undefined);
-    assert.equal(dto.payout_status, undefined);
   });
 
   it('serializeConversationInboxItem uses latest_message not messages array', () => {
@@ -115,11 +126,29 @@ describe('conversationInboxDto serialization', () => {
         return { ...this };
       },
     };
-    const item = serializeConversationInboxItem(row);
+    const item = serializeConversationInboxItem(row, { unreadCount: 2 });
     assert.equal(item.messages, undefined);
     assert.equal(item.latest_message.id, 7);
-    assert.equal(item.booking.coach_id, 10);
+    assert.equal(item.booking.lesson_id, 12);
+    assert.equal(item.booking.coach_id, undefined);
     assert.equal(item.booking.messaging_locked, false);
+    assert.equal(item.unread_count, 2);
+  });
+
+  it('serializeConversationInboxItem defaults unread_count to 0', () => {
+    const row = {
+      id: 2,
+      booking_id: 6,
+      created_at: '2026-05-29T10:00:00.000Z',
+      updated_at: '2026-05-29T10:00:00.000Z',
+      booking: fullBooking,
+      messages: [],
+      toJSON() {
+        return { ...this };
+      },
+    };
+    const item = serializeConversationInboxItem(row);
+    assert.equal(item.unread_count, 0);
   });
 
   it('serializeConversationInboxItem sets latest_message null when thread empty', () => {
@@ -175,6 +204,7 @@ describe('getConversations inbox list', () => {
         },
       ],
     });
+    sequelize.query = async () => [{ conversation_id: 1, unread_count: 3 }];
 
     const req = { validated: {}, user: { id: 10, roles: ['coach'] } };
     const res = mockRes();
@@ -187,6 +217,7 @@ describe('getConversations inbox list', () => {
     assert.equal(row.messages, undefined);
     assert.equal(row.booking.lesson_id, 12);
     assert.equal(row.booking.cancelled_by, undefined);
+    assert.equal(row.unread_count, 3);
   });
 
   it('returns empty array when booking_id filter is not participant booking', async () => {
@@ -246,6 +277,7 @@ describe('getConversations inbox list', () => {
         },
       ],
     });
+    sequelize.query = async () => [];
 
     const req = { validated: {}, user: { id: 10, roles: ['coach'] } };
     const res = mockRes();
@@ -254,6 +286,10 @@ describe('getConversations inbox list', () => {
     assert.deepEqual(
       res.body.data.map((r) => r.id),
       [2, 1],
+    );
+    assert.deepEqual(
+      res.body.data.map((r) => r.unread_count),
+      [0, 0],
     );
   });
 
@@ -264,6 +300,9 @@ describe('getConversations inbox list', () => {
       return [];
     };
     Conversation.findAndCountAll = async () => ({ count: 0, rows: [] });
+    sequelize.query = async () => {
+      throw new Error('should not query unread for empty inbox');
+    };
 
     const req = { validated: {}, user: { id: 1, roles: ['admin'] } };
     const res = mockRes();

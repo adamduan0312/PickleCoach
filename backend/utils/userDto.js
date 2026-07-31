@@ -21,6 +21,10 @@ import {
 import {
   serializeCourtForPublicViewer,
 } from './courtAddressVisibility.js';
+import { serializePublicMarketplaceLesson } from './lessonDto.js';
+import {
+  serializePublicReviewCard,
+} from './reviewDto.js';
 
 const int = (v) => {
   const x = Math.round(Number(v));
@@ -330,10 +334,12 @@ export function serializeCoachPublicUser(coachInstance, { includeCoachCourts = f
     out.availabilities = json.availabilities;
   }
   if (Array.isArray(json.lessons)) {
-    out.lessons = json.lessons;
+    // Marketplace embed — same public lesson card as GET /coaches/:id/lessons (no nested coach).
+    out.lessons = json.lessons.map(serializePublicMarketplaceLesson);
   }
   if (Array.isArray(json.reviewsReceived)) {
-    out.reviewsReceived = json.reviewsReceived;
+    // Marketplace coach card — trimmed cards (no booking blob).
+    out.reviewsReceived = json.reviewsReceived.map(serializePublicReviewCard);
   }
 
   return out;

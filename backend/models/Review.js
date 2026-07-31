@@ -10,12 +10,13 @@ const Review = sequelize.define('reviews', {
   booking_id: {
     type: DataTypes.INTEGER,
     allowNull: false,
+    unique: true,
   },
-  reviewer_id: {
+  student_id: {
     type: DataTypes.INTEGER,
     allowNull: true,
   },
-  target_user_id: {
+  coach_id: {
     type: DataTypes.INTEGER,
     allowNull: true,
   },
@@ -31,23 +32,16 @@ const Review = sequelize.define('reviews', {
     type: DataTypes.TEXT,
     allowNull: true,
   },
-  attendance_badges: {
-    type: DataTypes.JSON,
-    allowNull: true,
-  },
-  visibility: {
-    type: DataTypes.ENUM('public', 'private', 'semi_public'),
-    defaultValue: 'public',
-  },
 }, {
   tableName: 'reviews',
   timestamps: true,
   createdAt: 'created_at',
-  updatedAt: false,
+  updatedAt: 'updated_at',
   indexes: [
-    { fields: ['target_user_id'] },
-    { fields: ['reviewer_id'] },
-    { fields: ['target_user_id', 'created_at'] },
+    { unique: true, fields: ['booking_id'], name: 'reviews_booking_id_unique' },
+    { fields: ['coach_id'] },
+    { fields: ['student_id'] },
+    { fields: ['coach_id', 'created_at'] },
   ],
 });
 

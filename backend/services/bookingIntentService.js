@@ -11,7 +11,13 @@ import {
 } from '../models/index.js';
 import * as stripeService from './stripeService.js';
 import { checkBookingAvailability } from './bookingService.js';
-import { calculatePaymentAmounts, MIN_LESSON_PRICE_USD, dollarsToCents } from './paymentEngine.js';
+import {
+  calculatePaymentAmounts,
+  calculatePaymentAmountsFromAuthorizedTotalCents,
+  MIN_LESSON_PRICE_USD,
+  dollarsToCents,
+  normalizeStripeCurrencyCents,
+} from './paymentEngine.js';
 import { MIN_CHARGE_USD } from './paymentConstants.js';
 import { createAuditLog } from '../utils/audit.js';
 import { logger } from '../config/logger.js';
@@ -213,7 +219,7 @@ export async function createBookingIntent({
     scheduled_at: scheduledDate.toISOString(),
     duration_minutes: finalDuration,
     court_location_id: validatedCourtId,
-    /** Total charge to student in USD dollars (e.g. 54 for $50 lesson + 8% fee). */
+    /** Total charge to student in USD dollars (listed lesson price; e.g. 50 for a $50 lesson). */
     amount: totalCharge,
     /** Same amount in Stripe's smallest currency unit (cents for USD). */
     amount_cents: dollarsToCents(totalCharge),
@@ -287,37 +293,82 @@ export async function confirmBookingFromPaymentIntent({ studentId, paymentIntent
 
   // Duration always from the lesson package (ignore any stale metadata override)
   const finalDuration = lesson.duration_minutes;
-  const availabilityCheck = await checkBookingAvailability(
-    lesson.id,
-    parsedMeta.scheduledAt.toISOString(),
-    finalDuration,
-  );
 
-  if (!availabilityCheck.available) {
-    try {
-      await stripeService.cancelPaymentIntent(paymentIntentId);
-    } catch (cancelErr) {
-      logger.warn({
-        component: 'booking',
-        event: 'confirm_slot_unavailable_pi_cancel_failed',
-        paymentIntentId,
-        message: cancelErr?.message || String(cancelErr),
-      });
-    }
+  // Money snapshot from Stripe authorization — never recompute from current lesson.price.
+  const authorizedCents = normalizeStripeCurrencyCents(
+    paymentIntent.amount_capturable ?? paymentIntent.amount,
+  );
+  if (authorizedCents < 1) {
     const err = new Error(
-      availabilityCheck.reason || 'This time slot is no longer available.',
+      'Payment is not authorized for booking confirmation. Complete card authorization before confirming.',
     );
-    err.statusCode = 409;
-    err.code = SLOT_NO_LONGER_AVAILABLE_CODE;
+    err.statusCode = 400;
+    err.code = 'payment_intent_not_authorized';
     throw err;
   }
+  const amounts = calculatePaymentAmountsFromAuthorizedTotalCents(authorizedCents);
 
-  const amounts = calculatePaymentAmounts(lesson.price);
   const transaction = await sequelize.transaction();
   let booking;
   let payment;
 
   try {
+    // Serialize concurrent confirms for this coach (empty overlap set alone cannot lock a slot).
+    const coachProfile = await CoachProfile.findOne({
+      where: { user_id: lesson.coach_id, deleted_at: null },
+      transaction,
+      lock: transaction.LOCK.UPDATE,
+    });
+    if (!coachProfile) {
+      const err = new Error('Coach profile is not available for booking');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const court = await CourtLocation.findByPk(parsedMeta.courtLocationId, { transaction });
+    if (!court || court.deleted_at) {
+      const err = new Error('Court location not found');
+      err.statusCode = 404;
+      throw err;
+    }
+    const coachCourtLink = await CoachCourtLocation.findOne({
+      where: { coach_id: lesson.coach_id, court_id: parsedMeta.courtLocationId },
+      transaction,
+    });
+    if (!coachCourtLink) {
+      const err = new Error('Selected court is not available for this coach');
+      err.statusCode = 400;
+      err.code = 'court_not_linked_to_coach';
+      throw err;
+    }
+
+    const availabilityCheck = await checkBookingAvailability(
+      lesson.id,
+      parsedMeta.scheduledAt.toISOString(),
+      finalDuration,
+      { transaction, coachId: lesson.coach_id },
+    );
+
+    if (!availabilityCheck.available) {
+      await transaction.rollback();
+      try {
+        await stripeService.cancelPaymentIntent(paymentIntentId);
+      } catch (cancelErr) {
+        logger.warn({
+          component: 'booking',
+          event: 'confirm_slot_unavailable_pi_cancel_failed',
+          paymentIntentId,
+          message: cancelErr?.message || String(cancelErr),
+        });
+      }
+      const err = new Error(
+        availabilityCheck.reason || 'This time slot is no longer available.',
+      );
+      err.statusCode = 409;
+      err.code = SLOT_NO_LONGER_AVAILABLE_CODE;
+      throw err;
+    }
+
     booking = await Booking.create(
       {
         lesson_id: lesson.id,
@@ -326,7 +377,7 @@ export async function confirmBookingFromPaymentIntent({ studentId, paymentIntent
         idempotency_key: parsedMeta.idempotencyKey || `pi_${paymentIntentId}`,
         scheduled_at: parsedMeta.scheduledAt,
         duration_minutes: finalDuration,
-        price: lesson.price,
+        price: amounts.lesson_price,
         court_location_id: parsedMeta.courtLocationId,
         status: 'pending',
       },
@@ -353,6 +404,7 @@ export async function confirmBookingFromPaymentIntent({ studentId, paymentIntent
           capture_on_accept: true,
           authorization_succeeded_at: new Date().toISOString(),
           flow: 'authorize_then_book',
+          authorized_amount_cents: authorizedCents,
           // Confirm owns coach notify; webhook must not send a second booking_request_coach.
           [COACH_BOOKING_REQUEST_NOTIFIED_METADATA_KEY]: true,
           coach_booking_request_notified_at: new Date().toISOString(),
@@ -369,12 +421,15 @@ export async function confirmBookingFromPaymentIntent({ studentId, paymentIntent
       after_state: {
         payment_intent_id: paymentIntentId,
         payment_status: 'authorized',
+        authorized_amount_cents: authorizedCents,
       },
     });
 
     await transaction.commit();
   } catch (txErr) {
-    await transaction.rollback();
+    if (!transaction.finished) {
+      await transaction.rollback();
+    }
     if (txErr?.name === 'SequelizeUniqueConstraintError') {
       const racedPayment = await Payment.findOne({
         where: { payment_intent_id: paymentIntentId },

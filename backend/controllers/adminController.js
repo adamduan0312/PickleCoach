@@ -2,6 +2,7 @@ import bcrypt from 'bcryptjs';
 import { User, UserRole, Booking, Payment, Dispute, UserReliability, CoachCourtLocation, CourtLocation, CoachAvailability, AuditLog } from '../models/index.js';
 import { SCORE_FORMULA_VERSION } from '../services/reliabilityConstants.js';
 import { successResponse, errorResponse, paginatedResponse } from '../utils/response.js';
+import { serializeAuditLog } from '../utils/auditLogDto.js';
 import { logAudit } from '../utils/audit.js';
 import { Op } from 'sequelize';
 import { logger } from '../config/logger.js';
@@ -238,7 +239,12 @@ export const getAuditLogs = async (req, res) => {
     });
 
     const response = getPagingData(logs, page, queryLimit);
-    return paginatedResponse(res, response.items, response.pagination, 'Audit logs retrieved successfully');
+    return paginatedResponse(
+      res,
+      response.items.map(serializeAuditLog),
+      response.pagination,
+      'Audit logs retrieved successfully',
+    );
   } catch (error) {
     logger.error('Get audit logs error:', error);
     return errorResponse(res, 'Failed to retrieve audit logs', 500);
@@ -266,7 +272,11 @@ function mapCoachCourtLinkForAdmin(link) {
     court: {
       id: court.id,
       name: court.name,
-      address: court.address != null ? court.address : null,
+      address_line1: court.address_line1 != null ? court.address_line1 : null,
+      city: court.city != null ? court.city : null,
+      state: court.state != null ? court.state : null,
+      postal_code: court.postal_code != null ? court.postal_code : null,
+      country: court.country != null ? court.country : null,
       latitude: lat,
       longitude: lng,
       is_private: Boolean(court.is_private),

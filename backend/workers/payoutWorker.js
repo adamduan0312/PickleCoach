@@ -112,6 +112,22 @@ export const processPayouts = async () => {
           continue;
         }
 
+        // Dispute-approved refunds enqueue payment_actions before refund_status flips to pending.
+        // Block escrow release until those actions finish (same idea as booking_cancel_refund).
+        const pendingDisputeRefund = await PaymentAction.findOne({
+          where: {
+            booking_id: payment.booking_id,
+            action_type: { [Op.in]: ['dispute_refund_full', 'dispute_refund_partial'] },
+            status: 'pending',
+          },
+        });
+        if (pendingDisputeRefund) {
+          logger.info(
+            `Skipping payout for payment ${payment.id} - dispute refund action pending (${pendingDisputeRefund.action_type})`,
+          );
+          continue;
+        }
+
         // Refunds are finalized from Stripe charge webhooks; do not release escrow while refund is pending.
         if (payment.refund_status === 'pending') {
           logger.info(`Skipping payout for payment ${payment.id} - refund pending`);

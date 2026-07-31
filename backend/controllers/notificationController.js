@@ -46,6 +46,30 @@ export const getNotifications = async (req, res) => {
   }
 };
 
+/**
+ * Lightweight bell badge count: in-app notifications with read_at IS NULL for the caller.
+ * Prefer this over fetching the full list just to render 🔔 N.
+ */
+export const getUnreadNotificationCount = async (req, res) => {
+  try {
+    const count = await Notification.count({
+      where: {
+        user_id: req.user.id,
+        channel: 'in_app',
+        read_at: null,
+      },
+    });
+    return successResponse(
+      res,
+      { count },
+      'Unread notification count retrieved successfully',
+    );
+  } catch (error) {
+    logger.error('Get unread notification count error:', error);
+    return errorResponse(res, 'Failed to retrieve unread notification count', 500);
+  }
+};
+
 export const markNotificationAsRead = async (req, res) => {
   try {
     const { id } = req.params;

@@ -27,11 +27,17 @@ Controllers and workers must **not** reimplement fee, refund, or payout proporti
 **Authorize-first flow (current):** `POST /api/booking-intents` creates a manual-capture PaymentIntent with no booking row. After client authorization (`requires_capture`), `POST /api/bookings/confirm` creates `bookings` + `payments` with `payment_status: authorized`. Coach accept captures funds. See `docs/MIGRATION_AUTHORIZE_FIRST_BOOKING.md`.
 
 - **Lesson price** → integer cents via `dollarsToCents`.
-- **Platform fee** = `round(lessonCents × platform_fee_percent / 100)` (default **8%** of lesson).
-- **Total charge to student** = `lessonCents + platform_fee_cents`.
-- **Coach payout expected** = `round(lessonCents × coach_commission_percent / 100)` (default **92%** of lesson — not of total charge).
+- **Student charge** = lesson price exactly (no add-on fee at checkout).
+- **Platform commission** = `round(lessonCents × platform_fee_percent / 100)` (default **8%** of lesson) — internal accounting only; does **not** increase what the student pays.
+- **Coach payout expected** = `round(lessonCents × coach_commission_percent / 100)` (default **92%** of lesson).
+- Platform absorbs Stripe processing fees from its commission (MVP).
 
 Implemented as `calculatePaymentAmounts(lessonPrice)` in `paymentEngine.js`. Persisted on `payments` as DECIMAL fields; values are derived from cent-rounded intermediates for determinism.
+
+| Lesson | Student pays | Coach receives | Platform commission |
+|--------|--------------|----------------|---------------------|
+| $50 | $50 | $46 | $4 |
+| $100 | $100 | $92 | $8 |
 
 ## Cancellations and refund policy
 

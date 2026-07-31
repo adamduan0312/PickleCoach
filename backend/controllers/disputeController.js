@@ -75,7 +75,19 @@ export const getDisputes = async (req, res) => {
         },
         attributes: ['id'],
       });
-      where.booking_id = userBookings.map(b => b.id);
+      const bookingIds = userBookings.map((b) => b.id);
+      if (booking_id) {
+        const requestedId = parseInt(booking_id, 10);
+        if (!bookingIds.includes(requestedId)) {
+          // Not an IDOR — empty result when filtering to a booking the user does not own.
+          return successResponse(res, [], 'Disputes retrieved successfully');
+        }
+        where.booking_id = requestedId;
+      } else {
+        where.booking_id = bookingIds.length ? bookingIds : [-1];
+      }
+    } else if (booking_id) {
+      where.booking_id = booking_id;
     }
 
     if (page == null && limit == null) {
@@ -90,7 +102,12 @@ export const getDisputes = async (req, res) => {
         limit: MAX_LIST_ALL_DISPUTES,
         order: [['opened_at', 'DESC']],
       });
-      return successResponse(res, disputes.map(formatDisputeResponse), 'Disputes retrieved successfully');
+      const isAdmin = (req.user.roles || []).includes('admin');
+      return successResponse(
+        res,
+        disputes.map((d) => formatDisputeResponse(d, { isAdmin })),
+        'Disputes retrieved successfully',
+      );
     }
 
     const { limit: queryLimit, offset } = getPagination(page, limit);
@@ -109,9 +126,10 @@ export const getDisputes = async (req, res) => {
     });
 
     const response = getPagingData(disputes, page, queryLimit);
+    const isAdmin = (req.user.roles || []).includes('admin');
     return paginatedResponse(
       res,
-      response.items.map(formatDisputeResponse),
+      response.items.map((d) => formatDisputeResponse(d, { isAdmin })),
       response.pagination,
       'Disputes retrieved successfully',
     );
@@ -145,7 +163,12 @@ export const getDisputeById = async (req, res) => {
       }
     }
 
-    return successResponse(res, formatDisputeResponse(dispute), 'Dispute retrieved successfully');
+    const isAdmin = (req.user.roles || []).includes('admin');
+    return successResponse(
+      res,
+      formatDisputeResponse(dispute, { isAdmin }),
+      'Dispute retrieved successfully',
+    );
   } catch (error) {
     logger.error('Get dispute error:', error);
     return errorResponse(res, 'Failed to retrieve dispute', 500);
@@ -257,7 +280,14 @@ export const createDispute = async (req, res) => {
 
     await logAudit(req.user.id, 'dispute_created', 'disputes', dispute.id, null, dispute.toJSON(), req);
 
-    return successResponse(res, formatDisputeResponse(dispute), 'Dispute created successfully', 201);
+    return successResponse(
+      res,
+      formatDisputeResponse(dispute, {
+        isAdmin: (req.user.roles || []).includes('admin'),
+      }),
+      'Dispute created successfully',
+      201,
+    );
   } catch (error) {
     logger.error('Create dispute error:', error);
     const mysqlFkChildRow =
@@ -615,7 +645,7 @@ export const resolveDispute = async (req, res) => {
     if (attendanceReversalWarning) resolutionWarnings.push(attendanceReversalWarning);
 
     const payload = {
-      dispute: formatDisputeResponse(dispute),
+      dispute: formatDisputeResponse(dispute, { isAdmin: true }),
       ...(refundSummary && { refund: refundSummary }),
       ...(resolutionWarnings.length > 0 && { warnings: resolutionWarnings }),
       resolution: {

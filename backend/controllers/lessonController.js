@@ -1,10 +1,16 @@
-import { Lesson, User, Booking } from '../models/index.js';
+import { Lesson, User } from '../models/index.js';
 import { successResponse, errorResponse, paginatedResponse } from '../utils/response.js';
 import { getPagination, getPagingData } from '../utils/pagination.js';
 import { logger } from '../config/logger.js';
 import { findPublicActiveCoach } from '../utils/userLifecycle.js';
 import * as coachMarketplaceEligibility from '../services/coachMarketplaceEligibility.js';
 import { buildAdminLessonsWhere, buildLessonPriceWhere } from '../utils/lessonListQuery.js';
+import {
+  serializePublicMarketplaceLesson,
+  serializeCoachOwnerLesson,
+  serializeAdminLesson,
+  serializeLessonDetail,
+} from '../utils/lessonDto.js';
 
 const MAX_LIST_ALL_LESSONS = 10000;
 
@@ -14,19 +20,6 @@ export const lessonByIdDeps = {
     coachMarketplaceEligibility.getCoachMarketplaceEligibility(coachId),
   findPublicActiveCoach: (coachId) => findPublicActiveCoach(coachId),
 };
-
-/** Marketplace / coach-profile lesson cards — coach id/name/avatar only. */
-function shapePublicLessonRow(lessonInstance) {
-  const json = lessonInstance.get ? lessonInstance.get({ plain: true }) : { ...lessonInstance };
-  if (json.coach && typeof json.coach === 'object') {
-    json.coach = {
-      id: json.coach.id,
-      full_name: json.coach.full_name,
-      avatar_url: json.coach.avatar_url ?? null,
-    };
-  }
-  return json;
-}
 
 /** Soft-deleted lessons are historical (bookings only); coach lesson APIs treat them as missing. */
 function isLessonDeleted(lesson) {
@@ -75,23 +68,16 @@ export const getCoachLessonsById = async (req, res) => {
       is_active: true,
       deleted_at: null,
     };
-    const coachInclude = {
-      model: User,
-      as: 'coach',
-      attributes: ['id', 'full_name', 'avatar_url'],
-      required: false,
-    };
 
     if (page == null && limit == null) {
       const lessons = await Lesson.findAll({
         where,
-        include: [coachInclude],
         limit: MAX_LIST_ALL_LESSONS,
         order: [['created_at', 'DESC']],
       });
       return successResponse(
         res,
-        lessons.map(shapePublicLessonRow),
+        lessons.map(serializePublicMarketplaceLesson),
         'Lessons retrieved successfully',
       );
     }
@@ -99,7 +85,6 @@ export const getCoachLessonsById = async (req, res) => {
     const { limit: queryLimit, offset } = getPagination(page, limit);
     const lessons = await Lesson.findAndCountAll({
       where,
-      include: [coachInclude],
       limit: queryLimit,
       offset,
       distinct: true,
@@ -107,7 +92,7 @@ export const getCoachLessonsById = async (req, res) => {
     });
 
     const response = getPagingData(
-      { count: lessons.count, rows: lessons.rows.map(shapePublicLessonRow) },
+      { count: lessons.count, rows: lessons.rows.map(serializePublicMarketplaceLesson) },
       page,
       queryLimit,
     );
@@ -126,7 +111,7 @@ export const getCoachLessonsById = async (req, res) => {
 /**
  * GET /api/admin/lessons
  * Admin inventory — all coaches' lessons, no marketplace eligibility gate.
- * Default includes soft-deleted (complete inventory). Pass include_deleted=false to exclude.
+ * Default: non-deleted (active + inactive). Pass include_deleted=true for soft-deleted too.
  */
 export const getAdminLessons = async (req, res) => {
   try {
@@ -140,7 +125,7 @@ export const getAdminLessons = async (req, res) => {
     const coachInclude = {
       model: User,
       as: 'coach',
-      attributes: ['id', 'full_name', 'avatar_url', 'email', 'is_active', 'deleted_at'],
+      attributes: ['id', 'full_name', 'email', 'is_active', 'deleted_at'],
       required: false,
     };
 
@@ -151,7 +136,11 @@ export const getAdminLessons = async (req, res) => {
         limit: MAX_LIST_ALL_LESSONS,
         order: [['created_at', 'DESC']],
       });
-      return successResponse(res, lessons, 'Lessons retrieved successfully');
+      return successResponse(
+        res,
+        lessons.map(serializeAdminLesson),
+        'Lessons retrieved successfully',
+      );
     }
 
     const { limit: queryLimit, offset } = getPagination(page, limit);
@@ -164,7 +153,11 @@ export const getAdminLessons = async (req, res) => {
       order: [['created_at', 'DESC']],
     });
 
-    const response = getPagingData(lessons, page, queryLimit);
+    const response = getPagingData(
+      { count: lessons.count, rows: lessons.rows.map(serializeAdminLesson) },
+      page,
+      queryLimit,
+    );
     return paginatedResponse(
       res,
       response.items,
@@ -194,17 +187,18 @@ export const getMyLessons = async (req, res) => {
         coach_id: req.user.id,
         deleted_at: null,
       },
-      include: [{ model: User, as: 'coach', attributes: ['id', 'full_name', 'avatar_url'] }],
       limit: queryLimit,
       offset,
       order: [['created_at', 'DESC']],
     });
 
+    const rows = lessons.rows.map(serializeCoachOwnerLesson);
+
     if (!isPaginated) {
-      return successResponse(res, lessons.rows, 'My lessons retrieved successfully');
+      return successResponse(res, rows, 'My lessons retrieved successfully');
     }
 
-    const response = getPagingData(lessons, page, queryLimit);
+    const response = getPagingData({ count: lessons.count, rows }, page, queryLimit);
     return paginatedResponse(res, response.items, response.pagination, 'My lessons retrieved successfully');
   } catch (error) {
     logger.error('Get my lessons error:', error);
@@ -225,23 +219,25 @@ export const getLessonById = async (req, res) => {
     }
 
     const { id } = req.params;
+    const roles = req.user.roles || [];
+    const isAdmin = roles.includes('admin');
+
     const lesson = await Lesson.findByPk(id, {
-      include: [
-        {
-          model: User,
-          as: 'coach',
-          attributes: ['id', 'full_name', 'avatar_url', 'is_active', 'deleted_at'],
-        },
-        { model: Booking, as: 'bookings', limit: 5, order: [['scheduled_at', 'DESC']] },
-      ],
+      include: isAdmin
+        ? [
+            {
+              model: User,
+              as: 'coach',
+              attributes: ['id', 'full_name', 'email', 'is_active', 'deleted_at'],
+            },
+          ]
+        : [],
     });
 
     if (!lesson) {
       return errorResponse(res, 'Lesson not found', 404);
     }
 
-    const roles = req.user.roles || [];
-    const isAdmin = roles.includes('admin');
     const isOwner = Number(req.user.id) === Number(lesson.coach_id);
 
     if (!isAdmin && !isOwner) {
@@ -259,19 +255,26 @@ export const getLessonById = async (req, res) => {
       return errorResponse(res, 'Lesson not found', 404);
     }
 
-    const payload = typeof lesson.toJSON === 'function' ? lesson.toJSON() : { ...lesson };
-    return successResponse(res, payload, 'Lesson retrieved successfully');
+    return successResponse(
+      res,
+      serializeLessonDetail(lesson, { viewerIsAdmin: isAdmin }),
+      'Lesson retrieved successfully',
+    );
   } catch (error) {
     logger.error('Get lesson error:', error);
     return errorResponse(res, 'Failed to retrieve lesson', 500);
   }
 };
 
+/**
+ * POST /api/lessons — coach only (creates for req.user.id).
+ * Admins moderate existing lessons via PUT/DELETE /api/lessons/:id, not create.
+ */
 export const createLesson = async (req, res) => {
   try {
     const { title, description, duration_minutes, price, max_students } = req.validated;
 
-    if (!(req.user.roles || []).includes('coach') && !(req.user.roles || []).includes('admin')) {
+    if (!(req.user.roles || []).includes('coach')) {
       return errorResponse(res, 'Only coaches can create lessons', 403);
     }
 
@@ -284,7 +287,7 @@ export const createLesson = async (req, res) => {
       max_students: max_students || 1,
     });
 
-    return successResponse(res, lesson, 'Lesson created successfully', 201);
+    return successResponse(res, serializeCoachOwnerLesson(lesson), 'Lesson created successfully', 201);
   } catch (error) {
     logger.error('Create lesson error:', error);
     return errorResponse(res, 'Failed to create lesson', 500);
@@ -320,7 +323,7 @@ export const updateLesson = async (req, res) => {
       is_active: is_active !== undefined ? is_active : lesson.is_active,
     });
 
-    return successResponse(res, lesson, 'Lesson updated successfully');
+    return successResponse(res, serializeCoachOwnerLesson(lesson), 'Lesson updated successfully');
   } catch (error) {
     logger.error('Update lesson error:', error);
     return errorResponse(res, 'Failed to update lesson', 500);

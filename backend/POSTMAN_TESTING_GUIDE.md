@@ -125,19 +125,19 @@ The collection already uses `{{base_url}}` and `{{api_url}}`. Register, Login, *
 
 ### Dev login credentials (collection variables)
 
-**Postman defaults** use **test-flow** users (`npm run seed:test-flows` in `backend/`). All three share password **`Test1234!Ab`**:
+**Postman defaults** use **test-flow** users (`npm run seed:test-flows` in `backend/`). **Every seeded/dev user shares the same password** — collection/env var **`auth_password`** = **`Test1234!Ab`**:
 
-| Role | Email | Password |
-|------|-------|----------|
-| Admin | `admin.testflow@picklecoach.example.org` | `Test1234!Ab` |
-| Coach | `coach.testflow@picklecoach.example.org` | `Test1234!Ab` |
-| Student | `student.testflow@picklecoach.example.org` | `Test1234!Ab` |
+| Role | Email var | Password |
+|------|-----------|----------|
+| Admin | `{{admin_email}}` → `admin.testflow@picklecoach.example.org` | `{{auth_password}}` → `Test1234!Ab` |
+| Coach | `{{coach_email}}` → `coach.testflow@picklecoach.example.org` | `{{auth_password}}` → `Test1234!Ab` |
+| Student | `{{student_email}}` → `student.testflow@picklecoach.example.org` | `{{auth_password}}` → `Test1234!Ab` |
 
-**Demo seed** (`npm run db:seed`) alternate accounts: `coach1@example.com` / `student1@example.com` / `password123`; `admin@picklecoach.com` / `admin123`.
+**Demo seed** (`npm run db:seed`) and **geosearch** (`npm run seed:geosearch`) accounts use the **same** password (`Test1234!Ab`), e.g. `coach1@example.com`, `student1@example.com`, `admin@picklecoach.com`, `browse.geosearch@picklecoach.example.org`.
 
-**Coach radius / geo search fixtures** (`npm run seed:geosearch`): additive coaches + courts around SF (and NYC/LA controls). Login as any student (e.g. test-flow student or `browse.geosearch@picklecoach.example.org` / `password123`), then `GET /coaches?lat=37.78&lng=-122.41&radius=10`. Vary `radius` (5 / 10 / 15 / 25 / 50) to see the Bay Area ladder; NYC/LA / no-court / soft-deleted-court coaches must not appear. Re-run after `db:seed` wipe (demo seed clears coach_court_locations).
+**Coach radius / geo search fixtures** (`npm run seed:geosearch`): additive coaches + courts around SF (and NYC/LA controls). Login as any student (e.g. test-flow student or `browse.geosearch@picklecoach.example.org` / `Test1234!Ab`), then `GET /coaches?lat=37.78&lng=-122.41&radius=10`. Vary `radius` (5 / 10 / 15 / 25 / 50) to see the Bay Area ladder; NYC/LA / no-court / soft-deleted-court coaches must not appear. Re-run after `db:seed` wipe (demo seed clears coach_court_locations).
 
-If test-flow login returns **401 Invalid credentials**, run `npm run fix:invalid-emails` or `node scripts/reset-user-password.js <email> 'Test1234!Ab'`.
+If login returns **401 Invalid credentials**, run `npm run fix:invalid-emails` or `node scripts/reset-user-password.js <email> 'Test1234!Ab'`.
 
 **Extra lessons + deleted-lesson booking history:** `npm run seed:testflow-lesson-history` (additive; requires test-flow users). Creates active lessons, bookings, and one soft-deleted lesson (`Advanced Strategy Session`) whose `deleted_at` still appears nested on booking GETs. Sample booking id is printed in the script output (`sample_deleted_lesson_booking_id`).
 
@@ -162,24 +162,26 @@ Import one or both into Postman. Select your environment so `base_url` and `api_
 
 The **PickleCoach API (By Flow)** collection has **only three top-level folders**. Every endpoint lives inside one of them, in the correct user-flow order. There are no separate “Authentication”, “Coaches”, “Bookings”, etc. folders — everything is in **1 – Flow: Admin**, **2 – Flow: Coach**, or **3 – Flow: Student**.
 
-**Rule:** Each folder contains only endpoints that role is **allowed** to use (no 403). Admin cannot use Add Role (self-service) or Delete My Account; Coach cannot use List Coaches (Search) or Create Booking. There is no generic Update Booking Status endpoint.
+**Rule:** Each folder contains only endpoints that role is **allowed** to use (no **role-gate** 403). Admin cannot use Add Role (self-service) or Delete My Account; Coach cannot use Create Booking Intent / Confirm (student role required). Cancel booking is allowed for both Student and Coach on **their** bookings. There is no generic Update Booking Status endpoint.
 
-- **1 – Flow: Admin** — 45 requests. Health → Login (admin) → Profile → Dashboard → Users → … → Notifications → Coach support (**includes `GET /coaches/:id/availability` via the same canonical Coaches request as Student, with an admin sidebar label**) → Auth extras (no Add Role (self-service) / Delete My Account) → Courts/Lessons/Disputes → Admin booking reads/overrides → Payments → Webhook.
-- **2 – Flow: Coach** — 62 requests. Health → Register/Login → Profile → Coach profile → **Owner availability** (`GET/POST/PUT/DELETE …/me/availability` only) → Stripe Connect → Lessons → Bookings → …
-- **3 – Flow: Student** — Health → … → **Create Booking Intent** (`POST /booking-intents`) → authorize with Stripe → **Confirm Booking** (`POST /bookings/confirm`) → …
+**Ownership exception:** By Flow guarantees the role gate passes for that persona, **not** that every ownership/resource state will pass. Example: `PUT /bookings/:id/accept` is in Coach flow because coaches may accept, but `{{booking_id}}` must still belong to that coach at runtime—set variables from prior list/create steps.
+
+- **1 – Flow: Admin** — Health → Login (admin) → Profile → Dashboard → Users → **Update Coach Profile** → Notifications (create/list/mark/delete) → Coach support (**includes `GET /coaches/:id/availability`**, **Delete Court Globally**) → Auth extras (no Add Role / Delete My Account) → Courts/Lessons/Disputes → Admin booking reads/overrides → Payments. Webhook lives under **Reference**.
+- **2 – Flow: Coach** — Health → Register/Login → Profile → Coach profile → Owner availability → Courts → **List Coaches / Get Coach By ID / Reviews / Reliability / Courts** (browse) → Stripe Connect → **Marketplace Status** → Lessons → Bookings → Payments + **payment methods** → Received reviews → Messages → Disputes → Notifications (incl. delete) → …
+- **3 – Flow: Student** — Health → … → Browse coaches → Availability → **Create Booking Intent** → authorize with Stripe → **Create Booking from Payment** → Cancel (own) → Payments + **payment methods** → Reviews CRUD → Notifications (incl. delete) → …
 
 Run the requests in each folder in order (1, 2, 3, …). After editing the **ByType** collection, regenerate ByFlow with: `node backend/scripts/reorganize-postman-flows.js`.
 
-**Full order — 1 – Flow: Admin (45 steps):**  
-Health Check → Login → Get Profile → Refresh Token → Get Dashboard Stats → Get Audit Logs → Get Alerts → Resolve Alert → Create Admin User → Get All Users (Admin) → Get User By ID (Admin) → Update User (Admin) → Update Coach Profile (Admin) → Get User Reliability (Admin) → Adjust User Reliability → Create Notification (Admin) → Get My Notifications → Get Coach Courts (Admin) → **Get Coach Availability (Admin)** (same By Type definition as Student) → Delete Coach Court (Admin) → Delete Coach Availability (Admin) → Delete User (Admin) → Register → …
+**Full order — 1 – Flow: Admin:**  
+Health Check → Login → Get Profile → Refresh Token → Get Dashboard Stats → Get Audit Logs → Create Admin User → Get All Users (Admin) → Get User By ID (Admin) → Update User (Admin) → **Update Coach Profile (Admin)** → Get User Reliability (Admin) → Adjust User Reliability → Create Notification (Admin) → Get My Unread Notification Count → Get My Notifications → Mark Notification As Read → **Delete Notification** → Get Coach Courts (Admin) → **Get Coach Availability (Admin)** → **Delete Court Globally (Admin)** → Delete Coach Court (Admin) → …
 
-**Full order — 2 – Flow: Coach (62 steps):**  
-Health Check → Register → Login → Get Profile → … → Add Role (self-service) → Create Coach Profile → Update My Coach Profile → **Create Availability** → **Get My Coach Availability** → **Update My Availability** → **Delete Availability** → List/Search Courts → … (no `GET /coaches/:id/availability` — coach-only JWT gets **403** on that route.)
+**Full order — 2 – Flow: Coach:**  
+Health Check → Register → Login → Get Profile → … → Add Role (self-service) → Create Coach Profile → Update My Coach Profile → **Create Availability** → **Get My Coach Availability** → **Update My Availability** → **Delete Availability** → List/Search Courts → List Coaches (Search) → **Get Coach By ID** → **Get Coach Reviews** → **Get Coach Reliability (browse)** → Get Coach Courts → Create Court → … → Stripe Connect → **Get Marketplace Status** → Lessons → Bookings → Payments → **payment methods** → … (no `GET /coaches/:id/availability` — coach-only JWT gets **403** on that route.)
 
-**Full order — 3 – Flow: Student (47 steps):**  
-Health Check → Register → Login → Get Profile → … → List Coaches (Search) → Get Coach By ID → **Get Coach Courts** → **Get Coach Availability** → List/Search Courts → …
+**Full order — 3 – Flow: Student:**  
+Health Check → Register → Login → Get Profile → … → List Coaches (Search) → Get Coach By ID → **Get Coach Courts** → **Get Coach Availability** → List/Search Courts → Create Booking Intent → Confirm → … → Payments → **payment methods** → Reviews → Notifications (incl. **Delete Notification**) → …
 
-**Tip:** **Create Booking** (Student step 20) needs Stripe. For Phase 1, run Student steps 1–19 and 21+ if you have existing bookings; after setting up Stripe, run the full flow including Create Booking.
+**Tip:** Booking intent + confirm (Student) need Stripe. For Phase 1, run Student steps before payment and use existing bookings for cancel/read; after setting up Stripe, run the full flow including intent + confirm and payment methods.
 
 ---
 
@@ -226,20 +228,22 @@ Use this as a living checklist. Check off each line as you verify it (happy path
 - [ ] Remove Court from Coach — **200**; **`DELETE /api/coaches/me/courts/{{court_id}}`** (unlink only; `court_id` from List My Courts or Create Court)
 - [ ] Initiate Stripe Connect Onboarding — 200, redirect URL
 - [ ] Get Stripe Connect Status — 200
+- [ ] Get Marketplace Status — 200; `GET /api/coaches/me/marketplace-status` checklist (Coach flow)
+- [ ] List Coaches / Get Coach By ID / Get Coach Reviews / Get Coach Reliability — 200; coaches may browse marketplace like students (Coach flow)
 
 ### COURTS
 
 - [ ] List/Search Courts — 200
 - [ ] Get Court By ID — 200
 - [ ] Create Court — 201; coach response includes `court` + `coachCourt` (auto-linked; no `coach_notes` on `coachCourt`). Optional: **`POST /api/coaches/me/courts`** same `court_id` + `coach_notes` → **200** (link notes only)
+- [ ] Delete Court Globally (Admin) — 200; `DELETE /api/courts/:id` (Admin flow; coaches unlink via `DELETE /api/coaches/me/courts/:courtId`)
 
 ### LESSONS
 
-- [ ] Get All Lessons — **410** (`GET /api/lessons` catalog removed)
 - [ ] Get Coach Lessons — 200; `GET /api/coaches/:id/lessons` (active + marketplace-eligible coach)
-- [ ] Get Lessons (Admin) — 200; `GET /api/admin/lessons` (complete inventory)
+- [ ] Admin - Get All Lessons — 200; `GET /api/admin/lessons` (non-deleted by default; `include_deleted=true` for soft-deleted)
 - [ ] Get My Lessons — 200; coach inventory including inactive
-- [ ] Get Lesson By ID — **200** owner/admin; **403** for students (not discovery)
+- [ ] Get Lesson By ID — **200** owner/admin only (Coach + Admin flows); not in Student flow (students use Get Coach Lessons)
 - [ ] Create Lesson — 201
 - [ ] Update Lesson — 200
 - [ ] Delete Lesson — 200
@@ -273,41 +277,55 @@ Use this as a living checklist. Check off each line as you verify it (happy path
 
 - [ ] Get My Payments — 200 (saves `payment_id` from first row when present)
 - [ ] **Admin flow:** Get Payment By ID (Admin) — 200 for any payment id
+- [ ] List My Payment Methods — 200; `GET /api/payment-methods` (Student + Coach flows)
+- [ ] Add Payment Method — 201; `{ "payment_method_id": "{{stripe_payment_method_id}}" }` (Phase 2)
+- [ ] Set Default Payment Method — 200; `PUT /api/payment-methods/:id/default`
+- [ ] Delete Payment Method — 200; cannot delete sole default with no fallback
 - [ ] **Coach / Student flow:** Get My Payment By ID — 200 only when you are `coach_id` or `student_id` on that payment; **403** otherwise
 
 ### REVIEWS
 
+**No global feed** — `GET /api/reviews` returns **410**.
+
+**Student flow (`3 – Flow: Student`)**:
+
+- [ ] Get Coach Reviews — 200 (`GET /coaches/:id/reviews`, reviews about that coach)
+- [ ] List My Written Reviews — 200 (`GET /students/me/reviews`)
+- [ ] Create Review — 201; student role + verified email; caller must be `primary_student_id`; body: `booking_id` + `rating` (+ optional `comment`); coach inferred from booking; 403 if not the booking student / not student / email unverified; 400 if booking not completed; 409 if review exists
+- [ ] Update Review — 200 (student author only; rating/comment); changing rating recomputes coach `rating_average` / `rating_count`
+- [ ] Delete Review — 200 (student author only); recomputes coach rating aggregates
+
 **Coach flow (`2 – Flow: Coach`)** — read-only:
 
-- [ ] Get All Reviews — 200 (e.g. `?target_user_id={{coach_id}}` for reviews about you)
+- [ ] List My Received Reviews — 200 (`GET /coaches/me/reviews`)
 
-**Student flow (`3 – Flow: Student`)** — primary student on a **completed** booking:
+**Admin flow:**
 
-- [ ] Get All Reviews — 200
-- [ ] Create Review — 201; caller must be `primary_student_id`; coach inferred from booking (`target_user_id` not accepted); 403 if not the booking student; 403 if email not verified
-- [ ] Update Review — 200 (reviewer only)
-- [ ] Delete Review — 200 (reviewer only)
+- [ ] Admin - List Reviews — 200 (`GET /admin/reviews`; optional `coach_id` / `student_id`)
 
 ### MESSAGES
 
-- [ ] Get Conversations — 200 (participant or admin)
-- [ ] Create Conversation — 201 on **confirmed** booking with `messaging_locked: false`; **409** when locked (`pending`, `cancelled`, `completed`, etc.)
-- [ ] Get Conversation By ID — 200; history readable when locked; `booking.messaging_locked` (not root-level)
-- [ ] Send Message — 201 with `message_text` on unlocked booking; **409** when locked; **403** for non-participant
+- [ ] Get My Conversations — 200 (participant inbox; admin sees all); each row includes `unread_count`
+- [ ] Start Conversation — 201 on **confirmed** booking with `messaging_locked: false`; **409** when locked (`pending`, `cancelled`, `completed`, etc.)
+- [ ] Get My Conversation Details — 200; history readable when locked; `booking.messaging_locked` (not root-level); **403** if not a participant; marks thread read for viewer
+- [ ] Send Message — 201 with `message_text` on unlocked booking; **409** when locked; **403** for non-participant; response includes nested `sender`
+- [ ] Unread — after send as coach, student inbox shows `unread_count > 0`; after student opens Get My Conversation Details, inbox `unread_count` is `0`
 - [ ] Non-participant access — **403** on conversation read/send
 - [ ] Admin — can **view** conversations; cannot send (403)
 
 ### DISPUTES
 
 - [ ] Create Dispute — 201; students/coaches get 403 if not verified, admins are exempt on dispute-create routes; optional `notes` persisted; active `dispute_type_id`: **1** `coach_no_show_claim` (student opens), **8** `student_no_show_claim` (coach opens), **3** `misconduct`, **4** `lesson_not_completed`, **7** `other` (refunds go in notes + resolve `financial_action`, not a dispute type)
-- [ ] Get All Disputes — 200
-- [ ] Get Dispute By ID — 200
+- [ ] Get My Disputes — 200 (participant-scoped; admin flow label: Get All Disputes)
+- [ ] Get My Dispute By ID — 200 (participant or admin; admin flow label: Get Dispute By ID)
 - [ ] Resolve Dispute — attendance claim — 200 (admin); body must include `decision` + `outcome` + `financial_action` (no `resolution_action_id`) for types **1** / **8**; e.g. `{"decision":"upheld","outcome":"coach_no_show","financial_action":"refund_student","resolution_notes":"…"}`; optional `data.resolution` in response
 
 ### NOTIFICATIONS
 
+- [ ] Get My Unread Notification Count — 200; `data.count` is a number (in-app, `read_at` null)
 - [ ] Get My Notifications — 200
-- [ ] Mark Notification As Read — 200
+- [ ] Mark Notification As Read — 200; then unread-count decreases; calling again on the same id still **200** (idempotent; `read_at` unchanged)
+- [ ] Delete Notification — 200; owner or admin (`DELETE /api/notifications/:id`; Student, Coach, and Admin flows)
 - [ ] **After Accept Booking** — student sees `booking_confirmed` notification (and email when SendGrid configured)
 - [ ] **After Decline Booking** — student sees `booking_declined` notification with `decline_reason_code`, `message_to_student`, `reason_line`, and `summary`
 - [ ] **After Cancel Booking** — other party sees `booking_cancelled` notification
@@ -418,7 +436,7 @@ Use `API_ENDPOINTS.md` for full request/response specs. Minimal examples for flo
 - **Create Availability:** `weekday` (0–6 or `"monday"`), required `start_time` / `end_time` (e.g. `"09:00"`, `"17:00"`), optional `start_date` / `end_date` as **`YYYY-MM-DD`** only.
 - **Create Lesson:** title, duration_minutes, price, coach_id, etc.
 - **Create Booking:** lesson_id, coach_id, start datetime (and any other required fields).
-- **Create Review:** booking_id or lesson_id, rating, comment (per your API).
+- **Create Review:** `booking_id`, `rating`, optional `comment`.
 
 For “missing required” and “invalid data” tests, remove or corrupt one field at a time and confirm 400 with a validation message.
 

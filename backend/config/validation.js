@@ -130,8 +130,6 @@ export const reviewSchema = Joi.object({
   booking_id: Joi.number().integer().positive().required(),
   rating: Joi.number().integer().min(1).max(5).required(),
   comment: Joi.string().max(1000).optional(),
-  attendance_badges: Joi.array().items(Joi.string()).optional(),
-  visibility: Joi.string().valid('public', 'private', 'semi_public').default('public'),
 });
 
 export const createConversationSchema = Joi.object({
@@ -269,8 +267,6 @@ export const adminBookingRefundSchema = Joi.object({
 export const updateReviewSchema = Joi.object({
   rating: Joi.number().integer().min(1).max(5).optional(),
   comment: Joi.string().max(1000).allow('').optional(),
-  attendance_badges: Joi.array().items(Joi.string()).optional(),
-  visibility: Joi.string().valid('public', 'private', 'semi_public').optional(),
 });
 
 /** Pickleball-style self-reported level: 2.0–6.0 inclusive, half-point steps only. */
@@ -511,6 +507,11 @@ export const getCoachesQuerySchema = Joi.object({
   max_skill_rating: coachSkillRatingValueSchema.optional(),
   /** Review star average (`rating_average` 0–5); distinct from min/max_skill_rating. */
   min_rating: Joi.number().min(0).max(5).optional(),
+  /**
+   * Restrict to coaches linked to this court_locations.id (browse-courts → who teaches here).
+   * Combines with geo/skill/rating filters. Soft-deleted courts are not matched.
+   */
+  court_location_id: Joi.number().integer().positive().optional(),
 }).custom((value, helpers) => {
   if (
     value.min_skill_rating != null
@@ -538,7 +539,7 @@ export const getCoachLessonsQuerySchema = Joi.object({
   limit: Joi.number().integer().min(1).max(10000).optional(),
 });
 
-/** GET /api/admin/lessons — admin inventory (no marketplace gate). Default includes soft-deleted. */
+/** GET /api/admin/lessons — admin inventory (no marketplace gate). Soft-deleted excluded by default. */
 export const getAdminLessonsQuerySchema = Joi.object({
   page: Joi.number().integer().min(1).optional(),
   limit: Joi.number().integer().min(1).max(10000).optional(),
@@ -546,7 +547,7 @@ export const getAdminLessonsQuerySchema = Joi.object({
   /** Filter by publish flag. Query string: `true` | `false`. */
   is_active: Joi.string().valid('true', 'false').optional(),
   /**
-   * Default includes soft-deleted (complete inventory). Pass `false` to exclude them.
+   * Default omits soft-deleted. Pass `true` to include rows with `deleted_at` set.
    */
   include_deleted: Joi.string().valid('true', 'false').optional(),
   /** `true` = soft-deleted only; `false` = non-deleted only. */
@@ -563,8 +564,14 @@ export const getMyLessonsQuerySchema = Joi.object({
 export const getReviewsQuerySchema = Joi.object({
   page: Joi.number().integer().min(1).optional(),
   limit: Joi.number().integer().min(1).max(10000).optional(),
-  target_user_id: Joi.number().integer().positive().optional(),
-  reviewer_id: Joi.number().integer().positive().optional(),
+});
+
+/** GET /api/admin/reviews — full inventory. */
+export const getAdminReviewsQuerySchema = Joi.object({
+  page: Joi.number().integer().min(1).optional(),
+  limit: Joi.number().integer().min(1).max(10000).optional(),
+  coach_id: Joi.number().integer().positive().optional(),
+  student_id: Joi.number().integer().positive().optional(),
 });
 
 export const getDisputesQuerySchema = Joi.object({
@@ -640,3 +647,51 @@ export const searchCourtsQuerySchema = Joi.object({
   lng: Joi.number().min(-180).max(180).optional(),
   radius: Joi.number().positive().max(100).default(10), // miles (geo search only)
 }).and('lat', 'lng');
+
+/** US MVP: exactly two letters (uppercase after convert). */
+const usStateSchema = Joi.string()
+  .trim()
+  .uppercase()
+  .length(2)
+  .pattern(/^[A-Z]{2}$/)
+  .required()
+  .messages({
+    'string.length': 'state must be a 2-letter US state code',
+    'string.pattern.base': 'state must be a 2-letter US state code',
+    'any.required': 'state is required',
+    'string.empty': 'state is required',
+  });
+
+/** US ZIP: 12345 or 12345-6789 */
+const usPostalCodeSchema = Joi.string()
+  .trim()
+  .pattern(/^\d{5}(-\d{4})?$/)
+  .required()
+  .messages({
+    'string.pattern.base': 'postal_code must be 12345 or 12345-6789',
+    'any.required': 'postal_code is required',
+    'string.empty': 'postal_code is required',
+  });
+
+/**
+ * POST /api/courts — structured address (no free-text `address`).
+ * country optional (defaults US); state/postal_code US-MVP rules.
+ */
+export const createCourtBodySchema = Joi.object({
+  name: Joi.string().trim().min(1).max(255).required()
+    .messages({ 'string.empty': 'Court name is required', 'any.required': 'Court name is required' }),
+  address_line1: Joi.string().trim().min(1).max(255).required()
+    .messages({ 'string.empty': 'address_line1 is required', 'any.required': 'address_line1 is required' }),
+  city: Joi.string().trim().min(1).max(100).required()
+    .messages({ 'string.empty': 'city is required', 'any.required': 'city is required' }),
+  state: usStateSchema,
+  postal_code: usPostalCodeSchema,
+  country: Joi.string().trim().uppercase().length(2).pattern(/^[A-Z]{2}$/).default('US')
+    .messages({
+      'string.length': 'country must be a 2-letter ISO country code',
+      'string.pattern.base': 'country must be a 2-letter ISO country code',
+    }),
+  latitude: Joi.number().min(-90).max(90).optional().allow(null),
+  longitude: Joi.number().min(-180).max(180).optional().allow(null),
+  is_private: Joi.boolean().default(false),
+});

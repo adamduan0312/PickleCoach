@@ -7,6 +7,7 @@ import {
   dollarsToCents,
   centsToDecimalString,
   calculatePaymentAmounts,
+  calculatePaymentAmountsFromAuthorizedTotalCents,
   computeCancellationSplitCents,
   applyStripeRefundCap,
   splitNetRetainedCoachPlatformCents,
@@ -28,17 +29,18 @@ describe('paymentEngine', () => {
     assert.equal(centsToDecimalString(-5), '0.00');
   });
 
-  it('calculatePaymentAmounts: 8% fee on lesson, 92% coach share of lesson, total = lesson + fee', () => {
+  it('calculatePaymentAmounts: student pays lesson only; 8% platform commission; 92% coach share', () => {
     const a = calculatePaymentAmounts(100);
     assert.equal(a.lesson_price, 100);
     assert.equal(a.platform_fee_amount, 8);
-    assert.equal(a.total_charge_to_student, 108);
+    assert.equal(a.total_charge_to_student, 100);
     assert.equal(a.coach_payout_expected, 92);
     const lesson = dollarsToCents(100);
     const pf = dollarsToCents(a.platform_fee_amount);
     const tot = dollarsToCents(a.total_charge_to_student);
     const coach = dollarsToCents(a.coach_payout_expected);
-    assert.equal(tot, lesson + pf);
+    assert.equal(tot, lesson);
+    assert.equal(pf + coach, lesson);
     assert.equal(coach, Math.round((lesson * 92) / 100));
   });
 
@@ -46,7 +48,19 @@ describe('paymentEngine', () => {
     const a = calculatePaymentAmounts(10.99);
     const b = calculatePaymentAmounts(10.99);
     assert.deepEqual(a, b);
-    assert.equal(dollarsToCents(a.total_charge_to_student), dollarsToCents(10.99) + dollarsToCents(a.platform_fee_amount));
+    assert.equal(dollarsToCents(a.total_charge_to_student), dollarsToCents(10.99));
+  });
+
+  it('calculatePaymentAmountsFromAuthorizedTotalCents preserves Stripe total as lesson charge', () => {
+    const fromLesson = calculatePaymentAmounts(50);
+    const authorized = dollarsToCents(fromLesson.total_charge_to_student);
+    const snap = calculatePaymentAmountsFromAuthorizedTotalCents(authorized);
+    assert.equal(dollarsToCents(snap.total_charge_to_student), authorized);
+    assert.equal(dollarsToCents(snap.lesson_price), authorized);
+    assert.equal(
+      dollarsToCents(snap.platform_fee_amount) + dollarsToCents(snap.coach_payout_expected),
+      authorized,
+    );
   });
 
   it('computeCancellationSplitCents: refund + penalty === total', () => {
@@ -79,26 +93,28 @@ describe('paymentEngine', () => {
 
   it('splitNetRetainedCoachPlatformCents: coach + platform === net (remainder to platform)', () => {
     const x = splitNetRetainedCoachPlatformCents({
-      netRetainedCents: 5400,
-      totalChargeCents: 10_800,
+      netRetainedCents: 5000,
+      totalChargeCents: 10_000,
       coachPayoutExpectedCents: 9200,
     });
-    assert.equal(x.coachPayoutCents + x.platformFeeCents, 5400);
+    assert.equal(x.coachPayoutCents + x.platformFeeCents, 5000);
+    assert.equal(x.coachPayoutCents, 4600);
+    assert.equal(x.platformFeeCents, 400);
     assert.ok(x.coachPayoutCents >= 0);
     assert.ok(x.platformFeeCents >= 0);
   });
 
   it('computeEscrowCoachTransferCents matches split on net after refunds', () => {
     const { payoutCents, netRetainedCents } = computeEscrowCoachTransferCents({
-      totalChargeCents: 10_800,
-      refundedCents: 5400,
+      totalChargeCents: 10_000,
+      refundedCents: 5000,
       coachPayoutExpectedCents: 9200,
     });
-    assert.equal(netRetainedCents, 5400);
+    assert.equal(netRetainedCents, 5000);
     assert.equal(payoutCents, 4600);
     const split = splitNetRetainedCoachPlatformCents({
       netRetainedCents,
-      totalChargeCents: 10_800,
+      totalChargeCents: 10_000,
       coachPayoutExpectedCents: 9200,
     });
     assert.equal(payoutCents, split.coachPayoutCents);
@@ -118,8 +134,8 @@ describe('paymentEngine', () => {
 
   it('parseTotalChargeCentsFromBooking prefers payment total', () => {
     assert.equal(
-      parseTotalChargeCentsFromBooking({ total_charge_to_student: '54.00' }, { price: 50 }),
-      5400,
+      parseTotalChargeCentsFromBooking({ total_charge_to_student: '50.00' }, { price: 50 }),
+      5000,
     );
     assert.equal(parseTotalChargeCentsFromBooking(null, { price: 25.5 }), 2550);
   });

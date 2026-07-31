@@ -11,9 +11,26 @@ const CourtLocation = sequelize.define('court_locations', {
     type: DataTypes.STRING(255),
     allowNull: false,
   },
-  address: {
+  address_line1: {
     type: DataTypes.STRING(255),
-    allowNull: true,
+    allowNull: false,
+  },
+  city: {
+    type: DataTypes.STRING(100),
+    allowNull: false,
+  },
+  state: {
+    type: DataTypes.STRING(2),
+    allowNull: false,
+  },
+  postal_code: {
+    type: DataTypes.STRING(20),
+    allowNull: false,
+  },
+  country: {
+    type: DataTypes.STRING(2),
+    allowNull: false,
+    defaultValue: 'US',
   },
   latitude: {
     type: DataTypes.DOUBLE,
@@ -47,9 +64,12 @@ const CourtLocation = sequelize.define('court_locations', {
   indexes: [
     { fields: ['latitude'] },
     { fields: ['longitude'] },
-    { fields: ['name', 'address'], unique: true, name: 'unique_court' },
+    {
+      fields: ['name', 'address_line1', 'city', 'state', 'postal_code', 'country'],
+      unique: true,
+      name: 'unique_court',
+    },
   ],
 });
 
 export default CourtLocation;
-

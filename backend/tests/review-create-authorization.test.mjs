@@ -26,7 +26,7 @@ describe('validateReviewCreateAuthorization', () => {
       hasExistingReview: false,
     });
     assert.equal(result.ok, true);
-    assert.equal(result.targetUserId, 20);
+    assert.equal(result.coachId, 20);
   });
 
   it('allows dual-role user when they are primary_student_id (coach_id is someone else)', () => {
@@ -36,7 +36,7 @@ describe('validateReviewCreateAuthorization', () => {
       hasExistingReview: false,
     });
     assert.equal(result.ok, true);
-    assert.equal(result.targetUserId, 99);
+    assert.equal(result.coachId, 99);
   });
 
   it('rejects coach on their own booking (not primary student)', () => {
@@ -82,7 +82,7 @@ describe('validateReviewCreateAuthorization', () => {
     assert.match(result.message, /already exists/i);
   });
 
-  it('rejects self-review when reviewer would equal coach target', () => {
+  it('rejects self-review when student would equal coach', () => {
     const result = validateReviewCreateAuthorization({
       userId: 42,
       booking: completedBooking({ primary_student_id: 42, coach_id: 42 }),
@@ -106,37 +106,88 @@ describe('validateReviewCreateAuthorization', () => {
 });
 
 describe('reviewSchema (POST body)', () => {
-  test('strips target_user_id from validated payload (client cannot choose target)', () => {
+  test('accepts booking_id + rating; comment optional', () => {
+    const { error, value } = reviewSchema.validate(
+      { booking_id: 162, rating: 5 },
+      { stripUnknown: true, convert: true },
+    );
+    assert.equal(error, undefined);
+    assert.equal(value.booking_id, 162);
+    assert.equal(value.rating, 5);
+    assert.equal(value.comment, undefined);
+  });
+
+  test('strips coach_id / student_id from validated payload (client cannot choose parties)', () => {
     const { error, value } = reviewSchema.validate(
       {
         booking_id: 1,
-        target_user_id: 999,
+        coach_id: 999,
+        student_id: 888,
+        target_user_id: 777,
         rating: 5,
         comment: 'Great',
       },
       { stripUnknown: true, convert: true },
     );
     assert.equal(error, undefined);
+    assert.equal(value.coach_id, undefined);
+    assert.equal(value.student_id, undefined);
     assert.equal(value.target_user_id, undefined);
     assert.equal(value.booking_id, 1);
     assert.equal(value.rating, 5);
   });
+
+  test('strips unknown body fields', () => {
+    const { error, value } = reviewSchema.validate(
+      {
+        booking_id: 162,
+        rating: 5,
+        comment: 'Great lesson!',
+        attendance_badges: ['on_time'],
+        visibility: 'private',
+        coach_id: 999,
+      },
+      { stripUnknown: true, convert: true },
+    );
+    assert.equal(error, undefined);
+    assert.deepEqual(value, {
+      booking_id: 162,
+      rating: 5,
+      comment: 'Great lesson!',
+    });
+  });
 });
 
 describe('createReview controller wiring', () => {
-  it('uses validateReviewCreateAuthorization and sets target from booking coach', () => {
+  it('uses validateReviewCreateAuthorization and sets coach from booking', () => {
     const src = readFileSync(join(__dirname, '../controllers/reviewController.js'), 'utf8');
     const createBlock = src.slice(src.indexOf('export const createReview'), src.indexOf('export const updateReview'));
     assert.match(createBlock, /validateReviewCreateAuthorization/);
-    assert.match(createBlock, /target_user_id: auth\.targetUserId/);
+    assert.match(createBlock, /coach_id: auth\.coachId/);
+    assert.match(createBlock, /student_id: req\.user\.id/);
     assert.doesNotMatch(createBlock, /includes\('admin'\)/);
-    assert.doesNotMatch(createBlock, /target_user_id.*req\.validated|req\.validated.*target_user_id/);
+    assert.doesNotMatch(createBlock, /coach_id.*req\.validated|req\.validated.*coach_id/);
+    assert.doesNotMatch(createBlock, /attendance_badges/);
+    assert.doesNotMatch(createBlock, /visibility/);
   });
 
   it('checks existing review by booking_id only', () => {
     const src = readFileSync(join(__dirname, '../controllers/reviewController.js'), 'utf8');
     const createBlock = src.slice(src.indexOf('export const createReview'), src.indexOf('export const updateReview'));
     assert.match(createBlock, /findOne\(\{\s*where:\s*\{\s*booking_id\s*\}/);
+    assert.match(createBlock, /SequelizeUniqueConstraintError/);
+  });
+
+  it('declares UNIQUE(booking_id) on the Review model', () => {
+    const src = readFileSync(join(__dirname, '../models/Review.js'), 'utf8');
+    assert.match(src, /reviews_booking_id_unique/);
+    assert.match(src, /unique:\s*true/);
+  });
+
+  it('requires student role + verified email on POST /reviews', () => {
+    const src = readFileSync(join(__dirname, '../routes/reviewRoutes.js'), 'utf8');
+    assert.match(src, /authorize\('student'\)/);
+    assert.match(src, /requireVerifiedEmail/);
   });
 });
 

@@ -1,6 +1,9 @@
 import { serializeBookingSummary } from './bookingDto.js';
 
-/** Business-facing payment fields for participant-facing endpoints. */
+/** Business-facing payment fields for participant-facing endpoints.
+ *  `platform_fee_*` is the platform's internal commission from the lesson (not an add-on to the student charge).
+ *  `total_charge_to_student` equals the listed lesson price.
+ */
 export const PAYMENT_SUMMARY_FIELD_NAMES = [
   'id',
   'booking_id',

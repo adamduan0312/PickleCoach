@@ -119,7 +119,7 @@ describe('authorization gate for confirm', () => {
       isPaymentIntentAuthorizedForBookingConfirm({
         id: 'pi_1',
         status: 'requires_capture',
-        amount_capturable: 5400,
+        amount_capturable: 5000,
       }),
       true,
     );
@@ -149,6 +149,15 @@ describe('authorization gate for confirm', () => {
 });
 
 describe('confirm service wiring', () => {
+  it('requires student role by presence (dual-role coach+student may book)', () => {
+    // Gate on having student — not on lacking coach — so dual-role users can book.
+    assert.match(bookingIntentServiceSrc, /!studentRoles\.includes\('student'\)/);
+    assert.match(
+      bookingIntentServiceSrc,
+      /Only users with the student role can create bookings/,
+    );
+  });
+
   it('exposes amount in USD dollars and amount_cents for Stripe', () => {
     const createIntentSection = bookingIntentServiceSrc.slice(
       bookingIntentServiceSrc.indexOf('export async function createBookingIntent'),
@@ -209,6 +218,8 @@ describe('API routes and deprecation', () => {
     assert.match(routesSrc, /\/booking-intents/);
     const intentRoutesSrc = readFileSync(join(__dirname, '../routes/bookingIntentRoutes.js'), 'utf8');
     assert.match(intentRoutesSrc, /bookingIntentController\.createBookingIntent/);
+    // Dual-role: require student role presence (coach+student may book; coach-only may not).
+    assert.match(intentRoutesSrc, /authorize\('student'\)/);
   });
 
   it('mounts POST /api/bookings/confirm before /:id', () => {
@@ -217,6 +228,7 @@ describe('API routes and deprecation', () => {
     const idIdx = bookingRoutesSrc.indexOf("'/:id'");
     assert.ok(confirmIdx > -1 && idIdx > confirmIdx, '/confirm must be registered before /:id');
     assert.match(bookingRoutesSrc, /confirmBookingSchema/);
+    assert.match(bookingRoutesSrc, /authorize\('student'\)/);
   });
 
   it('deprecates POST /api/bookings with 410', () => {

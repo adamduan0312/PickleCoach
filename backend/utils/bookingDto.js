@@ -1,7 +1,7 @@
 import { isMessagingLocked } from './bookingMessaging.js';
 import { serializeCourtLocationForBooking } from './courtAddressVisibility.js';
 
-/** Core booking fields for list, inbox, disputes, and embedded summaries. */
+/** Core booking fields for list, disputes, and embedded summaries. */
 export const BOOKING_SUMMARY_FIELD_NAMES = [
   'id',
   'lesson_id',
@@ -12,6 +12,14 @@ export const BOOKING_SUMMARY_FIELD_NAMES = [
   'price',
   'status',
   'court_location_id',
+];
+
+/** Lean booking embed for messaging inbox / thread / start-conversation. */
+export const BOOKING_MESSAGING_FIELD_NAMES = [
+  'id',
+  'lesson_id',
+  'scheduled_at',
+  'status',
 ];
 
 /** Additional booking fields for detail views and post-mutation responses. */
@@ -42,10 +50,27 @@ export const LESSON_SUMMARY_FIELD_NAMES = [
 export const COURT_LOCATION_SUMMARY_FIELD_NAMES = [
   'id',
   'name',
-  'address',
+  'address_line1',
+  'city',
+  'state',
+  'postal_code',
+  'country',
   'latitude',
   'longitude',
   'is_private',
+];
+
+/** Cancellation history on booking detail — no reliability engine internals. */
+export const CANCELLATION_HISTORY_FIELD_NAMES = [
+  'id',
+  'booking_id',
+  'cancelled_by',
+  'refund_amount',
+  'penalty_amount',
+  'reason',
+  'reason_notes',
+  'penalty_reason',
+  'cancelled_at',
 ];
 
 export const USER_PARTY_FIELD_NAMES = ['id', 'full_name', 'avatar_url'];
@@ -118,8 +143,14 @@ export function serializeCourtLocationSummary(courtLocation, opts = {}) {
   return serializeCourtLocationForBooking(courtLocation, opts);
 }
 
+/** Booking-detail cancellation history row (omits affects_reliability / refund_payment_id). */
+export function serializeCancellationHistoryItem(record) {
+  if (!record) return null;
+  return pickFields(toPlain(record), CANCELLATION_HISTORY_FIELD_NAMES);
+}
+
 /**
- * Canonical trimmed booking for lists, messaging, disputes, and embeds.
+ * Canonical trimmed booking for lists, disputes, and embeds.
  * Omits persistence internals (`idempotency_key`, `deleted_at`, etc.).
  */
 export function serializeBookingSummary(booking) {
@@ -130,9 +161,16 @@ export function serializeBookingSummary(booking) {
   return dto;
 }
 
-/** Alias — messaging endpoints use the summary shape. */
+/**
+ * Messaging-only booking summary — inbox / thread UI fields only.
+ * Omits duration, price, court, and party ids (use booking detail for those).
+ */
 export function serializeBookingForMessaging(booking) {
-  return serializeBookingSummary(booking);
+  if (!booking) return null;
+  const plain = toPlain(booking);
+  const dto = pickFields(plain, BOOKING_MESSAGING_FIELD_NAMES);
+  dto.messaging_locked = isMessagingLocked(plain);
+  return dto;
 }
 
 /** Alias — dispute endpoints use the summary shape. */
@@ -243,7 +281,9 @@ export function serializeBookingDetailPayload(
   }
 
   if (cancellationHistory !== undefined) {
-    dto.cancellationHistory = cancellationHistory;
+    dto.cancellationHistory = Array.isArray(cancellationHistory)
+      ? cancellationHistory.map(serializeCancellationHistoryItem)
+      : cancellationHistory;
   }
 
   return dto;

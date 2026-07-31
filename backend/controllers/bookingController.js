@@ -17,7 +17,7 @@ import { successResponse, errorResponse, paginatedResponse } from '../utils/resp
 import { getPagination, getPagingData } from '../utils/pagination.js';
 import { Op } from 'sequelize';
 import { logAudit, createAuditLog } from '../utils/audit.js';
-import { affectsReliability, sanitizeResponse } from '../services/reliabilityPenaltyService.js';
+import { affectsReliability } from '../services/reliabilityPenaltyService.js';
 import { buildCancellationApiPayload } from '../utils/cancellationResponse.js';
 import * as bookingIntentService from '../services/bookingIntentService.js';
 import { updateUserReliability } from '../services/reliabilityService.js';
@@ -234,11 +234,8 @@ export const getBookingById = async (req, res) => {
       return errorResponse(res, 'Unauthorized', 403);
     }
 
-    // Sanitize cancellation history - remove affects_reliability from frontend
+    // Cancellation history is trimmed in serializeBookingDetailPayload
     const bookingJson = booking.toJSON();
-    if (bookingJson.cancellationHistory && Array.isArray(bookingJson.cancellationHistory)) {
-      bookingJson.cancellationHistory = bookingJson.cancellationHistory.map(record => sanitizeResponse(record));
-    }
 
     const isAdminViewer = isAdmin && isAdminRoute;
 
@@ -405,6 +402,11 @@ export const completeBooking = async (req, res) => {
     if (!booking) return errorResponse(res, 'Booking not found', 404);
     if (req.user.id !== booking.coach_id) return errorResponse(res, 'Only the coach for this booking can complete it', 403);
 
+    const finalizedCheck = checkAttendanceFinalized(booking);
+    if (!finalizedCheck.ok) {
+      return errorResponse(res, finalizedCheck.message, 409, null, { code: finalizedCheck.code });
+    }
+
     if (!['confirmed', 'awaiting_verification'].includes(booking.status)) {
       return errorResponse(
         res,
@@ -490,6 +492,10 @@ export const markBookingNoShow = async (req, res) => {
         { code: 'disputed_use_resolve_dispute', booking_status: booking.status },
       );
     }
+    const finalizedCheck = checkAttendanceFinalized(booking);
+    if (!finalizedCheck.ok) {
+      return errorResponse(res, finalizedCheck.message, 409, null, { code: finalizedCheck.code });
+    }
     const allowedStatuses = ['confirmed', 'awaiting_verification'];
     if (!allowedStatuses.includes(booking.status)) {
       const allowedLabel = 'confirmed or awaiting_verification';
@@ -566,25 +572,44 @@ function respondIfPaymentAuthorizationError(res, error) {
 export const acceptBooking = async (req, res) => {
   try {
     const { id } = req.params;
-    const booking = await Booking.findByPk(id);
-    if (!booking) return errorResponse(res, 'Booking not found', 404);
-    if (booking.status !== 'pending') {
-      return errorResponse(res, `Booking is not pending (status: ${booking.status}). Only pending bookings can be accepted.`, 400);
-    }
-    if (req.user.id !== booking.coach_id) {
-      return errorResponse(res, 'Only the coach for this booking can accept it', 403);
-    }
 
-    const payment = await Payment.findOne({ where: { booking_id: booking.id }, order: [['id', 'DESC']] });
-    if (payment) {
-      await paymentService.capturePaymentOnCoachAccept(payment.id);
-    } else {
-      await applyBookingStatusTransition(booking, {
-        toStatus: 'confirmed',
-        via: BookingTransitionVia.COACH_ACCEPT_WITHOUT_PAYMENT,
+    await sequelize.transaction(async (t) => {
+      const booking = await Booking.findByPk(id, { transaction: t, lock: t.LOCK.UPDATE });
+      if (!booking) {
+        const err = new Error('Booking not found');
+        err.statusCode = 404;
+        throw err;
+      }
+      if (booking.status !== 'pending') {
+        const err = new Error(
+          `Booking is not pending (status: ${booking.status}). Only pending bookings can be accepted.`,
+        );
+        err.statusCode = 400;
+        throw err;
+      }
+      if (req.user.id !== booking.coach_id) {
+        const err = new Error('Only the coach for this booking can accept it');
+        err.statusCode = 403;
+        throw err;
+      }
+
+      const payment = await Payment.findOne({
+        where: { booking_id: booking.id },
+        order: [['id', 'DESC']],
+        transaction: t,
+        lock: t.LOCK.UPDATE,
       });
-      await logAudit(req.user.id, 'booking_confirmed_by_coach', 'bookings', booking.id, null, { status: 'confirmed' }, req);
-    }
+      if (payment) {
+        await paymentService.capturePaymentOnCoachAccept(payment.id, { transaction: t });
+      } else {
+        await applyBookingStatusTransition(booking, {
+          toStatus: 'confirmed',
+          via: BookingTransitionVia.COACH_ACCEPT_WITHOUT_PAYMENT,
+          options: { transaction: t },
+        });
+        await logAudit(req.user.id, 'booking_confirmed_by_coach', 'bookings', booking.id, null, { status: 'confirmed' }, req);
+      }
+    });
 
     const updated = await Booking.findByPk(id, {
       include: [
@@ -610,6 +635,9 @@ export const acceptBooking = async (req, res) => {
       'Booking accepted. If payment was pending capture, confirmation completes when Stripe sends payment_intent.succeeded.'
     );
   } catch (error) {
+    if (error?.statusCode === 404) return errorResponse(res, error.message, 404);
+    if (error?.statusCode === 403) return errorResponse(res, error.message, 403);
+    if (error?.statusCode === 400) return errorResponse(res, error.message, 400);
     const sm = respondIfBookingStateMachineError(res, error);
     if (sm) return sm;
     const pay = respondIfPaymentAuthorizationError(res, error);
@@ -631,47 +659,72 @@ export const declineBooking = async (req, res) => {
   try {
     const { id } = req.params;
     const { message_to_student, decline_reason_code } = req.validated || {};
-    const booking = await Booking.findByPk(id);
-    if (!booking) return errorResponse(res, 'Booking not found', 404);
-    if (booking.status !== 'pending') {
-      return errorResponse(res, `Booking is not pending (status: ${booking.status}). Only pending bookings can be declined.`, 400);
-    }
-    if (req.user.id !== booking.coach_id) {
-      return errorResponse(res, 'Only the coach for this booking can decline it', 403);
-    }
-
-    const payment = await Payment.findOne({ where: { booking_id: booking.id }, order: [['id', 'DESC']] });
-    if (payment) {
-      await paymentService.cancelPaymentOnCoachDecline(payment.id);
-    } else {
-      await applyBookingStatusTransition(booking, {
-        toStatus: 'cancelled',
-        via: BookingTransitionVia.COACH_DECLINE,
-        patch: {
-          cancelled_by: 'coach',
-          cancelled_at: new Date(),
-        },
-      });
-      await logAudit(req.user.id, 'booking_declined_by_coach', 'bookings', booking.id, null, { status: 'cancelled' }, req);
-    }
-
-    const now = new Date();
     const noteToStore = (message_to_student && message_to_student.trim()) ? message_to_student.trim() : null;
     const codeToStore = (decline_reason_code && decline_reason_code.trim()) ? decline_reason_code.trim() : null;
-    await booking.update({
-      declined_at: now,
-      decline_message_to_student: noteToStore,
-      decline_reason_code: codeToStore,
-    });
 
-    await CancellationHistory.create({
-      booking_id: booking.id,
-      cancelled_by: 'coach',
-      reason: 'other',
-      reason_notes: (noteToStore || 'Coach declined').substring(0, 255),
-      affects_reliability: false,
-      refund_amount: 0,
-      penalty_amount: 0,
+    await sequelize.transaction(async (t) => {
+      const booking = await Booking.findByPk(id, { transaction: t, lock: t.LOCK.UPDATE });
+      if (!booking) {
+        const err = new Error('Booking not found');
+        err.statusCode = 404;
+        throw err;
+      }
+      if (booking.status !== 'pending') {
+        const err = new Error(
+          `Booking is not pending (status: ${booking.status}). Only pending bookings can be declined.`,
+        );
+        err.statusCode = 400;
+        throw err;
+      }
+      if (req.user.id !== booking.coach_id) {
+        const err = new Error('Only the coach for this booking can decline it');
+        err.statusCode = 403;
+        throw err;
+      }
+
+      const payment = await Payment.findOne({
+        where: { booking_id: booking.id },
+        order: [['id', 'DESC']],
+        transaction: t,
+        lock: t.LOCK.UPDATE,
+      });
+      if (payment) {
+        await paymentService.cancelPaymentOnCoachDecline(payment.id, { transaction: t });
+      } else {
+        await applyBookingStatusTransition(booking, {
+          toStatus: 'cancelled',
+          via: BookingTransitionVia.COACH_DECLINE,
+          patch: {
+            cancelled_by: 'coach',
+            cancelled_at: new Date(),
+          },
+          options: { transaction: t },
+        });
+        await logAudit(req.user.id, 'booking_declined_by_coach', 'bookings', booking.id, null, { status: 'cancelled' }, req);
+      }
+
+      const now = new Date();
+      await booking.update(
+        {
+          declined_at: now,
+          decline_message_to_student: noteToStore,
+          decline_reason_code: codeToStore,
+        },
+        { transaction: t },
+      );
+
+      await CancellationHistory.create(
+        {
+          booking_id: booking.id,
+          cancelled_by: 'coach',
+          reason: 'other',
+          reason_notes: (noteToStore || 'Coach declined').substring(0, 255),
+          affects_reliability: false,
+          refund_amount: 0,
+          penalty_amount: 0,
+        },
+        { transaction: t },
+      );
     });
 
     const updated = await Booking.findByPk(id, {
@@ -692,6 +745,9 @@ export const declineBooking = async (req, res) => {
       'Booking declined',
     );
   } catch (error) {
+    if (error?.statusCode === 404) return errorResponse(res, error.message, 404);
+    if (error?.statusCode === 403) return errorResponse(res, error.message, 403);
+    if (error?.statusCode === 400) return errorResponse(res, error.message, 400);
     const sm = respondIfBookingStateMachineError(res, error);
     if (sm) return sm;
     logger.error('Decline booking error:', error);

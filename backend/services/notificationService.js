@@ -18,6 +18,8 @@ import {
   buildBookingDeclinedNotificationContent,
   buildBookingCancelledNotificationContent,
   buildNewMessageNotificationPayload,
+  buildStripePayoutsDisabledNotificationContent,
+  buildStripePayoutsEnabledNotificationContent,
 } from '../notifications/payloadBuilders.js';
 
 /**
@@ -415,6 +417,34 @@ export const notifyBookingCancelled = async (bookingId, {
 };
 
 /**
+ * Stripe revoked payout capability for a coach (stripe_ready true→false).
+ * Caller (syncCoachStripeReadyFromAccount) guarantees this only fires on transitions,
+ * so duplicate account.updated webhook deliveries never produce duplicate emails.
+ */
+export const notifyCoachStripePayoutsDisabled = async (coachUserId) => {
+  const coach = await User.findByPk(coachUserId, { attributes: ['id', 'email'] });
+  if (!coach) return;
+  await deliverDualChannel(
+    coachUserId,
+    'stripe_payouts_disabled',
+    buildStripePayoutsDisabledNotificationContent(),
+    { email: coach.email },
+  );
+};
+
+/** Stripe payout capability (re)enabled for a coach (stripe_ready false→true). */
+export const notifyCoachStripePayoutsEnabled = async (coachUserId) => {
+  const coach = await User.findByPk(coachUserId, { attributes: ['id', 'email'] });
+  if (!coach) return;
+  await deliverDualChannel(
+    coachUserId,
+    'stripe_payouts_enabled',
+    buildStripePayoutsEnabledNotificationContent(),
+    { email: coach.email },
+  );
+};
+
+/**
  * Other booking participant who should receive a new-message ping (in-app only).
  * @returns {number|null}
  */
@@ -429,7 +459,7 @@ export const resolveMessageNotificationRecipient = (booking, senderId) => {
 
 /**
  * In-app only: notify the other booking participant that a new chat message arrived.
- * No email/SMS — chat volume would be noisy; the frontend can poll GET /notifications.
+ * No email/SMS — chat volume would be noisy; the frontend can poll GET /notifications/unread-count for the badge.
  */
 export const notifyNewMessage = async ({ booking, message, sender, conversationId } = {}) => {
   const recipientId = resolveMessageNotificationRecipient(booking, sender?.id ?? message?.sender_id);

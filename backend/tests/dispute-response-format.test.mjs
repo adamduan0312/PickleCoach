@@ -208,6 +208,54 @@ test('formatDisputeResponse: nested booking, disputeType, resolutionAction are t
   assert.equal(out.resolutionAction.requires_payout_adjustment, undefined);
 });
 
+test('formatDisputeResponse: participant omits stripe dispute fields; admin includes them', () => {
+  const raw = baseDispute({
+    stripe_dispute_id: 'dp_1',
+    stripe_dispute_status: 'warning_needs_response',
+    escalated: true,
+  });
+  const participant = formatDisputeResponse(raw, { isAdmin: false });
+  assert.equal(participant.stripe_dispute_id, undefined);
+  assert.equal(participant.escalated, undefined);
+
+  const admin = formatDisputeResponse(raw, { isAdmin: true });
+  assert.equal(admin.stripe_dispute_id, 'dp_1');
+  assert.equal(admin.escalated, true);
+});
+
+test('formatDisputeResponse: payment uses payment DTO (never raw Stripe ids for participants)', () => {
+  const out = formatDisputeResponse(
+    baseDispute({
+      payment: {
+        id: 9,
+        booking_id: 1,
+        payment_intent_id: 'pi_secret',
+        charge_id: 'ch_secret',
+        metadata: { x: 1 },
+        payment_status: 'captured',
+        total_charge_to_student: '80.00',
+        escrow_status: 'held',
+        refund_status: 'none',
+        lesson_price: '80.00',
+        platform_fee_percent: 8,
+        platform_fee_amount: '6.40',
+        coach_payout_expected: '73.60',
+        coach_id: 2,
+        student_id: 3,
+        payment_method: 'stripe',
+        currency: 'USD',
+        refunded_amount: '0.00',
+        created_at: '2026-01-01T00:00:00.000Z',
+        updated_at: '2026-01-01T00:00:00.000Z',
+      },
+    }),
+    { isAdmin: false },
+  );
+  assert.equal(out.payment.payment_status, 'captured');
+  assert.equal(out.payment.payment_intent_id, undefined);
+  assert.equal(out.payment.metadata, undefined);
+});
+
 test('formatDisputeResponse: null nested associations serialize to null', () => {
   const out = formatDisputeResponse(
     baseDispute({

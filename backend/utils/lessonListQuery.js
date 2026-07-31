@@ -5,8 +5,8 @@ import { Op } from 'sequelize';
 
 /**
  * Admin lesson inventory — no marketplace gate.
- * Default = **complete inventory** (includes soft-deleted). Pass `include_deleted=false`
- * or `deleted=false` to exclude soft-deleted; `deleted=true` for deleted-only.
+ * Default excludes soft-deleted (`deleted_at: null`). Pass `include_deleted=true`
+ * to include soft-deleted; `deleted=true` for deleted-only.
  *
  * @param {{
  *   coach_id?: number,
@@ -29,15 +29,12 @@ export function buildAdminLessonsWhere({
 
   if (deleted === true || deleted === 'true') {
     where.deleted_at = { [Op.ne]: null };
-  } else if (
-    deleted === false
-    || deleted === 'false'
-    || include_deleted === false
-    || include_deleted === 'false'
-  ) {
+  } else if (include_deleted === true || include_deleted === 'true') {
+    // omit deleted_at → active/inactive + soft-deleted
+  } else {
+    // default + deleted=false / include_deleted=false
     where.deleted_at = null;
   }
-  // else: omit deleted_at → include active + soft-deleted (complete inventory)
 
   return where;
 }

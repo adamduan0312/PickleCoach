@@ -137,6 +137,27 @@ export const buildBookingCancelledNotificationContent = (payload = {}) => {
 };
 
 /**
+ * Stripe revoked payout capability (failed verification, disputed identity, …).
+ * Fired only on a stripe_ready true→false transition; the coach is already
+ * hidden from the marketplace, this is the "here's how to fix it" message.
+ */
+export const buildStripePayoutsDisabledNotificationContent = () => ({
+  headline: 'Payouts paused — action needed',
+  summary: 'Stripe paused payouts for your account, so your profile is hidden from the marketplace. Reconnect Stripe to get relisted.',
+  route: '/coach/onboarding',
+});
+
+/**
+ * Stripe payout capability (re)enabled — covers both first-time onboarding
+ * completion and recovery after a revocation. Fired only on false→true.
+ */
+export const buildStripePayoutsEnabledNotificationContent = () => ({
+  headline: 'Payouts enabled',
+  summary: 'Your Stripe account is ready — you can receive payouts and appear in the marketplace.',
+  route: '/coach/onboarding',
+});
+
+/**
  * Preview + deep-link fields for the in-app notification bell.
  */
 export const buildNewMessageNotificationPayload = ({

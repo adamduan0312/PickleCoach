@@ -6,10 +6,24 @@
  * Does not delete any endpoint — moves/copies each into the appropriate flow.
  *
  * Rule: Each endpoint appears only in flow folder(s) where that role is ALLOWED
- * to use it (no 403). E.g. Admin cannot use Add Role (self-service) or Delete My Account, so
- * those are only in Coach and Student flows. Coach cannot use List Coaches (Search)
- * or Create Booking, so those are only in Admin and Student flows. Student cannot
- * use explicit booking action endpoints (accept/decline/complete/student-no-show/cancel).
+ * to use it (no 403 from the role gate). E.g. Admin cannot use Add Role (self-service)
+ * or Delete My Account, so those are only in Coach and Student flows. Coach can use
+ * List Coaches (Search) for marketplace browse (same public cards as students; booking
+ * still requires student). Coach cannot use Create Booking Intent / Confirm, so those
+ * stay Student only.
+ *
+ * Cancel booking (`POST /bookings/:id/cancel`):
+ * - Student: allowed for bookings where they are the primary student
+ * - Coach: allowed for bookings where they are the coach
+ * Both Coach and Student flows include Cancel Booking.
+ * Student cannot use coach-only booking actions (accept / decline / complete /
+ * student-no-show).
+ *
+ * Ownership exception: By Flow guarantees the **role gate** passes for that folder’s
+ * persona, not that every ownership/resource state will pass. Example:
+ * `PUT /bookings/:id/accept` is in Coach flow because the coach role is allowed, but
+ * the seeded `booking_id` must still belong to that coach at runtime. Postman cannot
+ * infer ownership from role alone — set variables from prior list/create steps.
  *
  * ## String contract (By Type is canonical)
  *
@@ -23,6 +37,7 @@
  * - One HTTP endpoint should exist **once** in By Type. If multiple flows need it, list the
  *   same `[folderName, requestName]` in each `*_ORDER` (optionally with a 4th element
  *   `displayName` for sidebar clarity). Use `applyDescriptionOverride` for per-flow copy only.
+ * - Keep By Type resource-oriented (not role-siloed). Role journeys belong in By Flow only.
  */
 
 import fs from 'fs';
@@ -153,13 +168,18 @@ const ADMIN_ORDER = [
   ['Admin', 'Get All Users (Admin)'],
   ['Admin', 'Get User By ID (Admin)'],
   ['Admin', 'Update User (Admin)'],
+  ['Admin', 'Update Coach Profile (Admin)'],
   ['Admin', 'Get User Reliability (Admin Full Breakdown)', '10b', 'Get User Reliability (Admin)'],
   ['Admin', 'Adjust User Reliability'],
   ['Notifications', 'Create Notification (Admin)'],
-  ['Admin', 'Get My Notifications'],
+  ['Notifications', 'Get My Unread Notification Count'],
+  ['Notifications', 'Get My Notifications'],
+  ['Notifications', 'Mark Notification As Read'],
+  ['Notifications', 'Delete Notification'],
   ['Admin', 'Get Coach Courts (Admin)'],
   // Same canonical request as Coaches → Get Coach Availability (one definition in By Type).
   ['Coaches', 'Get Coach Availability', '14b', 'Get Coach Availability (Admin)'],
+  ['Admin', 'Delete Court Globally (Admin)'],
   ['Admin', 'Delete Coach Court (Admin)'],
   ['Admin', 'Delete Coach Availability (Admin)'],
   ['Admin', 'Delete User (Admin)'],
@@ -177,11 +197,11 @@ const ADMIN_ORDER = [
   ['Courts', 'List/Search Courts'],
   ['Courts', 'Get Court By ID'],
   ['Lessons', 'Get Coach Lessons'],
-  ['Lessons', 'Get All Lessons (DEPRECATED — 410)'],
   ['Lessons', 'Get Lesson By ID'],
-  ['Disputes', 'Get All Disputes'],
-  ['Disputes', 'Get Dispute By ID'],
-  ['Admin', 'Get All Lessons (Admin)'],
+  ['Disputes', 'Get My Disputes', null, 'Get All Disputes'],
+  ['Disputes', 'Get My Dispute By ID', null, 'Get Dispute By ID'],
+  ['Admin', 'Admin - Get All Lessons'],
+  ['Admin', 'Admin - List Reviews'],
   ['Admin', 'Get Bookings (Admin)'],
   ['Admin', 'Get Booking By ID (Admin)'],
   ['Admin', 'Cancel Booking (Admin)'],
@@ -219,6 +239,11 @@ const COACH_ORDER = [
   ['Coaches', 'Delete Availability'],
   ['Courts', 'List/Search Courts'],
   ['Courts', 'Get Court By ID'],
+  ['Coaches', 'List Coaches (Search)'],
+  ['Coaches', 'Get Coach By ID'],
+  ['Reviews', 'Get Coach Reviews'],
+  ['Coaches', 'Get Coach Reliability (Score Only)', null, 'Get Coach Reliability (browse)'],
+  ['Coaches', 'Get Coach Courts'],
   ['Courts', 'Create Court'],
   ['Coaches', 'Add Court to Coach'],
   ['Coaches', 'List My Courts'],
@@ -226,8 +251,8 @@ const COACH_ORDER = [
   ['Coaches', 'Remove Court from Coach'],
   ['Coaches', 'Initiate Stripe Connect Onboarding'],
   ['Coaches', 'Get Stripe Connect Status'],
+  ['Coaches', 'Get Marketplace Status'],
   ['Lessons', 'Get Coach Lessons'],
-  ['Lessons', 'Get All Lessons (DEPRECATED — 410)'],
   ['Lessons', 'Get Lesson By ID'],
   ['Lessons', 'Create Lesson'],
   ['Lessons', 'Update Lesson'],
@@ -241,16 +266,22 @@ const COACH_ORDER = [
   ['Bookings', 'Mark Student No-Show'],
   ['Payments', 'Get My Payments'],
   ['Payments', 'Get Payment By ID', null, 'Get My Payment By ID'],
-  ['Reviews', 'Get All Reviews'],
-  ['Messages', 'Get Conversations'],
-  ['Messages', 'Create Conversation'],
-  ['Messages', 'Get Conversation By ID'],
+  ['Payments', 'List My Payment Methods'],
+  ['Payments', 'Add Payment Method'],
+  ['Payments', 'Set Default Payment Method'],
+  ['Payments', 'Delete Payment Method'],
+  ['Reviews', 'List My Received Reviews'],
+  ['Messages', 'Get My Conversations'],
+  ['Messages', 'Start Conversation'],
+  ['Messages', 'Get My Conversation Details'],
   ['Messages', 'Send Message'],
-  ['Disputes', 'Get All Disputes'],
-  ['Disputes', 'Get Dispute By ID'],
+  ['Disputes', 'Get My Disputes'],
+  ['Disputes', 'Get My Dispute By ID'],
   ['Disputes', 'Create Dispute'],
+  ['Notifications', 'Get My Unread Notification Count'],
   ['Notifications', 'Get My Notifications'],
   ['Notifications', 'Mark Notification As Read'],
+  ['Notifications', 'Delete Notification'],
   ['Authentication', 'Forgot Password'],
   ['Authentication', 'Reset Password'],
   ['Authentication', 'Logout'],
@@ -272,35 +303,40 @@ const STUDENT_ORDER = [
   ['Authentication', 'Add Role (Self-Service)'],
   ['Coaches', 'List Coaches (Search)'],
   ['Coaches', 'Get Coach By ID'],
+  ['Reviews', 'Get Coach Reviews'],
   ['Coaches', 'Get Coach Reliability (Score Only)', '13b', 'Get Coach Reliability (Student \u2014 detail)'],
   ['Coaches', 'Get Coach Courts'],
   ['Coaches', 'Get Coach Availability'],
   ['Courts', 'List/Search Courts'],
   ['Courts', 'Get Court By ID'],
   ['Lessons', 'Get Coach Lessons'],
-  ['Lessons', 'Get All Lessons (DEPRECATED — 410)'],
-  ['Lessons', 'Get Lesson By ID'],
   ['Bookings', 'Create Booking Intent'],
-  ['Bookings', 'Confirm Booking'],
+  ['Bookings', 'Create Booking from Payment'],
   ['Students', 'List My Student Bookings (Student Dashboard)', '22'],
   ['Bookings', 'Get My Booking by ID'],
   // Students do not get coach/admin booking override endpoints in flow ordering
   ['Bookings', 'Cancel Booking'],
   ['Payments', 'Get My Payments'],
   ['Payments', 'Get Payment By ID', null, 'Get My Payment By ID'],
-  ['Reviews', 'Get All Reviews'],
+  ['Payments', 'List My Payment Methods'],
+  ['Payments', 'Add Payment Method'],
+  ['Payments', 'Set Default Payment Method'],
+  ['Payments', 'Delete Payment Method'],
+  ['Reviews', 'List My Written Reviews'],
   ['Reviews', 'Create Review'],
   ['Reviews', 'Update Review'],
   ['Reviews', 'Delete Review'],
-  ['Messages', 'Get Conversations'],
-  ['Messages', 'Create Conversation'],
-  ['Messages', 'Get Conversation By ID'],
+  ['Messages', 'Get My Conversations'],
+  ['Messages', 'Start Conversation'],
+  ['Messages', 'Get My Conversation Details'],
   ['Messages', 'Send Message'],
-  ['Disputes', 'Get All Disputes'],
-  ['Disputes', 'Get Dispute By ID'],
+  ['Disputes', 'Get My Disputes'],
+  ['Disputes', 'Get My Dispute By ID'],
   ['Disputes', 'Create Dispute'],
+  ['Notifications', 'Get My Unread Notification Count'],
   ['Notifications', 'Get My Notifications'],
   ['Notifications', 'Mark Notification As Read'],
+  ['Notifications', 'Delete Notification'],
   ['Authentication', 'Forgot Password'],
   ['Authentication', 'Reset Password'],
   ['Authentication', 'Logout'],
@@ -311,45 +347,46 @@ assertFlowOrdersResolvable();
 
 const adminFolder = buildFlowFolder(
   '1 – Flow: Admin',
-  'All admin endpoints in user-flow order. Run in sequence: Health → Login (admin) → Profile → Dashboard → Users → Payments → Disputes → Notifications → Coach support → Auth extras. See backend/POSTMAN_TESTING_GUIDE.md.\n\nNote: The Stripe webhook (`POST /api/webhooks/stripe`) is documentation-only and lives under the top-level **Reference (Not for Manual Run)** folder. It is intentionally excluded from this flow so the runner stays green end-to-end.',
+  'All admin endpoints in user-flow order. Run in sequence: Health → Login (admin) → Profile → Dashboard → Users → **Update Coach Profile** → Notifications (create/list/mark/delete) → Coach support (**Get Coach Availability**, **Delete Court Globally**, unlink courts/availability) → Auth extras (no Add Role / Delete My Account) → Courts/Lessons/Disputes → Admin booking reads/overrides → Payments. See backend/POSTMAN_TESTING_GUIDE.md.\n\nNote: The Stripe webhook (`POST /api/webhooks/stripe`) is documentation-only and lives under the top-level **Reference (Not for Manual Run)** folder. It is intentionally excluded from this flow so the runner stays green end-to-end.\n\nOwnership: admin booking/dispute overrides still need valid IDs from prior steps — the role gate alone is not enough.',
   ADMIN_ORDER
 );
 
 const coachFolder = buildFlowFolder(
   '2 – Flow: Coach',
-  'All coach endpoints in user-flow order. Run in sequence: Health → Register/Login → Profile → **GET /coaches/me/reliability** → Coach profile → Courts → Availability → Stripe Connect → Lessons → Bookings → Payments → **Get All Reviews** (read-only) → Messages → Disputes → Notifications → Auth extras. See backend/POSTMAN_TESTING_GUIDE.md.\n\nBooking MVP: student uses booking-intents + confirm; coach uses PUT .../accept or PUT .../decline only for pending requests (coach on that booking only). Schedule changes: cancel + book again (no reschedule API). Accept/decline/cancel notify the other party.\n\nReviews: coaches may **list** reviews (e.g. filter `target_user_id`); only the booking primary student creates/updates/deletes reviews — use **3 – Flow: Student** for those.',
+  'All coach endpoints in user-flow order. Run in sequence: Health → Register/Login → Profile → **GET /coaches/me/reliability** → Coach profile → Courts → **List Coaches (Search)** → **Get Coach By ID / Reviews / Reliability** (browse other coaches like a student) → **Get Coach Courts** → Availability → Stripe Connect → **GET /coaches/me/marketplace-status** → Lessons → Bookings → Payments / payment methods → **List My Received Reviews** (`GET /coaches/me/reviews`) → Messages → Disputes → Notifications (incl. delete) → Auth extras. See backend/POSTMAN_TESTING_GUIDE.md.\n\nBooking MVP: student uses booking-intents + confirm; coach uses PUT .../accept or PUT .../decline only for pending requests (coach on that booking only — role gate passes; ownership still requires the booking to belong to this coach). Schedule changes: cancel + book again (no reschedule API). Accept/decline/cancel notify the other party.\n\nReviews: coaches list **reviews about themselves** via `GET /coaches/me/reviews`. Only the booking primary student creates/updates/deletes reviews — use **3 – Flow: Student** for those. Browse another coach’s reviews: `GET /coaches/:id/reviews`.',
   COACH_ORDER
 );
 
 const studentFolder = buildFlowFolder(
   '3 – Flow: Student',
-  'All student endpoints in user-flow order. Run in sequence: Health → Register/Login → Profile → **GET /students/me/reliability** → Search coaches (each result includes **reliability** score) → Open coach (GET /coaches/:id, includes **reliability**) → Optional GET /coaches/:id/reliability → Get coach courts → Check availability → Create Booking Intent → Confirm Booking → Bookings → Payments → Reviews (create/update/delete after completed lesson) → Messages → Disputes → Notifications → Auth extras. See backend/POSTMAN_TESTING_GUIDE.md.\n\nBooking MVP: POST /booking-intents → Stripe authorize → POST /bookings/confirm creates a pending request; the coach accepts or declines with PUT .../accept | PUT .../decline. To change time: cancel this booking, then book again.',
+  'All student endpoints in user-flow order. Run in sequence: Health → Register/Login → Profile → **GET /students/me/reliability** → Search coaches → Open coach → Reviews/reliability/courts/availability → Create Booking Intent → Confirm → Bookings (incl. cancel for own bookings) → Payments / payment methods → Written reviews CRUD → Messages → Disputes → Notifications (incl. delete) → Auth extras. See backend/POSTMAN_TESTING_GUIDE.md.\n\nBooking MVP: POST /booking-intents → Stripe authorize → POST /bookings/confirm creates a pending request; the coach accepts or declines with PUT .../accept | PUT .../decline. To change time: cancel this booking, then book again.\n\nReviews: `GET /api/reviews` is **410**. Use `GET /coaches/:id/reviews` (about a coach), `GET /students/me/reviews` (written by me), `GET /coaches/me/reviews` (about me, coach), `GET /admin/reviews` (admin).',
   STUDENT_ORDER
 );
 
+/** Shared MVP password for every seeded/dev user (also `{{auth_password}}` in Postman). */
 const REGISTER_PASSWORD = 'Test1234!Ab';
 
 const DEV_LOGINS = {
   admin: {
     email: 'admin.testflow@picklecoach.example.org',
-    password: REGISTER_PASSWORD,
+    emailVar: '{{admin_email}}',
     fullName: 'Test Admin',
   },
   coach: {
     email: 'coach.testflow@picklecoach.example.org',
-    password: REGISTER_PASSWORD,
+    emailVar: '{{coach_email}}',
     fullName: 'Test Coach',
   },
   student: {
     email: 'student.testflow@picklecoach.example.org',
-    password: REGISTER_PASSWORD,
+    emailVar: '{{student_email}}',
     fullName: 'Test Student',
   },
 };
 
 function registerBodyRaw(role) {
   const cfg = DEV_LOGINS[role] || DEV_LOGINS.student;
-  return `{\n  "full_name": "${cfg.fullName}",\n  "email": "{{auth_email}}",\n  "password": "${REGISTER_PASSWORD}",\n  "role": "${role}",\n  "phone": "+1234567890",\n  "timezone": "America/New_York",\n  "avatar_url": ""\n}`;
+  return `{\n  "full_name": "${cfg.fullName}",\n  "email": "{{auth_email}}",\n  "password": "{{auth_password}}",\n  "role": "${role}",\n  "phone": "+1234567890",\n  "timezone": "America/New_York",\n  "avatar_url": ""\n}`;
 }
 
 const REGISTER_BODY_RAW = registerBodyRaw('student');
@@ -375,8 +412,11 @@ function applySeededLoginExample(flowFolder, role) {
   if (!loginReq?.request || !cfg) return;
   loginReq.request.body = {
     mode: 'raw',
-    raw: `{\n  "email": "${cfg.email}",\n  "password": "${cfg.password}"\n}`,
+    raw: `{\n  "email": "${cfg.emailVar}",\n  "password": "{{auth_password}}"\n}`,
   };
+  loginReq.request.description =
+    `Roles: Any (no auth). Login as **test-flow ${role}** (\`npm run seed:test-flows\`). ` +
+    `Email \`${cfg.emailVar}\`, password \`{{auth_password}}\` (default \`${REGISTER_PASSWORD}\`). Saves JWT to auth_token.`;
 }
 
 function applySeededRegisterExample(flowFolder, role) {
@@ -443,6 +483,36 @@ applyDescriptionOverride(
   coachFolder,
   'Get My Payment By ID',
   '**Coach flow** — same route as admin (`GET /api/payments/:id`). Only payments where you are `coach_id` (or `student_id` if you have both roles). **403** if the ID is not one of your payments. Path `:id` = `{{payment_id}}` from **Get My Payments**.',
+);
+applyDescriptionOverride(
+  coachFolder,
+  'List Coaches (Search)',
+  'Roles: Student, Coach, or Admin (same public marketplace cards; booking still requires student). **Coach flow:** browse competition / nearby coaches after listing courts. **Marketplace eligibility (DB-only):** profile + `stripe_ready` + ≥1 active lesson + ≥1 court + ≥1 availability. Flattened cards include redacted private-court `area` only. Optional filters: `court_location_id`, geo (`lat`/`lng`/`radius`), skill, review rating.',
+);
+applyDescriptionOverride(
+  coachFolder,
+  'Get Coach Courts',
+  'Roles: Any (no auth). **Coach flow:** after List Coaches, inspect another coach’s teaching locations (`GET /api/coaches/:id/courts`). Path `:id` = that coach’s user id (`{{coach_id}}`). Private courts appear with `area` only (street/GPS redacted). Your own courts with full address: use **List My Courts**.',
+);
+applyDescriptionOverride(
+  coachFolder,
+  'Get Coach By ID',
+  'Roles: Student, Coach, or Admin. **Coach flow:** open another coach’s public marketplace profile (`GET /api/coaches/:id`) the same way a student would. Path `:id` = `{{coach_id}}`.',
+);
+applyDescriptionOverride(
+  coachFolder,
+  'Get Coach Reviews',
+  'Roles: Student, Coach, or Admin. **Coach flow:** browse public reviews about another coach (`GET /api/coaches/:id/reviews`). Your own received reviews: **List My Received Reviews**.',
+);
+applyDescriptionOverride(
+  coachFolder,
+  'Get Coach Reliability (browse)',
+  'Roles: Student, Coach, or Admin. **Coach flow:** score-only reliability for another coach (`GET /api/coaches/:id/reliability`). Your full breakdown: **Get My Coach Reliability**.',
+);
+applyDescriptionOverride(
+  coachFolder,
+  'Get Marketplace Status',
+  'Roles: Coach or Admin. **Coach flow:** checklist for marketplace readiness (`GET /api/coaches/me/marketplace-status`) — profile, Stripe, lessons, courts, availability. Run after Connect status / before going live.',
 );
 applyDescriptionOverride(
   studentFolder,

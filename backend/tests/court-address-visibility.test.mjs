@@ -1,10 +1,10 @@
 /**
- * Private-court address visibility (DTO policy).
+ * Private-court address visibility (DTO policy) — structured address fields.
  */
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
-  approximateAreaFromAddress,
+  buildCourtArea,
   shouldRevealPrivateCourtExactAddress,
   serializeCourtForPublicViewer,
   serializeCourtLocationForBooking,
@@ -13,17 +13,43 @@ import {
 import { serializeBookingListItem } from '../utils/bookingDto.js';
 import { serializeCoachListItem } from '../utils/userDto.js';
 
-describe('approximateAreaFromAddress', () => {
-  it('strips the street line', () => {
+const publicCourt = {
+  id: 1,
+  name: 'Central Park',
+  address_line1: '123 Main St',
+  city: 'Miami',
+  state: 'FL',
+  postal_code: '33101',
+  country: 'US',
+  latitude: 25.7,
+  longitude: -80.2,
+  is_private: false,
+};
+
+const privateCourt = {
+  id: 9,
+  name: "John's Private Court",
+  address_line1: '1234 Oak Lane',
+  city: 'Coral Springs',
+  state: 'FL',
+  postal_code: '33065',
+  country: 'US',
+  latitude: 26.271,
+  longitude: -80.27,
+  is_private: true,
+};
+
+describe('buildCourtArea', () => {
+  it('returns City, ST ZIP', () => {
     assert.equal(
-      approximateAreaFromAddress('1234 Oak Lane, Coral Springs, FL 33065'),
+      buildCourtArea({ city: 'Coral Springs', state: 'FL', postal_code: '33065' }),
       'Coral Springs, FL 33065',
     );
   });
 
-  it('returns null when no city/state segment', () => {
-    assert.equal(approximateAreaFromAddress('Backyard Court'), null);
-    assert.equal(approximateAreaFromAddress(null), null);
+  it('returns null when any component is missing', () => {
+    assert.equal(buildCourtArea({ city: 'Coral Springs', state: 'FL' }), null);
+    assert.equal(buildCourtArea(null), null);
   });
 });
 
@@ -79,70 +105,100 @@ describe('shouldRevealPrivateCourtExactAddress', () => {
 });
 
 describe('serializeCourtForPublicViewer', () => {
-  it('keeps full address for public courts', () => {
-    const out = serializeCourtForPublicViewer({
-      id: 1,
-      name: 'Central Park',
-      address: '123 Main St, Miami, FL',
-      latitude: 25.7,
-      longitude: -80.2,
-      is_private: false,
-    });
-    assert.equal(out.address, '123 Main St, Miami, FL');
+  it('public court returns full structured address', () => {
+    const out = serializeCourtForPublicViewer(publicCourt);
+    assert.equal(out.address_line1, '123 Main St');
+    assert.equal(out.city, 'Miami');
+    assert.equal(out.state, 'FL');
+    assert.equal(out.postal_code, '33101');
+    assert.equal(out.country, 'US');
     assert.equal(out.latitude, 25.7);
-    assert.equal(out.area, 'Miami, FL');
+    assert.equal(out.area, 'Miami, FL 33101');
   });
 
-  it('redacts exact address and GPS for private courts; keeps area + distance', () => {
-    const out = serializeCourtForPublicViewer(
-      {
-        id: 9,
-        name: "John's Private Court",
-        address: '1234 Oak Lane, Coral Springs, FL',
-        latitude: 26.271,
-        longitude: -80.27,
-        is_private: true,
-      },
-      { searchLat: 26.27, searchLng: -80.27, includeId: false },
-    );
+  it('private court returns only area; hides structured fields and GPS', () => {
+    const out = serializeCourtForPublicViewer(privateCourt, {
+      searchLat: 26.27,
+      searchLng: -80.27,
+      includeId: false,
+    });
     assert.equal(out.name, "John's Private Court");
     assert.equal(out.is_private, true);
-    assert.equal(out.address, null);
+    assert.equal(out.area, 'Coral Springs, FL 33065');
+    assert.equal(out.address_line1, null);
+    assert.equal(out.city, null);
+    assert.equal(out.state, null);
+    assert.equal(out.postal_code, null);
+    assert.equal(out.country, null);
     assert.equal(out.latitude, null);
     assert.equal(out.longitude, null);
-    assert.equal(out.area, 'Coral Springs, FL');
     assert.equal(typeof out.distance_miles, 'number');
     assert.equal(out.id, undefined);
+  });
+
+  it('private court still returns distance', () => {
+    const out = serializeCourtForPublicViewer(privateCourt, {
+      searchLat: 26.271,
+      searchLng: -80.27,
+    });
+    assert.equal(out.distance_miles, 0);
+    assert.equal(out.latitude, null);
   });
 });
 
 describe('serializeCourtLocationForBooking', () => {
-  const privateCourt = {
+  const bookingPrivate = {
     id: 75,
     name: 'HOA Court',
-    address: '9 Club Dr, Boca Raton, FL',
+    address_line1: '9 Club Dr',
+    city: 'Boca Raton',
+    state: 'FL',
+    postal_code: '33432',
+    country: 'US',
     latitude: 26.3,
     longitude: -80.1,
     is_private: true,
   };
 
-  it('redacts for student on pending booking', () => {
-    const out = serializeCourtLocationForBooking(privateCourt, {
+  it('pending booking redacts location', () => {
+    const out = serializeCourtLocationForBooking(bookingPrivate, {
       bookingStatus: 'pending',
       viewerIsPrivileged: false,
     });
-    assert.equal(out.address, null);
+    assert.equal(out.address_line1, null);
+    assert.equal(out.city, null);
+    assert.equal(out.state, null);
+    assert.equal(out.postal_code, null);
     assert.equal(out.latitude, null);
-    assert.equal(out.area, 'Boca Raton, FL');
+    assert.equal(out.area, 'Boca Raton, FL 33432');
   });
 
-  it('reveals after confirmed for student', () => {
-    const out = serializeCourtLocationForBooking(privateCourt, {
+  it('confirmed booking reveals location', () => {
+    const out = serializeCourtLocationForBooking(bookingPrivate, {
       bookingStatus: 'confirmed',
       viewerIsPrivileged: false,
     });
-    assert.equal(out.address, '9 Club Dr, Boca Raton, FL');
+    assert.equal(out.address_line1, '9 Club Dr');
+    assert.equal(out.city, 'Boca Raton');
+    assert.equal(out.state, 'FL');
+    assert.equal(out.postal_code, '33432');
     assert.equal(out.latitude, 26.3);
+  });
+
+  it('completed booking reveals location', () => {
+    const out = serializeCourtLocationForBooking(bookingPrivate, {
+      bookingStatus: 'completed',
+      viewerIsPrivileged: false,
+    });
+    assert.equal(out.address_line1, '9 Club Dr');
+  });
+
+  it('disputed booking reveals location', () => {
+    const out = serializeCourtLocationForBooking(bookingPrivate, {
+      bookingStatus: 'disputed',
+      viewerIsPrivileged: false,
+    });
+    assert.equal(out.address_line1, '9 Club Dr');
   });
 });
 
@@ -151,35 +207,15 @@ describe('serializeCourtLocationForBooking', () => {
  *
  * Court | User | Booking state | Exact address
  * ------|------|---------------|--------------
- * Public | Student | none | visible
- * Private | Student | none | hidden
- * Private | Student | pending | hidden
+ * Public | Student | none | visible (structured)
+ * Private | Student | none | area only
+ * Private | Student | pending | area only
  * Private | Student | confirmed | visible **on booking DTO only**
- * Private | Student | cancelled (never confirmed) | hidden
+ * Private | Student | cancelled (never confirmed) | area only
  * Private | Coach owner | any | visible
  * Private | Admin | any | visible
- *
- * Coach discovery (`serializeCourtForPublicViewer` / GET /coaches/:id/courts) never
- * unlocks private exact location based on booking status.
  */
 describe('MVP address visibility matrix', () => {
-  const publicCourt = {
-    id: 1,
-    name: 'Central Park',
-    address: '123 Main St, Miami, FL',
-    latitude: 25.7,
-    longitude: -80.2,
-    is_private: false,
-  };
-  const privateCourt = {
-    id: 9,
-    name: 'Backyard',
-    address: '1 Secret Rd, Coral Springs, FL',
-    latitude: 26.2,
-    longitude: -80.2,
-    is_private: true,
-  };
-
   function bookingRow(status, court) {
     return {
       id: 1,
@@ -198,22 +234,24 @@ describe('MVP address visibility matrix', () => {
 
   it('Public | Student | none → visible', () => {
     const out = serializeCourtForPublicViewer(publicCourt, { includeId: false });
-    assert.equal(out.address, '123 Main St, Miami, FL');
+    assert.equal(out.address_line1, '123 Main St');
     assert.equal(out.latitude, 25.7);
   });
 
   it('Private | Student | none → hidden', () => {
     const out = serializeCourtForPublicViewer(privateCourt, { includeId: false });
-    assert.equal(out.address, null);
+    assert.equal(out.address_line1, null);
+    assert.equal(out.city, null);
     assert.equal(out.latitude, null);
     assert.equal(out.longitude, null);
+    assert.equal(out.area, 'Coral Springs, FL 33065');
   });
 
   it('Private | Student | pending → hidden', () => {
     const out = serializeBookingListItem(bookingRow('pending', privateCourt), {
       viewerIsPrivileged: false,
     });
-    assert.equal(out.courtLocation.address, null);
+    assert.equal(out.courtLocation.address_line1, null);
     assert.equal(out.courtLocation.latitude, null);
   });
 
@@ -221,23 +259,22 @@ describe('MVP address visibility matrix', () => {
     const out = serializeBookingListItem(bookingRow('confirmed', privateCourt), {
       viewerIsPrivileged: false,
     });
-    assert.equal(out.courtLocation.address, '1 Secret Rd, Coral Springs, FL');
-    assert.equal(out.courtLocation.latitude, 26.2);
+    assert.equal(out.courtLocation.address_line1, '1234 Oak Lane');
+    assert.equal(out.courtLocation.city, 'Coral Springs');
+    assert.equal(out.courtLocation.latitude, 26.271);
   });
 
   it('Private | Student | confirmed booking does NOT unlock coach courts discovery', () => {
-    // Even with a confirmed booking elsewhere, coach-profile court list stays redacted.
     const out = serializeCourtForPublicViewer(privateCourt, { includeId: false });
-    assert.equal(out.address, null);
+    assert.equal(out.address_line1, null);
     assert.equal(out.latitude, null);
-    assert.equal(out.longitude, null);
   });
 
   it('Private | Student | cancelled without prior confirm → hidden', () => {
     const out = serializeBookingListItem(bookingRow('cancelled', privateCourt), {
       viewerIsPrivileged: false,
     });
-    assert.equal(out.courtLocation.address, null);
+    assert.equal(out.courtLocation.address_line1, null);
     assert.equal(out.courtLocation.latitude, null);
   });
 
@@ -246,18 +283,17 @@ describe('MVP address visibility matrix', () => {
       const out = serializeBookingListItem(bookingRow(status, privateCourt), {
         viewerIsPrivileged: true,
       });
-      assert.equal(out.courtLocation.address, '1 Secret Rd, Coral Springs, FL', status);
+      assert.equal(out.courtLocation.address_line1, '1234 Oak Lane', status);
     }
   });
 
   it('Private | Admin | any → visible', () => {
-    // Admin uses the same privileged bypass as coach owner at the DTO boundary.
     for (const status of ['pending', 'cancelled']) {
       const out = serializeCourtLocationForBooking(privateCourt, {
         bookingStatus: status,
         viewerIsPrivileged: true,
       });
-      assert.equal(out.address, '1 Secret Rd, Coral Springs, FL', status);
+      assert.equal(out.address_line1, '1234 Oak Lane', status);
     }
   });
 });
@@ -274,17 +310,20 @@ describe('DTO wiring', () => {
         {
           court: {
             name: 'Yard',
-            address: '1 Secret Rd, Coral Springs, FL',
+            address_line1: '1 Secret Rd',
+            city: 'Coral Springs',
+            state: 'FL',
+            postal_code: '33065',
+            country: 'US',
             latitude: 26.2,
             longitude: -80.2,
             is_private: true,
-            deleted_at: null,
           },
         },
       ],
     });
-    assert.equal(out.courts[0].address, null);
-    assert.equal(out.courts[0].latitude, null);
-    assert.equal(out.courts[0].area, 'Coral Springs, FL');
+    assert.equal(out.courts[0].address_line1, null);
+    assert.equal(out.courts[0].city, null);
+    assert.equal(out.courts[0].area, 'Coral Springs, FL 33065');
   });
 });

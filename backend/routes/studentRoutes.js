@@ -1,9 +1,10 @@
 import express from 'express';
 import * as reliabilityController from '../controllers/reliabilityController.js';
 import * as bookingController from '../controllers/bookingController.js';
+import * as reviewController from '../controllers/reviewController.js';
 import { authenticate, authorize } from '../middleware/auth.js';
 import { validateQuery } from '../middleware/validator.js';
-import { getBookingsQuerySchema } from '../config/validation.js';
+import { getBookingsQuerySchema, getReviewsQuerySchema } from '../config/validation.js';
 
 const router = express.Router();
 
@@ -15,6 +16,14 @@ router.get(
   authorize('student'),
   validateQuery(getBookingsQuerySchema),
   bookingController.getStudentBookings,
+);
+/** Reviews the authenticated student wrote. */
+router.get(
+  '/me/reviews',
+  authenticate,
+  authorize('student'),
+  validateQuery(getReviewsQuerySchema),
+  reviewController.getMyWrittenReviews,
 );
 
 export default router;

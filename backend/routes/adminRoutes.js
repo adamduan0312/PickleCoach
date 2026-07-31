@@ -16,8 +16,10 @@ import {
   adminGetUserReliabilityQuerySchema,
   getBookingsQuerySchema,
   getAdminLessonsQuerySchema,
+  getAdminReviewsQuerySchema,
   createDisputeSchema,
 } from '../config/validation.js';
+import * as reviewController from '../controllers/reviewController.js';
 
 const router = express.Router();
 
@@ -53,6 +55,14 @@ router.get(
   authorize('admin'),
   validateQuery(getAdminLessonsQuerySchema),
   lessonController.getAdminLessons,
+);
+
+router.get(
+  '/reviews',
+  authenticate,
+  authorize('admin'),
+  validateQuery(getAdminReviewsQuerySchema),
+  reviewController.getAdminReviews,
 );
 
 // Admin booking overrides

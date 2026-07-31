@@ -104,6 +104,7 @@ npm run seed:dedupe-disputes -- --apply
 | `seed-cancel-test-bookings.js` | `npm run seed:cancel-test-bookings` | Confirmed bookings timed for cancel-policy math (no charge_id) | ✅ |
 | `seed-bookings-no-charge.js` | `npm run seed:bookings-no-charge` | One booking per major status, **no Payment rows** / no Stripe | ✅ |
 | `seed-bookings-various-statuses.js` | `npm run seed:bookings-statuses` | Status matrix (may include payment/dispute rows — see header) | ✅ |
+| `seed-diverse-bookings.js` | `npm run seed:diverse-bookings` | Additive: lessons + bookings across demo coaches/students (keeps existing bookings) | ✅ |
 | `seed-confirmed-ended-booking.js` | `npm run seed:confirmed-ended-booking` | Confirmed, lesson just ended (no-show testing) | ✅ |
 | | `npm run seed:confirmed-ended-bookings` | Same with `--count=5` | ✅ |
 | `seed-test-booking.js` | `npm run seed:test-booking` | Single booking for older dispute tests; prefer test-flows | ✅ |

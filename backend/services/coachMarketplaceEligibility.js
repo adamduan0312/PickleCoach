@@ -27,6 +27,12 @@ import {
 } from '../models/index.js';
 import { PUBLIC_ACTIVE_USER_WHERE, isPubliclyActiveUser } from '../utils/userLifecycle.js';
 import { getEffectiveRolesForUserRecord } from '../utils/roleGovernance.js';
+import { logger } from '../config/logger.js';
+
+/** Mutable deps for unit tests (ESM named exports are read-only). */
+export const stripeReadySyncDeps = {
+  loadNotificationService: () => import('./notificationService.js'),
+};
 
 /** Step keys — Stripe is required for listing but not the first onboarding step UX. */
 export const MARKETPLACE_STEP_KEYS = Object.freeze([
@@ -49,11 +55,18 @@ export function isStripeAccountReady(account) {
 
 /**
  * Persist local stripe_ready from a Stripe Account object.
+ *
+ * All Stripe-driven syncs funnel through here (account.updated webhook, Connect
+ * status endpoint, marketplace-status refresh). Notifies the coach ONLY when the
+ * flag actually flips — true→true / false→false are silent, so duplicate
+ * account.updated deliveries never send duplicate notifications.
+ *
  * @param {import('sequelize').Model} coachProfile
  * @param {object} account — Stripe Account
  * @returns {Promise<boolean>} new stripe_ready value
  */
 export async function syncCoachStripeReadyFromAccount(coachProfile, account) {
+  const wasReady = Boolean(coachProfile.stripe_ready);
   const ready = isStripeAccountReady(account);
   const patch = { stripe_ready: ready };
   if (ready) {
@@ -64,6 +77,27 @@ export async function syncCoachStripeReadyFromAccount(coachProfile, account) {
     patch.stripe_onboarding_completed_at = null;
   }
   await coachProfile.update(patch);
+
+  if (ready !== wasReady) {
+    // Best-effort: a notification failure must never break the sync itself.
+    try {
+      const svc = await stripeReadySyncDeps.loadNotificationService();
+      if (ready) {
+        await svc.notifyCoachStripePayoutsEnabled(coachProfile.user_id);
+      } else {
+        await svc.notifyCoachStripePayoutsDisabled(coachProfile.user_id);
+      }
+    } catch (error) {
+      logger.warn({
+        component: 'stripe',
+        event: 'stripe_ready_transition_notify_failed',
+        coachUserId: coachProfile.user_id,
+        stripe_ready: ready,
+        message: error?.message,
+      });
+    }
+  }
+
   return ready;
 }
 

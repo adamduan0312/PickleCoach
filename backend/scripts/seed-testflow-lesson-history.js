@@ -46,7 +46,7 @@ async function createNoStripePayment(booking) {
     lesson_price: price.toFixed(2),
     platform_fee_percent: 8.0,
     platform_fee_amount: ((price * 8) / 100).toFixed(2),
-    total_charge_to_student: (price * 1.08).toFixed(2),
+    total_charge_to_student: Number(price).toFixed(2),
     coach_payout_expected: ((price * 92) / 100).toFixed(2),
     escrow_status: 'held',
     payment_status: 'captured',

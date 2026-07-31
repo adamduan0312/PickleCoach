@@ -13,6 +13,7 @@
  */
 
 import { CoachProfile, User, UserRole } from '../models/index.js';
+import { getEffectiveRolesForUserRecord } from './roleGovernance.js';
 
 /** Sequelize `where` for publicly discoverable / bookable accounts (Active only). */
 export const PUBLIC_ACTIVE_USER_WHERE = Object.freeze({
@@ -39,7 +40,7 @@ export function isPubliclyActiveUser(user) {
  */
 export async function findPublicActiveCoach(coachId) {
   if (!Number.isFinite(coachId) || coachId < 1) return null;
-  return User.findOne({
+  const user = await User.findOne({
     where: { id: coachId, ...PUBLIC_ACTIVE_USER_WHERE },
     include: [
       { model: UserRole, as: 'userRoles', where: { role: 'coach' }, required: true, attributes: ['role'] },
@@ -51,6 +52,10 @@ export async function findPublicActiveCoach(coachId) {
       },
     ],
   });
+  if (!user) return null;
+  // Governance may revoke coach capability while leaving the user_roles row.
+  if (!getEffectiveRolesForUserRecord(user).includes('coach')) return null;
+  return user;
 }
 
 /**

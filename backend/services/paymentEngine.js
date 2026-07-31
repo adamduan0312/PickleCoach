@@ -37,8 +37,11 @@ export const normalizeStripeCurrencyCents = (value) => {
   return Number.isFinite(n) ? Math.round(n) : 0;
 };
 
-/** Minimum lesson price (USD) so lesson + platform fee meets MIN_CHARGE_USD. */
-export const minLessonPriceUsd = () => MIN_CHARGE_USD / (1 + PLATFORM_FEE_PERCENT / 100);
+/**
+ * Minimum lesson price (USD) — student is charged the listed lesson price only,
+ * so lesson must meet Stripe MIN_CHARGE_USD by itself.
+ */
+export const minLessonPriceUsd = () => MIN_CHARGE_USD;
 
 /** Exported for Joi validation (`config/validation.js`). */
 export const MIN_LESSON_PRICE_USD = minLessonPriceUsd();
@@ -48,13 +51,20 @@ export const MIN_LESSON_PRICE_USD = minLessonPriceUsd();
 // ---------------------------------------------------------------------------
 
 /**
- * Deterministic lesson → platform fee, total to student, coach expected payout.
+ * Deterministic lesson → student charge, platform commission, coach expected payout.
+ *
+ * Pricing model (MVP):
+ * - Student pays exactly the listed lesson price (no add-on fee).
+ * - Platform retains PLATFORM_FEE_PERCENT of the lesson (internal commission).
+ * - Coach receives COACH_COMMISSION_PERCENT of the lesson.
+ * - Platform absorbs Stripe processing fees from its commission.
+ *
  * Uses integer-cent intermediates so DB DECIMAL fields stay stable vs float-only math.
  */
 export const calculatePaymentAmounts = (lessonPrice) => {
   const lessonCents = dollarsToCents(lessonPrice);
   const platformFeeCents = Math.round((lessonCents * PLATFORM_FEE_PERCENT) / 100);
-  const totalChargeCents = lessonCents + platformFeeCents;
+  const totalChargeCents = lessonCents;
   const coachPayoutCents = Math.round((lessonCents * COACH_COMMISSION_PERCENT) / 100);
 
   return {
@@ -62,6 +72,28 @@ export const calculatePaymentAmounts = (lessonPrice) => {
     platform_fee_percent: PLATFORM_FEE_PERCENT,
     platform_fee_amount: Number.parseFloat(centsToDecimalString(platformFeeCents)),
     total_charge_to_student: Number.parseFloat(centsToDecimalString(totalChargeCents)),
+    coach_payout_expected: Number.parseFloat(centsToDecimalString(coachPayoutCents)),
+  };
+};
+
+/**
+ * Rebuild payment snapshot from the Stripe-authorized total (integer cents).
+ * Trusts the authorized amount as total_charge_to_student (= listed lesson price)
+ * so confirm cannot drift if lesson.price changes between intent and confirm.
+ * Platform fee / coach payout are derived from that authorized lesson total.
+ */
+export const calculatePaymentAmountsFromAuthorizedTotalCents = (totalChargeCents) => {
+  const t = Math.max(0, Math.round(Number(totalChargeCents) || 0));
+  // Authorized total IS the lesson price (student is not charged an add-on fee).
+  const lessonCents = t;
+  const platformFeeCents = Math.round((lessonCents * PLATFORM_FEE_PERCENT) / 100);
+  const coachPayoutCents = Math.round((lessonCents * COACH_COMMISSION_PERCENT) / 100);
+
+  return {
+    lesson_price: Number.parseFloat(centsToDecimalString(lessonCents)),
+    platform_fee_percent: PLATFORM_FEE_PERCENT,
+    platform_fee_amount: Number.parseFloat(centsToDecimalString(platformFeeCents)),
+    total_charge_to_student: Number.parseFloat(centsToDecimalString(t)),
     coach_payout_expected: Number.parseFloat(centsToDecimalString(coachPayoutCents)),
   };
 };

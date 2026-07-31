@@ -63,6 +63,7 @@ const Payment = sequelize.define('payments', {
   payment_intent_id: {
     type: DataTypes.STRING(255),
     allowNull: true,
+    unique: true,
   },
   charge_id: {
     type: DataTypes.STRING(255),
@@ -115,7 +116,7 @@ const Payment = sequelize.define('payments', {
     { fields: ['booking_id'] },
     { fields: ['student_id'] },
     { fields: ['coach_id'] },
-    { fields: ['payment_intent_id'] },
+    { fields: ['payment_intent_id'], unique: true, name: 'payments_payment_intent_id_unique' },
     { fields: ['charge_id'] },
     { fields: ['escrow_status'] },
     { fields: ['created_at'] },

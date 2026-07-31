@@ -34,24 +34,25 @@ function mockRes() {
 }
 
 describe('buildAdminLessonsWhere', () => {
-  it('defaults to complete inventory (includes soft-deleted)', () => {
-    assert.deepEqual(buildAdminLessonsWhere(), {});
+  it('defaults to excluding soft-deleted', () => {
+    assert.deepEqual(buildAdminLessonsWhere(), { deleted_at: null });
   });
 
   it('filters coach_id and is_active', () => {
     assert.deepEqual(buildAdminLessonsWhere({ coach_id: 35, is_active: 'true' }), {
       coach_id: 35,
       is_active: true,
+      deleted_at: null,
     });
     assert.deepEqual(buildAdminLessonsWhere({ is_active: 'false' }), {
       is_active: false,
+      deleted_at: null,
     });
   });
 
-  it('include_deleted=false excludes soft-deleted', () => {
-    assert.deepEqual(buildAdminLessonsWhere({ include_deleted: 'false', coach_id: 1 }), {
+  it('include_deleted=true omits deleted_at filter', () => {
+    assert.deepEqual(buildAdminLessonsWhere({ include_deleted: 'true', coach_id: 1 }), {
       coach_id: 1,
-      deleted_at: null,
     });
   });
 
@@ -83,11 +84,24 @@ describe('GET /api/admin/lessons', () => {
           id: 28,
           coach_id: 35,
           title: 'Test Flow Lesson',
+          description: 'd',
+          duration_minutes: 60,
+          price: '80.00',
+          effective_hourly_rate: 80,
+          max_students: 1,
           is_active: true,
           deleted_at: null,
-          get: undefined,
-          toJSON() {
-            return this;
+          created_at: '2026-01-01T00:00:00.000Z',
+          coach: {
+            id: 35,
+            full_name: 'Coach',
+            email: 'c@example.com',
+            is_active: true,
+            deleted_at: null,
+            avatar_url: 'x',
+          },
+          get({ plain }) {
+            return plain ? { ...this } : this;
           },
         },
       ];
@@ -99,9 +113,20 @@ describe('GET /api/admin/lessons', () => {
     const res = mockRes();
     await getAdminLessons(req, res);
     assert.equal(res.statusCode, 200);
-    assert.equal(res.payload?.data?.[0]?.id, 28);
-    assert.deepEqual(captured.where, {});
+    const row = res.payload?.data?.[0];
+    assert.equal(row?.id, 28);
+    assert.equal(row.coach.email, 'c@example.com');
+    assert.equal(row.coach.avatar_url, undefined);
+    assert.equal(row.bookings, undefined);
+    assert.deepEqual(captured.where, { deleted_at: null });
     assert.equal(captured.include[0].as, 'coach');
+    assert.deepEqual(captured.include[0].attributes, [
+      'id',
+      'full_name',
+      'email',
+      'is_active',
+      'deleted_at',
+    ]);
     // No marketplace eligibility nested includes
     assert.equal(captured.include.length, 1);
   });
@@ -113,7 +138,7 @@ describe('GET /api/admin/lessons', () => {
       return [];
     };
     const req = {
-      validated: { coach_id: 35, is_active: 'false', include_deleted: 'false' },
+      validated: { coach_id: 35, is_active: 'false' },
       user: { id: 1, roles: ['admin'] },
     };
     const res = mockRes();
@@ -124,6 +149,22 @@ describe('GET /api/admin/lessons', () => {
       is_active: false,
       deleted_at: null,
     });
+  });
+
+  it('include_deleted=true omits deleted_at in query', async () => {
+    let captured;
+    Lesson.findAll = async (opts) => {
+      captured = opts;
+      return [];
+    };
+    const req = {
+      validated: { include_deleted: 'true' },
+      user: { id: 1, roles: ['admin'] },
+    };
+    const res = mockRes();
+    await getAdminLessons(req, res);
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(captured.where, {});
   });
 
   it('mounts GET /api/admin/lessons before /bookings', () => {

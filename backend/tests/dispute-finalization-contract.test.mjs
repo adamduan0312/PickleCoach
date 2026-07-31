@@ -45,6 +45,31 @@ test('admin no-show handlers call checkAttendanceFinalized after active-dispute 
   assert.match(studentSlice, /checkAttendanceFinalized\(booking\)/);
 });
 
+test('coach complete and student-no-show call checkAttendanceFinalized', () => {
+  const src = readFileSync(bookingControllerPath, 'utf8');
+  const completeIdx = src.indexOf('export const completeBooking');
+  const noShowIdx = src.indexOf('export const markBookingNoShow');
+  assert.ok(completeIdx > 0 && noShowIdx > 0);
+  const completeSlice = src.slice(completeIdx, completeIdx + 2500);
+  const noShowSlice = src.slice(noShowIdx, noShowIdx + 3500);
+  assert.match(completeSlice, /checkAttendanceFinalized\(booking\)/);
+  assert.match(noShowSlice, /checkAttendanceFinalized\(booking\)/);
+});
+
+test('accept and decline lock booking row like cancel', () => {
+  const src = readFileSync(bookingControllerPath, 'utf8');
+  const acceptIdx = src.indexOf('export const acceptBooking');
+  const declineIdx = src.indexOf('export const declineBooking');
+  const cancelIdx = src.indexOf('export const cancelBooking');
+  assert.ok(acceptIdx > 0 && declineIdx > 0 && cancelIdx > 0);
+  const acceptSlice = src.slice(acceptIdx, declineIdx);
+  const declineSlice = src.slice(declineIdx, cancelIdx);
+  assert.match(acceptSlice, /lock:\s*t\.LOCK\.UPDATE/);
+  assert.match(declineSlice, /lock:\s*t\.LOCK\.UPDATE/);
+  assert.match(acceptSlice, /sequelize\.transaction/);
+  assert.match(declineSlice, /sequelize\.transaction/);
+});
+
 test('after finalize: admin path would be blocked (checkAttendanceFinalized)', () => {
   const r = checkAttendanceFinalized({
     id: 1,

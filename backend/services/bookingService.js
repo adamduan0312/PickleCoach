@@ -94,14 +94,27 @@ export const checkCoachAvailability = async (coachId, scheduledAt, durationMinut
   return { available: false, reason: 'Coach is not available during this time slot' };
 };
 
-export const checkBookingAvailability = async (lessonId, scheduledAt, durationMinutes) => {
-  const lesson = await Lesson.findByPk(lessonId);
+/**
+ * @param {number} lessonId
+ * @param {string|Date} scheduledAt
+ * @param {number} durationMinutes
+ * @param {{ transaction?: import('sequelize').Transaction, coachId?: number }} [options]
+ *   When `transaction` is set (e.g. confirm under coach-profile lock), overlap queries
+ *   participate in that transaction so concurrent confirms serialize correctly.
+ */
+export const checkBookingAvailability = async (lessonId, scheduledAt, durationMinutes, options = {}) => {
+  const { transaction = null, coachId: coachIdOpt = null } = options;
+  const findOpts = transaction ? { transaction } : {};
+
+  const lesson = await Lesson.findByPk(lessonId, findOpts);
   if (!lesson || !lesson.is_active) {
     return { available: false, reason: 'Lesson not found or inactive' };
   }
 
+  const coachId = coachIdOpt != null ? coachIdOpt : lesson.coach_id;
+
   // Check coach availability first (coach-maintained availability)
-  const coachAvailability = await checkCoachAvailability(lesson.coach_id, scheduledAt, durationMinutes);
+  const coachAvailability = await checkCoachAvailability(coachId, scheduledAt, durationMinutes);
   if (!coachAvailability.available) {
     return coachAvailability;
   }
@@ -109,10 +122,10 @@ export const checkBookingAvailability = async (lessonId, scheduledAt, durationMi
   const scheduledDate = new Date(scheduledAt);
   const endTime = new Date(scheduledDate.getTime() + durationMinutes * 60000);
 
-  // Check for overlapping bookings (prevent double-booking). Block the second booking, not the coach.
+  // Overlap by coach (not just lesson): one coach cannot hold two concurrent slots.
   const overlappingBookings = await Booking.findAll({
     where: {
-      lesson_id: lessonId,
+      coach_id: coachId,
       status: { [Op.in]: ['pending', 'confirmed', 'awaiting_verification'] },
       scheduled_at: {
         [Op.lt]: endTime,
@@ -121,6 +134,7 @@ export const checkBookingAvailability = async (lessonId, scheduledAt, durationMi
         sequelize.literal(`DATE_ADD(scheduled_at, INTERVAL duration_minutes MINUTE) > '${scheduledDate.toISOString()}'`),
       ],
     },
+    ...findOpts,
   });
 
   if (overlappingBookings.length > 0) {

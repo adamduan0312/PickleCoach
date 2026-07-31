@@ -89,9 +89,9 @@ if (!skipDevFixtures) {
 console.log(`
 ✅ Database ready for tests / frontend.
 
-   Demo admin: admin@picklecoach.com / admin123
-   Demo coach: coach1@example.com / password123
-   Demo student: student1@example.com / password123
+   Demo admin: admin@picklecoach.com / Test1234!Ab
+   Demo coach: coach1@example.com / Test1234!Ab
+   Demo student: student1@example.com / Test1234!Ab
 
    Testflow (preferred for API/UI work):
      admin.testflow@picklecoach.example.org / Test1234!Ab

@@ -94,7 +94,7 @@ const FIELD_USAGE_NOISE = new Set([
   'payment',
   'dispute',
   'user',
-  'reviewsGiven',
+  'reviewsWritten',
   'reviewsReceived',
   'sentMessages',
   'auditLogs',

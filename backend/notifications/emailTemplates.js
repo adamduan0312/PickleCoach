@@ -17,6 +17,8 @@ export function getEmailSubject(type, _payload) {
     email_change_confirm: 'Confirm Your New PickleCoach Email',
     email_changed_notification: 'Your PickleCoach Email Was Changed',
     booking_request_coach: 'New booking request — PickleCoach',
+    stripe_payouts_disabled: 'Action needed: payouts paused on your PickleCoach account',
+    stripe_payouts_enabled: 'Payouts enabled on your PickleCoach account',
   };
   return subjects[type] || 'Notification from PickleCoach';
 }
@@ -93,6 +95,17 @@ export function getEmailContent(type, payload) {
       <p>Scheduled: ${scheduledAt}</p>
       <p>Booking ID: ${payload?.booking_id ?? ''}</p>
       <p>Please open PickleCoach and accept or decline this request before it expires.</p>
+    `,
+    stripe_payouts_disabled: `
+      <h2>Payouts Paused — Action Needed</h2>
+      <p>Stripe has paused payouts for your account (this usually means additional verification is required).</p>
+      <p>Your coach profile is <strong>hidden from the marketplace</strong> and you cannot receive new bookings until this is resolved.</p>
+      <p>Log in to PickleCoach and reconnect Stripe to complete the required steps — once Stripe re-enables payouts, your profile is relisted automatically.</p>
+    `,
+    stripe_payouts_enabled: `
+      <h2>Payouts Enabled</h2>
+      <p>Your Stripe account is ready — you can now receive payouts.</p>
+      <p>Your coach profile can appear in the marketplace as soon as your listing checklist (lesson, court, availability) is complete.</p>
     `,
   };
 

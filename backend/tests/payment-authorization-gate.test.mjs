@@ -24,7 +24,7 @@ describe('isPaymentIntentAuthorizedForManualCapture', () => {
     assert.equal(
       isPaymentIntentAuthorizedForManualCapture({
         status: 'requires_capture',
-        amount_capturable: 10800,
+        amount_capturable: 10000,
       }),
       true,
     );

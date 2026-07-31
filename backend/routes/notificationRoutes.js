@@ -7,6 +7,7 @@ import { createNotificationSchema, getNotificationsQuerySchema } from '../config
 const router = express.Router();
 
 router.get('/', authenticate, validateQuery(getNotificationsQuerySchema), notificationController.getNotifications);
+router.get('/unread-count', authenticate, notificationController.getUnreadNotificationCount);
 router.post('/', authenticate, authorize('admin'), validateRequest(createNotificationSchema), notificationController.createNotification);
 router.put('/:id/read', authenticate, notificationController.markNotificationAsRead);
 router.delete('/:id', authenticate, notificationController.deleteNotification);

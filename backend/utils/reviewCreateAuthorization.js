@@ -5,7 +5,7 @@
 
 /**
  * @param {{ userId: number, booking: { primary_student_id?: number | null, coach_id: number, status: string } | null, hasExistingReview: boolean }} p
- * @returns {{ ok: true, targetUserId: number } | { ok: false, statusCode: number, message: string, code?: string }}
+ * @returns {{ ok: true, coachId: number } | { ok: false, statusCode: number, message: string, code?: string }}
  */
 export function validateReviewCreateAuthorization({ userId, booking, hasExistingReview }) {
   if (!booking) {
@@ -36,9 +36,9 @@ export function validateReviewCreateAuthorization({ userId, booking, hasExisting
     };
   }
 
-  const targetUserId = booking.coach_id;
+  const coachId = booking.coach_id;
 
-  if (userId === targetUserId) {
+  if (userId === coachId) {
     return {
       ok: false,
       statusCode: 400,
@@ -47,5 +47,5 @@ export function validateReviewCreateAuthorization({ userId, booking, hasExisting
     };
   }
 
-  return { ok: true, targetUserId };
+  return { ok: true, coachId };
 }

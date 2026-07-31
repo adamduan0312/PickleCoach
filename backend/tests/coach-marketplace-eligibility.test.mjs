@@ -140,6 +140,16 @@ describe('discovery filters (DB-only)', () => {
     assert.match(getCoachLessonsSection, /deleted_at:\s*null/);
   });
 
+  it('GET /api/coaches/:id/lessons allows coach role (marketplace browse ≠ student-only)', () => {
+    const routesSrc = readFileSync(join(__dirname, '../routes/coachRoutes.js'), 'utf8');
+    const block = routesSrc.slice(
+      routesSrc.indexOf('/:id/lessons'),
+      routesSrc.indexOf("router.get('/:id'"),
+    );
+    assert.match(block, /authorize\('student',\s*'coach',\s*'admin'\)/);
+    assert.match(block, /getCoachLessonsById/);
+  });
+
   it('mounts GET /api/coaches/:id/lessons and marketplace-status before /:id', () => {
     const routesSrc = readFileSync(join(__dirname, '../routes/coachRoutes.js'), 'utf8');
     const statusIdx = routesSrc.indexOf('/me/marketplace-status');

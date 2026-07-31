@@ -252,12 +252,18 @@ export const handlePaymentCapture = async (paymentIntentId, chargeId) => {
  * Capture payment and confirm booking when coach accepts (coach-must-confirm flow).
  * Call this from the accept-booking endpoint.
  * @param {number} paymentId - Payment ID for the booking
+ * @param {{ transaction?: import('sequelize').Transaction }} [opts]
  * @returns {Promise<{ payment: Object, booking: Object }>}
  */
-export const capturePaymentOnCoachAccept = async (paymentId) => {
-  const payment = await Payment.findByPk(paymentId, {
+export const capturePaymentOnCoachAccept = async (paymentId, opts = {}) => {
+  const { transaction = null } = opts;
+  const findOpts = {
     include: [{ model: Booking, as: 'booking' }],
-  });
+    ...(transaction
+      ? { transaction, lock: transaction.LOCK.UPDATE }
+      : {}),
+  };
+  const payment = await Payment.findByPk(paymentId, findOpts);
   if (!payment) throw new Error('Payment not found');
   if (!payment.booking) throw new Error('Booking not found');
   if (payment.booking.status !== 'pending') {
@@ -290,11 +296,14 @@ export const capturePaymentOnCoachAccept = async (paymentId) => {
       paymentIntent.charges?.data?.[0]?.id ||
       payment.charge_id;
     const chargeIdStr = typeof chargeId === 'string' ? chargeId : chargeId?.id;
-    await payment.update({
-      payment_status: 'pending_capture',
-      charge_id: chargeIdStr || payment.charge_id,
-      escrow_status: 'held',
-    });
+    await payment.update(
+      {
+        payment_status: 'pending_capture',
+        charge_id: chargeIdStr || payment.charge_id,
+        escrow_status: 'held',
+      },
+      transaction ? { transaction } : {},
+    );
     await createAuditLog({
       user_id: payment.coach_id,
       action: 'payment_capture_initiated',
@@ -319,7 +328,10 @@ export const capturePaymentOnCoachAccept = async (paymentId) => {
   logger.info(
     `Coach accepted booking ${payment.booking.id}, payment ${payment.id}; capture pending webhook if applicable`
   );
-  await payment.reload({ include: [{ model: Booking, as: 'booking' }] });
+  await payment.reload({
+    include: [{ model: Booking, as: 'booking' }],
+    ...(transaction ? { transaction } : {}),
+  });
   return { payment, booking: payment.booking };
 };
 
@@ -327,11 +339,17 @@ export const capturePaymentOnCoachAccept = async (paymentId) => {
  * Cancel PaymentIntent and booking when coach declines (coach-must-confirm flow).
  * Call this from the decline-booking endpoint.
  * @param {number} paymentId - Payment ID for the booking
+ * @param {{ transaction?: import('sequelize').Transaction }} [opts]
  */
-export const cancelPaymentOnCoachDecline = async (paymentId) => {
-  const payment = await Payment.findByPk(paymentId, {
+export const cancelPaymentOnCoachDecline = async (paymentId, opts = {}) => {
+  const { transaction = null } = opts;
+  const findOpts = {
     include: [{ model: Booking, as: 'booking' }],
-  });
+    ...(transaction
+      ? { transaction, lock: transaction.LOCK.UPDATE }
+      : {}),
+  };
+  const payment = await Payment.findByPk(paymentId, findOpts);
   if (!payment) throw new Error('Payment not found');
   if (!payment.booking) throw new Error('Booking not found');
   if (payment.booking.status !== 'pending') {
@@ -339,7 +357,10 @@ export const cancelPaymentOnCoachDecline = async (paymentId) => {
   }
   if (payment.payment_intent_id && ['pending', 'authorized'].includes(payment.payment_status)) {
     await stripeService.cancelPaymentIntent(payment.payment_intent_id);
-    await payment.update({ payment_status: 'pending_void' });
+    await payment.update(
+      { payment_status: 'pending_void' },
+      transaction ? { transaction } : {},
+    );
     await createAuditLog({
       user_id: payment.coach_id,
       action: 'payment_void_initiated',
@@ -361,6 +382,7 @@ export const cancelPaymentOnCoachDecline = async (paymentId) => {
       cancelled_by: 'coach',
       cancelled_at: new Date(),
     },
+    options: transaction ? { transaction } : {},
   });
   await createAuditLog({
     user_id: payment.coach_id,

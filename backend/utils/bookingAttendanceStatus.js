@@ -36,11 +36,9 @@ export const ATTENDANCE_OUTCOME_STATUSES = ['student_no_show', 'coach_no_show'];
  * opening a **new** dispute on the same booking and resolving it (resolve
  * is the only path that clears/advances adjudication and re-affirms this flag).
  *
- * Wired into `adminMarkBookingNoShow` and `adminMarkCoachNoShow`. The coach
- * route (`markBookingNoShow`) is naturally guarded by its narrower source
- * set (`confirmed` / `awaiting_verification` only), so a finalized booking
- * — which is always in a terminal/completed status — can't reach the coach
- * route either way.
+ * Wired into `adminMarkBookingNoShow`, `adminMarkCoachNoShow`, coach
+ * `markBookingNoShow`, and coach `completeBooking`. Any post-resolve attendance
+ * or completion mutation must fail with `attendance_finalized_locked`.
  *
  * @param {{ attendance_finalized?: boolean } | null | undefined} booking
  * @returns {{ ok: true } | { ok: false, code: string, message: string }}

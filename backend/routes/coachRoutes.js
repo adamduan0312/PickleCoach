@@ -17,7 +17,9 @@ import {
   getMyLessonsQuerySchema,
   getBookingsQuerySchema,
   getCoachLessonsQuerySchema,
+  getReviewsQuerySchema,
 } from '../config/validation.js';
+import * as reviewController from '../controllers/reviewController.js';
 
 const router = express.Router();
 
@@ -55,6 +57,14 @@ router.get(
   validateQuery(getBookingsQuerySchema),
   bookingController.getCoachBookings,
 );
+/** Reviews about the authenticated coach (dashboard). */
+router.get(
+  '/me/reviews',
+  authenticate,
+  authorize('coach'),
+  validateQuery(getReviewsQuerySchema),
+  reviewController.getMyReceivedReviews,
+);
 // Student-facing: coach reliability (score only)
 // Must be declared before `/:id` route to avoid matching `reliability` as an `:id` param.
 router.get('/me/reliability', authenticate, authorize('coach'), reliabilityController.getCoachReliabilityForMe);
@@ -68,6 +78,14 @@ router.get(
   authorize('student', 'coach', 'admin'),
   validateQuery(getCoachLessonsQuerySchema),
   lessonController.getCoachLessonsById,
+);
+/** Marketplace / profile: public reviews about this coach. */
+router.get(
+  '/:id/reviews',
+  authenticate,
+  authorize('student', 'coach', 'admin'),
+  validateQuery(getReviewsQuerySchema),
+  reviewController.getCoachReviewsById,
 );
 router.get('/:id', authenticate, authorize('student', 'coach', 'admin'), coachController.getCoachById);
 router.post('/profile', authenticate, authorize('coach'), validateRequest(createCoachProfileSchema), coachController.createCoachProfile);

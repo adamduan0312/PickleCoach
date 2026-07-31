@@ -1,4 +1,4 @@
-import { CourtLocation, sequelize } from '../models/index.js';
+import { CourtLocation } from '../models/index.js';
 import { Op } from 'sequelize';
 import { logger } from '../config/logger.js';
 
@@ -18,29 +18,15 @@ const calculateDistance = (lat1, lng1, lat2, lng2) => {
 };
 
 /**
- * Normalize court name for deduplication
- */
-const normalizeCourtName = (name) => {
-  return name
-    .toLowerCase()
-    .trim()
-    .replace(/[^\w\s]/g, '') // Remove special characters
-    .replace(/\s+/g, ' '); // Normalize whitespace
-};
-
-/**
  * Check if a court already exists (deduplication)
  */
-const isDuplicateCourt = async (name, address, latitude, longitude) => {
-  const normalizedName = normalizeCourtName(name);
-  
-    // Check by name and address
-    const existingByName = await CourtLocation.findOne({
-      where: {
-        deleted_at: null,
-        name: { [Op.like]: `%${name}%` },
-      },
-    });
+const isDuplicateCourt = async (name, latitude, longitude) => {
+  const existingByName = await CourtLocation.findOne({
+    where: {
+      deleted_at: null,
+      name: { [Op.like]: `%${name}%` },
+    },
+  });
 
   if (existingByName) {
     return true;
@@ -69,6 +55,24 @@ const isDuplicateCourt = async (name, address, latitude, longitude) => {
   return false;
 };
 
+/** Best-effort structured address from OSM tags (import path; not API validation). */
+function structuredAddressFromOsmTags(tags = {}) {
+  const street = [tags['addr:housenumber'], tags['addr:street']].filter(Boolean).join(' ').trim();
+  const address_line1 = (tags['addr:full'] || street || 'Imported Court').slice(0, 255);
+  const city = (tags['addr:city'] || 'Unknown').slice(0, 100);
+  let state = String(tags['addr:state'] || 'XX').trim().toUpperCase().replace(/[^A-Z]/g, '').slice(0, 2);
+  if (state.length !== 2) state = 'XX';
+  let postal_code = String(tags['addr:postcode'] || '00000').trim();
+  if (!/^\d{5}(-\d{4})?$/.test(postal_code)) postal_code = '00000';
+  return {
+    address_line1,
+    city,
+    state,
+    postal_code,
+    country: 'US',
+  };
+}
+
 /**
  * Import courts from Overpass API (OpenStreetMap)
  * This is a free, no-API-key-required service
@@ -94,7 +98,7 @@ const importFromOpenStreetMap = async (latitude, longitude, radiusMiles) => {
     `;
 
     const overpassUrl = `https://overpass-api.de/api/interpreter?data=${encodeURIComponent(overpassQuery)}`;
-    
+
     const response = await fetch(overpassUrl);
     if (!response.ok) {
       throw new Error(`Overpass API error: ${response.statusText}`);
@@ -108,14 +112,11 @@ const importFromOpenStreetMap = async (latitude, longitude, radiusMiles) => {
       const lat = element.lat || element.center?.lat;
       const lon = element.lon || element.center?.lon;
       const name = element.tags?.name || element.tags?.operator || 'Pickleball Court';
-      const address = element.tags?.['addr:full'] || 
-                     `${element.tags?.['addr:street'] || ''} ${element.tags?.['addr:city'] || ''} ${element.tags?.['addr:state'] || ''}`.trim() ||
-                     null;
+      const structured = structuredAddressFromOsmTags(element.tags || {});
 
       if (!lat || !lon) continue;
 
-      // Check for duplicates
-      const isDuplicate = await isDuplicateCourt(name, address, lat, lon);
+      const isDuplicate = await isDuplicateCourt(name, lat, lon);
       if (isDuplicate) {
         continue;
       }
@@ -123,7 +124,7 @@ const importFromOpenStreetMap = async (latitude, longitude, radiusMiles) => {
       try {
         const court = await CourtLocation.create({
           name,
-          address: address || null,
+          ...structured,
           latitude: parseFloat(lat),
           longitude: parseFloat(lon),
           is_private: false,
@@ -155,7 +156,7 @@ const importGenericCourts = async (latitude, longitude, radiusMiles) => {
     return await importFromOpenStreetMap(latitude, longitude, radiusMiles);
   } catch (error) {
     logger.warn('OpenStreetMap import failed, creating sample courts:', error.message);
-    
+
     // Fallback: Create a few sample courts in the area
     // This ensures the search doesn't return empty results
     const sampleCourts = [];
@@ -172,7 +173,6 @@ const importGenericCourts = async (latitude, longitude, radiusMiles) => {
 
       const isDuplicate = await isDuplicateCourt(
         sampleNames[i],
-        null,
         offsetLat,
         offsetLng
       );
@@ -181,7 +181,11 @@ const importGenericCourts = async (latitude, longitude, radiusMiles) => {
         try {
           const court = await CourtLocation.create({
             name: sampleNames[i],
-            address: null,
+            address_line1: 'Near search center',
+            city: 'Unknown',
+            state: 'XX',
+            postal_code: '00000',
+            country: 'US',
             latitude: offsetLat,
             longitude: offsetLng,
             is_private: false,
@@ -206,9 +210,9 @@ const importGenericCourts = async (latitude, longitude, radiusMiles) => {
 export const lazyImportCourts = async (latitude, longitude, radiusMiles = 10) => {
   try {
     logger.info(`Lazy importing courts for location: ${latitude}, ${longitude}, radius: ${radiusMiles} miles`);
-    
+
     const importedCourts = await importGenericCourts(latitude, longitude, radiusMiles);
-    
+
     logger.info(`Imported ${importedCourts.length} courts`);
     return importedCourts;
   } catch (error) {
@@ -216,4 +220,3 @@ export const lazyImportCourts = async (latitude, longitude, radiusMiles = 10) =>
     throw error;
   }
 };
-

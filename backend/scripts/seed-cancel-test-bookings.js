@@ -51,7 +51,6 @@ async function findTestUser(emailLocal) {
 async function createNoStripePayment(booking) {
   const price = Number(booking.price);
   const platformFee = (price * 8) / 100;
-  const total = price + platformFee;
   const coachPayout = (price * 92) / 100;
   return Payment.create({
     booking_id: booking.id,
@@ -60,7 +59,7 @@ async function createNoStripePayment(booking) {
     lesson_price: price.toFixed(2),
     platform_fee_percent: 8.0,
     platform_fee_amount: platformFee.toFixed(2),
-    total_charge_to_student: total.toFixed(2),
+    total_charge_to_student: price.toFixed(2),
     coach_payout_expected: coachPayout.toFixed(2),
     escrow_status: 'held',
     payment_status: 'captured',
@@ -74,7 +73,7 @@ async function createNoStripePayment(booking) {
 
 function fmtBooking(booking, payment) {
   const price = Number(booking.price);
-  const total = (price * 1.08).toFixed(2);
+  const total = price.toFixed(2);
   const half = (Math.floor(Number(total) * 50) / 100).toFixed(2);
   return {
     id: booking.id,
@@ -178,12 +177,12 @@ async function main() {
   }
 
   const price = Number(lesson.price);
-  const totalCharge = (price * 1.08).toFixed(2);
+  const totalCharge = price.toFixed(2);
   const lateRefund = (Math.floor(Number(totalCharge) * 50) / 100).toFixed(2);
   const latePenalty = (Number(totalCharge) - Number(lateRefund)).toFixed(2);
 
   console.log('\n=== Cancel test bookings seeded ===\n');
-  console.log(`Lesson price: $${price.toFixed(2)}  |  Total charge (incl. 8% fee): $${totalCharge}`);
+  console.log(`Lesson price / student charge: $${totalCharge}`);
   console.log(`Late student cancel expected: refund $${lateRefund}, penalty $${latePenalty}\n`);
 
   for (const { spec, booking, payment } of created) {

@@ -20,7 +20,11 @@ const MAX_LIST_ALL_COACH_COURTS = 10000;
 const PUBLIC_COURT_LIST_ATTRIBUTES = [
   'id',
   'name',
-  'address',
+  'address_line1',
+  'city',
+  'state',
+  'postal_code',
+  'country',
   'latitude',
   'longitude',
   'is_private',
@@ -200,7 +204,11 @@ export const getCourt = async (req, res) => {
       attributes: [
         'id',
         'name',
-        'address',
+        'address_line1',
+        'city',
+        'state',
+        'postal_code',
+        'country',
         'latitude',
         'longitude',
         'is_private',
@@ -241,9 +249,8 @@ export const deleteCourt = async (req, res) => {
     }
 
     await court.update({ deleted_at: new Date() });
-    await CoachCourtLocation.destroy({
-      where: { court_id: court.id },
-    });
+    // Keep coach_court_locations rows so restoring the court (create-or-reuse) restores
+    // every prior coach link. Soft-deleted courts are already excluded from discovery joins.
     return res.json(createResponse(null, 'Court deleted successfully'));
   } catch (error) {
     logger.error('Error deleting court:', error);
@@ -253,13 +260,30 @@ export const deleteCourt = async (req, res) => {
 
 /**
  * POST /api/courts
- * Create a new court (coach or admin only)
+ * Create a new court, or reuse an existing shared court_locations row and link the coach.
+ * Identity key: (name, address_line1, city, state, postal_code, country).
+ *
+ * Rules:
+ * - Exact identity (active or soft-deleted) → reuse (restore if soft-deleted); never overwrite fields.
+ * - Same name, different address among active courts → 409 COURT_NAME_CONFLICT.
+ * - Different name, same address → allow (multiple courts at one venue).
  */
 export const createCourt = async (req, res) => {
   try {
-    const { name, address, latitude, longitude, is_private } = req.body;
+    const {
+      name,
+      address_line1,
+      city,
+      state,
+      postal_code,
+      country,
+      latitude,
+      longitude,
+      is_private,
+    } = req.validated || req.body;
     const userId = req.user.id;
     const userRoles = req.user.roles || [];
+    const countryNorm = country || 'US';
 
     if (!userRoles.includes('coach') && !userRoles.includes('admin')) {
       return res.status(403).json(createErrorResponse('Only coaches and admins can create courts'));
@@ -270,66 +294,114 @@ export const createCourt = async (req, res) => {
       return res.status(400).json(createErrorResponse(coachCourtFieldRejection.message));
     }
 
-    if (!name) {
-      return res.status(400).json(createErrorResponse('Court name is required'));
-    }
+    const identityFields = {
+      name,
+      address_line1,
+      city,
+      state,
+      postal_code,
+      country: countryNorm,
+    };
 
-    // If coach is creating: new court must be within MAX_COURT_DISTANCE_MILES of one of their existing courts (if any)
-    if (userRoles.includes('coach')) {
-      const existingLinks = await CoachCourtLocation.findAll({
-        where: { coach_id: userId },
-        include: [{ model: CourtLocation, as: 'court', attributes: ['id', 'latitude', 'longitude'] }],
+    // Exact identity including soft-deleted (unique index still covers deleted rows).
+    let court = await CourtLocation.findOne({ where: identityFields });
+    let courtWasCreated = false;
+    let courtWasRestored = false;
+
+    if (court) {
+      if (court.deleted_at) {
+        await court.update({ deleted_at: null });
+        courtWasRestored = true;
+        await court.reload();
+      }
+      // Reuse — do not overwrite name/address/coords/is_private.
+    } else {
+      // Same display name at a different address → refuse (protect shared identity).
+      const sameNameActive = await CourtLocation.findOne({
+        where: { name, deleted_at: null },
       });
-      const existingCourtsWithLocation = existingLinks
-        .map((l) => l.court)
-        .filter((c) => c && c.latitude != null && c.longitude != null);
-      const newLat = latitude != null ? parseFloat(latitude) : null;
-      const newLng = longitude != null ? parseFloat(longitude) : null;
-      if (existingCourtsWithLocation.length > 0 && newLat != null && newLng != null) {
-        const withinRange = existingCourtsWithLocation.some(
-          (c) => distanceMiles(newLat, newLng, c.latitude, c.longitude) <= MAX_COURT_DISTANCE_MILES
-        );
-        if (!withinRange) {
-          return res
-            .status(400)
-            .json(
-              createErrorResponse(
-                `New court must be within ${MAX_COURT_DISTANCE_MILES} miles of your existing courts. When you move, remove old courts first then add new ones.`
-              )
-            );
+      if (sameNameActive) {
+        return res.status(409).json({
+          success: false,
+          error: 'COURT_NAME_CONFLICT',
+          message:
+            'A court with this name already exists at a different location. Please verify the address or choose a different court name.',
+        });
+      }
+
+      if (userRoles.includes('coach')) {
+        const distanceError = await coachCourtDistanceError(userId, latitude, longitude);
+        if (distanceError) {
+          return res.status(400).json(createErrorResponse(distanceError));
+        }
+      }
+
+      try {
+        court = await CourtLocation.create({
+          ...identityFields,
+          latitude: latitude != null ? parseFloat(latitude) : null,
+          longitude: longitude != null ? parseFloat(longitude) : null,
+          is_private: Boolean(is_private),
+          created_by_user_id: userId,
+          source: 'manual',
+        });
+        courtWasCreated = true;
+      } catch (createErr) {
+        // Race: another request created/restored the same identity — reuse that row.
+        if (createErr?.name === 'SequelizeUniqueConstraintError') {
+          court = await CourtLocation.findOne({ where: identityFields });
+          if (court?.deleted_at) {
+            await court.update({ deleted_at: null });
+            courtWasRestored = true;
+            await court.reload();
+          }
+        }
+        if (!court) {
+          throw createErr;
         }
       }
     }
 
-    // Check for duplicate
-    const existing = await CourtLocation.findOne({
-      where: {
-        name,
-        address: address || null,
-        deleted_at: null,
-      },
-    });
-
-    if (existing) {
-      return res.status(409).json(createErrorResponse('Court with this name and address already exists'));
-    }
-
-    const court = await CourtLocation.create({
-      name,
-      address,
-      latitude: latitude != null ? parseFloat(latitude) : null,
-      longitude: longitude != null ? parseFloat(longitude) : null,
-      is_private: is_private || false,
-      created_by_user_id: userId,
-      source: 'manual',
-    });
-
-    // Coaches are auto-linked to courts they create (court row only here; coach_notes via POST /api/coaches/me/courts).
+    // Coaches are linked to the court (create or reuse). Existing shared fields are not overwritten.
     if (userRoles.includes('coach')) {
-      const coachCourt = await CoachCourtLocation.create({
-        coach_id: userId,
-        court_id: court.id,
+      if (!courtWasCreated) {
+        const distanceError = await coachCourtDistanceError(
+          userId,
+          court.latitude,
+          court.longitude,
+        );
+        if (distanceError) {
+          return res.status(400).json(createErrorResponse(distanceError));
+        }
+      }
+
+      let coachCourt = await CoachCourtLocation.findOne({
+        where: { coach_id: userId, court_id: court.id },
       });
+      let linkWasCreated = false;
+
+      if (!coachCourt) {
+        try {
+          coachCourt = await CoachCourtLocation.create({
+            coach_id: userId,
+            court_id: court.id,
+          });
+          linkWasCreated = true;
+        } catch (linkErr) {
+          if (linkErr?.name === 'SequelizeUniqueConstraintError') {
+            coachCourt = await CoachCourtLocation.findOne({
+              where: { coach_id: userId, court_id: court.id },
+            });
+            linkWasCreated = false;
+          } else {
+            throw linkErr;
+          }
+        }
+      }
+
+      if (!coachCourt) {
+        return res.status(500).json(createErrorResponse('Failed to link court to coach'));
+      }
 
       const courtData = await CourtLocation.findByPk(court.id, {
         attributes: PUBLIC_COURT_LIST_ATTRIBUTES,
@@ -338,17 +410,60 @@ export const createCourt = async (req, res) => {
         attributes: COACH_COURT_LINK_POST_COURT_RESPONSE_ATTRIBUTES,
       });
 
-      return res.status(201).json(
-        createResponse({ court: courtData, coachCourt: coachCourtData }, 'Court created successfully')
+      const status = courtWasCreated || linkWasCreated ? 201 : 200;
+      let message = 'Court already linked';
+      if (courtWasCreated) {
+        message = 'Court created successfully';
+      } else if (courtWasRestored && linkWasCreated) {
+        message = 'Existing court restored and linked successfully';
+      } else if (linkWasCreated) {
+        message = 'Existing court linked successfully';
+      } else if (courtWasRestored) {
+        message = 'Existing court restored';
+      }
+
+      return res.status(status).json(
+        createResponse({ court: courtData, coachCourt: coachCourtData }, message),
       );
     }
 
-    return res.status(201).json(createResponse(court, 'Court created successfully'));
+    // Admin: no auto-link.
+    if (courtWasCreated) {
+      return res.status(201).json(createResponse(court, 'Court created successfully'));
+    }
+    if (courtWasRestored) {
+      return res.status(200).json(createResponse(court, 'Court restored'));
+    }
+    return res.status(200).json(createResponse(court, 'Court already exists'));
   } catch (error) {
     logger.error('Error creating court:', error);
     return res.status(500).json(createErrorResponse('Failed to create court'));
   }
 };
+
+/**
+ * When a coach already has located courts, a new/linked court must be within MAX_COURT_DISTANCE_MILES.
+ * @returns {Promise<string|null>} error message or null if OK
+ */
+async function coachCourtDistanceError(coachId, latitude, longitude) {
+  const existingLinks = await CoachCourtLocation.findAll({
+    where: { coach_id: coachId },
+    include: [{ model: CourtLocation, as: 'court', attributes: ['id', 'latitude', 'longitude'] }],
+  });
+  const existingCourtsWithLocation = existingLinks
+    .map((l) => l.court)
+    .filter((c) => c && c.latitude != null && c.longitude != null);
+  const newLat = latitude != null ? parseFloat(latitude) : null;
+  const newLng = longitude != null ? parseFloat(longitude) : null;
+  if (existingCourtsWithLocation.length === 0 || newLat == null || newLng == null) {
+    return null;
+  }
+  const withinRange = existingCourtsWithLocation.some(
+    (c) => distanceMiles(newLat, newLng, c.latitude, c.longitude) <= MAX_COURT_DISTANCE_MILES,
+  );
+  if (withinRange) return null;
+  return `New court must be within ${MAX_COURT_DISTANCE_MILES} miles of your existing courts. When you move, remove old courts first then add new ones.`;
+}
 
 /**
  * GET /api/coaches/:id/courts

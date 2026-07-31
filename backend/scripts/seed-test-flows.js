@@ -261,7 +261,11 @@ async function createCoachStack(coach) {
 
   const court = await CourtLocation.create({
     name: 'Test Flow Court',
-    address: '1 Pickleball Lane, New York, NY',
+    address_line1: '1 Pickleball Lane',
+    city: 'New York',
+    state: 'NY',
+    postal_code: '10001',
+    country: 'US',
     latitude: 40.7128,
     longitude: -74.006,
     is_private: false,
@@ -312,7 +316,7 @@ async function createNoStripePayment(booking, { paymentStatus = 'captured', escr
     lesson_price: price.toFixed(2),
     platform_fee_percent: 8.0,
     platform_fee_amount: ((price * 8) / 100).toFixed(2),
-    total_charge_to_student: (price * 1.08).toFixed(2),
+    total_charge_to_student: Number(price).toFixed(2),
     coach_payout_expected: ((price * 92) / 100).toFixed(2),
     escrow_status: escrowStatus,
     payment_status: paymentStatus,

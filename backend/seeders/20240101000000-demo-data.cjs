@@ -60,16 +60,16 @@ module.exports = {
 
     // Major US cities with coordinates
     const cities = [
-      { name: 'New York', lat: 40.7128, lng: -74.0060 },
-      { name: 'Los Angeles', lat: 34.0522, lng: -118.2437 },
-      { name: 'Chicago', lat: 41.8781, lng: -87.6298 },
-      { name: 'Houston', lat: 29.7604, lng: -95.3698 },
-      { name: 'Phoenix', lat: 33.4484, lng: -112.0740 },
-      { name: 'Philadelphia', lat: 39.9526, lng: -75.1652 },
-      { name: 'San Antonio', lat: 29.4241, lng: -98.4936 },
-      { name: 'San Diego', lat: 32.7157, lng: -117.1611 },
-      { name: 'Dallas', lat: 32.7767, lng: -96.7970 },
-      { name: 'San Jose', lat: 37.3382, lng: -121.8863 },
+      { name: 'New York', state: 'NY', postal_code: '10001', lat: 40.7128, lng: -74.0060 },
+      { name: 'Los Angeles', state: 'CA', postal_code: '90012', lat: 34.0522, lng: -118.2437 },
+      { name: 'Chicago', state: 'IL', postal_code: '60601', lat: 41.8781, lng: -87.6298 },
+      { name: 'Houston', state: 'TX', postal_code: '77002', lat: 29.7604, lng: -95.3698 },
+      { name: 'Phoenix', state: 'AZ', postal_code: '85001', lat: 33.4484, lng: -112.0740 },
+      { name: 'Philadelphia', state: 'PA', postal_code: '19102', lat: 39.9526, lng: -75.1652 },
+      { name: 'San Antonio', state: 'TX', postal_code: '78205', lat: 29.4241, lng: -98.4936 },
+      { name: 'San Diego', state: 'CA', postal_code: '92101', lat: 32.7157, lng: -117.1611 },
+      { name: 'Dallas', state: 'TX', postal_code: '75201', lat: 32.7767, lng: -96.7970 },
+      { name: 'San Jose', state: 'CA', postal_code: '95113', lat: 37.3382, lng: -121.8863 },
     ];
 
     // Create 10 coaches
@@ -81,7 +81,7 @@ module.exports = {
 
     for (let i = 0; i < 10; i++) {
       const city = cities[i % cities.length];
-      const passwordHash = await bcrypt.hash('password123', 10);
+      const passwordHash = await bcrypt.hash('Test1234!Ab', 10);
       
       try {
         const user = await User.create({
@@ -130,7 +130,11 @@ module.exports = {
       
       const court = await CourtLocation.create({
         name: `${city.name} Pickleball Court ${courtNum}`,
-        address: `${100 + i} Main St, ${city.name}`,
+        address_line1: `${100 + i} Main St`,
+        city: city.name,
+        state: city.state,
+        postal_code: city.postal_code,
+        country: 'US',
         latitude: city.lat + (Math.random() - 0.5) * 0.1,
         longitude: city.lng + (Math.random() - 0.5) * 0.1,
         is_private: i % 5 === 0, // Every 5th court is private
@@ -193,7 +197,7 @@ module.exports = {
     ];
 
     for (let i = 0; i < 10; i++) {
-      const passwordHash = await bcrypt.hash('password123', 10);
+      const passwordHash = await bcrypt.hash('Test1234!Ab', 10);
       const user = await User.create({
         full_name: studentNames[i],
         email: `student${i + 1}@example.com`,
@@ -263,7 +267,7 @@ module.exports = {
           lesson_price: lesson.price,
           platform_fee_percent: 8.0,
           platform_fee_amount: lesson.price * 0.08,
-          total_charge_to_student: lesson.price * 1.08,
+          total_charge_to_student: lesson.price,
           coach_payout_expected: lesson.price * 0.92,
           escrow_status: status === 'completed' ? 'released' : 'held',
           payment_status: 'captured',
@@ -278,17 +282,16 @@ module.exports = {
       if (status === 'completed' && i % 3 === 0) {
         await Review.create({
           booking_id: booking.id,
-          reviewer_id: student.id,
-          target_user_id: lesson.coach_id,
+          student_id: student.id,
+          coach_id: lesson.coach_id,
           rating: 4 + Math.random(),
           comment: `Great lesson! Learned a lot.`,
-          visibility: 'public',
         });
       }
     }
 
     // Create 1 admin user
-    const adminPasswordHash = await bcrypt.hash('admin123', 10);
+    const adminPasswordHash = await bcrypt.hash('Test1234!Ab', 10);
     const adminUser = await User.create({
       full_name: 'Admin User',
       email: 'admin@picklecoach.com',
@@ -307,9 +310,10 @@ module.exports = {
     console.log(`   - 100 bookings`);
     console.log(`   - 1 admin user`);
     console.log('\n📧 Test credentials:');
-    console.log('   Coach: coach1@example.com / password123');
-    console.log('   Student: student1@example.com / password123');
-    console.log('   Admin: admin@picklecoach.com / admin123');
+    console.log('   Password for all seeded users: Test1234!Ab');
+    console.log('   Coach: coach1@example.com');
+    console.log('   Student: student1@example.com');
+    console.log('   Admin: admin@picklecoach.com');
   },
 
   async down(queryInterface, Sequelize) {

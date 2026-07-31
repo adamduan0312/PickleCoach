@@ -11,8 +11,9 @@ const bcrypt = require('bcryptjs');
  * Search center (matches Postman student List Coaches):
  *   lat=37.78  lng=-122.41  (downtown San Francisco)
  *
- * Credentials (development):
- * - Student: browse.geosearch@picklecoach.example.org / password123
+ * Credentials (development) — same password for every fixture user:
+ *   Test1234!Ab
+ * - Student: browse.geosearch@picklecoach.example.org
  * - Coaches (cannot call GET /coaches — 403): see emails below
  *
  * Expected results from that center (approx miles → coach email):
@@ -34,7 +35,7 @@ module.exports = {
 
     const { User, UserRole, CoachProfile, CourtLocation, CoachCourtLocation, Lesson, CoachAvailability } = await import('../models/index.js');
 
-    const passwordHash = await bcrypt.hash('password123', 10);
+    const passwordHash = await bcrypt.hash('Test1234!Ab', 10);
     const verifiedAt = new Date();
 
     /** Courts keyed for coach linking. Miles are vs Postman center (37.78, -122.41). */
@@ -42,7 +43,10 @@ module.exports = {
       {
         key: 'sf-mission',
         name: 'GeoSearch Fixture SF Mission Courts',
-        address: 'Dolores St & 19th St, San Francisco, CA',
+        address_line1: 'Dolores St & 19th St',
+        city: 'San Francisco',
+        state: 'CA',
+        postal_code: '94114',
         latitude: 37.7599,
         longitude: -122.425,
         approxMilesFromSfCenter: 1.5,
@@ -50,7 +54,10 @@ module.exports = {
       {
         key: 'sf-ferry',
         name: 'GeoSearch Fixture SF Ferry Courts',
-        address: '1 Ferry Building Plaza, San Francisco, CA',
+        address_line1: '1 Ferry Building Plaza',
+        city: 'San Francisco',
+        state: 'CA',
+        postal_code: '94111',
         latitude: 37.7955,
         longitude: -122.3937,
         approxMilesFromSfCenter: 2.5,
@@ -58,7 +65,10 @@ module.exports = {
       {
         key: 'oak-merritt',
         name: 'GeoSearch Fixture Oakland Lake Merritt Courts',
-        address: 'Lake Merritt, Oakland, CA',
+        address_line1: 'Lake Merritt',
+        city: 'Oakland',
+        state: 'CA',
+        postal_code: '94612',
         latitude: 37.8044,
         longitude: -122.2581,
         approxMilesFromSfCenter: 9,
@@ -66,7 +76,10 @@ module.exports = {
       {
         key: 'berkeley',
         name: 'GeoSearch Fixture Berkeley Codornices Courts',
-        address: 'Codornices Park, Berkeley, CA',
+        address_line1: 'Codornices Park',
+        city: 'Berkeley',
+        state: 'CA',
+        postal_code: '94709',
         latitude: 37.8915,
         longitude: -122.273,
         approxMilesFromSfCenter: 11,
@@ -74,7 +87,10 @@ module.exports = {
       {
         key: 'sanmateo',
         name: 'GeoSearch Fixture San Mateo Central Park Courts',
-        address: 'Central Park, San Mateo, CA',
+        address_line1: 'Central Park',
+        city: 'San Mateo',
+        state: 'CA',
+        postal_code: '94401',
         latitude: 37.5629,
         longitude: -122.3255,
         approxMilesFromSfCenter: 17,
@@ -82,7 +98,10 @@ module.exports = {
       {
         key: 'sanjose',
         name: 'GeoSearch Fixture San Jose Guadalupe Courts',
-        address: 'Guadalupe River Park, San Jose, CA',
+        address_line1: 'Guadalupe River Park',
+        city: 'San Jose',
+        state: 'CA',
+        postal_code: '95110',
         latitude: 37.3382,
         longitude: -121.8863,
         approxMilesFromSfCenter: 42,
@@ -90,7 +109,10 @@ module.exports = {
       {
         key: 'la-santa-monica',
         name: 'GeoSearch Fixture LA Santa Monica Courts',
-        address: 'Ocean Ave, Santa Monica, CA',
+        address_line1: 'Ocean Ave',
+        city: 'Santa Monica',
+        state: 'CA',
+        postal_code: '90401',
         latitude: 34.0195,
         longitude: -118.4912,
         approxMilesFromSfCenter: 350,
@@ -98,7 +120,10 @@ module.exports = {
       {
         key: 'nyc-bryant',
         name: 'GeoSearch Fixture NYC Bryant Park Courts',
-        address: 'W 42nd St, New York, NY',
+        address_line1: 'W 42nd St',
+        city: 'New York',
+        state: 'NY',
+        postal_code: '10036',
         latitude: 40.754,
         longitude: -73.984,
         approxMilesFromSfCenter: 2560,
@@ -106,7 +131,10 @@ module.exports = {
       {
         key: 'nyc-chelsea',
         name: 'GeoSearch Fixture NYC Chelsea Piers Courts',
-        address: '23rd St Waterfront, New York, NY',
+        address_line1: '23rd St Waterfront',
+        city: 'New York',
+        state: 'NY',
+        postal_code: '10011',
         latitude: 40.748,
         longitude: -74.009,
         approxMilesFromSfCenter: 2560,
@@ -114,7 +142,10 @@ module.exports = {
       {
         key: 'sf-deleted',
         name: 'GeoSearch Fixture SF Soft-Deleted Court',
-        address: 'Hidden Alley, San Francisco, CA',
+        address_line1: 'Hidden Alley',
+        city: 'San Francisco',
+        state: 'CA',
+        postal_code: '94103',
         latitude: 37.78,
         longitude: -122.41,
         approxMilesFromSfCenter: 0,
@@ -127,7 +158,11 @@ module.exports = {
       const [court] = await CourtLocation.findOrCreate({
         where: { name: spec.name },
         defaults: {
-          address: spec.address,
+          address_line1: spec.address_line1,
+          city: spec.city,
+          state: spec.state,
+          postal_code: spec.postal_code,
+          country: 'US',
           latitude: spec.latitude,
           longitude: spec.longitude,
           is_private: false,
@@ -136,7 +171,11 @@ module.exports = {
         },
       });
       await court.update({
-        address: spec.address,
+        address_line1: spec.address_line1,
+        city: spec.city,
+        state: spec.state,
+        postal_code: spec.postal_code,
+        country: 'US',
         latitude: spec.latitude,
         longitude: spec.longitude,
         is_private: false,
@@ -403,7 +442,8 @@ module.exports = {
 
     console.log('');
     console.log('✅ GeoSearch fixtures ready');
-    console.log('   Student login: browse.geosearch@picklecoach.example.org / password123');
+    console.log('   Student login: browse.geosearch@picklecoach.example.org / Test1234!Ab');
+    console.log('   All geosearch fixture users use password: Test1234!Ab');
     console.log('   (Or use student.testflow@… — any verified student JWT works)');
     console.log('');
     console.log('   GET /coaches?lat=37.78&lng=-122.41&radius=5');

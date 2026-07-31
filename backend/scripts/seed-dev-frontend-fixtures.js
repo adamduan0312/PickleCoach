@@ -73,7 +73,6 @@ async function findTestUser(emailLocal) {
 async function createNoStripePayment(booking, { paymentStatus = 'captured', escrowStatus = 'held' } = {}) {
   const price = Number(booking.price);
   const platformFee = (price * 8) / 100;
-  const total = price + platformFee;
   const coachPayout = (price * 92) / 100;
   return Payment.create({
     booking_id: booking.id,
@@ -82,7 +81,7 @@ async function createNoStripePayment(booking, { paymentStatus = 'captured', escr
     lesson_price: price.toFixed(2),
     platform_fee_percent: 8.0,
     platform_fee_amount: platformFee.toFixed(2),
-    total_charge_to_student: total.toFixed(2),
+    total_charge_to_student: price.toFixed(2),
     coach_payout_expected: coachPayout.toFixed(2),
     escrow_status: escrowStatus,
     payment_status: paymentStatus,

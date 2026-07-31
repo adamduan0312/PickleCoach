@@ -8,22 +8,16 @@ import {
   canSendBookingMessage,
 } from '../utils/bookingMessaging.js';
 import { ensureBookingConversation } from '../utils/bookingConversationSummary.js';
-import { serializeConversationInboxItem, serializeBookingForMessaging } from '../utils/conversationInboxDto.js';
+import { serializeConversationInboxItem } from '../utils/conversationInboxDto.js';
+import { serializeMessage, serializeConversationDetail } from '../utils/messageDto.js';
+import {
+  getUnreadCountsByConversationIds,
+  markConversationAsRead,
+} from '../utils/conversationUnread.js';
 import * as notificationService from '../services/notificationService.js';
 
 const MAX_LIST_ALL_CONVERSATIONS = 10000;
 const MAX_LIST_ALL_MESSAGES = 10000;
-
-function serializeMessage(message) {
-  const plain = message?.toJSON ? message.toJSON() : { ...message };
-  return plain;
-}
-
-function serializeConversation(conversation, { booking } = {}) {
-  const plain = conversation?.toJSON ? conversation.toJSON() : { ...conversation };
-  if (booking) plain.booking = booking;
-  return plain;
-}
 
 export const getConversations = async (req, res) => {
   try {
@@ -78,7 +72,15 @@ export const getConversations = async (req, res) => {
       order: [['created_at', 'DESC']],
     });
 
-    const rows = conversations.rows.map((row) => serializeConversationInboxItem(row));
+    const unreadMap = await getUnreadCountsByConversationIds(
+      req.user.id,
+      conversations.rows.map((row) => row.id),
+    );
+    const rows = conversations.rows.map((row) =>
+      serializeConversationInboxItem(row, {
+        unreadCount: unreadMap.get(Number(row.id)) || 0,
+      }),
+    );
 
     if (!isPaginated) {
       return successResponse(res, rows, 'Conversations retrieved successfully');
@@ -114,6 +116,10 @@ export const getConversationById = async (req, res) => {
       return errorResponse(res, 'Unauthorized', 403);
     }
 
+    // Opening the thread marks it read for this viewer.
+    // Cursor = newest message created_at (not wall-clock), so a message sent right after open stays unread.
+    await markConversationAsRead(req.user.id, Number(id));
+
     const messages = await Message.findAndCountAll({
       where: { conversation_id: id },
       include: [{ model: User, as: 'sender', attributes: ['id', 'full_name', 'avatar_url'] }],
@@ -122,10 +128,10 @@ export const getConversationById = async (req, res) => {
       order: [['created_at', 'ASC']],
     });
 
-    const payload = serializeConversation(conversation, {
-      booking: serializeBookingForMessaging(booking),
+    const payload = serializeConversationDetail(conversation, {
+      booking,
+      messages: messages.rows,
     });
-    payload.messages = messages.rows.map(serializeMessage);
     if (isPaginated) {
       const paging = getPagingData(messages, page, queryLimit);
       payload.messages_pagination = paging.pagination;
@@ -156,9 +162,7 @@ export const createConversation = async (req, res) => {
     if (existingConversation) {
       return successResponse(
         res,
-        serializeConversation(existingConversation, {
-          booking: serializeBookingForMessaging(booking),
-        }),
+        serializeConversationDetail(existingConversation, { booking }),
         'Conversation already exists',
       );
     }
@@ -166,9 +170,7 @@ export const createConversation = async (req, res) => {
     const conversation = await ensureBookingConversation(booking_id);
     return successResponse(
       res,
-      serializeConversation(conversation, {
-        booking: serializeBookingForMessaging(booking),
-      }),
+      serializeConversationDetail(conversation, { booking }),
       'Conversation created successfully',
       201,
     );
@@ -199,7 +201,7 @@ export const sendMessage = async (req, res) => {
       return errorResponse(res, sendCheck.message, sendCheck.status);
     }
 
-    const message = await Message.create({
+    const created = await Message.create({
       conversation_id,
       sender_id: req.user.id,
       message_text,
@@ -207,10 +209,14 @@ export const sendMessage = async (req, res) => {
 
     await conversation.update({ updated_at: new Date() });
 
+    const message = await Message.findByPk(created.id, {
+      include: [{ model: User, as: 'sender', attributes: ['id', 'full_name', 'avatar_url'] }],
+    });
+
     void notificationService
       .notifyNewMessage({
         booking: conversation.booking,
-        message,
+        message: created,
         sender: req.user,
         conversationId: conversation.id,
       })
@@ -219,7 +225,7 @@ export const sendMessage = async (req, res) => {
           component: 'messaging',
           event: 'new_message_notify_failed',
           conversationId: conversation.id,
-          messageId: message.id,
+          messageId: created.id,
           message: err?.message,
         });
       });
