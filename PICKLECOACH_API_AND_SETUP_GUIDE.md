@@ -1045,8 +1045,7 @@ pm.test("Returns array of bookings", function () {
 {
   "booking_id": "{{booking_id}}",
   "rating": 5,
-  "comment": "Great lesson!",
-  "target_user_id": "{{coach_id}}"
+  "comment": "Great lesson!"
 }
 ```
 
@@ -2152,7 +2151,7 @@ Authorization: Bearer <token>
 ## Coaches (`/api/coaches`)
 
 ### `GET /api/coaches` (List / search coaches)
-- **Auth**: Required (student or admin only). Coaches cannot use this endpoint (403).
+- **Auth**: Required (student, coach, or admin). Same public marketplace cards for all; booking still requires the **student** role.
 - **Description**: Flattened marketplace list. Optional **lat** / **lng** / **radius** for geo search (adds **`distance_miles`**). Other filters: **min_skill_rating**, **max_skill_rating**, **min_rating**, page, limit.
 - **Query Parameters**: `lat`, `lng`, `radius` (miles), `min_skill_rating`, `max_skill_rating`, `min_rating`, `page`, `limit` (all optional).
 - **Response** (Status: 200): Flattened cards — `headline`, `skill_rating`, `rating_*`, `reliability_score`, `courts[]` (no join IDs). With lat/lng: `distance_miles`. Paged responses include `pagination` (`totalItems`, `totalPages`, `currentPage`, `pageSize`). See **backend/API_ENDPOINTS.md** for full example.
@@ -2361,7 +2360,11 @@ Authorization: Bearer <token>
         "court": {
           "id": 1,
           "name": "Central Park Pickleball Court",
-          "address": "123 Main St",
+          "address_line1": "123 Main St",
+          "city": "New York",
+          "state": "NY",
+          "postal_code": "10001",
+          "country": "US",
           "latitude": 40.7,
           "longitude": -74.0,
           "is_private": false
@@ -2392,20 +2395,22 @@ Authorization: Bearer <token>
 
 ### `POST /api/coaches/me/stripe-connect/onboard`
 - **Auth**: Required
-- **Description**: Initiate Stripe Connect onboarding for coach payouts
+- **Description**: Initiate **or resume** Stripe Connect onboarding for coach payouts. Creates the Connect account once; while onboarding is unfinished, each call returns a fresh single-use `onboarding_url` (Stripe links expire after ~5 minutes). `409` only when onboarding is already complete.
 - **Request Body**:
   ```json
   {
     "coach_id": "number (optional, admin only - defaults to authenticated user's ID)"
   }
   ```
-- **Response** (Status: 200):
+- **Response** (Status: **201** first call / **200** resume):
   ```json
   {
     "success": true,
-    "message": "Stripe Connect onboarding initiated",
+    "message": "Stripe Connect onboarding initiated successfully",
     "data": {
-      "onboarding_url": "https://connect.stripe.com/setup/c/..."
+      "account_id": "acct_...",
+      "onboarding_url": "https://connect.stripe.com/setup/e/acct_.../...",
+      "expires_at": 1234567890
     }
   }
   ```
@@ -2433,7 +2438,7 @@ Authorization: Bearer <token>
 
 **Field notes:** `is_private` is a **discovery flag**, not a permissions flag (not invitation-only / access-restricted). When `true`, the court is **hidden from public court discovery** only (`GET /api/courts`, `GET /api/courts/:id` returns **404**). **`is_private` affects only public court discovery.** Once a court is linked to a coach, it remains available for coach profiles, marketplace eligibility, and booking regardless of its privacy setting. Admins always see both.
 
-**Address visibility:** Exact location for `is_private: true` is unlocked **only on booking endpoints** when that booking is **confirmed** (or later). `GET /api/coaches/:id/courts` and marketplace coach cards **always** redact private street/GPS (even after the student has a confirmed booking) — use `GET /api/bookings/:id` for the booked court’s exact address. Public courts always show full address. Coaches and admins always see exact location. See `API_ENDPOINTS.md` Court field notes.
+**Address visibility:** Exact structured location for `is_private: true` is unlocked **only on booking endpoints** when that booking is **confirmed** (or later). `GET /api/coaches/:id/courts` and marketplace coach cards **always** redact private street/GPS (even after the student has a confirmed booking) — they expose only `area` (`City, ST ZIP`). Use `GET /api/bookings/:id` for the booked court’s exact address. Public courts always show full structured address. Coaches and admins always see exact location. See `API_ENDPOINTS.md` Court field notes.
 
 `rate_modifier` on coach–court links is stored for future per-court pricing but not exposed on coach/student APIs until booking logic uses it.
 
@@ -2450,7 +2455,11 @@ Authorization: Bearer <token>
       {
         "id": 1,
         "name": "Central Park Pickleball Court",
-        "address": "123 Main St",
+        "address_line1": "123 Main St",
+        "city": "New York",
+        "state": "NY",
+        "postal_code": "10001",
+        "country": "US",
         "latitude": 40.7128,
         "longitude": -74.0060,
         "is_private": false
@@ -2470,7 +2479,11 @@ Authorization: Bearer <token>
     "data": {
       "id": 1,
       "name": "Central Park Pickleball Court",
-      "address": "123 Main St",
+      "address_line1": "123 Main St",
+      "city": "New York",
+      "state": "NY",
+      "postal_code": "10001",
+      "country": "US",
       "latitude": 40.7128,
       "longitude": -74.0060,
       "is_private": false,
@@ -2483,12 +2496,16 @@ Authorization: Bearer <token>
 
 ### `POST /api/courts`
 - **Auth**: Required (Coach or Admin only)
-- **Description**: Create a new court location (**court entity only**). **Coach auto-link:** When a coach creates a court, the server creates a link row with **only** `coach_id` and `court_id`. **`coach_notes` / `notes` are not accepted** on this route — body must not include those properties (**400** if present). Use **`POST /api/coaches/me/courts`** with `court_id` and optional **`coach_notes`** for relationship metadata.
+- **Description**: Create **or reuse** a shared court location (**court entity only**, structured address). Identity: `(name, address_line1, city, state, postal_code, country)`. If the court already exists, coaches are linked to it instead of getting a uniqueness error. **Coach auto-link:** `coach_id` + `court_id` only. **`coach_notes` / `notes` / free-text `address` are not accepted** (**400**). Use **`POST /api/coaches/me/courts`** with `court_id` and optional **`coach_notes`** for relationship metadata.
 - **Request Body**:
   ```json
   {
     "name": "string (required)",
-    "address": "string (optional)",
+    "address_line1": "string (required)",
+    "city": "string (required)",
+    "state": "string (required, 2-letter US)",
+    "postal_code": "string (required, 12345 or 12345-6789)",
+    "country": "string (optional, default US)",
     "latitude": "number (optional)",
     "longitude": "number (optional)",
     "is_private": "boolean (optional, defaults to false)"
@@ -2503,7 +2520,11 @@ Authorization: Bearer <token>
       "court": {
         "id": 1,
         "name": "Central Park Pickleball Court",
-        "address": "123 Main St",
+        "address_line1": "123 Main St",
+        "city": "New York",
+        "state": "NY",
+        "postal_code": "10001",
+        "country": "US",
         "latitude": 40.7128,
         "longitude": -74.0060,
         "is_private": false
@@ -2526,7 +2547,11 @@ Authorization: Bearer <token>
     "data": {
       "id": 1,
       "name": "Central Park Pickleball Court",
-      "address": "123 Main St",
+      "address_line1": "123 Main St",
+      "city": "New York",
+      "state": "NY",
+      "postal_code": "10001",
+      "country": "US",
       "latitude": 40.7128,
       "longitude": -74.0060,
       "is_private": false,
@@ -2850,31 +2875,39 @@ Authorization: Bearer <token>
       {
         "id": 1,
         "booking_id": 1,
-        "reviewer_id": 1,
-        "target_user_id": 2,
+        "student_id": 1,
+        "coach_id": 2,
         "rating": 5,
         "comment": "Great lesson!",
-        "visibility": "public",
-        "created_at": "2026-01-01T00:00:00.000Z"
+        "created_at": "2026-01-01T00:00:00.000Z",
+        "updated_at": "2026-01-01T00:00:00.000Z"
       }
     ]
   }
   ```
 
 ### `POST /api/reviews`
-- **Auth**: Required
-- **Description**: Create a review
+- **Authentication**: Logged-in user with the student role and a verified email.
+- **Authorization**: Must be the booking's `primary_student_id`.
+- **Description**: Create a review for a completed booking (rating + optional comment).
 - **Request Body**:
   ```json
   {
-    "booking_id": "number (required, positive integer)",
-    "target_user_id": "number (optional, positive integer)",
-    "rating": "number (required, 1-5 integer)",
-    "comment": "string (optional, max 1000 chars)",
-    "attendance_badges": "array (optional, array of strings)",
-    "visibility": "string (optional, 'public' | 'private' | 'semi_public', defaults to 'public')"
+    "booking_id": 162,
+    "rating": 5,
+    "comment": "Great lesson!"
   }
   ```
+- **Error conditions**:
+
+  | Situation | Status |
+  |-----------|--------|
+  | Booking not found | 404 |
+  | Not the booking's student | 403 |
+  | Booking not completed | 400 |
+  | Review already exists | 409 |
+  | Invalid body | 400 |
+
 - **Response** (Status: 201):
   ```json
   {
@@ -2882,27 +2915,25 @@ Authorization: Bearer <token>
     "message": "Review created successfully",
     "data": {
       "id": 1,
-      "booking_id": 1,
-      "reviewer_id": 1,
-      "target_user_id": 2,
+      "booking_id": 162,
+      "student_id": 1,
+      "coach_id": 2,
       "rating": 5,
       "comment": "Great lesson!",
-      "visibility": "public",
-      "created_at": "2026-01-01T00:00:00.000Z"
+      "created_at": "2026-01-01T00:00:00.000Z",
+      "updated_at": "2026-01-01T00:00:00.000Z"
     }
   }
   ```
 
 ### `PUT /api/reviews/:id`
 - **Auth**: Required
-- **Description**: Update review (only by reviewer)
+- **Description**: Update review (only by reviewer). Rating and/or comment only; sets `updated_at`.
 - **Request Body** (all fields optional - omit fields you don't want to update):
   ```json
   {
-    "rating": "number (optional, 1-5 integer)",
-    "comment": "string (optional, max 1000 chars)",
-    "attendance_badges": "array (optional, array of strings)",
-    "visibility": "string (optional, 'public' | 'private' | 'semi_public')"
+    "rating": 4,
+    "comment": "Updated review comment"
   }
   ```
 - **Response** (Status: 200):
@@ -2914,7 +2945,8 @@ Authorization: Bearer <token>
       "id": 1,
       "rating": 4,
       "comment": "Updated review comment",
-      "updated_at": "2026-01-01T00:00:00.000Z"
+      "created_at": "2026-01-01T00:00:00.000Z",
+      "updated_at": "2026-01-02T15:30:00.000Z"
     }
   }
   ```
