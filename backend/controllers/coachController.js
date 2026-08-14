@@ -651,6 +651,61 @@ export const stripeConnectOnboardDeps = {
   loadAudit: () => import('../utils/audit.js'),
 };
 
+/** Mutable deps for GET stripe-connect/status unit tests. */
+export const stripeConnectStatusDeps = {
+  loadStripeService: () => import('../services/stripeService.js'),
+};
+
+/**
+ * True when Stripe says the Connect account id is gone / never existed.
+ * Used to clear stale seed or deleted-dashboard account ids instead of 500ing.
+ */
+export function isStripeConnectAccountMissingError(error) {
+  if (!error) return false;
+  const code = String(error.code || '');
+  const type = String(error.type || '');
+  const statusCode = Number(error.statusCode || error.status || 0);
+  const message = String(error.message || '');
+
+  // Bad API credentials / misconfiguration — never treat as "account gone"
+  if (type === 'StripeAuthenticationError' || statusCode === 401) {
+    return false;
+  }
+
+  if (code === 'resource_missing') return true;
+  if (statusCode === 404 && /account/i.test(message)) return true;
+
+  // Live Stripe often returns PermissionError + account_invalid for deleted /
+  // inaccessible Connect accounts (probe: 403, "does not have access… or does not exist").
+  if (code === 'account_invalid' || type === 'StripePermissionError') {
+    if (
+      /no such account|account does not exist|does not have access to account|could not be found/i.test(
+        message,
+      )
+    ) {
+      return true;
+    }
+  }
+
+  if (
+    type === 'StripeInvalidRequestError' &&
+    /no such account|no such customer|could not be found|invalid.*account/i.test(message)
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Stripe Connect account ids look like `acct_1ABC…` (alphanumeric after prefix).
+ * Seed fakes such as `acct_testflow_seed` are not valid Stripe ids — clear locally
+ * without calling Stripe (avoids opaque failures / connection noise).
+ */
+export function isPlausibleStripeConnectAccountId(accountId) {
+  return typeof accountId === 'string' && /^acct_[A-Za-z0-9]+$/.test(accountId);
+}
+
 /**
  * POST /api/coaches/me/stripe-connect/onboard
  * Initiate or resume Stripe Connect onboarding for coach.
@@ -747,6 +802,11 @@ export const initiateStripeConnectOnboarding = async (req, res) => {
 /**
  * GET /api/coaches/me/stripe-connect/status
  * Get Stripe Connect account status and sync local stripe_ready for discovery.
+ *
+ * Missing/invalid Connect account ids (deleted in Dashboard, seed fakes like
+ * `acct_testflow_seed`) clear local state and return 200 `onboarded: false`
+ * so the coach can re-onboard — same spirit as marketplace-status Stripe soft-fail.
+ * Transient Stripe failures return 502 (not an opaque 500).
  */
 export const getStripeConnectStatus = async (req, res) => {
   try {
@@ -775,20 +835,83 @@ export const getStripeConnectStatus = async (req, res) => {
       }, 'Coach not onboarded with Stripe Connect');
     }
 
-    // Get account details from Stripe and sync local readiness cache
-    const stripe = (await import('../services/stripeService.js')).default;
-    const account = await stripe.accounts.retrieve(coachProfile.stripe_account_id);
-    const stripeReady = await syncCoachStripeReadyFromAccount(coachProfile, account);
+    const storedAccountId = coachProfile.stripe_account_id;
 
-    return successResponse(res, {
-      onboarded: true,
-      account_id: coachProfile.stripe_account_id,
-      charges_enabled: account.charges_enabled,
-      payouts_enabled: account.payouts_enabled,
-      details_submitted: account.details_submitted,
-      email: account.email,
-      stripe_ready: stripeReady,
-    }, 'Stripe Connect status retrieved successfully');
+    if (!isPlausibleStripeConnectAccountId(storedAccountId)) {
+      logger.warn('Stripe Connect status: stored account id is not a valid Stripe Connect id; clearing', {
+        coachId,
+        accountId: storedAccountId,
+      });
+      await coachProfile.update({
+        stripe_account_id: null,
+        stripe_ready: false,
+        stripe_onboarding_completed_at: null,
+      });
+      return successResponse(
+        res,
+        {
+          onboarded: false,
+          account_id: null,
+          stripe_ready: false,
+          cleared_invalid_account: true,
+        },
+        'Stored Stripe Connect account id was invalid; local state cleared',
+      );
+    }
+
+    try {
+      const stripeMod = await stripeConnectStatusDeps.loadStripeService();
+      const stripe = stripeMod.default || stripeMod;
+      const account = await stripe.accounts.retrieve(storedAccountId);
+      const stripeReady = await syncCoachStripeReadyFromAccount(coachProfile, account);
+
+      return successResponse(res, {
+        onboarded: true,
+        account_id: coachProfile.stripe_account_id,
+        charges_enabled: account.charges_enabled,
+        payouts_enabled: account.payouts_enabled,
+        details_submitted: account.details_submitted,
+        email: account.email,
+        stripe_ready: stripeReady,
+      }, 'Stripe Connect status retrieved successfully');
+    } catch (stripeError) {
+      if (isStripeConnectAccountMissingError(stripeError)) {
+        logger.warn('Stripe Connect status: stored account missing in Stripe; clearing local Connect state', {
+          coachId,
+          accountId: storedAccountId,
+          message: stripeError.message,
+          code: stripeError.code,
+        });
+        await coachProfile.update({
+          stripe_account_id: null,
+          stripe_ready: false,
+          stripe_onboarding_completed_at: null,
+        });
+        return successResponse(
+          res,
+          {
+            onboarded: false,
+            account_id: null,
+            stripe_ready: false,
+            cleared_invalid_account: true,
+          },
+          'Stored Stripe Connect account was invalid or deleted; local state cleared',
+        );
+      }
+
+      logger.error('Get Stripe Connect status Stripe error:', stripeError);
+      return errorResponse(
+        res,
+        'Temporarily unable to retrieve Stripe Connect status from Stripe',
+        502,
+        null,
+        {
+          code: 'stripe_connect_status_unavailable',
+          account_id: storedAccountId,
+          stripe_ready: !!coachProfile.stripe_ready,
+        },
+      );
+    }
   } catch (error) {
     logger.error('Get Stripe Connect status error:', error);
     return errorResponse(res, 'Failed to retrieve Stripe Connect status', 500);

@@ -45,6 +45,29 @@ import {
 } from '../utils/lateCancelPayout.js';
 import { createAuditLog } from '../utils/audit.js';
 import { applyBookingStatusTransition, BookingTransitionVia } from './bookingStateMachine.js';
+import { nextBookingPayoutStatusAfterTransferConfirmed } from '../utils/bookingPayoutStatus.js';
+import {
+  escrowAfterSuccessfulCapture,
+  escrowAfterUncapturedVoid,
+  escrowForUncapturedAuthorization,
+} from '../utils/paymentEscrowStatus.js';
+
+/**
+ * Advance `bookings.payout_status` to `paid` after Stripe confirms the Connect
+ * transfer (or the zero-amount path with nothing to send). Idempotent.
+ * Never overwrites `forfeited`.
+ */
+export async function markBookingPayoutPaid(bookingId, { transaction } = {}) {
+  if (!bookingId) return null;
+  const booking = await Booking.findByPk(bookingId, { transaction });
+  if (!booking) return null;
+  const next = nextBookingPayoutStatusAfterTransferConfirmed(booking.payout_status);
+  if (next === booking.payout_status) {
+    return { booking, unchanged: true };
+  }
+  await booking.update({ payout_status: next }, { transaction });
+  return { booking, unchanged: false };
+}
 
 /** Re-export canonical math for controllers/services that imported from `paymentService`. */
 export {
@@ -134,7 +157,7 @@ export const createPaymentForBooking = async (booking, studentId, paymentMethod 
     platform_fee_amount: amounts.platform_fee_amount,
     total_charge_to_student: amounts.total_charge_to_student,
     coach_payout_expected: amounts.coach_payout_expected,
-    escrow_status: 'held',
+    escrow_status: escrowForUncapturedAuthorization(),
     payment_status: 'pending',
     refund_status: 'none',
     payment_method: paymentMethod,
@@ -189,7 +212,8 @@ export const createPaymentForBooking = async (booking, studentId, paymentMethod 
 };
 
 /**
- * Handle successful payment capture (from webhook)
+ * Handle successful payment capture (from webhook or sync heal).
+ * Idempotent when payment is already captured / booking already confirmed.
  */
 export const handlePaymentCapture = async (paymentIntentId, chargeId) => {
   const payment = await Payment.findOne({
@@ -201,12 +225,22 @@ export const handlePaymentCapture = async (paymentIntentId, chargeId) => {
     throw new Error(`Payment not found for PaymentIntent ${paymentIntentId}`);
   }
 
+  if (payment.payment_status === 'captured') {
+    if (payment.booking?.status === 'pending') {
+      await applyBookingStatusTransition(payment.booking, {
+        toStatus: 'confirmed',
+        via: BookingTransitionVia.PAYMENT_CAPTURE_WEBHOOK,
+      });
+    }
+    return payment;
+  }
+
   const captureOnAccept = payment.metadata?.capture_on_accept === true;
   if (captureOnAccept) {
     await payment.update({
-      charge_id: chargeId,
+      charge_id: chargeId || payment.charge_id,
       payment_status: 'captured',
-      escrow_status: 'held',
+      escrow_status: escrowAfterSuccessfulCapture(),
     });
     if (payment.booking && payment.booking.status === 'pending') {
       await applyBookingStatusTransition(payment.booking, {
@@ -226,8 +260,8 @@ export const handlePaymentCapture = async (paymentIntentId, chargeId) => {
 
   await payment.update({
     payment_status: 'captured',
-    charge_id: chargeId,
-    escrow_status: 'held',
+    charge_id: chargeId || payment.charge_id,
+    escrow_status: escrowAfterSuccessfulCapture(),
   });
 
   if (payment.booking && payment.booking.status === 'pending') {
@@ -249,8 +283,58 @@ export const handlePaymentCapture = async (paymentIntentId, chargeId) => {
 };
 
 /**
+ * Finalize capture + confirm booking inside the coach-accept transaction when Stripe
+ * already reports the PaymentIntent as succeeded.
+ */
+async function finalizeCaptureOnAccept(payment, chargeIdStr, { transaction, source }) {
+  await payment.update(
+    {
+      payment_status: 'captured',
+      charge_id: chargeIdStr || payment.charge_id,
+      escrow_status: escrowAfterSuccessfulCapture(),
+    },
+    transaction ? { transaction } : {},
+  );
+
+  if (payment.booking.status === 'pending') {
+    await applyBookingStatusTransition(payment.booking, {
+      toStatus: 'confirmed',
+      via: BookingTransitionVia.COACH_ACCEPT_CAPTURE,
+      options: transaction ? { transaction } : {},
+    });
+  }
+
+  await createAuditLog({
+    user_id: payment.coach_id,
+    action: 'payment_captured',
+    table_name: 'payments',
+    record_id: payment.id,
+    after_state: {
+      charge_id: chargeIdStr,
+      payment_status: 'captured',
+      booking_status: 'confirmed',
+      source,
+    },
+  });
+
+  logger.info({
+    component: 'stripe',
+    event: 'capture_finalized_coach_accept',
+    paymentId: payment.id,
+    bookingId: payment.booking.id,
+    paymentIntentId: payment.payment_intent_id,
+    source,
+  });
+}
+
+/**
  * Capture payment and confirm booking when coach accepts (coach-must-confirm flow).
  * Call this from the accept-booking endpoint.
+ *
+ * When Stripe `capture` returns `succeeded` immediately (normal for cards), we finalize
+ * payment + booking in the same request so the accept response is not stale.
+ * Webhook `payment_intent.succeeded` remains as a backup / idempotent confirm.
+ *
  * @param {number} paymentId - Payment ID for the booking
  * @param {{ transaction?: import('sequelize').Transaction }} [opts]
  * @returns {Promise<{ payment: Object, booking: Object }>}
@@ -270,8 +354,27 @@ export const capturePaymentOnCoachAccept = async (paymentId, opts = {}) => {
     throw new Error(`Booking is not pending (status: ${payment.booking.status})`);
   }
 
-  // Capture may have succeeded on a prior accept attempt while a later step failed (e.g. audit log).
+  // Prior accept left pending_capture — heal if Stripe already succeeded.
   if (payment.payment_status === 'pending_capture') {
+    if (payment.payment_intent_id) {
+      const existingPi = await stripeService.getPaymentIntent(payment.payment_intent_id);
+      if (existingPi?.status === 'succeeded') {
+        const chargeId =
+          existingPi.latest_charge ||
+          existingPi.charges?.data?.[0]?.id ||
+          payment.charge_id;
+        const chargeIdStr = typeof chargeId === 'string' ? chargeId : chargeId?.id;
+        await finalizeCaptureOnAccept(payment, chargeIdStr, {
+          transaction,
+          source: 'coach_accept_heal_pending_capture',
+        });
+        await payment.reload({
+          include: [{ model: Booking, as: 'booking' }],
+          ...(transaction ? { transaction } : {}),
+        });
+        return { payment, booking: payment.booking };
+      }
+    }
     logger.info({
       component: 'stripe',
       event: 'coach_accept_idempotent_pending_capture',
@@ -296,38 +399,45 @@ export const capturePaymentOnCoachAccept = async (paymentId, opts = {}) => {
       paymentIntent.charges?.data?.[0]?.id ||
       payment.charge_id;
     const chargeIdStr = typeof chargeId === 'string' ? chargeId : chargeId?.id;
-    await payment.update(
-      {
-        payment_status: 'pending_capture',
-        charge_id: chargeIdStr || payment.charge_id,
-        escrow_status: 'held',
-      },
-      transaction ? { transaction } : {},
-    );
-    await createAuditLog({
-      user_id: payment.coach_id,
-      action: 'payment_capture_initiated',
-      table_name: 'payments',
-      record_id: payment.id,
-      after_state: {
-        charge_id: chargeIdStr,
-        payment_status: 'pending_capture',
-        note: 'awaiting payment_intent.succeeded webhook',
-      },
-    });
-    logger.info({
-      component: 'stripe',
-      event: 'capture_initiated_coach_accept',
-      paymentId: payment.id,
-      bookingId: payment.booking.id,
-      paymentIntentId: payment.payment_intent_id,
-    });
+
+    if (paymentIntent.status === 'succeeded') {
+      await finalizeCaptureOnAccept(payment, chargeIdStr, {
+        transaction,
+        source: 'coach_accept_capture_api',
+      });
+    } else {
+      // Rare: capture accepted but not yet succeeded — wait for webhook.
+      await payment.update(
+        {
+          payment_status: 'pending_capture',
+          charge_id: chargeIdStr || payment.charge_id,
+          escrow_status: escrowForUncapturedAuthorization(),
+        },
+        transaction ? { transaction } : {},
+      );
+      await createAuditLog({
+        user_id: payment.coach_id,
+        action: 'payment_capture_initiated',
+        table_name: 'payments',
+        record_id: payment.id,
+        after_state: {
+          charge_id: chargeIdStr,
+          payment_status: 'pending_capture',
+          note: 'awaiting payment_intent.succeeded webhook',
+          stripe_status: paymentIntent.status,
+        },
+      });
+      logger.info({
+        component: 'stripe',
+        event: 'capture_initiated_coach_accept',
+        paymentId: payment.id,
+        bookingId: payment.booking.id,
+        paymentIntentId: payment.payment_intent_id,
+        stripeStatus: paymentIntent.status,
+      });
+    }
   }
 
-  /** Booking becomes confirmed only after Stripe reports capture success (webhook). */
-  logger.info(
-    `Coach accepted booking ${payment.booking.id}, payment ${payment.id}; capture pending webhook if applicable`
-  );
   await payment.reload({
     include: [{ model: Booking, as: 'booking' }],
     ...(transaction ? { transaction } : {}),
@@ -358,7 +468,7 @@ export const cancelPaymentOnCoachDecline = async (paymentId, opts = {}) => {
   if (payment.payment_intent_id && ['pending', 'authorized'].includes(payment.payment_status)) {
     await stripeService.cancelPaymentIntent(payment.payment_intent_id);
     await payment.update(
-      { payment_status: 'pending_void' },
+      { payment_status: 'pending_void', escrow_status: escrowAfterUncapturedVoid() },
       transaction ? { transaction } : {},
     );
     await createAuditLog({
@@ -366,7 +476,11 @@ export const cancelPaymentOnCoachDecline = async (paymentId, opts = {}) => {
       action: 'payment_void_initiated',
       table_name: 'payments',
       record_id: payment.id,
-      after_state: { payment_status: 'pending_void', note: 'awaiting payment_intent.canceled webhook' },
+      after_state: {
+        payment_status: 'pending_void',
+        escrow_status: escrowAfterUncapturedVoid(),
+        note: 'awaiting payment_intent.canceled webhook',
+      },
     });
     logger.info({
       component: 'stripe',
@@ -422,7 +536,10 @@ export const expirePendingBookingNoCoachResponse = async (bookingId) => {
     if (payment?.payment_intent_id && ['pending', 'authorized'].includes(payment.payment_status)) {
       try {
         await stripeService.cancelPaymentIntent(payment.payment_intent_id);
-        await payment.update({ payment_status: 'pending_void' }, { transaction });
+        await payment.update(
+          { payment_status: 'pending_void', escrow_status: escrowAfterUncapturedVoid() },
+          { transaction },
+        );
         await createAuditLog({
           user_id: null,
           action: 'payment_void_initiated',
@@ -430,6 +547,7 @@ export const expirePendingBookingNoCoachResponse = async (bookingId) => {
           record_id: payment.id,
           after_state: {
             payment_status: 'pending_void',
+            escrow_status: escrowAfterUncapturedVoid(),
             note: 'pending booking expired — awaiting payment_intent.canceled webhook',
           },
         });
@@ -440,7 +558,12 @@ export const expirePendingBookingNoCoachResponse = async (bookingId) => {
           bookingId: booking.id,
           message: stripeErr?.message || String(stripeErr),
         });
-        await payment.update({ payment_status: 'pending_void' }, { transaction }).catch(() => {});
+        await payment
+          .update(
+            { payment_status: 'pending_void', escrow_status: escrowAfterUncapturedVoid() },
+            { transaction },
+          )
+          .catch(() => {});
       }
     }
 
@@ -575,6 +698,7 @@ export const releaseEscrow = async (paymentId, coachStripeAccountId = null) => {
         note: 'Net retained amount is zero after refunds; no transfer initiated',
       },
     });
+    await markBookingPayoutPaid(payment.booking_id);
     return { payment: await Payment.findByPk(payment.id), payout };
   }
 
@@ -710,6 +834,7 @@ export const finalizeTransferFromStripe = async (transfer) => {
         processed_at: payout.processed_at || new Date(),
       });
     }
+    await markBookingPayoutPaid(payment.booking_id);
     return { idempotent: true, payment };
   }
 
@@ -745,10 +870,13 @@ export const finalizeTransferFromStripe = async (transfer) => {
         payout_status: 'paid',
         booking_id: payment.booking_id,
         payment_id: payment.id,
+        booking_payout_status: 'paid',
         source: 'stripe_webhook',
       },
     });
   }
+
+  await markBookingPayoutPaid(payment.booking_id);
 
   logger.info({
     component: 'stripe',
@@ -756,6 +884,7 @@ export const finalizeTransferFromStripe = async (transfer) => {
     paymentId: payment.id,
     transferId: transfer.id,
     payoutId: payout?.id,
+    bookingId: payment.booking_id,
   });
 
   return { payment, payout };

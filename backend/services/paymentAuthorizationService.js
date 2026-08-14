@@ -17,6 +17,7 @@ import {
   isPaymentIntentAuthorizedForManualCapture,
   wasCoachBookingRequestNotified,
 } from '../utils/paymentAuthorizationGate.js';
+import { escrowAfterUncapturedVoid } from '../utils/paymentEscrowStatus.js';
 
 const AUTH_FAILURE_AUDIT_ACTION = 'payment_authorization_failed_booking_cancelled';
 
@@ -175,7 +176,15 @@ export async function handlePaymentAuthorizationFailed(paymentIntent) {
     const bookingTerminal = booking && isBookingTerminalForAuthFailureCancel(booking.status);
 
     if (payment.payment_status !== 'failed') {
-      await payment.update({ payment_status: 'failed' }, { transaction });
+      await payment.update(
+        {
+          payment_status: 'failed',
+          ...(!payment.charge_id ? { escrow_status: escrowAfterUncapturedVoid() } : {}),
+        },
+        { transaction },
+      );
+    } else if (!payment.charge_id && payment.escrow_status !== escrowAfterUncapturedVoid()) {
+      await payment.update({ escrow_status: escrowAfterUncapturedVoid() }, { transaction });
     }
 
     if (!booking || booking.status !== 'pending') {

@@ -29,6 +29,12 @@ Attendance **source sets** and outcome validation still live in `utils/bookingAt
 
 `payout_status`, `messaging_locked`, `cancelled_*`, `attendance_finalized` are **orthogonal columns** updated in the same `update()` as `status` where the product requires it (see callers).
 
+**`payments.escrow_status`:** `pending` = authorized/uncaptured (not a hold). `held` = captured funds only. See [`payment-system.md`](./payment-system.md).
+
+**`payout_status`:** `none` → `pending` (complete / auto-complete / late-cancel retained revenue) → `processing` (`payoutWorker` initiated a Connect transfer) → `paid` (`transfer.*` webhook or zero-amount payout).
+
+**`forfeited` is reserved** (natural future use: coach no-show / coach gets $0). Live runtime does **not** assign it — student no-show stays `none` until the worker pays (`none` → `processing` → `paid`); coach no-show / voids / full refunds stay `none`. Attendance still locks on `processing`, `paid`, and `forfeited` if the last is ever written.
+
 ## Transition diagram (text)
 
 ```
@@ -56,6 +62,8 @@ Examples (non-exhaustive; see code for full graph):
 | `via` | Typical caller |
 |-------|----------------|
 | `payment_capture_webhook` | `paymentService.handlePaymentCapture` (pending → confirmed) |
+| `coach_accept_capture` | `paymentService.capturePaymentOnCoachAccept` when Stripe capture already returned `succeeded` |
+| `coach_accept_without_payment` | Coach accept with no payment row |
 | `coach_accept_without_payment` | `bookingController.acceptBooking` (no payment row) |
 | `coach_decline` | `cancelPaymentOnCoachDecline`, coach decline without payment |
 | `system_expire_pending` | Coach acceptance timeout worker (authorized pending, no accept/decline in time) |

@@ -191,9 +191,10 @@ const STATUS_ROWS = [
     extra: () => ({ messaging_locked: true }),
   },
   {
+    // Coach is owed; live mark leaves payout_status none until payoutWorker runs.
     key: 'student_no_show',
     status: 'student_no_show',
-    payout_status: 'forfeited',
+    payout_status: 'none',
     offsetDays: -4,
     extra: () => ({ messaging_locked: true }),
   },

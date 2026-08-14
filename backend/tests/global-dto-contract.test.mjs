@@ -314,7 +314,7 @@ describe('payment summary baseline', () => {
         payment_intent_id: 'pi_x',
         payment_status: 'authorized',
         total_charge_to_student: '50.00',
-        escrow_status: 'held',
+        escrow_status: 'pending',
         refund_status: 'none',
         lesson_price: '50.00',
         platform_fee_percent: 8,

@@ -8,7 +8,9 @@
  * paths reconcile escrow. The payout worker gates on escrow_status, not booking status.
  */
 
-/** Only `held` escrow is releasable; every other state is parked money. */
+/** Only `held` escrow is releasable; every other state is parked money.
+ * `failed + released` (pre-capture void) is never payable — payoutWorker also
+ * requires `captured` / `partially_refunded`. */
 export const PAYOUT_ELIGIBLE_ESCROW_STATUS = 'held';
 
 /**

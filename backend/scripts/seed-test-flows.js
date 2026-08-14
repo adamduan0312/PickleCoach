@@ -69,6 +69,7 @@ import {
   StudentFeedback,
   Conversation,
   Message,
+  ConversationRead,
   Notification,
   AuditLog,
 } from '../models/index.js';
@@ -142,6 +143,7 @@ async function wipe() {
   await CancellationHistory.destroy({ where: {} });
   await StudentFeedback.destroy({ where: {} });
   await Message.destroy({ where: {} });
+  await ConversationRead.destroy({ where: {} });
   await Conversation.destroy({ where: {} });
   await Payment.destroy({ where: {} });
   await Dispute.destroy({ where: {} });
@@ -346,7 +348,7 @@ async function createBookings({ coach, student, lesson, court }) {
     messaging_locked: true,
     idempotency_key: idemKey('pending_future'),
   });
-  await createNoStripePayment(out.pending_future, { paymentStatus: 'authorized' });
+  await createNoStripePayment(out.pending_future, { paymentStatus: 'authorized', escrowStatus: 'pending' });
 
   // 2) Confirmed future booking — cancel with payment row but no Stripe linkage
   out.confirmed_future = await Booking.create({

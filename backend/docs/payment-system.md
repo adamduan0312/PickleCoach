@@ -1,5 +1,33 @@
 # Payment system (canonical model)
 
+## Persistence roles
+
+| Table | Role |
+|-------|------|
+| **`payments`** | Underlying payment / escrow state (`authorized`, `captured`, refunded amounts, etc.) |
+| **`payment_actions`** | Asynchronous **post-capture refund** work queue (`processPendingRefundPaymentActions`) |
+| **`payouts`** | Coach Connect payout / transfer records |
+
+**Pre-capture** cancel or coach decline voids the Stripe PaymentIntent (authorization released). That path does **not** create a `payment_actions` refund row and does not call Stripe Refunds.
+
+## Escrow vs Stripe authorization
+
+Do **not** call a card authorization an escrow hold. `escrow_status = held` means captured funds only.
+
+| State | Meaning |
+|-------|---------|
+| `payment_status: authorized` + `escrow_status: pending` | Stripe authorized/reserved the card. **No captured money.** PickleCoach is not holding funds. |
+| `payment_status: captured` + `escrow_status: held` | Capture succeeded. PickleCoach is holding the charge for later payout or refund. |
+| `escrow_status: pending_release` | Connect transfer initiated; waiting for `transfer.*` webhook. |
+| `escrow_status: released` | After payout: captured funds released to the coach. Also used after a **pre-capture void** (`payment_status: failed`) — there was never captured money to hold. |
+| `escrow_status: refunded` | Captured charge fully refunded (Stripe refund succeeded / `charge.refunded`). Partial refunds stay `held` with `payment_status: partially_refunded`. |
+
+Pre-capture void (decline / early cancel / expire): `pending_void` then webhook `failed`, `escrow_status: released`. No refund, no `payment_actions`, no payout. Stripe refund processing time is not the same as the student seeing the money in their bank.
+
+**Post-capture** money returned to the student (late cancel, coach cancel after capture, dispute `refund_student` / partial, coach no-show auto-refund, admin refund) enqueues a `payment_actions` row; the refund worker executes `stripe.refunds.create` and marks the action `succeeded` or `failed`.
+
+See also [`database-tables.md`](./database-tables.md).
+
 ## Webhook + replay contracts
 
 Operational rules (dedupe, refund mirror, idempotency key formats, `payment_actions` typing) live in **`paymentStripeContract.js`** and are covered by **`tests/payment-stripe-contract.test.mjs`**. Refactor handlers to call these helpers so contract tests stay aligned with production.
@@ -39,6 +67,34 @@ Implemented as `calculatePaymentAmounts(lessonPrice)` in `paymentEngine.js`. Per
 | $50 | $50 | $46 | $4 |
 | $100 | $100 | $92 | $8 |
 
+## Terminology: PickleCoach “net retained” vs Stripe “Net amount”
+
+**Do not confuse these.** They use different bases.
+
+| Term | Meaning |
+|------|---------|
+| **PickleCoach “net retained”** | Gross charge − refunds only (`total_charge_to_student` − `refunded_amount`). Code/docs that say “net retained” mean **this**. |
+| **Stripe Dashboard “Net amount”** | Stripe’s balance impact after **refunds and Stripe processing fees**. Not used as the coach/platform split base. |
+| **Coach payout** | ~92% of PickleCoach net retained |
+| **Platform share** | ~8% of PickleCoach net retained |
+| **Stripe processing fee** | Platform expense under current MVP policy (not passed to student or coach in app math) |
+
+**Example (C3c late cancel on a $55 lesson):**
+
+```
+$55.00  charge
+−$27.50 refund
+───────────
+$27.50  PickleCoach "net retained"  ← split base
+  Coach:    92% ≈ $25.30
+  Platform:  8% ≈ $2.20
+
+Stripe separately:
+$55.00 charge − $27.50 refund − ~$1.90 processing fee ≈ $25.60 Stripe "Net amount"
+```
+
+Do **not** compare Stripe’s ~$25.60 Net to the ~$25.30 coach payout and conclude the coach should get 92% of $25.60. Student refund stays **$27.50** (no fee deducted from the refund). Record Stripe’s fee as a platform cost; C3c expectations use PickleCoach retained math only.
+
 ## Cancellations and refund policy
 
 - **Total charge basis**: `parseTotalChargeCentsFromBooking(payment, booking)`.
@@ -55,6 +111,7 @@ Timeline is aligned with **`autoConfirmWorker`** (lesson **end** + 24h verificat
 2. During `awaiting_verification`: escrow stays **held**; open in-app disputes block auto-complete and payout.
 3. **24h after lesson end** with no open dispute → `autoConfirmWorker` sets `completed` + `payout_status: pending`.
 4. **`payoutWorker`** (~10 min) releases escrow only when `bookings.status` is **`completed`** (or **`student_no_show`** for immediate attendance payout, or late-cancel `cancelled`).
+5. Booking **`payout_status`**: `pending` (owed) → `processing` (Connect transfer initiated) → **`paid`** (Stripe `transfer.created` / `transfer.paid` webhook, or zero-amount path with nothing to send). `payouts.status` and `payments.escrow_status` stay the money source of truth; the booking column now follows them so the frontend can show “Coach payout: Paid” without joining `payouts`. **`forfeited` is reserved** and is not assigned by live code (no-payout cases stay `none`; student no-show is payable).
 
 Coach **`POST .../complete`** can skip the wait by setting `completed` + `payout_status: pending` earlier. **`awaiting_verification` is not a payable status** — payout never runs before the booking reaches a terminal payable outcome.
 
@@ -63,12 +120,14 @@ Coach **`POST .../complete`** can skip the wait by setting `completed` + `payout
 When mirroring Stripe refund state or computing escrow payout:
 
 - **Coach share ratio** = `coach_payout_expected_cents / total_charge_cents` (from the payment row at capture / current stored snapshot).
-- **Net retained** = charge gross cents − refunded cents (Stripe charge object for mirror; payment row fields for escrow payout path).
-- **Coach portion** = `round(net × ratio)`, capped to `net`; **platform** = `net − coach` (remainder absorbs cent rounding).
+- **PickleCoach net retained** = charge **gross** cents − refunded cents only (payment row / Stripe charge refund fields — **not** Stripe Dashboard “Net amount” after processing fees).
+- **Coach portion** = `round(net_retained × ratio)`, capped to net retained; **platform** = remainder (cent rounding).
 
 Implemented as `splitNetRetainedCoachPlatformCents` and `computeEscrowCoachTransferCents` in `paymentEngine.js`. Used by `applyRefundStateFromStripeCharge` and `releaseEscrow`.
 
-**Late-cancel / partial-refund payout:** `releaseEscrow` calls `computeCoachEscrowPayoutFromPaymentSnapshot`, which sets **net retained = `total_charge_to_student` − `refunded_amount`** (Stripe-mirrored payment row). `lesson_price` defines the capture-time coach/total **ratio only** — the transfer is **`net_retained × ratio`**, never the full pre-refund coach share.
+**Late-cancel / partial-refund payout (C3c):** `releaseEscrow` uses  
+`net_retained = total_charge_to_student − refunded_amount`  
+(e.g. $55 − $27.50 = **$27.50**). Transfer ≈ **$25.30** coach / **$2.20** platform. Stripe’s separate ~$1.90 processing fee and Dashboard “Net amount” (~$25.60) are **not** the split base — platform absorbs the fee.
 
 ## Rounding rules
 
@@ -81,5 +140,28 @@ Implemented as `splitNetRetainedCoachPlatformCents` and `computeEscrowCoachTrans
 
 - **Refunds**: `payment_actions` rows carry `idempotency_key` / `stripe_idempotency_key`; `processRefund` uses `SELECT … FOR UPDATE` on `payments` and skips duplicate pending when appropriate.
 - **Webhooks**: `charge.refunded` and consistency checks use `applyRefundStateFromStripeCharge` so local `refunded_amount` / statuses align with Stripe.
+
+## Postman money scenarios (live Stripe test mode)
+
+Faster than manual book → accept → cancel. From `backend/`:
+
+```bash
+npm run seed:postman-money
+# or subset:
+npm run seed:postman-money -- --only=C3b,C3c,C3d,C4
+```
+
+| Key | Fixture ready for | You only call |
+|-----|-------------------|---------------|
+| **C3a** | pending + authorized | coach `PUT …/decline` (void) |
+| **C3b** | pending + authorized, lesson ≥24h out | student `POST …/cancel` (void; no `payment_actions`) |
+| **C3c** | confirmed + captured, `scheduled_at` ~12h out | student `POST …/cancel` → half refund; then coach payout = 92% of PickleCoach net retained (gross − refund), **not** 92% of Stripe Dashboard Net |
+| **C3d** | confirmed + captured | coach `POST …/cancel` (full refund → `payment_actions`) |
+| **C4** | confirmed + captured, lesson already ended | coach `POST …/complete` then wait `payoutWorker` |
+| **C5** | authorized PI (no booking), pending accept, captured cancel | double confirm / accept / cancel |
+
+**C3c expect (example $55 lesson):** $55 charge → $27.50 student refund → **$27.50 PickleCoach net retained** → ≈ **$25.30 coach / $2.20 platform**. Separately note Stripe processing fee on the Dashboard; do not use Stripe “Net amount” as the split base. See [Terminology](#terminology-picklecoach-net-retained-vs-stripe-net-amount).
+
+Default users: `student.testflow@picklecoach.example.org` / `coach7@example.com` (password `Test1234!Ab`). Requires `sk_test_…`, `stripe listen`, and workers.
 
 See `payment-system-audit.md` for risks and follow-ups.

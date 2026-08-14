@@ -15,7 +15,7 @@ module.exports = {
       throw new Error('❌ Seeding is only allowed in development');
     }
 
-    const { User, UserRole, CoachProfile, CourtLocation, CoachCourtLocation, Lesson, Booking, Payment, Review, CoachAvailability, Payout, CancellationHistory, Dispute, Notification, Conversation, Message, PaymentAction, BookingPlayer, StudentFeedback, UserReliability, SystemJob, AuditLog } = await import('../models/index.js');
+    const { User, UserRole, CoachProfile, CourtLocation, CoachCourtLocation, Lesson, Booking, Payment, Review, CoachAvailability, Payout, CancellationHistory, Dispute, Notification, Conversation, Message, ConversationRead, PaymentAction, BookingPlayer, StudentFeedback, UserReliability, SystemJob, AuditLog } = await import('../models/index.js');
 
     // Clean up existing seed data first (idempotent seeding)
     // Delete in order to respect foreign key constraints (child tables first)
@@ -23,6 +23,7 @@ module.exports = {
     await Review.destroy({ where: {} });
     await StudentFeedback.destroy({ where: {} });
     await Message.destroy({ where: {} });
+    await ConversationRead.destroy({ where: {} });
     await Conversation.destroy({ where: {} });
     await Notification.destroy({ where: {} });
     await Dispute.destroy({ where: {} });

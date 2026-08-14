@@ -8,6 +8,7 @@ import {
   isLateCancelRefundSettledForPayout,
 } from '../utils/lateCancelPayout.js';
 import { isPaymentEscrowPayable } from '../utils/payoutEscrowEligibility.js';
+import { nextBookingPayoutStatusAfterReleaseEscrow } from '../utils/bookingPayoutStatus.js';
 
 /**
  * Process payouts for completed bookings and student late-cancels with retained revenue.
@@ -141,10 +142,15 @@ export const processPayouts = async () => {
         // Process payout
         await paymentService.releaseEscrow(payment.id, coachStripeAccountId);
 
-        // Update booking payout status
-        await payment.booking.update({
-          payout_status: 'processing',
+        await payment.reload();
+        await payment.booking.reload();
+        const nextPayoutStatus = nextBookingPayoutStatusAfterReleaseEscrow({
+          currentPayoutStatus: payment.booking.payout_status,
+          escrowStatus: payment.escrow_status,
         });
+        if (nextPayoutStatus !== payment.booking.payout_status) {
+          await payment.booking.update({ payout_status: nextPayoutStatus });
+        }
 
         logger.info(`Processed payout for payment ${payment.id}`);
       } catch (error) {
@@ -153,10 +159,36 @@ export const processPayouts = async () => {
       }
     }
 
+    await healReleasedBookingsStillProcessing();
+
     logger.info(`Payout worker processed ${payments.length} payments`);
   } catch (error) {
     logger.error('Error in payout worker:', error);
     throw error;
   }
 };
+
+/**
+ * Bookings left at `processing` after a confirmed release (webhook already ran,
+ * or the prior worker only wrote `processing`). Advance to `paid`.
+ */
+async function healReleasedBookingsStillProcessing() {
+  const stale = await Booking.findAll({
+    where: { payout_status: 'processing' },
+    include: [
+      {
+        model: Payment,
+        as: 'payments',
+        required: true,
+        where: { escrow_status: 'released' },
+      },
+    ],
+  });
+  for (const booking of stale) {
+    await paymentService.markBookingPayoutPaid(booking.id);
+  }
+  if (stale.length) {
+    logger.info(`Healed ${stale.length} booking(s) payout_status processing → paid`);
+  }
+}
 

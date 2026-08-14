@@ -168,6 +168,9 @@ const logStripeApiError = (operation, error, extra = {}) => {
  */
 export const createPaymentIntent = async (amount, currency = 'usd', customerId = null, metadata = {}, options = {}) => {
   try {
+    if (stripeTestDouble?.createPaymentIntent) {
+      return stripeTestDouble.createPaymentIntent(amount, currency, customerId, metadata, options);
+    }
     const params = {
       amount: Math.round(amount * 100), // Convert to cents
       currency: currency.toLowerCase(),
@@ -209,6 +212,9 @@ export const capturePaymentIntent = async (paymentIntentId) => {
   if (isDevSeedPaymentIntentId(paymentIntentId)) {
     return devSeedCapturePaymentIntent(paymentIntentId);
   }
+  if (stripeTestDouble?.capturePaymentIntent) {
+    return stripeTestDouble.capturePaymentIntent(paymentIntentId);
+  }
   try {
     const paymentIntent = await stripe.paymentIntents.capture(paymentIntentId);
     logger.info('PaymentIntent captured', { paymentIntentId });
@@ -227,6 +233,9 @@ export const capturePaymentIntent = async (paymentIntentId) => {
 export const cancelPaymentIntent = async (paymentIntentId) => {
   if (isDevSeedPaymentIntentId(paymentIntentId)) {
     return devSeedCancelPaymentIntent(paymentIntentId);
+  }
+  if (stripeTestDouble?.cancelPaymentIntent) {
+    return stripeTestDouble.cancelPaymentIntent(paymentIntentId);
   }
   try {
     const paymentIntent = await stripe.paymentIntents.cancel(paymentIntentId);
@@ -411,6 +420,9 @@ export const createAccountLink = async (accountId, returnUrl, refreshUrl) => {
  * @returns {Object} Event object
  */
 export const verifyWebhookSignature = (payload, signature) => {
+  if (stripeTestDouble?.verifyWebhookSignature) {
+    return stripeTestDouble.verifyWebhookSignature(payload, signature);
+  }
   try {
     const event = stripe.webhooks.constructEvent(
       payload,
@@ -451,6 +463,9 @@ export const getPaymentIntent = async (paymentIntentId) => {
  */
 export const createCustomer = async ({ email, name, metadata = {} } = {}) => {
   try {
+    if (stripeTestDouble?.createCustomer) {
+      return stripeTestDouble.createCustomer({ email, name, metadata });
+    }
     return await stripe.customers.create({
       email,
       name,

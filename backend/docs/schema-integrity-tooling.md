@@ -2,6 +2,8 @@
 
 **Principle:** The **database** is the source of truth for what exists. Sequelize models (via `scripts/schema-map.js`) are the **representation** checked against the DB and against static field usage patterns.
 
+**Canonical table list / truncate notes:** [`database-tables.md`](./database-tables.md).
+
 ## Scripts (run from `backend/`)
 
 | npm script | Purpose |

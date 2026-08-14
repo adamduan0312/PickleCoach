@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PickleCoach — Stripe authorize test</title>
+    <script src="https://js.stripe.com/v3/"></script>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: system-ui, sans-serif;
+      }
+      body {
+        max-width: 480px;
+        margin: 2rem auto;
+        padding: 0 1rem;
+        line-height: 1.45;
+      }
+      h1 {
+        font-size: 1.25rem;
+        margin: 0 0 0.5rem;
+      }
+      p.hint {
+        color: #555;
+        font-size: 0.9rem;
+        margin: 0 0 1.25rem;
+      }
+      label {
+        display: block;
+        font-size: 0.85rem;
+        font-weight: 600;
+        margin: 0.75rem 0 0.25rem;
+      }
+      input,
+      button {
+        width: 100%;
+        box-sizing: border-box;
+        font: inherit;
+      }
+      input {
+        padding: 0.55rem 0.65rem;
+        border: 1px solid #ccc;
+        border-radius: 6px;
+      }
+      button {
+        margin-top: 1rem;
+        padding: 0.7rem 1rem;
+        border: 0;
+        border-radius: 6px;
+        background: #0a7;
+        color: #fff;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      button:disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
+      }
+      button.secondary {
+        background: #334;
+        margin-top: 0.5rem;
+      }
+      #payment-element {
+        margin-top: 1rem;
+        padding: 0.75rem;
+        border: 1px solid #ddd;
+        border-radius: 8px;
+        min-height: 120px;
+      }
+      #status {
+        margin-top: 1rem;
+        padding: 0.75rem;
+        border-radius: 6px;
+        background: #f4f4f4;
+        font-size: 0.9rem;
+        white-space: pre-wrap;
+        word-break: break-all;
+      }
+      #status.ok {
+        background: #e8f8ef;
+      }
+      #status.err {
+        background: #fdecea;
+      }
+      code {
+        font-size: 0.85em;
+      }
+      ol {
+        padding-left: 1.2rem;
+        font-size: 0.9rem;
+        color: #444;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Stripe authorize test</h1>
+    <p class="hint">
+      After <code>POST /api/booking-intents</code>, paste the
+      <code>client_secret</code> here. Success card
+      <code>4242 4242 4242 4242</code> → <code>requires_capture</code>. Decline
+      card <code>4000 0000 0000 0002</code> → Stripe error; confirm must 400.
+      Then <code>POST /api/bookings/confirm</code>.
+    </p>
+
+    <ol>
+      <li>Dashboard → Developers → API keys → copy <strong>Publishable</strong> test key</li>
+      <li>Paste <code>client_secret</code> from the booking-intent response</li>
+      <li>Click <strong>Mount Payment Element</strong> — “ready” means enter the card in the form, then <strong>Authorize</strong></li>
+      <li>New intent? Paste the new secret and click Mount again (or Reset first)</li>
+    </ol>
+
+    <label for="pk">Stripe publishable key (<code>pk_test_…</code>)</label>
+    <input id="pk" type="text" autocomplete="off" spellcheck="false" placeholder="pk_test_..." />
+
+    <label for="clientSecret">PaymentIntent <code>client_secret</code></label>
+    <input
+      id="clientSecret"
+      type="text"
+      autocomplete="off"
+      spellcheck="false"
+      placeholder="pi_..._secret_..."
+    />
+
+    <button type="button" class="secondary" id="mountBtn">Mount Payment Element</button>
+    <button type="button" class="secondary" id="resetBtn">Reset (new client_secret)</button>
+
+    <div id="payment-element"></div>
+
+    <button type="button" id="payBtn" disabled>Authorize (confirmPayment)</button>
+
+    <div id="status">Ready. Mount the Payment Element to begin.</div>
+
+    <script>
+      const PK_KEY = 'picklecoach_stripe_pk_test';
+      const statusEl = document.getElementById('status');
+      const pkInput = document.getElementById('pk');
+      const secretInput = document.getElementById('clientSecret');
+      const mountBtn = document.getElementById('mountBtn');
+      const resetBtn = document.getElementById('resetBtn');
+      const payBtn = document.getElementById('payBtn');
+
+      let stripe = null;
+      let elements = null;
+      let paymentElement = null;
+      let mountedSecret = null;
+
+      pkInput.value = localStorage.getItem(PK_KEY) || '';
+
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('client_secret')) {
+        secretInput.value = params.get('client_secret');
+      }
+      if (params.get('pk')) {
+        pkInput.value = params.get('pk');
+      }
+
+      function setStatus(message, kind) {
+        statusEl.textContent = message;
+        statusEl.className = kind || '';
+      }
+
+      function paymentIntentIdFromSecret(clientSecret) {
+        const id = String(clientSecret || '').split('_secret')[0];
+        return id.startsWith('pi_') ? id : null;
+      }
+
+      function teardownElement() {
+        if (paymentElement) {
+          try {
+            paymentElement.unmount();
+          } catch (_) {
+            /* already unmounted */
+          }
+        }
+        paymentElement = null;
+        elements = null;
+        stripe = null;
+        mountedSecret = null;
+        payBtn.disabled = true;
+        document.getElementById('payment-element').innerHTML = '';
+      }
+
+      mountBtn.addEventListener('click', async () => {
+        const pk = pkInput.value.trim();
+        const clientSecret = secretInput.value.trim();
+
+        if (!pk.startsWith('pk_test_') && !pk.startsWith('pk_live_')) {
+          setStatus('Enter a valid Stripe publishable key (pk_test_… for Test Mode).', 'err');
+          return;
+        }
+        if (!clientSecret.includes('_secret_')) {
+          setStatus('Enter the client_secret from POST /api/booking-intents.', 'err');
+          return;
+        }
+
+        localStorage.setItem(PK_KEY, pk);
+        payBtn.disabled = true;
+        setStatus('Mounting Payment Element…');
+
+        try {
+          if (mountedSecret && mountedSecret !== clientSecret) {
+            teardownElement();
+          }
+          if (paymentElement && mountedSecret === clientSecret) {
+            setStatus(
+              'Already mounted for this client_secret. Enter the card in the form, then click Authorize.\nSuccess: 4242 4242 4242 4242\nDecline: 4000 0000 0000 0002',
+            );
+            payBtn.disabled = false;
+            return;
+          }
+          stripe = Stripe(pk);
+          elements = stripe.elements({ clientSecret });
+          paymentElement = elements.create('payment');
+          paymentElement.mount('#payment-element');
+          mountedSecret = clientSecret;
+          payBtn.disabled = false;
+          setStatus(
+            'Card form is ready — that is not authorization yet.\nEnter a card below, then click Authorize.\nSuccess: 4242 4242 4242 4242\nDecline: 4000 0000 0000 0002',
+          );
+        } catch (err) {
+          teardownElement();
+          setStatus(err.message || String(err), 'err');
+        }
+      });
+
+      resetBtn.addEventListener('click', () => {
+        teardownElement();
+        setStatus('Reset. Paste a new client_secret and click Mount Payment Element.');
+      });
+
+      payBtn.addEventListener('click', async () => {
+        if (!stripe || !elements) {
+          setStatus('Mount the Payment Element first.', 'err');
+          return;
+        }
+
+        payBtn.disabled = true;
+        setStatus('Confirming payment…');
+
+        const { error, paymentIntent } = await stripe.confirmPayment({
+          elements,
+          confirmParams: {
+            return_url: window.location.href.split('?')[0],
+          },
+          redirect: 'if_required',
+        });
+
+        if (error) {
+          payBtn.disabled = false;
+          setStatus(error.message || String(error), 'err');
+          return;
+        }
+
+        const pi = paymentIntent;
+        const id =
+          (pi && pi.id) || paymentIntentIdFromSecret(secretInput.value.trim());
+        const status = (pi && pi.status) || '(unknown — check Dashboard)';
+
+        setStatus(
+          [
+            'Authorization succeeded.',
+            '',
+            `payment_intent_id: ${id}`,
+            `status: ${status}`,
+            '',
+            status === 'requires_capture'
+              ? 'Next: POST /api/bookings/confirm with { "payment_intent_id": "' +
+                id +
+                '" }'
+              : 'Expected requires_capture for manual-capture intents. Check Stripe Dashboard if different.',
+          ].join('\n'),
+          'ok',
+        );
+        payBtn.disabled = false;
+      });
+    </script>
+  </body>
+</html>

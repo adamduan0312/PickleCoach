@@ -1,6 +1,10 @@
 # Schema Verification Report
 
-## ✅ Verification Status: **100% MATCH**
+> **Historical only (Jan 2026).** This file is **not** the current table list.  
+> For the verified live schema, truncate order, and payment-table roles, see **[`docs/database-tables.md`](./docs/database-tables.md)**.  
+> Notable drift since this report: `reschedule_history` was **removed**; `conversation_reads` was **added**; several listed tables (e.g. `prebooking_inquiries`, `admin_analytics`) are not in the current app schema.
+
+## ✅ Verification Status: **100% MATCH** *(at time of writing — outdated)*
 
 I've verified all models against your SQL schema. All models match the SQL schema with intentional architectural improvements where appropriate.
 

@@ -44,9 +44,18 @@ const Payment = sequelize.define('payments', {
     defaultValue: 0,
   },
   escrow_status: {
-    type: DataTypes.ENUM('held', 'released', 'refunded', 'disputed', 'manual_payout_required', 'pending_release'),
+    // pending = authorized/uncaptured; held = captured funds only. See utils/paymentEscrowStatus.js.
+    type: DataTypes.ENUM(
+      'pending',
+      'held',
+      'released',
+      'refunded',
+      'disputed',
+      'manual_payout_required',
+      'pending_release',
+    ),
     allowNull: false,
-    defaultValue: 'held',
+    defaultValue: 'pending',
   },
   payment_status: {
     type: DataTypes.ENUM('pending', 'authorized', 'captured', 'failed', 'refunded', 'partially_refunded', 'pending_capture', 'pending_void'),

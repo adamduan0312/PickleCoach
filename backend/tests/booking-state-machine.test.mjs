@@ -17,6 +17,11 @@ describe('bookingStateMachine', () => {
     assert.equal(r.ok, true);
   });
 
+  it('allows pending → confirmed via coach accept capture (sync Stripe succeeded)', () => {
+    const r = canTransitionBookingStatus('pending', 'confirmed', BookingTransitionVia.COACH_ACCEPT_CAPTURE);
+    assert.equal(r.ok, true);
+  });
+
   it('rejects pending → completed (no such channel)', () => {
     const r = canTransitionBookingStatus('pending', 'completed', BookingTransitionVia.MARK_COMPLETED);
     assert.equal(r.ok, false);

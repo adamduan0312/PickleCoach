@@ -602,7 +602,7 @@ export const getPaymentsQuerySchema = Joi.object({
     )
     .optional(),
   escrow_status: Joi.string()
-    .valid('held', 'released', 'refunded', 'disputed', 'manual_payout_required', 'pending_release')
+    .valid('pending', 'held', 'released', 'refunded', 'disputed', 'manual_payout_required', 'pending_release')
     .optional(),
   student_id: Joi.number().integer().positive().optional(),
   coach_id: Joi.number().integer().positive().optional(),

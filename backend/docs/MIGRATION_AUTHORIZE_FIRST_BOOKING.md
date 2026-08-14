@@ -47,6 +47,18 @@ All bookings created via the new flow already have an authorized PaymentIntent w
 5. Remove UI/logic for “booking pending payment authorization”.
 6. Do not rely on payment-authorization timeouts — bookings are created only after authorization. **Do** expect coach acceptance timeout: unaccepted pending bookings auto-cancel after `COACH_ACCEPTANCE_TIMEOUT_HOURS` (default 24).
 
+## Dev testing with live Stripe (authorize step)
+
+After `POST /api/booking-intents` returns `client_secret` / `payment_intent_id`:
+
+1. Confirm the PaymentIntent in Stripe Dashboard (Test Mode → Payments) — amount and status should match.
+2. Authorize the card with the frontend test page (not the Dashboard): with Vite running, open  
+   `http://localhost:5173/stripe-authorize-test.html`  
+   Paste `pk_test_…` + `client_secret`, use test card `4242 4242 4242 4242`. Success → PI status **`requires_capture`**.
+3. `POST /api/bookings/confirm` with `{ "payment_intent_id": "pi_…" }`, then coach accept → capture.
+
+See `frontend/README.md` (Stripe authorize test page) and `frontend/public/stripe-authorize-test.html`.
+
 ## Dev testing without live Stripe
 
 ```bash
@@ -63,6 +75,15 @@ Creates three **pending** bookings with authorize-first payment rows and dev-onl
 | `pending_for_cancel` | `POST /api/bookings/:id/cancel` |
 
 Legacy `seed:test-flows` `pending_future` has no PaymentIntent — suitable for offline cancel only, **not** accept/decline capture testing.
+
+### Live Stripe cancel / payout checklist (C3–C5)
+
+```bash
+npm run seed:postman-money
+# subset: npm run seed:postman-money -- --only=C3b,C3c,C4
+```
+
+Creates real authorized (+ captured) fixtures so you skip manual book→accept. Details: [`payment-system.md`](./payment-system.md#postman-money-scenarios-live-stripe-test-mode).
 
 ## API response shapes
 

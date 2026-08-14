@@ -22,3 +22,21 @@ PickleCoach separates **`user.roles`** (permissions) from **coach onboarding** (
 ```bash
 npm test
 ```
+
+## Stripe authorize test page (dev)
+
+After `POST /api/booking-intents` returns a `client_secret`, authorize the PaymentIntent with Stripe.js (do not rely on the Dashboard to complete this step).
+
+1. `npm run dev` in `frontend/`
+2. Open [http://localhost:5173/stripe-authorize-test.html](http://localhost:5173/stripe-authorize-test.html)
+3. Paste your **Test Mode publishable key** (`pk_test_…` from Stripe Dashboard → Developers → API keys)
+4. Paste the `client_secret` from the booking-intent response
+5. Mount → “ready” means the card form is shown; enter a card, then Authorize
+   - Success: `4242 4242 4242 4242` → PaymentIntent **`requires_capture`**
+   - Decline: `4000 0000 0000 0002` → Stripe error; PI stays not `requires_capture`
+6. New intent: paste the new `client_secret` and Mount again (or Reset first)
+7. Continue backend flow: `POST /api/bookings/confirm` with `{ "payment_intent_id": "pi_…" }`
+
+Optional query params: `?client_secret=…&pk=…`
+
+This page is a minimal stand-in for future React checkout (`client_secret` → Payment Element → `confirmPayment`).

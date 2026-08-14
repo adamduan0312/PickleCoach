@@ -4,8 +4,9 @@
   "type": "module",
   "main": "server.js",
   "scripts": {
-    "test": "node --test 'tests/*.test.mjs'",
+    "test": "node scripts/run-tests.mjs",
     "test:payment:integration": "RUN_PAYMENT_INTEGRATION=1 node --test tests/payment-stripe-integration.test.mjs",
+    "test:integration": "NODE_ENV=test DB_NAME=picklecoach_test RUN_HTTP_INTEGRATION=1 SKIP_SERVER_LISTEN=1 node --import ./tests/helpers/loadIntegrationEnv.mjs --test --test-concurrency=1 --test-force-exit tests/integration/*.integration.test.mjs",
     "dev": "nodemon server.js",
     "start": "node server.js",
     "db:reset:test": "node scripts/reset-and-seed-for-tests.mjs",
@@ -22,6 +23,9 @@
     "seed:booking-action-tests": "node scripts/seed-booking-action-test-bookings.js",
     "seed:dev-frontend": "node scripts/seed-dev-frontend-fixtures.js",
     "seed:coaches-pending-stripe": "node scripts/seed-coaches-pending-stripe.js",
+    "seed:c2-money-path": "node scripts/seed-c2-money-path.js",
+    "seed:c3-cancel-flows": "node scripts/seed-c3-cancel-flows.js",
+    "seed:postman-money": "node scripts/seed-c3-cancel-flows.js",
     "seed:geosearch": "NODE_ENV=development sequelize-cli db:seed --seed 20260509200000-coach-geosearch-fixtures.cjs",
     "dev:simulate-capture": "node scripts/simulate-coach-accept-capture.js",
     "seed:testflow-lesson-history": "node scripts/seed-testflow-lesson-history.js",
@@ -30,6 +34,8 @@
     "seed:all:dev": "npm run seed:test-flows && npm run seed:booking-action-tests && npm run seed:cancel-test-bookings && npm run seed:dev-frontend && npm run seed:geosearch",
     "postman:collection-by-type": "node scripts/create-by-type-collection.js",
     "postman:reorganize-flows": "node scripts/reorganize-postman-flows.js",
+    "postman:audit": "node scripts/audit-postman-endpoints.mjs",
+    "postman:audit:phase2": "node scripts/audit-phase2-money-auth.mjs",
     "dev:test-login": "node scripts/test-login.js",
     "user:reset-password": "node scripts/reset-user-password.js",
     "user:set-role": "node scripts/set-user-role.js",
@@ -66,5 +72,8 @@
   "devDependencies": {
     "nodemon": "^3.1.11",
     "sequelize-cli": "^6.6.2"
+  },
+  "engines": {
+    "node": ">=22.0.0"
   }
 }

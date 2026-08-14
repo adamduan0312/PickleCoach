@@ -74,7 +74,7 @@ async function createAuthorizeFirstPayment(booking, { label, scheduledAtIso }) {
     platform_fee_amount: amounts.platform_fee_amount,
     total_charge_to_student: amounts.total_charge_to_student,
     coach_payout_expected: amounts.coach_payout_expected,
-    escrow_status: 'held',
+    escrow_status: 'pending',
     payment_status: 'authorized',
     refund_status: 'none',
     payment_method: 'stripe',

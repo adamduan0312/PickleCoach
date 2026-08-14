@@ -34,7 +34,8 @@ router.use('/disputes', disputeRoutes);
 router.use('/notifications', notificationRoutes);
 router.use('/admin', adminRoutes);
 
-// Webhook routes (no auth, uses signature verification)
-router.post('/webhooks/stripe', webhookController.stripeWebhookMiddleware, webhookController.handleStripeWebhook);
+// Webhook routes (no auth, uses signature verification).
+// Raw body is mounted in server.js before express.json() — do not re-parse here.
+router.post('/webhooks/stripe', webhookController.handleStripeWebhook);
 
 export default router;

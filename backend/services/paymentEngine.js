@@ -152,7 +152,10 @@ export const applyStripeRefundCap = ({ policyRefundCents, totalChargeCents, rema
 };
 
 // ---------------------------------------------------------------------------
-// Coach vs platform split on net retained (post-refund escrow / mirrored state)
+// Coach vs platform split on PickleCoach "net retained" (gross − refunds only)
+// ---------------------------------------------------------------------------
+// "net retained" here is NOT Stripe Dashboard "Net amount" (which also subtracts
+// Stripe processing fees). Platform absorbs processing fees under MVP policy.
 // ---------------------------------------------------------------------------
 
 export const computeCoachShareRatio = (totalChargeCents, coachPayoutExpectedCents) => {
@@ -162,7 +165,8 @@ export const computeCoachShareRatio = (totalChargeCents, coachPayoutExpectedCent
 };
 
 /**
- * Split net retained charge (after refunds) into coach vs platform using the same ratio as at capture:
+ * Split PickleCoach net retained (gross charge − refunds, before Stripe fees)
+ * into coach vs platform using the same ratio as at capture:
  * coachPortion = round(net * coachShare), capped to net; platform = net - coach (remainder absorbs rounding).
  */
 export const splitNetRetainedCoachPlatformCents = ({

@@ -31,6 +31,7 @@ import {
   checkAttendanceFinalized,
 } from '../utils/bookingAttendanceStatus.js';
 import { applyBookingStatusTransition, BookingTransitionVia } from '../services/bookingStateMachine.js';
+import { escrowAfterUncapturedVoid } from '../utils/paymentEscrowStatus.js';
 import { ACTIVE_DISPUTE_STATUSES } from '../services/disputeStateMachine.js';
 import { getEffectiveRolesForUserRecord } from '../utils/roleGovernance.js';
 import { attachConversationSummaries, attachConversationSummaryToBookingJson } from '../utils/bookingConversationSummary.js';
@@ -340,6 +341,7 @@ const isRefundFinalizedForAttendanceLock = (payment) => {
 };
 
 const canModifyAttendanceStatus = (booking, payment) => {
+  // processing = transfer initiated; paid = Stripe confirmed; forfeited = reserved (not assigned live).
   if (['processing', 'paid', 'forfeited'].includes(String(booking.payout_status || ''))) {
     return {
       allowed: false,
@@ -629,10 +631,15 @@ export const acceptBooking = async (req, res) => {
       req.user.roles || [],
     );
 
+    const acceptMessage =
+      updated.status === 'confirmed'
+        ? 'Booking accepted and confirmed.'
+        : 'Booking accepted. Confirmation completes when Stripe reports capture success (webhook).';
+
     return successResponse(
       res,
       serializeBookingListItem(payload, { includeStudentReliability: true, viewerIsPrivileged: true }),
-      'Booking accepted. If payment was pending capture, confirmation completes when Stripe sends payment_intent.succeeded.'
+      acceptMessage,
     );
   } catch (error) {
     if (error?.statusCode === 404) return errorResponse(res, error.message, 404);
@@ -977,7 +984,10 @@ export const cancelBooking = async (req, res) => {
       if (!payment?.charge_id && payment?.payment_intent_id && ['pending', 'authorized'].includes(payment.payment_status)) {
         try {
           await stripeService.cancelPaymentIntent(payment.payment_intent_id);
-          await payment.update({ payment_status: 'pending_void' }, { transaction: t });
+          await payment.update(
+            { payment_status: 'pending_void', escrow_status: escrowAfterUncapturedVoid() },
+            { transaction: t },
+          );
           voidedPaymentId = payment.id;
         } catch (voidErr) {
           logger.error('Stripe PaymentIntent cancel failed during cancellation; booking not cancelled:', voidErr);

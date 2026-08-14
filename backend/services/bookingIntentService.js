@@ -31,6 +31,7 @@ import {
 } from '../utils/bookingIntentContract.js';
 import { COACH_BOOKING_REQUEST_NOTIFIED_METADATA_KEY } from '../utils/paymentAuthorizationGate.js';
 import { isPubliclyActiveUser } from '../utils/userLifecycle.js';
+import { escrowForUncapturedAuthorization } from '../utils/paymentEscrowStatus.js';
 
 async function ensureStripeCustomer(student, transaction = null) {
   let stripeCustomerId = student.stripe_customer_id || null;
@@ -394,7 +395,7 @@ export async function confirmBookingFromPaymentIntent({ studentId, paymentIntent
         platform_fee_amount: amounts.platform_fee_amount,
         total_charge_to_student: amounts.total_charge_to_student,
         coach_payout_expected: amounts.coach_payout_expected,
-        escrow_status: 'held',
+        escrow_status: escrowForUncapturedAuthorization(),
         payment_status: 'authorized',
         refund_status: 'none',
         payment_method: parsedMeta.paymentMethod,

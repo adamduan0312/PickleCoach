@@ -2,6 +2,11 @@
 
 A comprehensive backend API for the PickleCoach platform built with Node.js, Express, and Sequelize.
 
+## Prerequisites
+
+- **Node.js >= 22** (enforced via `engines` and the test runner — `fs.globSync` and `node --test` glob discovery require it)
+- **MySQL 8**
+
 ## Features
 
 - **User Management**: Registration, authentication, profile management
@@ -193,5 +198,6 @@ Additional documentation files:
 - **[MIGRATION_GUIDE.md](./MIGRATION_GUIDE.md)** - Complete migration guide (setup, workflow, helper scripts)
 - **[QUICK_REFERENCE.md](./QUICK_REFERENCE.md)** - Quick command reference for migrations
 - **[ENTERPRISE_ASSESSMENT.md](./ENTERPRISE_ASSESSMENT.md)** - Enterprise-level assessment
-- **[SCHEMA_VERIFICATION-BEGINNING-0F-JAN-2026.md](./SCHEMA_VERIFICATION-BEGINNING-0F-JAN-2026.md)** - Schema verification report
+- **[docs/database-tables.md](./docs/database-tables.md)** - Current table list, truncate order, payment-table roles
+- **[SCHEMA_VERIFICATION-BEGINNING-0F-JAN-2026.md](./SCHEMA_VERIFICATION-BEGINNING-0F-JAN-2026.md)** - Historical schema report (Jan 2026; not current)
 

@@ -45,6 +45,8 @@ const Booking = sequelize.define('bookings', {
     defaultValue: 'pending',
   },
   payout_status: {
+    // none → pending → processing → paid. `forfeited` is reserved (e.g. future coach
+    // no-show) and is NOT assigned by live runtime — no-payout bookings stay `none`.
     type: DataTypes.ENUM('none', 'pending', 'awaiting_verification', 'processing', 'paid', 'forfeited'),
     defaultValue: 'none',
   },

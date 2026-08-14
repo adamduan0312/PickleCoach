@@ -171,6 +171,7 @@ describe('confirm service wiring', () => {
   it('creates payment as authorized immediately', () => {
     assert.match(bookingIntentServiceSrc, /payment_status: 'authorized'/);
     assert.match(bookingIntentServiceSrc, /flow: 'authorize_then_book'/);
+    assert.match(bookingIntentServiceSrc, /escrowForUncapturedAuthorization/);
   });
 
   it('marks coach notify claimed on confirm so webhook cannot double-send', () => {

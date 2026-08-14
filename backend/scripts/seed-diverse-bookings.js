@@ -73,7 +73,7 @@ const BOOKING_SPECS = [
     payout_status: 'none',
     messaging_locked: true,
     offsetDays: 8,
-    payment: { paymentStatus: 'authorized', escrowStatus: 'held' },
+    payment: { paymentStatus: 'authorized', escrowStatus: 'pending' },
   },
   {
     key: 'confirmed',
@@ -118,17 +118,19 @@ const BOOKING_SPECS = [
     payment: { paymentStatus: 'captured', escrowStatus: 'held' },
   },
   {
+    // Coach is owed; live mark leaves payout_status none until payoutWorker runs.
     key: 'student_no_show',
     status: 'student_no_show',
-    payout_status: 'forfeited',
+    payout_status: 'none',
     messaging_locked: true,
     offsetDays: -3,
     payment: { paymentStatus: 'captured', escrowStatus: 'held' },
   },
   {
+    // Live code leaves payout_status none (no coach transfer). `forfeited` is reserved, not assigned.
     key: 'coach_no_show',
     status: 'coach_no_show',
-    payout_status: 'forfeited',
+    payout_status: 'none',
     messaging_locked: true,
     offsetDays: -5,
     payment: { paymentStatus: 'captured', escrowStatus: 'held' },

@@ -1,4 +1,3 @@
-import express from 'express';
 import { UniqueConstraintError } from 'sequelize';
 import { WebhookLog, Payment, CoachProfile } from '../models/index.js';
 import * as stripeService from '../services/stripeService.js';
@@ -8,6 +7,7 @@ import { syncCoachStripeReadyFromAccount } from '../services/coachMarketplaceEli
 import { logger } from '../config/logger.js';
 import * as paymentAuthorizationService from '../services/paymentAuthorizationService.js';
 import { shouldStripeWebhookSkipAsDuplicate } from '../services/paymentStripeContract.js';
+import { escrowAfterUncapturedVoid } from '../utils/paymentEscrowStatus.js';
 
 async function assertConsistencyAfterWebhook(paymentId, context) {
   if (!paymentId) return;
@@ -280,8 +280,16 @@ const handlePaymentIntentCanceled = async (paymentIntent) => {
     );
   }
 
-  if (payment.payment_status === 'pending_void' || payment.payment_status === 'pending') {
-    await payment.update({ payment_status: 'failed' });
+  const patch = {};
+  if (['pending_void', 'pending', 'authorized'].includes(String(payment.payment_status || ''))) {
+    patch.payment_status = 'failed';
+  }
+  // Uncaptured authorization: never leave escrow held after Stripe cancel.
+  if (!payment.charge_id && !['released', 'refunded'].includes(String(payment.escrow_status || ''))) {
+    patch.escrow_status = escrowAfterUncapturedVoid();
+  }
+  if (Object.keys(patch).length) {
+    await payment.update(patch);
   }
 
   await assertConsistencyAfterWebhook(payment.id, 'payment_intent.canceled');
@@ -359,5 +367,3 @@ const handleConnectAccountUpdated = async (account) => {
     stripe_ready: ready,
   });
 };
-
-export const stripeWebhookMiddleware = express.raw({ type: 'application/json' });

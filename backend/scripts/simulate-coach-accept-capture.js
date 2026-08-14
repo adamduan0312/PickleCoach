@@ -2,15 +2,20 @@
  * Dev helper: simulate Stripe payment_intent.succeeded after coach accept.
  *
  * Coach accept sets payment to pending_capture; production confirms the booking
- * on webhook. This script completes that step for dev-seed PaymentIntents.
+ * on webhook. This script completes that step when webhooks were missed.
  *
  * Usage:
  *   npm run dev:simulate-capture -- --booking-id=123
  *   node scripts/simulate-coach-accept-capture.js 123
+ *
+ * Works for:
+ * - Dev-seed PaymentIntents (`pi_seed_dev_*`)
+ * - Real test-mode PIs already captured in Stripe (uses stored charge_id or Stripe API)
  */
 import dotenv from 'dotenv';
 import { sequelize, Booking, Payment } from '../models/index.js';
 import * as paymentService from '../services/paymentService.js';
+import * as stripeService from '../services/stripeService.js';
 import { isDevSeedPaymentIntentId } from '../services/stripeService.js';
 
 const env = process.env.NODE_ENV || 'development';
@@ -28,6 +33,34 @@ function parseBookingId(argv) {
     if (Number.isFinite(n) && n > 0) return n;
   }
   return null;
+}
+
+async function resolveChargeId(payment) {
+  if (isDevSeedPaymentIntentId(payment.payment_intent_id)) {
+    return `ch_seed_dev_${String(payment.payment_intent_id).slice(-12)}`;
+  }
+
+  if (payment.charge_id) {
+    return payment.charge_id;
+  }
+
+  const pi = await stripeService.getPaymentIntent(payment.payment_intent_id);
+  if (pi?.status !== 'succeeded') {
+    throw new Error(
+      `PaymentIntent ${payment.payment_intent_id} status is "${pi?.status}" (expected succeeded). ` +
+        'Capture in Stripe first (coach accept), then re-run this script or rely on webhooks.',
+    );
+  }
+
+  const chargeId =
+    typeof pi.latest_charge === 'string'
+      ? pi.latest_charge
+      : pi.latest_charge?.id || pi.charges?.data?.[0]?.id;
+
+  if (!chargeId) {
+    throw new Error(`No charge_id on succeeded PaymentIntent ${payment.payment_intent_id}`);
+  }
+  return chargeId;
 }
 
 async function main() {
@@ -54,21 +87,16 @@ async function main() {
     process.exit(1);
   }
 
-  if (!isDevSeedPaymentIntentId(payment.payment_intent_id)) {
-    console.error(
-      `PaymentIntent ${payment.payment_intent_id} is not a dev seed stub. ` +
-        'Use real Stripe webhooks or seed:booking-action-tests.',
-    );
-    process.exit(1);
-  }
-
   if (!['pending_capture', 'authorized'].includes(payment.payment_status)) {
     console.warn(
       `Payment status is ${payment.payment_status}; expected pending_capture after accept or authorized before accept.`,
     );
   }
 
-  const chargeId = `ch_seed_dev_${String(payment.payment_intent_id).slice(-12)}`;
+  const chargeId = await resolveChargeId(payment);
+  console.log(
+    `Finalizing capture for ${payment.payment_intent_id} (charge=${chargeId}, was ${payment.payment_status})…`,
+  );
   await paymentService.handlePaymentCapture(payment.payment_intent_id, chargeId);
 
   const updated = await Booking.findByPk(bookingId);
@@ -81,7 +109,7 @@ async function main() {
         payment_status: (await Payment.findByPk(payment.id))?.payment_status,
         message:
           updated.status === 'confirmed'
-            ? 'Capture simulated — messaging should be unlocked.'
+            ? 'Capture finalized — booking confirmed.'
             : 'Booking not confirmed; check payment/booking state.',
       },
       null,

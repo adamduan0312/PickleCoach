@@ -35,6 +35,11 @@ export const BOOKING_STATUSES = Object.freeze([
 export const BookingTransitionVia = Object.freeze({
   /** Student PI succeeded after coach accept (webhook) or non-capture booking payment success */
   PAYMENT_CAPTURE_WEBHOOK: 'payment_capture_webhook',
+  /**
+   * Coach accept: Stripe `paymentIntents.capture` already returned `succeeded`
+   * (same end state as webhook; webhook remains idempotent).
+   */
+  COACH_ACCEPT_CAPTURE: 'coach_accept_capture',
   /** Coach accepted a booking that has no payment row (legacy / edge) */
   COACH_ACCEPT_WITHOUT_PAYMENT: 'coach_accept_without_payment',
   /** `cancelPaymentOnCoachDecline` */
@@ -80,6 +85,7 @@ function addEdge(from, to, vias) {
 function buildEdges() {
   addEdge('pending', 'confirmed', [
     BookingTransitionVia.PAYMENT_CAPTURE_WEBHOOK,
+    BookingTransitionVia.COACH_ACCEPT_CAPTURE,
     BookingTransitionVia.COACH_ACCEPT_WITHOUT_PAYMENT,
   ]);
   addEdge('pending', 'cancelled', [

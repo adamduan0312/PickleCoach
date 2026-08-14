@@ -24,6 +24,7 @@ describe('payout escrow eligibility', () => {
 
   it('every non-held escrow state is parked (not payable)', () => {
     for (const escrow_status of [
+      'pending',
       'disputed',
       'released',
       'refunded',
