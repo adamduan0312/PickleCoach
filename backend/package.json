@@ -24,6 +24,7 @@
     "seed:dev-frontend": "node scripts/seed-dev-frontend-fixtures.js",
     "seed:coaches-pending-stripe": "node scripts/seed-coaches-pending-stripe.js",
     "seed:c2-money-path": "node scripts/seed-c2-money-path.js",
+    "seed:d7-booking-emails": "node scripts/seed-d7-booking-emails.js",
     "seed:c3-cancel-flows": "node scripts/seed-c3-cancel-flows.js",
     "seed:postman-money": "node scripts/seed-c3-cancel-flows.js",
     "seed:geosearch": "NODE_ENV=development sequelize-cli db:seed --seed 20260509200000-coach-geosearch-fixtures.cjs",
