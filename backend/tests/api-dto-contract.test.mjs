@@ -39,6 +39,9 @@ test('serializeBookingSummary trims persistence internals', () => {
   assert.equal(dto.messaging_locked, true);
   assert.equal(dto.idempotency_key, undefined);
   assert.equal(dto.payout_status, undefined);
+  assert.ok(dto.financial_review);
+  assert.equal(typeof dto.financial_review.review_until, 'string');
+  assert.equal(typeof dto.financial_review.window_open, 'boolean');
 });
 
 test('serializeBookingDetailCore includes lifecycle fields', () => {
@@ -46,6 +49,31 @@ test('serializeBookingDetailCore includes lifecycle fields', () => {
   assert.equal(dto.attendance_finalized, false);
   assert.equal(dto.payout_status, 'none');
   assert.equal(dto.idempotency_key, undefined);
+  assert.equal(dto.coach_acceptance_timeout_hours, undefined);
+});
+
+test('serializeBookingDetailCore exposes coach acceptance timeout for pending bookings', () => {
+  const dto = serializeBookingDetailCore({
+    ...fullBooking,
+    status: 'pending',
+    created_at: '2026-08-26T14:00:00.000Z',
+    scheduled_at: '2026-08-27T14:00:00.000Z',
+  });
+  assert.equal(dto.coach_acceptance_timeout_hours, 24);
+  assert.equal(dto.min_booking_lead_hours, 2);
+  // earlier of request+24h and lesson−2h → lesson−2h
+  assert.equal(dto.coach_acceptance_deadline_at, '2026-08-27T12:00:00.000Z');
+});
+
+test('serializeBookingListItem exposes acceptance deadline for pending rows', () => {
+  const dto = serializeBookingListItem({
+    ...fullBooking,
+    status: 'pending',
+    created_at: '2026-08-26T14:00:00.000Z',
+    scheduled_at: '2026-08-27T14:00:00.000Z',
+  });
+  assert.equal(dto.coach_acceptance_deadline_at, '2026-08-27T12:00:00.000Z');
+  assert.equal(dto.min_booking_lead_hours, 2);
 });
 
 test('serializeBookingListItem trims nested associations', () => {
@@ -92,7 +120,7 @@ test('resolveStudentReliabilityScore reads student reliability row only', () => 
   );
 });
 
-test('coach-facing booking list includes primaryStudent.reliability_score when requested', () => {
+test('opt-in includeStudentReliability attaches score only (unused by coach booking routes)', () => {
   const dto = serializeBookingListItem(
     {
       ...fullBooking,
@@ -122,7 +150,7 @@ test('coach-facing booking list includes primaryStudent.reliability_score when r
   assert.equal(dto.primaryStudent.decay_lambda, undefined);
 });
 
-test('coach-facing booking list defaults reliability_score to 100 when no row', () => {
+test('opt-in includeStudentReliability defaults reliability_score to 100 when no row', () => {
   const dto = serializeBookingListItem(
     {
       ...fullBooking,
@@ -133,7 +161,7 @@ test('coach-facing booking list defaults reliability_score to 100 when no row', 
   assert.equal(dto.primaryStudent.reliability_score, 100);
 });
 
-test('student and public serializers omit student reliability even if loaded', () => {
+test('default booking serializers omit student reliability even if loaded (MVP coach contract)', () => {
   const studentWithRel = {
     id: 2,
     full_name: 'John Doe',

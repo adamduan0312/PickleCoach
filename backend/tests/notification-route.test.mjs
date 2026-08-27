@@ -21,6 +21,10 @@ describe('notificationRouteFor', () => {
       'booking_cancelled',
       'booking_request_coach',
       'pre_lesson_24h',
+      'student_no_show',
+      'coach_no_show',
+      'dispute_opened',
+      'dispute_resolved',
     ]) {
       assert.equal(notificationRouteFor(type, { booking_id: 99 }), '/bookings/99', type);
     }

@@ -343,8 +343,9 @@ Authorization: Bearer <token>
   ```
 - **Behavior**:
   - Finds a user with the matching `email_verification_token` and a non-expired `email_verification_expires`.
-  - Sets `email_verified_at` if not already set, and clears the verification token/expiry and last-sent timestamp.
-- **Error responses**: `400` (invalid or expired verification token), `500` (server error).
+  - If `email_verified_at` is already set, returns success with message `"Email already verified"` and does **not** re-run audit/side effects. The token remains usable until it expires or a new verification email replaces it.
+  - Otherwise sets `email_verified_at` and returns `"Email verified successfully"`. Does **not** clear the token on first success (so accidental re-clicks stay friendly).
+- **Error responses**: `400` (invalid or expired verification token — including after expiry or after a newer verification email was issued), `500` (server error).
 
 ### `GET /api/auth/profile`
 - **Auth**: Required
@@ -405,13 +406,14 @@ Authorization: Bearer <token>
 
 ### `PUT /api/auth/me/role`
 - **Auth**: Required
-- **Description**: **Add** the **student** or **coach** role to your account (self-service). This endpoint **does not remove** roles or “switch” you to a single role — you can hold **both** student and coach **when permitted**. Admins cannot use this (use admin user management). To **remove** coach or admin access, an admin must use **`PUT /api/users/:id`** with an explicit **`roles`** array; coach profile and Stripe Connect data **persist** for billing/history. After adding **coach**, create a coach profile with `POST /api/coaches/profile` if you do not have one yet.
-- **Role governance**: After an admin has sent **`roles`** on **`PUT /api/users/:id`** for your account, **`role_governance_locked`** is **true** and **`admin_allowed_roles`** is the allow-list. **`PUT /api/auth/me/role`** then returns **403** with message *This role has been restricted by an administrator* if you try to add a role not in that list (e.g. admin left you `["student"]` and you request **`coach`**). **`GET /api/auth/profile`** and session **`user`** include **`role_state`**: `{ locked, allowed_roles, effective_roles, source }` so the UI can disable self-service adds when locked. **Design reference:** [`docs/ROLE_AUTHORIZATION.md`](docs/ROLE_AUTHORIZATION.md) (effective roles are the only permission source for access control).
+- **Description**: **Add or remove** the **student** or **coach** role (self-service). Body includes **`action`**: `"add"` (default) or `"remove"`. You can hold **both** student and coach. **Remove does not delete** coach profiles, lessons, court links, bookings, payments, reviews, disputes, messages, or Stripe Connect data — only the `user_roles` assignment. You must keep **at least one** of `student` or `coach`. Admins cannot use this (use **`PUT /api/users/:id`**). After adding **coach**, create a coach profile with `POST /api/coaches/profile` if you do not have one yet. After removing **coach**, you disappear from marketplace discovery but **existing bookings continue** (participant-based auth).
+- **Role governance**: After an admin has sent **`roles`** on **`PUT /api/users/:id`** for your account, **`role_governance_locked`** is **true** and **`admin_allowed_roles`** is the allow-list. **`PUT /api/auth/me/role`** with **`action: "add"`** returns **403** with message *This role has been restricted by an administrator* if you try to add a role not in that list. **Remove** still requires keeping one marketplace role. **`GET /api/auth/profile`** and session **`user`** include **`role_state`**: `{ locked, allowed_roles, effective_roles, source }`. **Design reference:** [`docs/ROLE_AUTHORIZATION.md`](docs/ROLE_AUTHORIZATION.md).
 - **Active mode (recommended UX)**: The API does **not** store which dashboard the user is “in”. Use client **`activeRole`** for navigation; **`data.user.roles`** reflects **effective** permissions (same as `authorize()` after governance).
 - **Request Body**:
   ```json
   {
-    "role": "string (required, 'student' | 'coach')"
+    "role": "string (required, 'student' | 'coach')",
+    "action": "string (optional, 'add' | 'remove', default 'add')"
   }
   ```
 - **Response** (Status: 200):
@@ -666,6 +668,35 @@ Authorization: Bearer <token>
 
 ---
 
+## Geo (`/api/geo`)
+
+### `GET /api/geo/search`
+- **Auth**: Required (student, coach, or admin) — same roles as marketplace Discover.
+- **Description**: Convert a free-text **ZIP code, city, or address** into latitude/longitude for Discover radius search. Geocoding runs **server-side** (default: OpenStreetMap Nominatim). The query is **not** persisted. Provider API keys (if any) stay on the server.
+- **Query Parameters**:
+  - `q` (required) – search text, 2–200 characters
+  - `limit` (optional) – max results, 1–10, default 5
+- **Response** (Status: 200):
+  ```json
+  {
+    "success": true,
+    "message": "Locations found",
+    "data": {
+      "results": [
+        {
+          "label": "San Francisco, CA 94114",
+          "lat": 37.7599,
+          "lng": -122.425
+        }
+      ]
+    }
+  }
+  ```
+- **Empty match**: Still **200** with `results: []` and a helpful `message` (not an error).
+- **Errors**: `400` validation, `401`/`403` auth, `502`/`503` provider unavailable, `500` unexpected.
+
+---
+
 ## Coaches (`/api/coaches`)
 
 ### `GET /api/coaches` (List / search coaches)
@@ -682,7 +713,7 @@ Authorization: Bearer <token>
 - **Query Parameters**:
   - `lat` (optional) – latitude in degrees (center point for distance filter)
   - `lng` (optional) – longitude in degrees (center point for distance filter)
-  - `radius` (optional) – miles from (lat, lng); default 10, max 500
+  - `radius` (optional) – miles from (lat, lng); default **25** (launch default for sparse markets), max 500
   - `court_location_id` (optional) – `court_locations.id`; return only coaches linked to that court. Missing/soft-deleted court → **`404`**. Works for public and private courts (private addresses still redacted on the card).
   - `min_skill_rating` (optional) – numeric **self-reported** playing level **≥** this value (**2.0–6.0**, **0.5** steps). Excludes coaches with **`skill_rating`** unset (`null`).
   - `max_skill_rating` (optional) – **≤** this value; same rules. Cannot be less than `min_skill_rating` when both are sent.
@@ -998,8 +1029,8 @@ Authorization: Bearer <token>
 - **Error responses**: `403` (not coach or not own availability), `404` (availability not found), `500` (server error).
 
 **Coach courts workflow**
-- **Create courts** (public or private): Use **`POST /api/courts`** only. Body: `name`, `address_line1`, `city`, `state`, `postal_code` (required); optional `country` (default `US`), `latitude`, `longitude`, `is_private` (default false). Free-text **`address` is rejected**. **Shared courts:** identity is `(name, address_line1, city, state, postal_code, country)`. Exact match → **reuse** (restore if soft-deleted) and **link** the coach. Same name / different address → **`409`** `COURT_NAME_CONFLICT`. For **coach-specific link notes**, use **`POST /api/coaches/me/courts`** with `court_id` and **`coach_notes`**. **Distance rule:** If the coach already has other courts, the new/linked court must be within **100 miles** of one of them.
-- **Add an existing court to your list**: Use **`POST /api/coaches/me/courts`** when the court already exists. Body: `court_id` (required), optional **`coach_notes`**. If you are **already linked** (for example after **`POST /api/courts`** auto-link), send **`coach_notes`** in the body to **update** link text (**`200`**); without **`coach_notes`**, duplicate link returns **`409`**. **Distance rule:** If the coach already has other courts, the new court must be within **100 miles** of one of them.
+- **Create courts** (public or private): Use **`POST /api/courts`** only. Body: `name`, `address_line1`, `city`, `state`, `postal_code` (required); optional `country` (default `US`), `latitude`, `longitude`, `is_private` (default false). Free-text **`address` is rejected**. **Shared courts:** identity is `(name, address_line1, city, state, postal_code, country)`. Exact match → **reuse** (restore if soft-deleted) and **link** the coach. **Court names are not globally unique** — the same name may exist in different cities/states when coordinates are materially different. Nearby same-place matches use geographic duplicate detection (`COURT_DUPLICATE_HIGH` / `COURT_DUPLICATE_POSSIBLE`) so the coach can select the existing court. For **coach-specific link notes**, use **`POST /api/coaches/me/courts`** with `court_id` and **`coach_notes`**. Coaches may link/create courts **anywhere** — there is no teaching-area distance limit between a coach's courts.
+- **Add an existing court to your list**: Use **`POST /api/coaches/me/courts`** when the court already exists. Body: `court_id` (required), optional **`coach_notes`**. If you are **already linked** (for example after **`POST /api/courts`** auto-link), send **`coach_notes`** in the body to **update** link text (**`200`**); without **`coach_notes`**, duplicate link returns **`409`**. Coaches may link courts **anywhere** — there is no teaching-area distance limit between a coach's courts.
 - **Remove a court from your profile** (e.g. when moving): Use **`DELETE /api/coaches/me/courts/:courtId`** where **`courtId`** is **`court_locations.id`** (same as **`court_id`** / nested **`court.id`** on **`GET /api/coaches/me/courts`**). This **only** removes your coach–court link; it does **not** delete the shared court or affect other coaches. To remove the court from the marketplace entirely, an **admin** uses **`DELETE /api/courts/:id`**. After unlinking, add courts in the new city and update profile **location**.
 - **List your courts**: **`GET /api/coaches/me/courts`** returns all courts linked to the authenticated coach (use **`court_id`** for unlink).
 - **List a coach's courts (for students)**: **`GET /api/coaches/:id/courts`** returns courts where a coach teaches. Public; no auth required. Use when a student views a coach's profile to show locations. In the By Flow Postman collection this is **3 – Flow: Student** → **Get Coach Courts**.
@@ -1149,7 +1180,7 @@ Authorization: Bearer <token>
   }
   ```
 - **Response** (Status: **200** — already linked; body included **`coach_notes`**): same `data` shape as above; `message`: `Coach court link updated`.
-- **Error responses**: `400` (court_id missing or invalid; or court more than 100 miles from your existing courts), `404` (court not found), `409` (already linked and request omitted **`coach_notes`**).
+- **Error responses**: `400` (court_id missing or invalid), `404` (court not found), `409` (already linked and request omitted **`coach_notes`**).
 
 ### `DELETE /api/coaches/me/courts/:courtId`
 - **Auth**: Required (coach only)
@@ -1299,10 +1330,13 @@ Before confirmation (browse, intent, authorized/`pending`), students see `name`,
 
 ### `GET /api/courts`
 - **Auth**: None required
-- **Description**: **Public directory only** — returns courts with **`is_private: false`** and **`deleted_at: null`** only (courts with `is_private: true` are hidden from this shared catalog, not from coach/booking surfaces). **List all** when **lat** and **lng** are omitted. **No `page` and no `limit`** → return **all** matching courts in `data` (server-capped at **10,000** for safety). **Either `page` or `limit`** (or both) → **paginated** list (`data` + `pagination`); per-page max **100**. **Search near a point** when both **lat** and **lng** are provided (bounding box + **radius** in miles, default 10); results are ordered **closest to the search point first** (Haversine). If no courts match, may **lazy-import** from OpenStreetMap and re-query (still distance-ordered, up to 100 rows; re-fetch also excludes courts hidden from public discovery).
+- **Description**: **Public directory only** — returns courts with **`is_private: false`** and **`deleted_at: null`** only (courts with `is_private: true` are hidden from this shared catalog, not from coach/booking surfaces). **List all** when **lat** and **lng** are omitted. **No `page` and no `limit`** → return **all** matching courts in `data` (server-capped at **10,000** for safety). **Either `page` or `limit`** (or both) → **paginated** list (`data` + `pagination`); per-page max **100**. **Search near a point** when both **lat** and **lng** are provided (bounding box + **radius** in miles, default 10, max 100); results are ordered **closest to the search point first** (Haversine), up to **100** rows.
+- **Geographic discovery (no `q`)**: For every `lat`+`lng` request **without** text `q`, the server **always** attempts OSM/Overpass discovery for that area — **even when local `court_locations` already exist**. Newly found pickleball features are deduplicated (stable **`osm_type` + `osm_id`**, plus proximity against manual courts). Addresses use OSM `addr:*` tags first, then Nominatim reverse geocode for gaps (budget **`COURT_DISCOVER_MAX_REVERSE_GEOCODES`**, default **20**). Reverse hits whose pin is more than **`COURT_IMPORT_REVERSE_MAX_DISTANCE_MILES`** (default **1**) from the OSM court coordinates are discarded (park-entrance offsets are fine; multi-mile mismatches are not). **Incomplete or placeholder addresses are never inserted** — those OSM features are skipped (coaches can still add them via `GET /api/geo/search` → confirm → `POST /api/courts`). Existing incomplete OSM rows are enriched on rediscovery when a valid address can be resolved (missing fields only). Cap: up to **`COURT_DISCOVER_MAX_IMPORTS`** (default **100**) closest OSM candidates per request. If Overpass fails, existing local courts are still returned (empty array if none).
+- **Text search (`q`)**: Optional filter on name / street / city / ZIP / state. **DB-only** — Overpass is **not** called when `q` is present (including combined `q` + geo).
 - **Query Parameters**:
   - **List all**: `page`, `limit` — optional; omit both to fetch the full capped list (no `pagination` object).
   - **Geo search**: `lat`, `lng` (both required together), `radius` (miles, default 10, max 100).
+  - **Text**: `q` (optional) — PickleCoach directory only.
 - **Response** (Status: 200):
   - **List all, no pagination** (`no lat/lng`, no `page`/`limit`): `{ success, message, data: [...] }` (array only).
   - **List all, paginated** (`no lat/lng`, with `page` and/or `limit`):
@@ -1314,7 +1348,7 @@ Before confirmation (browse, intent, authorized/`pending`), students see `name`,
     "pagination": { "page": 1, "limit": 10, "total": 42, "totalPages": 5 }
   }
   ```
-  - **Geo search** (`lat` + `lng`): non-paginated array in `data` (up to 100 courts), **closest first**, same court shape as above.
+  - **Geo search** (`lat` + `lng`): non-paginated array in `data` (up to 100 courts), **closest first**, same court shape as above; message may note how many were newly imported.
 
 ### `GET /api/courts/:id`
 - **Auth**: None required
@@ -1345,7 +1379,7 @@ Before confirmation (browse, intent, authorized/`pending`), students see `name`,
 
 ### `POST /api/courts`
 - **Auth**: Required (Coach or Admin only)
-- **Description**: Create **or reuse** a shared court location (**`court_locations`**). **Structured address required** (`address_line1`, `city`, `state`, `postal_code`; `country` defaults to `US`). Free-text **`address` is rejected** (`400`). **Identity / uniqueness:** `(name, address_line1, city, state, postal_code, country)`. Exact match (including **soft-deleted**) is **reused** — restores `deleted_at` when needed — and shared fields are **never overwritten**. **Same name, different address** (active courts) → **`409`** `COURT_NAME_CONFLICT`. **Different name, same address** is allowed (multiple courts at one venue). **Coaches:** also creates (or finds) a `coach_court_locations` link (`coach_id` + `court_id` only; no `coach_notes` on this path). Status: **`201`** when the court or coach link is newly created; **`200`** when already linked. Admins are not auto-linked: **`201`** on create, **`200`** on reuse/restore. **Distance rule (coaches):** If you already have other courts, the target court must be within **100 miles** of one of them. To add or change **`coach_notes`**, call **`POST /api/coaches/me/courts`** with `court_id` and **`coach_notes`**. **Rejected input:** **`coach_notes`**, legacy **`notes`**, or free-text **`address`**. US MVP: `state` / `country` must be 2 letters; `postal_code` must be `12345` or `12345-6789`.
+- **Description**: Create **or reuse** a shared court location (**`court_locations`**). **Structured address required** (`address_line1`, `city`, `state`, `postal_code`; `country` defaults to `US`). Free-text **`address` is rejected** (`400`). **Identity / uniqueness:** `(name, address_line1, city, state, postal_code, country)`. Exact match (including **soft-deleted**) is **reused** — restores `deleted_at` when needed — and shared fields are **never overwritten**. **Court names are not globally unique** — the same name may exist at materially different coordinates (e.g. Holiday Park in two states). Nearby same-place matches → **`409`** `COURT_DUPLICATE_HIGH` / `COURT_DUPLICATE_POSSIBLE` with candidate courts to select. **Different name, same address** is allowed (multiple courts at one venue) unless geographic duplicate rules flag a nearby match. **Coaches:** also creates (or finds) a `coach_court_locations` link (`coach_id` + `court_id` only; no `coach_notes` on this path). Status: **`201`** when the court or coach link is newly created; **`200`** when already linked. Admins are not auto-linked: **`201`** on create, **`200`** on reuse/restore. Coaches may teach at any valid court — **no** geographic cluster limit between their courts. To add or change **`coach_notes`**, call **`POST /api/coaches/me/courts`** with `court_id` and **`coach_notes`**. **Rejected input:** **`coach_notes`**, legacy **`notes`**, or free-text **`address`**. US MVP: `state` / `country` must be 2 letters; `postal_code` must be `12345` or `12345-6789`.
 - **Request Body**:
   ```json
   {
@@ -1408,7 +1442,7 @@ Before confirmation (browse, intent, authorized/`pending`), students see `name`,
     }
   }
   ```
-- **Error responses**: For coaches with existing courts, `400` if the target court is more than 100 miles from all of your existing courts. **`400`** if the body includes **`coach_notes`**, **`notes`**, or legacy free-text **`address`**. **`409`** `COURT_NAME_CONFLICT` if an active court with the same **name** already exists at a **different address**. Exact-identity duplicates are reused/linked (or restored if soft-deleted), not rejected.
+- **Error responses**: **`400`** if the body includes **`coach_notes`**, **`notes`**, or legacy free-text **`address`**. **`409`** `COURT_DUPLICATE_HIGH` / `COURT_DUPLICATE_POSSIBLE` when a nearby existing court likely represents the same physical location (response includes candidates to select). Exact-identity duplicates are reused/linked (or restored if soft-deleted), not rejected. Court **names alone never cause a conflict**. There is **no** teaching-area distance limit between a coach's courts.
 
 ### `DELETE /api/courts/:id`
 - **Auth**: Required (**Admin only**)
@@ -1639,7 +1673,7 @@ See `backend/docs/MIGRATION_AUTHORIZE_FIRST_BOOKING.md` for migration notes.
 
 **Coach notification:** After successful `POST /api/bookings/confirm`, the API notifies the coach (in-app + email when SendGrid is configured).
 
-**Coach acceptance timeout:** If the coach does not accept or decline within **`COACH_ACCEPTANCE_TIMEOUT_HOURS`** (default **24**, alias `PENDING_BOOKING_EXPIRY_HOURS`), a worker cancels the booking (`cancelled_by: system`), voids the uncaptured PaymentIntent, and frees the slot. This applies to **authorized** pending bookings only — it is a marketplace responsiveness rule, not a payment-authorization timeout. Runs every 15 minutes when workers are enabled.
+**Coach acceptance timeout:** Pending bookings expire at the **earlier of** (1) **`COACH_ACCEPTANCE_TIMEOUT_HOURS`** after the request (default **24**, alias `PENDING_BOOKING_EXPIRY_HOURS`), or (2) **`MIN_BOOKING_LEAD_HOURS`** before lesson start (default **2**). A worker cancels the booking (`cancelled_by: system`), voids the uncaptured PaymentIntent, and frees the slot. New booking intents/confirmations are rejected if the lesson starts sooner than the min lead time (`booking_too_soon`). Coach accept after the deadline returns **400** `acceptance_window_closed`. This applies to **authorized** pending bookings only — it is a marketplace responsiveness rule, not a payment-authorization timeout. Runs every 15 minutes when workers are enabled.
 
 Admins and students get **403** on accept/decline.
 
@@ -1654,11 +1688,11 @@ Only **`pending`** and **`confirmed`** are cancellable through these endpoints (
 | `pending` | Student confirmed authorization; waiting for coach decision | `POST /api/bookings/confirm` | **Yes** (student, coach on booking, or admin) | Pre-lesson; payment already `authorized`; cancel voids or refunds per policy |
 | `confirmed` | Coach accepted; lesson not yet ended (or still in coach-action window before worker moves it) | `PUT /api/bookings/:id/accept` | **Yes** (same callers), only while **`scheduled_at` is still in the future** | Pre-lesson; same **`payment_actions`**-backed cancel refund path as **`pending`**. After lesson start → **400** `lesson_started_cancellation_unavailable` |
 | `awaiting_verification` | Lesson **end** time has passed while still `confirmed`; worker moved booking here until coach marks complete / no-show or **auto-complete** runs (**24h after lesson end**) | Background worker (`autoConfirmWorker`, ~every 5 min): `confirmed` → `awaiting_verification` when `scheduled_at + duration` ≤ now (typically 0-5 minutes after lesson end when workers are healthy) | **No** | **400** `booking_in_post_lesson_phase` — use complete, no-show, or dispute workflows. **No coach payout** while in this status — escrow stays held until `completed` (or `student_no_show`) |
-| `completed` | Lesson treated as completed (coach `POST .../complete`, or auto worker **24h after lesson end** if still `awaiting_verification` and no open dispute) | Coach or `autoConfirmWorker` | **No** | Terminal. Coach payout eligible via **`payoutWorker`** (~every 10 min) once `payout_status` is `pending` and guards pass. After the Connect transfer is confirmed, `payout_status` becomes `paid` (in-flight is `processing`) |
+| `completed` | Lesson treated as completed (coach `POST .../complete`, or auto worker **24h after lesson end** if still `awaiting_verification` and no open dispute) | Coach or `autoConfirmWorker` | **No** | Attendance terminal. Coach payout waits until **lesson end + 24h** with no open dispute (`payoutWorker`). Complete does **not** skip that clock. |
 | `cancelled` | Booking cancelled | `POST .../cancel`, coach decline, coach acceptance timeout worker, etc. | **No** | Terminal |
 | `disputed` | Chargeback / dispute workflow tied to payment (e.g. Stripe dispute sync may set this on the booking) | `stripeDisputeSyncService` (webhook path); seeds/tests | **No** | Cancel endpoint rejects; resolve dispute and handle funds via documented dispute/refund flows |
-| `student_no_show` | Primary **student** did not attend | `POST .../student-no-show` (coach or admin) | **No** | Terminal attendance outcome; **not** reversible via cancel (no `reason_notes` token path). Coach payout is eligible; adjust with dispute/admin override if contested |
-| `coach_no_show` | **Coach** did not attend | `POST /api/admin/bookings/:id/coach-no-show` | **No** | Terminal attendance outcome; cancel endpoint does not apply |
+| `student_no_show` | Primary **student** did not attend | `POST .../student-no-show` (coach or admin) | **No** | Attendance terminal; **not** reversible via cancel. Coach payout uses the **same 24h post-lesson review clock** as `completed` (not immediate). |
+| `coach_no_show` | **Coach** did not attend | `POST /api/admin/bookings/:id/coach-no-show` | **No** | Attendance terminal. Student refund is **held until the 24h review window ends** (or admin dispute resolve). |
 
 The sections below document the **authorize-first write flow** first, then **beyond MVP** (list, detail, cancel).
 
@@ -1807,12 +1841,12 @@ The sections below document the **authorize-first write flow** first, then **bey
 
 ### `POST /api/bookings/:id/complete`
 - **Auth**: Required
-- **Description**: Coach only. Mark booking as completed after lesson end time. Allowed from `confirmed` or `awaiting_verification`. Sets payout pipeline to pending.
+- **Description**: Coach only. Mark booking as completed after lesson end time. Allowed from `confirmed` or `awaiting_verification`. This confirms **attendance** only. It sets `payout_status` to `pending` (owed) but **does not** release funds. Coach payout waits until **24 hours after lesson end** with no open dispute (`payoutWorker`).
 - **Request Body**: Optional (e.g. notes)
 
 ### `POST /api/bookings/:id/student-no-show`
 - **Auth**: Required
-- **Description**: Coach only. Records that the **primary student did not attend**; sets booking status to `student_no_show` after lesson end time. Allowed from `confirmed` or `awaiting_verification` **when there is no active dispute**. If booking is disputed (or has open/under_review dispute), use **`PUT /api/disputes/:id/resolve`** as final authority for status + money outcome. This is **not** for “coach did not show”—that scenario uses `POST /api/disputes` with dispute type **`coach_no_show_claim`** (`dispute_type_id` **1**). Admin override: `POST /api/admin/bookings/:id/student-no-show`.
+- **Description**: Coach only. Records that the **primary student did not attend**; sets booking status to `student_no_show` after lesson end time. Allowed from `confirmed` or `awaiting_verification` **when there is no active dispute**. If booking is disputed (or has open/under_review dispute), use **`PUT /api/disputes/:id/resolve`** as final authority for status + money outcome. This is **not** for “coach did not show”—that scenario uses `POST /api/disputes` with dispute type **`coach_no_show_claim`** (`dispute_type_id` **1**). Admin override: `POST /api/admin/bookings/:id/student-no-show`. **Notifies the student** (`student_no_show`, in-app + email) that they were marked no-show and can dispute within 24 hours after lesson end.
 - **Request Body**: Optional (e.g. notes)
 
 ### `POST /api/bookings/:id/cancel`
@@ -1895,12 +1929,13 @@ The sections below document the **authorize-first write flow** first, then **bey
 
 ### `POST /api/admin/bookings/:id/student-no-show`
 - **Auth**: Required (`admin`)
-- **Description**: Admin override for **student** no-show. Lesson must have ended; allowed source statuses are `confirmed`, `awaiting_verification`, `student_no_show`, or `coach_no_show` **when there is no active dispute** and **`bookings.attendance_finalized` is false**. After any dispute has been resolved on the booking, this endpoint returns **`409`** with **`code: attendance_finalized_locked`** — attendance changes must go through a **new** dispute + **`PUT /api/disputes/:id/resolve`**. While the booking is not finalized, this endpoint sets `bookings.status` → `student_no_show` and can correct an earlier admin attendance mark (including `coach_no_show` → `student_no_show`) subject to payment/attendance-lock guards. If disputed (or any open/under_review dispute exists), this endpoint returns conflict and you should resolve through **`PUT /api/disputes/:id/resolve`** so final status + financial outcome are decided in one path. Coach payout is handled by the payout worker as a payable attendance outcome: once eligible (no open dispute, no pending refund, escrow still `held`), payout proceeds on the next worker cycle (`~10 minutes`); **`student_no_show` is payable immediately** — unlike the default post-lesson path, which waits for **`completed`** after the 24h verification window.
+- **Description**: Admin override for **student** no-show. Lesson must have ended; allowed source statuses are `confirmed`, `awaiting_verification`, `student_no_show`, or `coach_no_show` **when there is no active dispute** and **`bookings.attendance_finalized` is false**. After any dispute has been resolved on the booking, this endpoint returns **`409`** with **`code: attendance_finalized_locked`** — attendance changes must go through a **new** dispute + **`PUT /api/disputes/:id/resolve`**. While the booking is not finalized, this endpoint sets `bookings.status` → `student_no_show` and can correct an earlier admin attendance mark (including `coach_no_show` → `student_no_show`) subject to payment/attendance-lock guards. If disputed (or any open/under_review dispute exists), this endpoint returns conflict and you should resolve through **`PUT /api/disputes/:id/resolve`** so final status + financial outcome are decided in one path. Coach payout is handled by the payout worker as a payable attendance outcome: once eligible (lesson end + 24h, no open dispute, no pending refund, escrow still `held`). **`student_no_show` uses the same 24-hour financial review clock as `completed`** — it is not an immediate payout.
 
 - **Side effects — reliability & payments (read this carefully)**:
   - **Reliability — YES, student only.** After the status flip, the controller calls `updateUserReliability(primary_student_id, 'student')`. The new `student_no_show` row is picked up by `calculateStudentMetrics` → `calculateStudentReliabilityScore`, so the **student's** score recomputes (a no-show is a negative signal). **Coach reliability is not touched** by this endpoint. Recalculation is skipped only when the student user also has the `admin` role.
-  - **Refund — NO, no automatic refund.** The student is **not** refunded by this endpoint. The booking is treated as a payable attendance outcome: coach payout proceeds via the normal payout worker once the booking is eligible (escrow still `held`, no open dispute, no pending refund). **`student_no_show` pays out on the next worker cycle** — there is no 24h verification hold for this attendance outcome.
-  - **Need a refund anyway?** Use **`POST /api/admin/bookings/:id/refund`** (enqueues a `booking_admin_refund` `payment_actions` row), or open/resolve a dispute via **`POST /api/admin/disputes`** + **`PUT /api/disputes/:id/resolve`** with the appropriate `financial_action`.
+  - **Notifications — YES, student.** In-app + email (`student_no_show`).
+  - **Refund — NO, no automatic refund.** The student is **not** refunded by this endpoint. Coach payout is **not** immediate: `student_no_show` uses the same **24-hour post-lesson financial review window** as completed lessons. `payoutWorker` pays the coach only after lesson end + 24h, with no open dispute, and escrow still `held`.
+  - **Need a refund anyway?** During the **24h post-lesson review window**, do **not** use the admin refund endpoint (**409** `financial_review_window_open`). Open/resolve a dispute via **`POST /api/admin/disputes`** + **`PUT /api/disputes/:id/resolve`** with the appropriate `financial_action`. After the window, **`POST /api/admin/bookings/:id/refund`** is allowed when there is no open dispute.
 
 - **Execution rule (required)**: status alone is not sufficient. Admin no-show is allowed only when **both** conditions are true:
   1. Booking status is in allowed source statuses.
@@ -1919,7 +1954,8 @@ The sections below document the **authorize-first write flow** first, then **bey
 
 - **Side effects — reliability & payments (read this carefully)**:
   - **Reliability — YES, coach only.** After the status flip, the controller calls `updateUserReliability(coach_id, 'coach')`. The new `coach_no_show` row is picked up by `calculateCoachMetrics` → `calculateCoachReliabilityScore`, so the **coach's** score recomputes (a no-show is a negative signal). **Student reliability is not touched** by this endpoint. Recalculation is skipped only when the coach user also has the `admin` role.
-  - **Refund — YES, automatic refund to student when payment is refundable.** In the same transaction that sets `status = coach_no_show`, the controller inspects the latest `payments` row. If it is refundable (Stripe charge present, `payment_status` is `captured` or `partially_refunded`, no pending refund / refund-pipeline action, remaining Stripe balance ≥ 1¢), it queues a **`payment_actions`** row with `action_type` **`booking_coach_no_show_refund`** and returns **`auto_refund.status: queued`** plus **`payment_action_id`**. Stripe is executed by **`processPendingRefundPaymentActions`** (~2 minutes), same reconciliation path used by cancel and dispute refunds.
+  - **Notifications — YES, student and coach.** In-app + email (`coach_no_show`).
+  - **Refund — not immediate.** Marking `coach_no_show` does **not** enqueue a Stripe refund in the same request. After the **24-hour post-lesson review window** with no open dispute, `payoutWorker` queues **`booking_coach_no_show_refund`**. Response `auto_refund.status` is **`held_until_review`** during the window, **`queued`** after the window when a refundable charge exists, or **`skipped`** with a reason. Dispute resolve can still refund sooner via **`financial_action`**.
   - **When refund is not queued** the response carries **`auto_refund.status: skipped`** with a **`reason`** (`payment_missing`, `charge_missing`, `refund_pending`, `refund_pipeline_pending`, `already_fully_refunded`, `payment_status_not_refundable:<status>`, or `no_refundable_payment`). The status flip and coach reliability recalc still happen. Fallback for money movement in `skipped` cases is **`POST /api/admin/bookings/:id/refund`**.
 
 - **Execution rule (required)**: status alone is not sufficient. Admin no-show is allowed only when **both** conditions are true:
@@ -1971,6 +2007,7 @@ The sections below document the **authorize-first write flow** first, then **bey
 ### `POST /api/admin/bookings/:id/refund`
 - **Auth**: Required (`admin`)
 - **Description**: Admin override refund **intent** for a booking's latest payment. Does **not** call Stripe synchronously: creates a **`payment_actions`** row (`action_type` **`booking_admin_refund`**) with the computed **`refund_cents`**; Stripe runs via **`processPendingRefundPaymentActions`** (~**2 minutes**) with the same **`payment_actions`** reconciliation path as cancellations and disputes.
+  - **Post-lesson 24h guardrail**: after lesson end, while the financial review window is still open, returns **409** `code: financial_review_window_open` (payload includes `review_until`). Use **dispute create + resolve** if money must move during that window. Pre-lesson admin refunds are unchanged. After the window, this endpoint is allowed when there is no open dispute.
   - **Single-settlement guardrail**: if the booking already has **any refunded amount**, a **pending `payments.refund_status`**, **or any pending `payment_actions` row** for Stripe execution, returns **409** `code: refund_path_already_used` (includes partial refunds and queued intents).
   - **Dispute-first guardrail**: if the booking has an **open** or **under_review** dispute, returns **409** `code: refund_requires_dispute_resolution`.
   - Resolved disputes whose resolution action **`requires_payout_adjustment`** still yield **409** **`refund_path_already_used`** (matches server guard against mixed dispute + manual refund paths).
@@ -2011,17 +2048,17 @@ Use this section as the admin decision guide for incidents, payouts/refunds, dis
 
 - **Booking status endpoints** (`cancel`, `student-no-show`, `coach-no-show`) set the canonical booking outcome.
 - **Dispute endpoints** (`create`, `resolve`) manage case workflow and optional dispute-driven refunds.
-- **Refund endpoint** (`POST /api/admin/bookings/:id/refund`) enqueues money movement (**`booking_admin_refund`**) without requiring a dispute.
+- **Refund endpoint** (`POST /api/admin/bookings/:id/refund`) enqueues money movement (**`booking_admin_refund`**) without requiring a dispute, **except** during the post-lesson 24h review window (**409** `financial_review_window_open`) and while a dispute is open.
 - **Reliability adjust endpoint** (`PUT /api/admin/users/:id/reliability`) is a manual support override, not the normal path.
 
 | Situation | Primary endpoint | Add these if needed | Important notes |
 |---|---|---|---|
 | Lesson has **not** happened yet (`pending` / `confirmed`) and needs cancellation | `POST /api/admin/bookings/:id/cancel` | `POST /api/admin/bookings/:id/refund` only for rare/manual follow-up adjustments after **`payment_actions`** from cancel have finished (exceptional; not the default path); `PUT /api/admin/users/:id/reliability` if a party should still be penalized | Cancel is pre-lesson only; sets `cancelled_by: admin`. **Reliability: NO** — admin cancel never adjusts coach or student score (`affects_reliability=false`). **Refund: YES, full refund (no penalty)** when money is recoverable — refundable charges enqueue **`booking_cancel_refund`** (`payment_actions`, worker ~2 min); uncaptured intents are voided in-txn |
 | Lesson ended and **student** did not attend | `POST /api/admin/bookings/:id/student-no-show` | If disputed/active case: `PUT /api/disputes/:id/resolve`; `POST /api/admin/bookings/:id/refund` if a refund is also warranted | Sets `bookings.status -> student_no_show`. **Reliability: YES — student only** (`updateUserReliability(primary_student_id, 'student')`). **Refund: NO automatic refund** — coach payout follows normal payout flow. Admin may also use this to correct `coach_no_show -> student_no_show` before financial settlement lock |
-| Lesson ended and **coach** did not attend | `POST /api/admin/bookings/:id/coach-no-show` | If disputed/active case: `PUT /api/disputes/:id/resolve`; manual refund endpoint only if **`auto_refund` skipped** (e.g. not captured) — not synchronous Stripe anymore | Sets `bookings.status -> coach_no_show`. **Reliability: YES — coach only** (`updateUserReliability(coach_id, 'coach')`). **Refund: YES (automatic when eligible)** — queues **`booking_coach_no_show_refund`** on `payment_actions`; worker runs Stripe ~2 min. Corrects `student_no_show -> coach_no_show` before financial lock |
-| Quality/conduct/billing issue needs case tracking (user contacted support, evidence review, etc.) | `POST /api/admin/disputes` | `PUT /api/disputes/:id/resolve` (+ optional refund via resolution action) | Creating a dispute does not change booking status by itself |
-| Existing dispute is ready for outcome | `PUT /api/disputes/:id/resolve` | Send `decision` + `financial_action` for all disputes; for attendance claims also send **`outcome`** (required on every resolve) | Resolve is the final authority; decision is explicit, booking status comes from `outcome` (attendance only), money comes from `financial_action` |
-| Need money returned and **no active dispute** | `POST /api/admin/bookings/:id/refund` | N/A | Creates **`booking_admin_refund`** on `payment_actions`; money returns via Stripe after worker (**same reconciliation** as cancel/dispute refunds); booking row unchanged unless you change status separately |
+| Lesson ended and **coach** did not attend | `POST /api/admin/bookings/:id/coach-no-show` | If disputed/active case: `PUT /api/disputes/:id/resolve`; manual refund endpoint only if **`auto_refund` skipped** (e.g. not captured) **and** the 24h window has ended — not synchronous Stripe anymore | Sets `bookings.status -> coach_no_show`. **Reliability: YES — coach only** (`updateUserReliability(coach_id, 'coach')`). **Refund: YES after the 24h review window** (no open dispute) — queues **`booking_coach_no_show_refund`**; Stripe worker ~2 min **after enqueue**. During the window, refund via dispute resolve. Corrects `student_no_show -> coach_no_show` before financial lock |
+| Quality/conduct/billing issue needs case tracking (user contacted support, evidence review, etc.) | `POST /api/admin/disputes` | `PUT /api/disputes/:id/resolve` (+ optional refund via resolution action) | Creating a dispute does not change booking status by itself. Resolve refunds **may** run during the 24h window (adjudication). |
+| Existing dispute is ready for outcome | `PUT /api/disputes/:id/resolve` | Send `decision` + `financial_action` for all disputes; for attendance claims also send **`outcome`** (required on every resolve) | Resolve is the final authority; decision is explicit, booking status comes from `outcome` (attendance only), money comes from `financial_action`. This is the path that can move money **during** the 24h window. |
+| Need money returned and **no active dispute** | `POST /api/admin/bookings/:id/refund` | N/A **after** the 24h window; **during** the window this returns **409** `financial_review_window_open` — use dispute create + resolve instead | Creates **`booking_admin_refund`** on `payment_actions`; money returns via Stripe after worker (**same reconciliation** as cancel/dispute refunds); booking row unchanged unless you change status separately |
 | Score is clearly wrong after investigation and standard flows cannot correct it in time | `PUT /api/admin/users/:id/reliability` | `GET /api/admin/users/:id/reliability` before/after for audit check | Manual override only; choose correct `role` (`coach` default, `student` when needed) |
 
 #### Recommended order by incident type
@@ -2039,6 +2076,7 @@ Use this section as the admin decision guide for incidents, payouts/refunds, dis
 - **Refunds and status are separate except coach no-show.** **Coach no-show** queues a refund when refundable; otherwise use cancel or **`POST …/refund`** explicitly.
 - **Refund is a single settlement per booking incident.** Once Stripe shows money moved **or any `payment_actions`/payment refund is pending**, additional refund attempts are blocked with `409 refund_path_already_used`.
 - **When a dispute is open/under_review, refunds must be decided in dispute resolution.** Manual refund endpoint returns `409 refund_requires_dispute_resolution`.
+- **After lesson end, automatic and admin-override refunds wait 24 hours** (same clock as coach payout). Manual refund during that window returns **409** `financial_review_window_open`. Dispute **resolve** is the exception that can refund sooner.
 - **Dispute visibility is not admin-only.** Booking participants (coach/student on that booking) can view related disputes; admins can view all.
 - **Reliability deduplication exists for no-show overlap.** If booking is already `coach_no_show`/`student_no_show`, resolving the matching no-show claim dispute does not double-penalize scoring.
 
@@ -2078,7 +2116,7 @@ Use this section as the admin decision guide for incidents, payouts/refunds, dis
 
 **Schedule changes:** There is no reschedule API. To move a lesson, **cancel** the booking (`POST /api/bookings/:id/cancel`) and **book a new slot** (`POST /api/booking-intents` → authorize → `POST /api/bookings/confirm`). Cancellation reasons: excused (`weather`, `emergency`, `sickness`) vs unexcused (`travel_delay`, `schedule_conflict`, `forgot`, `other`) for reliability. Cancel notifies the other party with `cancelled_by`, `reason`, and optional `reason_notes`.
 
-**Notifications (email + in-app when configured):** booking accepted (`booking_confirmed`), declined (`booking_declined`), cancelled (`booking_cancelled`). **Lesson reminders (MVP):** `pre_lesson_24h` — in-app + email; `pre_lesson_1h` — in-app only (no 1h email). Chat: in-app only `new_message` when the other participant sends a message. **Stripe Connect:** `stripe_payouts_disabled` / `stripe_payouts_enabled` (in-app + email) — sent to the coach **only when `stripe_ready` actually flips** (via `account.updated` webhook or a status sync); duplicate webhook deliveries stay silent.
+**Notifications (email + in-app when configured):** booking accepted (`booking_confirmed`), declined (`booking_declined`), cancelled (`booking_cancelled`). **Pending expiry:** `booking_request_expired` (student, in-app + email) when the coach never responds and the authorization is voided. **Lesson reminders (MVP):** `pre_lesson_24h` — in-app + email; `pre_lesson_1h` — in-app only (no 1h email). Chat: in-app only `new_message` when the other participant sends a message. **Reviews:** `review_received` (coach, in-app only) when a student submits a review. **Refunds:** `refund_succeeded` (student, in-app + email) when Stripe confirms `amount_refunded` increased on the charge (not when a refund is merely queued). **Post-lesson attendance:** `student_no_show` (student, in-app + email) when coach or admin marks student no-show; `coach_no_show` (student and coach, in-app + email) when admin marks coach no-show. **Disputes:** `dispute_opened` (in-app only) to the other party, or both when admin opens; `dispute_resolved` (student and coach, in-app + email) when admin resolves. **Stripe Connect:** `stripe_payouts_disabled` / `stripe_payouts_enabled` (in-app + email) — sent to the coach **only when `stripe_ready` actually flips** (via `account.updated` webhook or a status sync); duplicate webhook deliveries stay silent.
 
 ---
 
@@ -2480,19 +2518,23 @@ Use this section as the admin decision guide for incidents, payouts/refunds, dis
 
   See **`GET /api/disputes`** above for the meaning of `decision`, `outcome`, and `refund_amount`.
 
+### `GET /api/disputes/types`
+- **Auth**: Required
+- **Description**: List active in-app dispute types (`id`, `code`, `name`, `description`) for create forms.
+
 ### `POST /api/disputes`
 - **Auth**: Required. **Students and coaches** must have **verified email**. **Admins** may create disputes without email verification; the row is stored with **`opened_by` → `admin`** (same as **`POST /api/admin/disputes`**).
-- **Description**: Create a dispute. **Student/coach** callers get **`opened_by` → `student`** or **`coach`** as appropriate. **Admin** callers get **`opened_by` → `admin`**. Active types only: `coach_no_show_claim`, `student_no_show_claim`, `misconduct`, `lesson_not_completed`, `other`. Types outside the active catalog (including removed codes such as `refund_request` / `billing_issue`) return **400** `dispute_type_deprecated` when still referenced. Refund intent belongs in **`notes`** and admin **`financial_action`** on resolve — not a separate dispute type.
-- **Booking status guard**: Disputes are **post-lesson** case records. The booking must be in an eligible status before create succeeds (**400** with `booking_status` in the error payload):
+- **Description**: Create a dispute. **Student/coach** callers get **`opened_by` → `student`** or **`coach`** as appropriate. **Admin** callers get **`opened_by` → `admin`**. Active types only: `coach_no_show_claim`, `student_no_show_claim`, `misconduct`, `lesson_not_completed`, `other`. Types outside the active catalog (including removed codes such as `refund_request` / `billing_issue`) return **400** `dispute_type_deprecated` when still referenced. Refund intent belongs in **`notes`** and admin **`financial_action`** on resolve — not a separate dispute type. **Notifies** the other booking party in-app (`dispute_opened`); admin-opened disputes notify **both**. No email in MVP.
+- **Booking status guard**: Disputes are **post-lesson** case records. The booking must be in an eligible status before create succeeds (**400** with `booking_status` in the error payload). **Student/coach** callers are also limited to the **24-hour financial review window** after lesson end (**400** `dispute_create_financial_review_closed` after that). **Admins** may still create after the window for exceptional support cases. After the window the booking is **normally financially final**; exceptional post-settlement corrections may require manual Stripe operations.
 
   | Booking status | Can create? |
   |----------------|-------------|
-  | `awaiting_verification` | **Yes** |
-  | `completed` | **Yes** |
-  | `student_no_show` | **Yes** (e.g. second dispute after a prior resolve) |
-  | `coach_no_show` | **Yes** |
-  | `disputed` | **Yes** when no other active in-app dispute exists |
-  | `confirmed` | **Yes** only after lesson end time (`scheduled_at + duration_minutes`) |
+  | `awaiting_verification` | **Yes** during the 24h review window (student/coach); admin anytime |
+  | `completed` | **Yes** during the 24h review window (student/coach); admin anytime |
+  | `student_no_show` | **Yes** during the 24h review window (student/coach); admin anytime |
+  | `coach_no_show` | **Yes** during the 24h review window (student/coach); admin anytime |
+  | `disputed` | **Yes** when no other active in-app dispute exists (same window rule for student/coach) |
+  | `confirmed` | **Yes** only after lesson end time, and only during the 24h window for student/coach |
   | `pending` | **No** — `dispute_create_pre_lesson_booking` |
   | `confirmed` (lesson not ended) | **No** — `dispute_create_lesson_not_ended` |
   | `cancelled` | **No** — `dispute_create_cancelled_booking` |
@@ -2535,7 +2577,7 @@ Use this section as the admin decision guide for incidents, payouts/refunds, dis
 
 Dispute resolution is the **authoritative adjudication boundary** for whether the booking’s attendance outcome may still be changed **outside** the dispute flow.
 
-- **On every successful resolve** (all dispute types: attendance claims **`coach_no_show_claim`**, **`student_no_show_claim`**, behavior **`misconduct`**, **`lesson_not_completed`**, and catch-all **`other`**), the server sets **`bookings.attendance_finalized` → `true`**.
+- **On every successful resolve** (all dispute types: attendance claims **`coach_no_show_claim`**, **`student_no_show_claim`**, behavior **`misconduct`**, **`lesson_not_completed`**, and catch-all **`other`**), the server sets **`bookings.attendance_finalized` → `true`**. **Notifies student and coach** (`dispute_resolved`, in-app + email) with outcome-based copy (refund vs payout).
 - **What the flag means**: it does **not** freeze the entire booking row forever. It means **attendance outcome** cannot be mutated via **`POST /api/admin/bookings/:id/student-no-show`** or **`POST /api/admin/bookings/:id/coach-no-show`** — those return **`409`** with **`code: attendance_finalized_locked`** once the flag is true.
 - **Changing attendance after finalization**: open a **new** dispute on the same booking (when no dispute is active) and resolve it via this endpoint. Resolve may still update **`bookings.status`** from allowed source statuses (including `student_no_show`, `coach_no_show`, `completed`, `disputed` per `DISPUTE_RESOLVE_ATTENDANCE_SOURCE_STATUSES` for attendance outcomes) and always re-affirms **`attendance_finalized`**.
 - **Canonical records**: **`disputes.outcome`** is the historical attendance determination for that dispute row (attendance types only). **`bookings.status`** is the operational final state for product/UI. **`attendance_finalized`** is the guardrail preventing post-resolution drift from admin no-show endpoints.
@@ -2703,7 +2745,7 @@ Dispute resolution is the **authoritative adjudication boundary** for whether th
 
 **In-app navigation convention:** For the notification bell, filter `channel === 'in_app'`. Render with `payload.headline` / `payload.summary` / optional `payload.preview`; on tap, `if (notification.payload?.route) navigate(notification.payload.route)` — no per-type copy or routing on the client.
 
-**In-app UI contract:** Every in-app notification payload includes **`headline`** and **`summary`** (and usually **`route`**). Optional **`preview`**. Keep **`summary`** to one short sentence for the bell; put reasons, notes, and refunds in structured fields (`reason_line`, `message_to_student`, `refund_line`, etc.). Extra keys (`booking_id`, `coach_name`, …) are metadata only. Types covered: `booking_confirmed`, `booking_request_coach`, `booking_declined`, `booking_cancelled`, `pre_lesson_24h`, `pre_lesson_1h`, `new_message`, `stripe_payouts_disabled`, `stripe_payouts_enabled` (route: `/coach/onboarding`).
+**In-app UI contract:** Every in-app notification payload includes **`headline`** and **`summary`** (and usually **`route`**). Optional **`preview`**. Keep **`summary`** to one short sentence for the bell; put reasons, notes, and refunds in structured fields (`reason_line`, `message_to_student`, `refund_line`, etc.). Extra keys (`booking_id`, `coach_name`, …) are metadata only. Types covered: `booking_confirmed`, `booking_request_coach`, `booking_declined`, `booking_cancelled`, `pre_lesson_24h`, `pre_lesson_1h`, `new_message`, `student_no_show`, `coach_no_show`, `dispute_opened`, `dispute_resolved`, `stripe_payouts_disabled`, `stripe_payouts_enabled` (route: `/coach/onboarding`).
 
 **Code layout (MVP):** Orchestration in `services/notificationService.js`. Presentation under `notifications/` — `payloadBuilders.js` (in-app copy), `emailTemplates.js` / `smsTemplates.js` (delivery copy), `notificationRoutes.js` (`payload.route`).
 

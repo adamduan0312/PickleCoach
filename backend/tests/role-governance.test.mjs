@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test, describe } from 'node:test';
 import {
   canSelfServiceAddRole,
+  canSelfServiceRemoveRole,
   effectiveRolesFromGovernance,
   getEffectiveRolesForUserRecord,
   isRoleGovernanceLocked,
@@ -49,5 +50,18 @@ describe('roleGovernance', () => {
       userRoles: [{ role: 'student' }, { role: 'coach' }],
     };
     assert.deepEqual(getEffectiveRolesForUserRecord(user).sort(), ['student']);
+  });
+
+  test('self-service can remove coach when student remains', () => {
+    assert.equal(canSelfServiceRemoveRole(userOpen, 'coach', ['student', 'coach']), true);
+  });
+
+  test('self-service cannot remove last marketplace role', () => {
+    assert.equal(canSelfServiceRemoveRole(userOpen, 'student', ['student']), false);
+    assert.equal(canSelfServiceRemoveRole(userOpen, 'coach', ['coach']), false);
+  });
+
+  test('self-service remove of missing role is a noop-allowed path', () => {
+    assert.equal(canSelfServiceRemoveRole(userOpen, 'coach', ['student']), true);
   });
 });

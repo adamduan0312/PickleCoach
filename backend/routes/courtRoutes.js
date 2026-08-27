@@ -2,12 +2,18 @@ import express from 'express';
 import * as courtController from '../controllers/courtController.js';
 import { authenticate } from '../middleware/auth.js';
 import { validateQuery, validateRequest } from '../middleware/validator.js';
-import { searchCourtsQuerySchema, createCourtBodySchema } from '../config/validation.js';
+import { searchCourtsQuerySchema, createCourtBodySchema, courtDuplicateCheckBodySchema } from '../config/validation.js';
 
 const router = express.Router();
 
 // Public routes
 router.get('/', validateQuery(searchCourtsQuerySchema), courtController.searchCourts);
+router.post(
+  '/duplicate-check',
+  authenticate,
+  validateRequest(courtDuplicateCheckBodySchema),
+  courtController.checkCourtDuplicates,
+);
 router.get('/:id', courtController.getCourt);
 
 // Protected routes

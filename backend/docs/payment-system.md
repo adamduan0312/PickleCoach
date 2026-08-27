@@ -14,6 +14,8 @@
 
 Do **not** call a card authorization an escrow hold. `escrow_status = held` means captured funds only.
 
+**Scenario map** (authorize vs capture, both 24h clocks, no-shows, disputes, who the refund/payout is issued against): [`money-movement.md`](./money-movement.md).
+
 | State | Meaning |
 |-------|---------|
 | `payment_status: authorized` + `escrow_status: pending` | Stripe authorized/reserved the card. **No captured money.** PickleCoach is not holding funds. |
@@ -105,15 +107,40 @@ Do **not** compare Stripe’s ~$25.60 Net to the ~$25.30 coach payout and conclu
 
 ## Post-lesson coach payout (completed lessons)
 
-Timeline is aligned with **`autoConfirmWorker`** (lesson **end** + 24h verification window):
+**Product rule:** Students and coaches have **24 hours after the lesson** to report a payment or lesson problem. During that period, payout is protected. After the review period closes, the booking is **normally financially final**. Exceptional post-settlement corrections may require **manual Stripe operations** (this app does not auto-claw back a Connect transfer).
 
-1. Lesson ends → `confirmed` → `awaiting_verification` (worker, ~5 min).
-2. During `awaiting_verification`: escrow stays **held**; open in-app disputes block auto-complete and payout.
-3. **24h after lesson end** with no open dispute → `autoConfirmWorker` sets `completed` + `payout_status: pending`.
-4. **`payoutWorker`** (~10 min) releases escrow only when `bookings.status` is **`completed`** (or **`student_no_show`** for immediate attendance payout, or late-cancel `cancelled`).
-5. Booking **`payout_status`**: `pending` (owed) → `processing` (Connect transfer initiated) → **`paid`** (Stripe `transfer.created` / `transfer.paid` webhook, or zero-amount path with nothing to send). `payouts.status` and `payments.escrow_status` stay the money source of truth; the booking column now follows them so the frontend can show “Coach payout: Paid” without joining `payouts`. **`forfeited` is reserved** and is not assigned by live code (no-payout cases stay `none`; student no-show is payable).
+Timeline is aligned with a **24-hour financial review window after lesson end** (not after Complete / no-show clicks):
 
-Coach **`POST .../complete`** can skip the wait by setting `completed` + `payout_status: pending` earlier. **`awaiting_verification` is not a payable status** — payout never runs before the booking reaches a terminal payable outcome.
+1. Lesson ends → `confirmed` → `awaiting_verification` (worker, ~5 min). Coach may mark **Complete** or **student no-show** immediately; those are **attendance** only.
+2. During the 24h window: escrow stays **held**. Students and coaches may open in-app disputes. Open disputes block payout. Complete does **not** release money.
+3. **24h after lesson end** with no open dispute → payout becomes eligible (`completed` or `student_no_show`). `autoConfirmWorker` may also set `completed` if the coach never confirmed attendance.
+4. **`payoutWorker`** (~10 min) releases escrow only when `bookings.status` is **`completed`** or **`student_no_show`**, **and** `financial_review_until` (lesson end + 24h) has passed, **and** there is no open dispute. Late-cancel `cancelled` payouts are pre-lesson and skip this clock.
+5. Booking **`payout_status`**: `pending` (owed) → `processing` (Connect transfer initiated) → **`paid`**. **`forfeited` is reserved** and is not assigned by live code.
+
+Coach **`POST .../complete`** does **not** skip the 24h wait. **`awaiting_verification` is not a payable status**. **`student_no_show` is not an immediate payout** — it uses the same 24h clock.
+
+**`coach_no_show`:** marking attendance does **not** refund immediately. After the same 24h window with no open dispute, `payoutWorker` enqueues `booking_coach_no_show_refund`. Dispute resolve can still refund sooner via admin `financial_action`.
+
+### What the 24h clock gates (and what it does not)
+
+Automatic post-lesson settlement waits until **lesson end + 24h** **and** there is **no open dispute**. That includes every path that would otherwise finalize money without an in-app report:
+
+| Path | During 24h window | After window, no open dispute |
+|---|---|---|
+| Connect transfer / `releaseEscrow` for `completed` or `student_no_show` | Blocked (`payoutWorker` skip + `releaseEscrow` throw) | Eligible |
+| `booking_coach_no_show_refund` | Held (enqueue + refund worker + Stripe reconcile replay) | Eligible |
+| `POST /api/admin/bookings/:id/refund` (`booking_admin_refund`) | **409** `financial_review_window_open`; worker/reconcile also hold if a row already exists | Eligible if no open dispute |
+
+**Not** on this clock (by design):
+
+- Pre-lesson capture / void / `booking_cancel_refund`
+- Late-cancel retained coach payout (`cancelled`) — that payout is scheduled **before** the lesson
+- Admin **dispute resolve** refunds (`dispute_refund_full` / `dispute_refund_partial`) — someone already reported; adjudication may move money during the window
+- Stripe card chargebacks (external)
+
+Open disputes also block payout and the gated auto/admin refunds. Payout and participant dispute-create both `SELECT … FOR UPDATE` the booking row so a report at 23:59:59 cannot race a payout that thinks the clock has elapsed.
+
+**Boundary:** `window_open` is `now < review_until`; `elapsed` is `now >= review_until`. At the exact instant the window ends, participant dispute create closes and automatic settlement becomes eligible (XOR, no overlap).
 
 ## Post-refund coach vs platform split
 
@@ -157,7 +184,7 @@ npm run seed:postman-money -- --only=C3b,C3c,C3d,C4
 | **C3b** | pending + authorized, lesson ≥24h out | student `POST …/cancel` (void; no `payment_actions`) |
 | **C3c** | confirmed + captured, `scheduled_at` ~12h out | student `POST …/cancel` → half refund; then coach payout = 92% of PickleCoach net retained (gross − refund), **not** 92% of Stripe Dashboard Net |
 | **C3d** | confirmed + captured | coach `POST …/cancel` (full refund → `payment_actions`) |
-| **C4** | confirmed + captured, lesson already ended | coach `POST …/complete` then wait `payoutWorker` |
+| **C4** | confirmed + captured, lesson ended **>24h ago** | coach `POST …/complete` then wait `payoutWorker` |
 | **C5** | authorized PI (no booking), pending accept, captured cancel | double confirm / accept / cancel |
 
 **C3c expect (example $55 lesson):** $55 charge → $27.50 student refund → **$27.50 PickleCoach net retained** → ≈ **$25.30 coach / $2.20 platform**. Separately note Stripe processing fee on the Dashboard; do not use Stripe “Net amount” as the split base. See [Terminology](#terminology-picklecoach-net-retained-vs-stripe-net-amount).

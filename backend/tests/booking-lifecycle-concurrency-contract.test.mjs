@@ -18,6 +18,10 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const intentSrc = readFileSync(join(__dirname, '../services/bookingIntentService.js'), 'utf8');
 const bookingServiceSrc = readFileSync(join(__dirname, '../services/bookingService.js'), 'utf8');
 const payoutWorkerSrc = readFileSync(join(__dirname, '../workers/payoutWorker.js'), 'utf8');
+const stripeServiceSrc = readFileSync(join(__dirname, '../services/stripeService.js'), 'utf8');
+const disputeControllerSrc = readFileSync(join(__dirname, '../controllers/disputeController.js'), 'utf8');
+const paymentServiceSrc = readFileSync(join(__dirname, '../services/paymentService.js'), 'utf8');
+const bookingControllerSrc = readFileSync(join(__dirname, '../controllers/bookingController.js'), 'utf8');
 const courtControllerSrc = readFileSync(join(__dirname, '../controllers/courtController.js'), 'utf8');
 const userLifecycleSrc = readFileSync(join(__dirname, '../utils/userLifecycle.js'), 'utf8');
 const coachControllerSrc = readFileSync(join(__dirname, '../controllers/coachController.js'), 'utf8');
@@ -71,11 +75,59 @@ describe('payout vs dispute refund race', () => {
   it('payout worker skips pending dispute_refund_* payment actions', () => {
     assert.match(payoutWorkerSrc, /dispute_refund_full/);
     assert.match(payoutWorkerSrc, /dispute_refund_partial/);
-    assert.match(payoutWorkerSrc, /dispute refund action pending/);
+    assert.match(payoutWorkerSrc, /booking_admin_refund/);
+    assert.match(payoutWorkerSrc, /booking_coach_no_show_refund/);
+    assert.match(payoutWorkerSrc, /refund action pending/);
+  });
+
+  it('post-lesson payout waits for the 24h review window and locks the booking', () => {
+    assert.match(payoutWorkerSrc, /isPostLessonFinancialReviewElapsed/);
+    assert.match(payoutWorkerSrc, /lock:\s*transaction\.LOCK\.UPDATE/);
+    assert.match(paymentServiceSrc, /Post-lesson payout is blocked until 24 hours after the lesson ends/);
+    assert.match(paymentServiceSrc, /Post-lesson payout is blocked while a dispute is open/);
+  });
+
+  it('refund worker and reconcilers hold window-gated refund types until the 24h clock and skip open disputes', () => {
+    assert.match(paymentServiceSrc, /shouldHoldPostLessonWindowGatedRefund/);
+    assert.match(paymentServiceSrc, /post_lesson_refund_held_for_review_window/);
+    assert.match(paymentServiceSrc, /payment_action_reconcile_held_for_review_window/);
+  });
+
+  it('admin refund is blocked during the post-lesson review window', () => {
+    const refundSection = bookingControllerSrc.slice(
+      bookingControllerSrc.indexOf('export const adminRefundBooking'),
+    );
+    assert.match(refundSection, /shouldHoldPostLessonWindowGatedRefund/);
+    assert.match(refundSection, /financial_review_window_open/);
+  });
+
+  it('participant dispute create rechecks eligibility under a booking row lock', () => {
+    assert.match(disputeControllerSrc, /lock:\s*transaction\.LOCK\.UPDATE/);
+    assert.match(disputeControllerSrc, /checkDisputeCreateBookingEligibility\(locked/);
   });
 
   it('held escrow alone is still required', () => {
     assert.equal(isPaymentEscrowPayable({ escrow_status: 'held' }), true);
+  });
+
+  it('Connect transfers are only initiated from releaseEscrow (already window + dispute gated)', () => {
+    const transferCallIdx = paymentServiceSrc.indexOf('stripeService.transferToConnectedAccount');
+    assert.ok(transferCallIdx > 0);
+    const releaseIdx = paymentServiceSrc.indexOf('export const releaseEscrow');
+    const nextExport = paymentServiceSrc.indexOf('\nexport const ', releaseIdx + 1);
+    assert.ok(transferCallIdx > releaseIdx && transferCallIdx < nextExport);
+  });
+
+  it('payout worker rechecks open disputes under the booking lock before releaseEscrow', () => {
+    assert.match(payoutWorkerSrc, /export async function processHeldEscrowPayment/);
+    const lockIdx = payoutWorkerSrc.indexOf('lock: transaction.LOCK.UPDATE');
+    const disputeIdx = payoutWorkerSrc.indexOf("payoutBlockedReason = 'open_dispute'");
+    const releaseIdx = payoutWorkerSrc.indexOf('paymentService.releaseEscrow');
+    assert.ok(lockIdx > 0 && disputeIdx > lockIdx && releaseIdx > disputeIdx);
+  });
+
+  it('Connect transfers honor the Stripe test double so cutoff races never hit live Stripe', () => {
+    assert.match(stripeServiceSrc, /stripeTestDouble\?\.transferToConnectedAccount/);
   });
 });
 

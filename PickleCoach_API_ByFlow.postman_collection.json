@@ -1854,7 +1854,7 @@
 						"method": "GET",
 						"header": [],
 						"url": {
-							"raw": "{{api_url}}/courts",
+							"raw": "{{api_url}}/courts?q=Holiday",
 							"host": [
 								"{{api_url}}"
 							],
@@ -1891,10 +1891,16 @@
 									"value": "10",
 									"description": "Optional miles radius (used with lat/lng).",
 									"disabled": true
+								},
+								{
+									"key": "q",
+									"value": "Holiday",
+									"description": "Optional. Free-text search over public courts (name, street, city, ZIP, state). Min 1 char. Combines with lat/lng when both set.",
+									"disabled": false
 								}
 							]
 						},
-						"description": "Roles: Any (no auth). **Public directory only** \u2014 results are **`is_private: false`** courts only (private courts are not discoverable here; use coach court endpoints). **No lat/lng, no page/limit** = all matching courts in `data` (capped server-side). **page** and/or **limit** = paginated list (`pagination`). **lat** + **lng** (+ optional **radius**) = nearby search; results ordered **closest first** (lazy OSM import if empty)."
+						"description": "Roles: Any (no auth). **Public directory only** \u2014 **`is_private: false`** courts.\n\n**Text (`q`):** PickleCoach DB only (name/street/city/ZIP/state). **No Overpass.**\n\n**Geo (`lat`+`lng`+optional `radius`, no `q`):** Always runs local lookup **and** OSM/Overpass discovery for that radius \u2014 existing local courts do **not** skip Overpass. New OSM courts are deduped (`osm_type`/`osm_id` + proximity vs manual) and imported; response is the combined set (closest first, up to 100). If Overpass fails, local courts are still returned.\n\n**No lat/lng:** list/paginate public courts. Coach \u201cCourts near me\u201d uses this geo path; Select still uses `POST /api/coaches/me/courts`."
 					},
 					"response": [],
 					"event": [
@@ -1967,7 +1973,122 @@
 					]
 				},
 				{
-					"name": "35. Get Coach Lessons",
+					"name": "35. Search Locations (Geocode)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{api_url}}/geo/search?q=33304&limit=5",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"geo",
+								"search"
+							],
+							"query": [
+								{
+									"key": "q",
+									"value": "33304",
+									"description": "Required. ZIP, city, or address (2\u2013200 chars). Not persisted."
+								},
+								{
+									"key": "limit",
+									"value": "5",
+									"description": "Optional. Max results 1\u201310 (default 5).",
+									"disabled": true
+								}
+							]
+						},
+						"description": "Roles: Student, Coach, or Admin. Server-side geocode (Nominatim by default): free-text ZIP/city/address \u2192 `{ label, lat, lng }` candidates.\n\n**Use for:** Discover \u201cnear me\u201d fallback and coach **new court** address confirmation before `POST /api/courts` (store returned lat/lng).\n\nEmpty match is still **200** with `results: []`. Errors: `400` validation, `401`/`403` auth, `502`/`503` provider."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Returns results array\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"    pm.expect(jsonData.data).to.have.property(\"results\");",
+									"    pm.expect(jsonData.data.results).to.be.an(\"array\");",
+									"    if (jsonData.data.results.length > 0) {",
+									"        pm.environment.set(\"geo_lat\", String(jsonData.data.results[0].lat));",
+									"        pm.environment.set(\"geo_lng\", String(jsonData.data.results[0].lng));",
+									"    }",
+									"});"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "36. Check Court Duplicates",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Holiday Park\",\n  \"address_line1\": \"1150 G. Harold Martin Dr\",\n  \"city\": \"Fort Lauderdale\",\n  \"state\": \"FL\",\n  \"postal_code\": \"33304\",\n  \"country\": \"US\",\n  \"latitude\": 26.1395,\n  \"longitude\": -80.1234\n}"
+						},
+						"url": {
+							"raw": "{{api_url}}/courts/duplicate-check",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"courts",
+								"duplicate-check"
+							]
+						},
+						"description": "Roles: Coach or Admin. **Does not create a court.** After geocoding a proposed address (`GET /api/geo/search`), call this with structured fields + **required** `latitude`/`longitude`.\n\nReturns `data.high_confidence` and `data.possible` candidate courts (distance + fuzzy name/address). Coach UI: high \u2192 require selecting existing; possible \u2192 warn and allow \u201cdifferent location\u201d; empty \u2192 safe to create.\n\n**Create gate:** `POST /api/courts` enforces the same rules \u2014 `409 COURT_DUPLICATE_HIGH` (must use existing) or `409 COURT_DUPLICATE_POSSIBLE` (retry create with `acknowledge_possible_duplicates: true`)."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Returns high_confidence and possible arrays\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"    pm.expect(jsonData.data).to.have.property(\"high_confidence\");",
+									"    pm.expect(jsonData.data).to.have.property(\"possible\");",
+									"    pm.expect(jsonData.data.high_confidence).to.be.an(\"array\");",
+									"    pm.expect(jsonData.data.possible).to.be.an(\"array\");",
+									"});"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "37. Get Coach Lessons",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -2023,7 +2144,7 @@
 					]
 				},
 				{
-					"name": "36. Get Lesson By ID",
+					"name": "38. Get Lesson By ID",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -2073,7 +2194,7 @@
 					]
 				},
 				{
-					"name": "37. Get All Disputes",
+					"name": "39. Get All Disputes",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -2127,7 +2248,7 @@
 					]
 				},
 				{
-					"name": "38. Get Dispute By ID",
+					"name": "40. Get Dispute By ID",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -2175,7 +2296,7 @@
 					]
 				},
 				{
-					"name": "39. Admin - Get All Lessons",
+					"name": "41. Admin - Get All Lessons",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -2245,7 +2366,7 @@
 					]
 				},
 				{
-					"name": "40. Admin - List Reviews",
+					"name": "42. Admin - List Reviews",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -2310,7 +2431,7 @@
 					]
 				},
 				{
-					"name": "41. Get Bookings (Admin)",
+					"name": "43. Get Bookings (Admin)",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -2365,7 +2486,7 @@
 					]
 				},
 				{
-					"name": "42. Get Booking By ID (Admin)",
+					"name": "44. Get Booking By ID (Admin)",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -2415,7 +2536,7 @@
 					]
 				},
 				{
-					"name": "43. Cancel Booking (Admin)",
+					"name": "45. Cancel Booking (Admin)",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -2473,7 +2594,7 @@
 					]
 				},
 				{
-					"name": "44. Create Dispute (Admin)",
+					"name": "46. Create Dispute (Admin)",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -2524,7 +2645,7 @@
 					]
 				},
 				{
-					"name": "45. Mark Student No-Show (Admin)",
+					"name": "47. Mark Student No-Show (Admin)",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -2582,7 +2703,7 @@
 					]
 				},
 				{
-					"name": "46. Mark Coach No-Show (Admin)",
+					"name": "48. Mark Coach No-Show (Admin)",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -2652,7 +2773,7 @@
 					]
 				},
 				{
-					"name": "47. Refund Booking (Admin)",
+					"name": "49. Refund Booking (Admin)",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -2717,7 +2838,7 @@
 					]
 				},
 				{
-					"name": "48. Resolve Dispute (Admin)",
+					"name": "50. Resolve Dispute (Admin)",
 					"request": {
 						"method": "PUT",
 						"header": [
@@ -2823,7 +2944,7 @@
 					]
 				},
 				{
-					"name": "49. Get My Payments",
+					"name": "51. Get My Payments",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -2880,7 +3001,7 @@
 					]
 				},
 				{
-					"name": "50. Get Payment By ID (Admin)",
+					"name": "52. Get Payment By ID (Admin)",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -2931,7 +3052,7 @@
 		},
 		{
 			"name": "2 \u2013 Flow: Coach",
-			"description": "All coach endpoints in user-flow order. Run in sequence: Health \u2192 Register/Login \u2192 Profile \u2192 **GET /coaches/me/reliability** \u2192 Coach profile \u2192 Courts \u2192 **List Coaches (Search)** \u2192 **Get Coach By ID / Reviews / Reliability** (browse other coaches like a student) \u2192 **Get Coach Courts** \u2192 Availability \u2192 Stripe Connect \u2192 **GET /coaches/me/marketplace-status** \u2192 Lessons \u2192 Bookings \u2192 Payments / payment methods \u2192 **List My Received Reviews** (`GET /coaches/me/reviews`) \u2192 Messages \u2192 Disputes \u2192 Notifications (incl. delete) \u2192 Auth extras. See backend/POSTMAN_TESTING_GUIDE.md.\n\nBooking MVP: student uses booking-intents + confirm; coach uses PUT .../accept or PUT .../decline only for pending requests (coach on that booking only \u2014 role gate passes; ownership still requires the booking to belong to this coach). Schedule changes: cancel + book again (no reschedule API). Accept/decline/cancel notify the other party.\n\nReviews: coaches list **reviews about themselves** via `GET /coaches/me/reviews`. Only the booking primary student creates/updates/deletes reviews \u2014 use **3 \u2013 Flow: Student** for those. Browse another coach\u2019s reviews: `GET /coaches/:id/reviews`.",
+			"description": "All coach endpoints in user-flow order. Run in sequence: Health \u2192 Register/Login \u2192 Profile \u2192 **GET /coaches/me/reliability** \u2192 Coach profile \u2192 Availability \u2192 **List/Search Courts** (optional `q`) \u2192 browse coaches \u2192 **Search Locations (Geocode)** \u2192 **Check Court Duplicates** \u2192 **Create Court** (lat/lng required) \u2192 link/list courts \u2192 Stripe Connect \u2192 **GET /coaches/me/marketplace-status** \u2192 Lessons \u2192 Bookings \u2192 Payments / payment methods \u2192 **List My Received Reviews** (`GET /coaches/me/reviews`) \u2192 Messages \u2192 Disputes \u2192 Notifications (incl. delete) \u2192 Auth extras. See backend/POSTMAN_TESTING_GUIDE.md.\n\nBooking MVP: student uses booking-intents + confirm; coach uses PUT .../accept or PUT .../decline only for pending requests (coach on that booking only \u2014 role gate passes; ownership still requires the booking to belong to this coach). Schedule changes: cancel + book again (no reschedule API). Accept/decline/cancel notify the other party.\n\nReviews: coaches list **reviews about themselves** via `GET /coaches/me/reviews`. Only the booking primary student creates/updates/deletes reviews \u2014 use **3 \u2013 Flow: Student** for those. Browse another coach\u2019s reviews: `GET /coaches/:id/reviews`.",
 			"item": [
 				{
 					"name": "1. Health Check",
@@ -3869,7 +3990,7 @@
 						"method": "GET",
 						"header": [],
 						"url": {
-							"raw": "{{api_url}}/courts",
+							"raw": "{{api_url}}/courts?q=Holiday",
 							"host": [
 								"{{api_url}}"
 							],
@@ -3906,10 +4027,16 @@
 									"value": "10",
 									"description": "Optional miles radius (used with lat/lng).",
 									"disabled": true
+								},
+								{
+									"key": "q",
+									"value": "Holiday",
+									"description": "Optional. Free-text search over public courts (name, street, city, ZIP, state). Min 1 char. Combines with lat/lng when both set.",
+									"disabled": false
 								}
 							]
 						},
-						"description": "Roles: Any (no auth). **Public directory only** \u2014 results are **`is_private: false`** courts only (private courts are not discoverable here; use coach court endpoints). **No lat/lng, no page/limit** = all matching courts in `data` (capped server-side). **page** and/or **limit** = paginated list (`pagination`). **lat** + **lng** (+ optional **radius**) = nearby search; results ordered **closest first** (lazy OSM import if empty)."
+						"description": "Roles: Any (no auth). **Public directory only** \u2014 **`is_private: false`** courts.\n\n**Text (`q`):** PickleCoach DB only (name/street/city/ZIP/state). **No Overpass.**\n\n**Geo (`lat`+`lng`+optional `radius`, no `q`):** Always runs local lookup **and** OSM/Overpass discovery for that radius \u2014 existing local courts do **not** skip Overpass. New OSM courts are deduped (`osm_type`/`osm_id` + proximity vs manual) and imported; response is the combined set (closest first, up to 100). If Overpass fails, local courts are still returned.\n\n**No lat/lng:** list/paginate public courts. Coach \u201cCourts near me\u201d uses this geo path; Select still uses `POST /api/coaches/me/courts`."
 					},
 					"response": [],
 					"event": [
@@ -4304,7 +4431,68 @@
 					]
 				},
 				{
-					"name": "25. Create Court",
+					"name": "25. Search Locations (Geocode)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{api_url}}/geo/search?q=33304&limit=5",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"geo",
+								"search"
+							],
+							"query": [
+								{
+									"key": "q",
+									"value": "33304",
+									"description": "Required. ZIP, city, or address (2\u2013200 chars). Not persisted."
+								},
+								{
+									"key": "limit",
+									"value": "5",
+									"description": "Optional. Max results 1\u201310 (default 5).",
+									"disabled": true
+								}
+							]
+						},
+						"description": "Roles: Student, Coach, or Admin. Server-side geocode (Nominatim by default): free-text ZIP/city/address \u2192 `{ label, lat, lng }` candidates.\n\n**Use for:** Discover \u201cnear me\u201d fallback and coach **new court** address confirmation before `POST /api/courts` (store returned lat/lng).\n\nEmpty match is still **200** with `results: []`. Errors: `400` validation, `401`/`403` auth, `502`/`503` provider."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Returns results array\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"    pm.expect(jsonData.data).to.have.property(\"results\");",
+									"    pm.expect(jsonData.data.results).to.be.an(\"array\");",
+									"    if (jsonData.data.results.length > 0) {",
+									"        pm.environment.set(\"geo_lat\", String(jsonData.data.results[0].lat));",
+									"        pm.environment.set(\"geo_lng\", String(jsonData.data.results[0].lng));",
+									"    }",
+									"});"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "26. Check Court Duplicates",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -4319,7 +4507,61 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"name\": \"Central Park Pickleball Court\",\n  \"address_line1\": \"123 Main St\",\n  \"city\": \"New York\",\n  \"state\": \"NY\",\n  \"postal_code\": \"10001\",\n  \"country\": \"US\",\n  \"latitude\": 40.7128,\n  \"longitude\": -74.0060,\n  \"is_private\": false\n}"
+							"raw": "{\n  \"name\": \"Holiday Park\",\n  \"address_line1\": \"1150 G. Harold Martin Dr\",\n  \"city\": \"Fort Lauderdale\",\n  \"state\": \"FL\",\n  \"postal_code\": \"33304\",\n  \"country\": \"US\",\n  \"latitude\": 26.1395,\n  \"longitude\": -80.1234\n}"
+						},
+						"url": {
+							"raw": "{{api_url}}/courts/duplicate-check",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"courts",
+								"duplicate-check"
+							]
+						},
+						"description": "Roles: Coach or Admin. **Does not create a court.** After geocoding a proposed address (`GET /api/geo/search`), call this with structured fields + **required** `latitude`/`longitude`.\n\nReturns `data.high_confidence` and `data.possible` candidate courts (distance + fuzzy name/address). Coach UI: high \u2192 require selecting existing; possible \u2192 warn and allow \u201cdifferent location\u201d; empty \u2192 safe to create.\n\n**Create gate:** `POST /api/courts` enforces the same rules \u2014 `409 COURT_DUPLICATE_HIGH` (must use existing) or `409 COURT_DUPLICATE_POSSIBLE` (retry create with `acknowledge_possible_duplicates: true`)."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Returns high_confidence and possible arrays\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"    pm.expect(jsonData.data).to.have.property(\"high_confidence\");",
+									"    pm.expect(jsonData.data).to.have.property(\"possible\");",
+									"    pm.expect(jsonData.data.high_confidence).to.be.an(\"array\");",
+									"    pm.expect(jsonData.data.possible).to.be.an(\"array\");",
+									"});"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "27. Create Court",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Central Park Pickleball Court\",\n  \"address_line1\": \"123 Main St\",\n  \"city\": \"New York\",\n  \"state\": \"NY\",\n  \"postal_code\": \"10001\",\n  \"country\": \"US\",\n  \"latitude\": 40.7128,\n  \"longitude\": -74.006,\n  \"is_private\": false,\n  \"acknowledge_possible_duplicates\": false\n}"
 						},
 						"url": {
 							"raw": "{{api_url}}/courts",
@@ -4330,7 +4572,7 @@
 								"courts"
 							]
 						},
-						"description": "Roles: Coach. Create **or reuse** a shared court (**court fields only** \u2014 do not send `coach_notes`, `notes`, or free-text `address`). Identity: name + structured address (+ country). If the court already exists, links you to it (201) or returns already-linked (200). **Auto-link:** `coachCourt` in response has id/coach_id/court_id/timestamps only. **Distance rule:** if you already have courts, the target must be within 100 miles of one of them."
+						"description": "Roles: Coach (or Admin). Create **or reuse** a shared court (**court fields only** \u2014 do not send `coach_notes`, `notes`, or free-text `address`).\n\n**Coach workflow:** search PickleCoach courts first (`GET /api/courts?q=` / near-me) \u2192 link with `POST /api/coaches/me/courts`. Only if genuinely new: geocode (`GET /api/geo/search`) \u2192 optional `POST /api/courts/duplicate-check` \u2192 create with **required** `latitude`/`longitude`.\n\n**Duplicate gate (new rows):** `409 COURT_DUPLICATE_HIGH` \u2192 must select existing court; `409 COURT_DUPLICATE_POSSIBLE` \u2192 review candidates or retry with **`acknowledge_possible_duplicates: true`**. Exact identity still **reuses**. Court names are not globally unique — same name at far-apart coordinates is allowed; nearby same-place matches use `COURT_DUPLICATE_*`.\n\n**Auto-link:** coaches get `coachCourt` in response. Coaches may link/create courts anywhere — no teaching-area distance limit."
 					},
 					"response": [],
 					"event": [
@@ -4369,7 +4611,7 @@
 					]
 				},
 				{
-					"name": "26. Add Court to Coach",
+					"name": "28. Add Court to Coach",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -4420,7 +4662,7 @@
 					]
 				},
 				{
-					"name": "27. List My Courts",
+					"name": "29. List My Courts",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -4480,7 +4722,7 @@
 					]
 				},
 				{
-					"name": "28. Get My Lessons",
+					"name": "30. Get My Lessons",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -4539,7 +4781,7 @@
 					]
 				},
 				{
-					"name": "29. Remove Court from Coach",
+					"name": "31. Remove Court from Coach",
 					"request": {
 						"method": "DELETE",
 						"header": [
@@ -4586,7 +4828,7 @@
 					]
 				},
 				{
-					"name": "30. Initiate Stripe Connect Onboarding",
+					"name": "32. Initiate Stripe Connect Onboarding",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -4639,7 +4881,7 @@
 					]
 				},
 				{
-					"name": "31. Get Stripe Connect Status",
+					"name": "33. Get Stripe Connect Status",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -4683,7 +4925,7 @@
 					]
 				},
 				{
-					"name": "32. Get Marketplace Status",
+					"name": "34. Get Marketplace Status",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -4732,7 +4974,7 @@
 					]
 				},
 				{
-					"name": "33. Get Coach Lessons",
+					"name": "35. Get Coach Lessons",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -4788,7 +5030,7 @@
 					]
 				},
 				{
-					"name": "34. Get Lesson By ID",
+					"name": "36. Get Lesson By ID",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -4838,7 +5080,7 @@
 					]
 				},
 				{
-					"name": "35. Create Lesson",
+					"name": "37. Create Lesson",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -4892,7 +5134,7 @@
 					]
 				},
 				{
-					"name": "36. Update Lesson",
+					"name": "38. Update Lesson",
 					"request": {
 						"method": "PUT",
 						"header": [
@@ -4948,7 +5190,7 @@
 					]
 				},
 				{
-					"name": "37. Delete Lesson",
+					"name": "39. Delete Lesson",
 					"request": {
 						"method": "DELETE",
 						"header": [
@@ -4996,7 +5238,7 @@
 					]
 				},
 				{
-					"name": "38. List My Coach Bookings (Coach Dashboard)",
+					"name": "40. List My Coach Bookings (Coach Dashboard)",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -5052,7 +5294,7 @@
 					]
 				},
 				{
-					"name": "39. Get My Booking by ID",
+					"name": "41. Get My Booking by ID",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -5101,7 +5343,7 @@
 					]
 				},
 				{
-					"name": "40. Accept Booking",
+					"name": "42. Accept Booking",
 					"request": {
 						"method": "PUT",
 						"header": [
@@ -5158,7 +5400,7 @@
 					]
 				},
 				{
-					"name": "41. Decline Booking",
+					"name": "43. Decline Booking",
 					"request": {
 						"method": "PUT",
 						"header": [
@@ -5215,7 +5457,7 @@
 					]
 				},
 				{
-					"name": "42. Cancel Booking",
+					"name": "44. Cancel Booking",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -5272,7 +5514,7 @@
 					]
 				},
 				{
-					"name": "43. Complete Booking",
+					"name": "45. Complete Booking",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -5329,7 +5571,7 @@
 					]
 				},
 				{
-					"name": "44. Mark Student No-Show",
+					"name": "46. Mark Student No-Show",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -5386,7 +5628,7 @@
 					]
 				},
 				{
-					"name": "45. Get My Payments",
+					"name": "47. Get My Payments",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -5443,7 +5685,7 @@
 					]
 				},
 				{
-					"name": "46. Get My Payment By ID",
+					"name": "48. Get My Payment By ID",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -5491,7 +5733,7 @@
 					]
 				},
 				{
-					"name": "47. List My Payment Methods",
+					"name": "49. List My Payment Methods",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -5537,7 +5779,7 @@
 					]
 				},
 				{
-					"name": "48. Add Payment Method",
+					"name": "50. Add Payment Method",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -5590,7 +5832,7 @@
 					]
 				},
 				{
-					"name": "49. Set Default Payment Method",
+					"name": "51. Set Default Payment Method",
 					"request": {
 						"method": "PUT",
 						"header": [
@@ -5639,7 +5881,7 @@
 					]
 				},
 				{
-					"name": "50. Delete Payment Method",
+					"name": "52. Delete Payment Method",
 					"request": {
 						"method": "DELETE",
 						"header": [
@@ -5687,7 +5929,7 @@
 					]
 				},
 				{
-					"name": "51. List My Received Reviews",
+					"name": "53. List My Received Reviews",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -5743,7 +5985,7 @@
 					]
 				},
 				{
-					"name": "52. Get My Conversations",
+					"name": "54. Get My Conversations",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -5815,7 +6057,7 @@
 					]
 				},
 				{
-					"name": "53. Start Conversation",
+					"name": "55. Start Conversation",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -5870,7 +6112,7 @@
 					]
 				},
 				{
-					"name": "54. Get My Conversation Details",
+					"name": "56. Get My Conversation Details",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -5941,7 +6183,7 @@
 					]
 				},
 				{
-					"name": "55. Send Message",
+					"name": "57. Send Message",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -5992,7 +6234,7 @@
 					]
 				},
 				{
-					"name": "56. Get My Disputes",
+					"name": "58. Get My Disputes",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -6046,7 +6288,7 @@
 					]
 				},
 				{
-					"name": "57. Get My Dispute By ID",
+					"name": "59. Get My Dispute By ID",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -6094,7 +6336,7 @@
 					]
 				},
 				{
-					"name": "58. Create Dispute",
+					"name": "60. Create Dispute",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -6143,7 +6385,7 @@
 					]
 				},
 				{
-					"name": "59. Get My Unread Notification Count",
+					"name": "61. Get My Unread Notification Count",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -6187,7 +6429,7 @@
 					]
 				},
 				{
-					"name": "60. Get My Notifications",
+					"name": "62. Get My Notifications",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -6249,7 +6491,7 @@
 					]
 				},
 				{
-					"name": "61. Mark Notification As Read",
+					"name": "63. Mark Notification As Read",
 					"request": {
 						"method": "PUT",
 						"header": [
@@ -6298,7 +6540,7 @@
 					]
 				},
 				{
-					"name": "62. Delete Notification",
+					"name": "64. Delete Notification",
 					"request": {
 						"method": "DELETE",
 						"header": [
@@ -6346,7 +6588,7 @@
 					]
 				},
 				{
-					"name": "63. Forgot Password",
+					"name": "65. Forgot Password",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -6392,7 +6634,7 @@
 					]
 				},
 				{
-					"name": "64. Reset Password",
+					"name": "66. Reset Password",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -6438,7 +6680,7 @@
 					]
 				},
 				{
-					"name": "65. Logout",
+					"name": "67. Logout",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -6479,7 +6721,7 @@
 					]
 				},
 				{
-					"name": "66. Delete My Account",
+					"name": "68. Delete My Account",
 					"request": {
 						"method": "DELETE",
 						"header": [
@@ -6519,7 +6761,7 @@
 		},
 		{
 			"name": "3 \u2013 Flow: Student",
-			"description": "All student endpoints in user-flow order. Run in sequence: Health \u2192 Register/Login \u2192 Profile \u2192 **GET /students/me/reliability** \u2192 Search coaches \u2192 Open coach \u2192 Reviews/reliability/courts/availability \u2192 Create Booking Intent \u2192 Confirm \u2192 Bookings (incl. cancel for own bookings) \u2192 Payments / payment methods \u2192 Written reviews CRUD \u2192 Messages \u2192 Disputes \u2192 Notifications (incl. delete) \u2192 Auth extras. See backend/POSTMAN_TESTING_GUIDE.md.\n\nBooking MVP: POST /booking-intents \u2192 Stripe authorize \u2192 POST /bookings/confirm creates a pending request; the coach accepts or declines with PUT .../accept | PUT .../decline. To change time: cancel this booking, then book again.\n\nReviews: `GET /api/reviews` is **410**. Use `GET /coaches/:id/reviews` (about a coach), `GET /students/me/reviews` (written by me), `GET /coaches/me/reviews` (about me, coach), `GET /admin/reviews` (admin).",
+			"description": "All student endpoints in user-flow order. Run in sequence: Health \u2192 Register/Login \u2192 Profile \u2192 **GET /students/me/reliability** \u2192 **Search Locations (Geocode)** \u2192 Search coaches \u2192 Open coach \u2192 Reviews/reliability/courts/availability \u2192 Create Booking Intent \u2192 Confirm \u2192 Bookings (incl. cancel for own bookings) \u2192 Payments / payment methods \u2192 Written reviews CRUD \u2192 Messages \u2192 Disputes \u2192 Notifications (incl. delete) \u2192 Auth extras. See backend/POSTMAN_TESTING_GUIDE.md.\n\nBooking MVP: POST /booking-intents \u2192 Stripe authorize \u2192 POST /bookings/confirm creates a pending request; the coach accepts or declines with PUT .../accept | PUT .../decline. To change time: cancel this booking, then book again.\n\nReviews: `GET /api/reviews` is **410**. Use `GET /coaches/:id/reviews` (about a coach), `GET /students/me/reviews` (written by me), `GET /coaches/me/reviews` (about me, coach), `GET /admin/reviews` (admin).",
 			"item": [
 				{
 					"name": "1. Health Check",
@@ -7152,7 +7394,68 @@
 					]
 				},
 				{
-					"name": "12. List Coaches (Search)",
+					"name": "12. Search Locations (Geocode)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{api_url}}/geo/search?q=33304&limit=5",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"geo",
+								"search"
+							],
+							"query": [
+								{
+									"key": "q",
+									"value": "33304",
+									"description": "Required. ZIP, city, or address (2\u2013200 chars). Not persisted."
+								},
+								{
+									"key": "limit",
+									"value": "5",
+									"description": "Optional. Max results 1\u201310 (default 5).",
+									"disabled": true
+								}
+							]
+						},
+						"description": "Roles: Student, Coach, or Admin. Server-side geocode (Nominatim by default): free-text ZIP/city/address \u2192 `{ label, lat, lng }` candidates.\n\n**Use for:** Discover \u201cnear me\u201d fallback and coach **new court** address confirmation before `POST /api/courts` (store returned lat/lng).\n\nEmpty match is still **200** with `results: []`. Errors: `400` validation, `401`/`403` auth, `502`/`503` provider."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Returns results array\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"    pm.expect(jsonData.data).to.have.property(\"results\");",
+									"    pm.expect(jsonData.data.results).to.be.an(\"array\");",
+									"    if (jsonData.data.results.length > 0) {",
+									"        pm.environment.set(\"geo_lat\", String(jsonData.data.results[0].lat));",
+									"        pm.environment.set(\"geo_lng\", String(jsonData.data.results[0].lng));",
+									"    }",
+									"});"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "13. List Coaches (Search)",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -7254,7 +7557,7 @@
 					]
 				},
 				{
-					"name": "13. Get Coach By ID",
+					"name": "14. Get Coach By ID",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -7305,7 +7608,7 @@
 					]
 				},
 				{
-					"name": "14. Get Coach Reviews",
+					"name": "15. Get Coach Reviews",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -7417,7 +7720,7 @@
 					]
 				},
 				{
-					"name": "15. Get Coach Courts",
+					"name": "16. Get Coach Courts",
 					"request": {
 						"method": "GET",
 						"header": [],
@@ -7474,7 +7777,7 @@
 					]
 				},
 				{
-					"name": "16. Get Coach Availability",
+					"name": "17. Get Coach Availability",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -7535,12 +7838,12 @@
 					]
 				},
 				{
-					"name": "17. List/Search Courts",
+					"name": "18. List/Search Courts",
 					"request": {
 						"method": "GET",
 						"header": [],
 						"url": {
-							"raw": "{{api_url}}/courts",
+							"raw": "{{api_url}}/courts?q=Holiday",
 							"host": [
 								"{{api_url}}"
 							],
@@ -7577,10 +7880,16 @@
 									"value": "10",
 									"description": "Optional miles radius (used with lat/lng).",
 									"disabled": true
+								},
+								{
+									"key": "q",
+									"value": "Holiday",
+									"description": "Optional. Free-text search over public courts (name, street, city, ZIP, state). Min 1 char. Combines with lat/lng when both set.",
+									"disabled": false
 								}
 							]
 						},
-						"description": "Roles: Any (no auth). **Public directory only** \u2014 results are **`is_private: false`** courts only (private courts are not discoverable here; use coach court endpoints). **No lat/lng, no page/limit** = all matching courts in `data` (capped server-side). **page** and/or **limit** = paginated list (`pagination`). **lat** + **lng** (+ optional **radius**) = nearby search; results ordered **closest first** (lazy OSM import if empty)."
+						"description": "Roles: Any (no auth). **Public directory only** \u2014 **`is_private: false`** courts.\n\n**Text (`q`):** PickleCoach DB only (name/street/city/ZIP/state). **No Overpass.**\n\n**Geo (`lat`+`lng`+optional `radius`, no `q`):** Always runs local lookup **and** OSM/Overpass discovery for that radius \u2014 existing local courts do **not** skip Overpass. New OSM courts are deduped (`osm_type`/`osm_id` + proximity vs manual) and imported; response is the combined set (closest first, up to 100). If Overpass fails, local courts are still returned.\n\n**No lat/lng:** list/paginate public courts. Coach \u201cCourts near me\u201d uses this geo path; Select still uses `POST /api/coaches/me/courts`."
 					},
 					"response": [],
 					"event": [
@@ -7609,7 +7918,7 @@
 					]
 				},
 				{
-					"name": "18. Get Court By ID",
+					"name": "19. Get Court By ID",
 					"request": {
 						"method": "GET",
 						"header": [],
@@ -7653,7 +7962,7 @@
 					]
 				},
 				{
-					"name": "19. Get Coach Lessons",
+					"name": "20. Get Coach Lessons",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -7709,7 +8018,7 @@
 					]
 				},
 				{
-					"name": "20. Create Booking Intent",
+					"name": "21. Create Booking Intent",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -7769,7 +8078,7 @@
 					]
 				},
 				{
-					"name": "21. Create Booking from Payment",
+					"name": "22. Create Booking from Payment",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -7876,7 +8185,7 @@
 					]
 				},
 				{
-					"name": "22. Get My Booking by ID",
+					"name": "23. Get My Booking by ID",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -7925,7 +8234,7 @@
 					]
 				},
 				{
-					"name": "23. Cancel Booking",
+					"name": "24. Cancel Booking",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -7982,7 +8291,7 @@
 					]
 				},
 				{
-					"name": "24. Get My Payments",
+					"name": "25. Get My Payments",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -8039,7 +8348,7 @@
 					]
 				},
 				{
-					"name": "25. Get My Payment By ID",
+					"name": "26. Get My Payment By ID",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -8087,7 +8396,7 @@
 					]
 				},
 				{
-					"name": "26. List My Payment Methods",
+					"name": "27. List My Payment Methods",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -8133,7 +8442,7 @@
 					]
 				},
 				{
-					"name": "27. Add Payment Method",
+					"name": "28. Add Payment Method",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -8186,7 +8495,7 @@
 					]
 				},
 				{
-					"name": "28. Set Default Payment Method",
+					"name": "29. Set Default Payment Method",
 					"request": {
 						"method": "PUT",
 						"header": [
@@ -8235,7 +8544,7 @@
 					]
 				},
 				{
-					"name": "29. Delete Payment Method",
+					"name": "30. Delete Payment Method",
 					"request": {
 						"method": "DELETE",
 						"header": [
@@ -8283,7 +8592,7 @@
 					]
 				},
 				{
-					"name": "30. List My Written Reviews",
+					"name": "31. List My Written Reviews",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -8339,7 +8648,7 @@
 					]
 				},
 				{
-					"name": "31. Create Review",
+					"name": "32. Create Review",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -8401,7 +8710,7 @@
 					]
 				},
 				{
-					"name": "32. Update Review",
+					"name": "33. Update Review",
 					"request": {
 						"method": "PUT",
 						"header": [
@@ -8460,7 +8769,7 @@
 					]
 				},
 				{
-					"name": "33. Delete Review",
+					"name": "34. Delete Review",
 					"request": {
 						"method": "DELETE",
 						"header": [
@@ -8508,7 +8817,7 @@
 					]
 				},
 				{
-					"name": "34. Get My Conversations",
+					"name": "35. Get My Conversations",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -8580,7 +8889,7 @@
 					]
 				},
 				{
-					"name": "35. Start Conversation",
+					"name": "36. Start Conversation",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -8635,7 +8944,7 @@
 					]
 				},
 				{
-					"name": "36. Get My Conversation Details",
+					"name": "37. Get My Conversation Details",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -8706,7 +9015,7 @@
 					]
 				},
 				{
-					"name": "37. Send Message",
+					"name": "38. Send Message",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -8757,7 +9066,7 @@
 					]
 				},
 				{
-					"name": "38. Get My Disputes",
+					"name": "39. Get My Disputes",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -8811,7 +9120,7 @@
 					]
 				},
 				{
-					"name": "39. Get My Dispute By ID",
+					"name": "40. Get My Dispute By ID",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -8859,7 +9168,7 @@
 					]
 				},
 				{
-					"name": "40. Create Dispute",
+					"name": "41. Create Dispute",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -8908,7 +9217,7 @@
 					]
 				},
 				{
-					"name": "41. Get My Unread Notification Count",
+					"name": "42. Get My Unread Notification Count",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -8952,7 +9261,7 @@
 					]
 				},
 				{
-					"name": "42. Get My Notifications",
+					"name": "43. Get My Notifications",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -9014,7 +9323,7 @@
 					]
 				},
 				{
-					"name": "43. Mark Notification As Read",
+					"name": "44. Mark Notification As Read",
 					"request": {
 						"method": "PUT",
 						"header": [
@@ -9063,7 +9372,7 @@
 					]
 				},
 				{
-					"name": "44. Delete Notification",
+					"name": "45. Delete Notification",
 					"request": {
 						"method": "DELETE",
 						"header": [
@@ -9111,7 +9420,7 @@
 					]
 				},
 				{
-					"name": "45. Forgot Password",
+					"name": "46. Forgot Password",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -9157,7 +9466,7 @@
 					]
 				},
 				{
-					"name": "46. Reset Password",
+					"name": "47. Reset Password",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -9203,7 +9512,7 @@
 					]
 				},
 				{
-					"name": "47. Logout",
+					"name": "48. Logout",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -9244,7 +9553,7 @@
 					]
 				},
 				{
-					"name": "48. Delete My Account",
+					"name": "49. Delete My Account",
 					"request": {
 						"method": "DELETE",
 						"header": [

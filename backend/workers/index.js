@@ -103,7 +103,7 @@ export const startWorkers = () => {
   logger.info('   - Auto-confirm lessons: every 5 minutes');
   logger.info('   - Process payouts: every 10 minutes');
   logger.info('   - Retry failed payments: every 10 minutes');
-  logger.info('   - Coach acceptance timeout: every 15 minutes (COACH_ACCEPTANCE_TIMEOUT_HOURS, default 24)');
+  logger.info('   - Coach acceptance timeout: every 15 minutes (earlier of request+COACH_ACCEPTANCE_TIMEOUT_HOURS / lesson−MIN_BOOKING_LEAD_HOURS)');
   logger.info('   - Deferred dispute refunds (`payment_actions`): every 2 minutes');
   logger.info('   - Stripe reconciliation + stale refund-action probe: hourly');
   logger.info('   - Recalculate reliability: daily at 2 AM');

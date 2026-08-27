@@ -231,11 +231,16 @@ Use this as a living checklist. Check off each line as you verify it (happy path
 - [ ] Get Marketplace Status — 200; `GET /api/coaches/me/marketplace-status` checklist (Coach flow)
 - [ ] List Coaches / Get Coach By ID / Get Coach Reviews / Get Coach Reliability — 200; coaches may browse marketplace like students (Coach flow)
 
+### GEO
+
+- [ ] Search Locations (Geocode) — 200; `GET /api/geo/search?q=` (ZIP/city/address → lat/lng). Student Discover + coach new-court confirmation. Sets `geo_lat` / `geo_lng` when results exist.
+
 ### COURTS
 
-- [ ] List/Search Courts — 200
+- [ ] List/Search Courts — 200; optional **`q`** (DB-only). Geo **lat/lng** (no `q`) always attempts OSM discovery + merge (existing locals do not block); repeat search must not duplicate; Overpass down → still return locals
 - [ ] Get Court By ID — 200
-- [ ] Create Court — 201; coach response includes `court` + `coachCourt` (auto-linked; no `coach_notes` on `coachCourt`). Optional: **`POST /api/coaches/me/courts`** same `court_id` + `coach_notes` → **200** (link notes only)
+- [ ] Check Court Duplicates — 200; `POST /api/courts/duplicate-check` with structured address + lat/lng → `high_confidence` / `possible`
+- [ ] Create Court — 201; coaches **require** lat/lng. May return **`409 COURT_DUPLICATE_HIGH`** (use existing) or **`409 COURT_DUPLICATE_POSSIBLE`** (retry with `acknowledge_possible_duplicates: true`). Coach response includes `court` + `coachCourt` (auto-linked; no `coach_notes` on `coachCourt`). Prefer search → **`POST /api/coaches/me/courts`** when the court already exists.
 - [ ] Delete Court Globally (Admin) — 200; `DELETE /api/courts/:id` (Admin flow; coaches unlink via `DELETE /api/coaches/me/courts/:courtId`)
 
 ### LESSONS
@@ -432,7 +437,9 @@ Use `API_ENDPOINTS.md` for full request/response specs. Minimal examples for flo
 - **Register:** `{ "full_name", "email", "password", "role": "student" | "coach", "phone?", "timezone?" }`
 - **Login:** `{ "email", "password" }`
 - **Create Coach Profile:** `{ "headline?", "bio?", "experience_years?", "skill_rating?" (2.0–6.0, 0.5 steps), "rating_system?" (**`self`** | **`DUPR`** | **`UTR-P`**; default `"self"`), "certifications?", "location?" }` — pricing is per **lesson** (`price` + `duration_minutes`), not on the profile.
-- **Create Court:** `{ "name" (required), "address?", "latitude?", "longitude?", "is_private?" }` — no `coach_notes` / `notes` on this route (**400** if sent). Coaches are auto-linked (`data.coachCourt`, no `coach_notes`). Link notes: **`POST /api/coaches/me/courts`** with same `court_id` + **`coach_notes`** (**200**). See `API_ENDPOINTS.md` `POST /api/courts`.
+- **Search Locations:** `GET /api/geo/search?q=` (+ optional `limit`) — auth required.
+- **Check Court Duplicates:** `{ "name", "address_line1", "city", "state", "postal_code", "latitude", "longitude", "country?" }`
+- **Create Court:** `{ "name", "address_line1", "city", "state", "postal_code", "country?", "latitude", "longitude", "is_private?", "acknowledge_possible_duplicates?" }` — coaches require lat/lng; no `coach_notes` / `notes` / free-text `address` (**400**). Auto-link: `data.coachCourt`. Link notes: **`POST /api/coaches/me/courts`** with `court_id` + `coach_notes`. See `API_ENDPOINTS.md` `POST /api/courts`.
 - **Create Availability:** `weekday` (0–6 or `"monday"`), required `start_time` / `end_time` (e.g. `"09:00"`, `"17:00"`), optional `start_date` / `end_date` as **`YYYY-MM-DD`** only.
 - **Create Lesson:** title, duration_minutes, price, coach_id, etc.
 - **Create Booking:** lesson_id, coach_id, start datetime (and any other required fields).

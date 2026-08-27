@@ -31,9 +31,9 @@ Attendance **source sets** and outcome validation still live in `utils/bookingAt
 
 **`payments.escrow_status`:** `pending` = authorized/uncaptured (not a hold). `held` = captured funds only. See [`payment-system.md`](./payment-system.md).
 
-**`payout_status`:** `none` → `pending` (complete / auto-complete / late-cancel retained revenue) → `processing` (`payoutWorker` initiated a Connect transfer) → `paid` (`transfer.*` webhook or zero-amount payout).
+**`payout_status`:** `none` → `pending` (complete / auto-complete / late-cancel retained revenue) → `processing` (`payoutWorker` initiated a Connect transfer) → `paid` (`transfer.*` webhook or zero-amount payout). Post-lesson `pending` does **not** mean payable yet: `payoutWorker` still waits until **lesson end + 24h** with no open dispute. After that window the booking is normally financially final; exceptional corrections may need manual Stripe work.
 
-**`forfeited` is reserved** (natural future use: coach no-show / coach gets $0). Live runtime does **not** assign it — student no-show stays `none` until the worker pays (`none` → `processing` → `paid`); coach no-show / voids / full refunds stay `none`. Attendance still locks on `processing`, `paid`, and `forfeited` if the last is ever written.
+**`forfeited` is reserved** (natural future use: coach no-show / coach gets $0). Live runtime does **not** assign it — student no-show stays `none` until the worker pays after the 24h review window (`none` → `processing` → `paid`); coach no-show / voids / full refunds stay `none`. Attendance still locks on `processing`, `paid`, and `forfeited` if the last is ever written.
 
 ## Transition diagram (text)
 
@@ -69,7 +69,7 @@ Examples (non-exhaustive; see code for full graph):
 | `system_expire_pending` | Coach acceptance timeout worker (authorized pending, no accept/decline in time) |
 | `pre_lesson_cancel` | `cancelBooking` transaction |
 | `worker_lesson_end_to_awaiting_verification` | `autoConfirmWorker` bulk update |
-| `mark_completed` | coach complete, auto-complete worker |
+| `mark_completed` | coach complete, auto-complete worker (attendance only; payout still waits 24h after lesson end) |
 | `coach_mark_student_no_show` / `admin_mark_*` | No-show routes |
 | `stripe_dispute_open` | `stripeDisputeSyncService` (non-terminal chargeback) |
 | `stripe_dispute_terminal` | `stripeDisputeSyncService` (terminal chargeback — release `disputed` → `completed`) |

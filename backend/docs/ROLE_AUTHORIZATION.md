@@ -28,6 +28,10 @@ See **`ROLE_SYSTEM_REFERENCE.md`** for end-to-end product behavior (registration
 **Only _effective_ roles may decide access.**  
 Treat persisted `user_roles` as **assignments / audit / admin UI**, not as the permission source by itself.
 
+**Roles control what a user can do *now*. They do not invalidate historical records.** Removing `coach` or `student` (self-service or admin) must **not** delete coach profiles, lessons, court links, bookings, payments, reviews, disputes, messages, or Stripe Connect data. Existing bookings authorize by **participation** (`coach_id` / `primary_student_id`), not by whether the user currently holds that role. Marketplace discovery (`GET /api/coaches`, bookable coach side-doors) requires a **current** effective `coach` role.
+
+**Self-booking invariant:** `primary_student_id !== coach_id` — enforced on booking intent creation and confirmation (and the Booking model validate).
+
 | Layer | Meaning |
 |--------|---------|
 | **`user_roles` (DB)** | What was assigned (history, admin lists, joins). |

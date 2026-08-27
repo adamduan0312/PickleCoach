@@ -47,6 +47,14 @@ import { createAuditLog } from '../utils/audit.js';
 import { applyBookingStatusTransition, BookingTransitionVia } from './bookingStateMachine.js';
 import { nextBookingPayoutStatusAfterTransferConfirmed } from '../utils/bookingPayoutStatus.js';
 import {
+  bookingStatusUsesPostLessonPayoutClock,
+  getFinancialReviewUntil,
+  isPostLessonFinancialReviewElapsed,
+  shouldHoldPostLessonWindowGatedRefund,
+  isPostLessonWindowGatedRefundAction,
+} from '../utils/financialReviewWindow.js';
+import { ACTIVE_DISPUTE_STATUSES } from './disputeStateMachine.js';
+import {
   escrowAfterSuccessfulCapture,
   escrowAfterUncapturedVoid,
   escrowForUncapturedAuthorization,
@@ -582,7 +590,7 @@ export const expirePendingBookingNoCoachResponse = async (bookingId) => {
         booking_id: booking.id,
         cancelled_by: 'system',
         reason: 'other',
-        reason_notes: 'Coach did not accept or decline within time limit (authorization voided)',
+        reason_notes: 'Coach did not accept or decline before the acceptance deadline (authorization voided)',
         affects_reliability: false,
         refund_amount: 0,
         penalty_amount: 0,
@@ -604,6 +612,16 @@ export const expirePendingBookingNoCoachResponse = async (bookingId) => {
       event: 'pending_booking_expired',
       bookingId: booking.id,
     });
+    void import('./notificationService.js')
+      .then((notificationService) => notificationService.notifyBookingRequestExpired(booking.id))
+      .catch((err) => {
+        logger.warn({
+          component: 'booking',
+          event: 'booking_request_expired_notify_failed',
+          bookingId: booking.id,
+          message: err?.message,
+        });
+      });
     return { expired: true };
   } catch (e) {
     await transaction.rollback();
@@ -661,6 +679,25 @@ export const releaseEscrow = async (paymentId, coachStripeAccountId = null) => {
     }
   } else if (!standardPayableStatuses.includes(bookingStatus)) {
     throw new Error('Booking must be completed, student_no_show, or a student late cancel with retained revenue before payout');
+  }
+
+  if (
+    bookingStatusUsesPostLessonPayoutClock(bookingStatus)
+    && !isPostLessonFinancialReviewElapsed(payment.booking)
+  ) {
+    throw new Error(
+      'Post-lesson payout is blocked until 24 hours after the lesson ends',
+    );
+  }
+
+  const openDispute = await Dispute.findOne({
+    where: {
+      booking_id: payment.booking_id,
+      status: { [Op.in]: [...ACTIVE_DISPUTE_STATUSES] },
+    },
+  });
+  if (openDispute) {
+    throw new Error('Post-lesson payout is blocked while a dispute is open');
   }
 
   const { payoutCents, netRetainedCents, coachShareRatio } = computeCoachEscrowPayoutFromPaymentSnapshot({
@@ -902,6 +939,9 @@ export const applyRefundStateFromStripeCharge = async (payment, charge, { stripe
     return payment;
   }
 
+  const prevRefundedCents = dollarsToCents(payment.refunded_amount);
+  const refundIncreased = refundedCents > prevRefundedCents;
+
   const refundedDollars = centsToDecimalString(refundedCents);
   const totalChargeCents = dollarsToCents(payment.total_charge_to_student);
   const originalCoachPayoutCents = dollarsToCents(payment.coach_payout_expected);
@@ -927,7 +967,31 @@ export const applyRefundStateFromStripeCharge = async (payment, charge, { stripe
     updates.stripe_refund_id = stripeRefundId;
   }
   await payment.update(updates, { transaction });
-  return payment.reload({ transaction });
+  const reloaded = await payment.reload({ transaction });
+
+  if (refundIncreased && payment.booking_id != null) {
+    const deltaCents = refundedCents - prevRefundedCents;
+    const notifyAmount = Number.parseFloat(centsToDecimalString(deltaCents));
+    void import('./notificationService.js')
+      .then((notificationService) =>
+        notificationService.notifyRefundSucceeded({
+          bookingId: payment.booking_id,
+          paymentId: payment.id,
+          refundAmount: notifyAmount,
+        }),
+      )
+      .catch((err) => {
+        logger.warn({
+          component: 'payments',
+          event: 'refund_succeeded_notify_failed',
+          paymentId: payment.id,
+          bookingId: payment.booking_id,
+          message: err?.message,
+        });
+      });
+  }
+
+  return reloaded;
 };
 
 /**
@@ -1239,6 +1303,36 @@ export const processPendingRefundPaymentActions = async ({ batchLimit = 14 } = {
     try {
       let row = await PaymentAction.findByPk(paymentActionId);
       if (!row) continue;
+      if (isPostLessonWindowGatedRefundAction(row.action_type)) {
+        const bookingForHold = await Booking.findByPk(row.booking_id);
+        if (shouldHoldPostLessonWindowGatedRefund(bookingForHold, row.action_type)) {
+          logger.info({
+            component: 'payments',
+            event: 'post_lesson_refund_held_for_review_window',
+            paymentActionId: row.id,
+            bookingId: row.booking_id,
+            action_type: row.action_type,
+          });
+          continue;
+        }
+        const openDispute = await Dispute.findOne({
+          where: {
+            booking_id: row.booking_id,
+            status: { [Op.in]: [...ACTIVE_DISPUTE_STATUSES] },
+          },
+        });
+        if (openDispute) {
+          logger.info({
+            component: 'payments',
+            event: 'post_lesson_refund_held_open_dispute',
+            paymentActionId: row.id,
+            bookingId: row.booking_id,
+            disputeId: openDispute.id,
+            action_type: row.action_type,
+          });
+          continue;
+        }
+      }
       row = await hydrateFullRemainingRefundPaymentAction(row);
       await ensureStripeIdempotencyPersistedForPaymentAction(row);
       row = await PaymentAction.findByPk(paymentActionId);
@@ -1486,6 +1580,34 @@ export const reconcileRefundPaymentActionsWithStripe = async ({
     }
 
     if (byMeta.length === 0 && autoHeal) {
+      if (isPostLessonWindowGatedRefundAction(pa.action_type)) {
+        const bookingForHold = await Booking.findByPk(pa.booking_id);
+        if (shouldHoldPostLessonWindowGatedRefund(bookingForHold, pa.action_type)) {
+          logger.info({
+            component: 'payments',
+            event: 'payment_action_reconcile_held_for_review_window',
+            paymentActionId: pa.id,
+            action_type: pa.action_type,
+            bookingId: pa.booking_id,
+          });
+          continue;
+        }
+        const openDispute = await Dispute.findOne({
+          where: {
+            booking_id: pa.booking_id,
+            status: { [Op.in]: [...ACTIVE_DISPUTE_STATUSES] },
+          },
+        });
+        if (openDispute) {
+          logger.info({
+            component: 'payments',
+            event: 'payment_action_reconcile_held_open_dispute',
+            paymentActionId: pa.id,
+            disputeId: openDispute.id,
+          });
+          continue;
+        }
+      }
       try {
         const partial = fixedCentsRefundActionTypeSet.has(pa.action_type);
         const ref = await stripeService.createRefund(payment.charge_id, {
@@ -1598,6 +1720,95 @@ export const getLatestBookingRefundState = async (bookingId) => {
     hasAnyRefund: refundedSoFarCents > 0 || hasPendingRefund || queuedPipeline > 0,
     hasPendingRefund: hasPendingRefund || queuedPipeline > 0,
     hasQueuedPaymentActionRefund: queuedPipeline > 0,
+  };
+};
+
+/**
+ * Queue a full remaining refund for `coach_no_show` only after the 24h review
+ * window and only when no dispute is open. Status changes do not move money.
+ */
+export const enqueueCoachNoShowRefundIfEligible = async (bookingId, { now = new Date() } = {}) => {
+  const empty = {
+    status: 'skipped',
+    reason: null,
+    payment_id: null,
+    payment_action_id: null,
+    refund_cents: 0,
+    refund_status: null,
+    review_until: null,
+  };
+
+  const booking = await Booking.findByPk(bookingId);
+  if (!booking || booking.status !== 'coach_no_show') {
+    return { ...empty, reason: 'not_coach_no_show' };
+  }
+
+  if (!isPostLessonFinancialReviewElapsed(booking, now)) {
+    return {
+      ...empty,
+      status: 'held_until_review',
+      reason: 'post_lesson_review_window',
+      review_until: getFinancialReviewUntil(booking)?.toISOString() ?? null,
+    };
+  }
+
+  const openDispute = await Dispute.findOne({
+    where: {
+      booking_id: bookingId,
+      status: { [Op.in]: [...ACTIVE_DISPUTE_STATUSES] },
+    },
+  });
+  if (openDispute) {
+    return { ...empty, reason: 'open_dispute' };
+  }
+
+  const refundState = await getLatestBookingRefundState(bookingId);
+  const pay = refundState.payment;
+  if (!pay) return { ...empty, reason: 'payment_missing' };
+  if (!pay.charge_id) {
+    return { ...empty, payment_id: pay.id, reason: 'charge_missing' };
+  }
+  if (pay.refund_status === 'pending') {
+    return { ...empty, payment_id: pay.id, reason: 'refund_pending' };
+  }
+  if (refundState.hasQueuedPaymentActionRefund) {
+    return { ...empty, payment_id: pay.id, reason: 'refund_pipeline_pending' };
+  }
+  const remainingCents = Math.max(
+    0,
+    refundState.chargeAmountCents - refundState.refundedSoFarCents,
+  );
+  if (remainingCents < 1) {
+    return { ...empty, payment_id: pay.id, reason: 'already_fully_refunded' };
+  }
+  if (!['captured', 'partially_refunded'].includes(pay.payment_status)) {
+    return {
+      ...empty,
+      payment_id: pay.id,
+      reason: `payment_status_not_refundable:${pay.payment_status}`,
+    };
+  }
+
+  const created = await PaymentAction.create({
+    booking_id: bookingId,
+    payment_id: pay.id,
+    dispute_id: null,
+    action_type: 'booking_coach_no_show_refund',
+    status: 'pending',
+    refund_cents: remainingCents,
+    idempotency_key: null,
+    stripe_idempotency_key: null,
+    attempts: 0,
+  });
+
+  return {
+    status: 'queued',
+    reason: null,
+    payment_id: pay.id,
+    payment_action_id: created.id,
+    refund_cents: remainingCents,
+    refund_status: 'pending_stripe_execution',
+    review_until: getFinancialReviewUntil(booking)?.toISOString() ?? null,
   };
 };
 

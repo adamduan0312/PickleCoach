@@ -8,7 +8,7 @@ import { serializeAuthProfileUser, serializeAuthSessionUser } from '../utils/use
 import { logAudit } from '../utils/audit.js';
 import { logger } from '../config/logger.js';
 import * as notificationService from '../services/notificationService.js';
-import { canSelfServiceAddRole } from '../utils/roleGovernance.js';
+import { canSelfServiceAddRole, canSelfServiceRemoveRole } from '../utils/roleGovernance.js';
 import { countOtherLiveAdmins } from '../utils/userRoleChangeGuards.js';
 import { softDeleteUserAccount } from '../utils/userLifecycle.js';
 
@@ -427,12 +427,15 @@ export const logout = async (req, res) => {
 };
 
 /**
- * Add student or coach capability (self-service). **Does not remove** roles — users can hold both.
- * Route: **PUT /api/auth/me/role** (path unchanged for clients).
- * Body: { role: 'student' | 'coach' }
- * **Permissions** come from **`user.roles`** in the response (and DB). **Which dashboard to show** (student vs coach)
- * is a **frontend `activeRole` / mode** concern only — this API does not store an active mode server-side.
- * Admins cannot use this. If the user already has the role, returns current user and token unchanged.
+ * Add or remove student/coach capability (self-service).
+ * Route: **PUT /api/auth/me/role**
+ * Body: { role: 'student' | 'coach', action?: 'add' | 'remove' }  (action defaults to add)
+ *
+ * Invariants:
+ * - Does **not** delete coach profiles, lessons, bookings, payments, reviews, Stripe data, etc.
+ * - Must keep at least one of `student` or `coach` after remove.
+ * - Cannot change `admin` here. Admins cannot use this endpoint (use admin user management).
+ * - Which dashboard to show is a frontend `activeRole` concern — not stored server-side.
  */
 export const addUserRole = async (req, res) => {
   try {
@@ -444,12 +447,56 @@ export const addUserRole = async (req, res) => {
     }
 
     if ((req.user.roles || []).includes('admin')) {
-      return errorResponse(res, 'Admins cannot add roles via this endpoint; use admin user management.', 403);
+      return errorResponse(res, 'Admins cannot change roles via this endpoint; use admin user management.', 403);
     }
 
-    const { role } = req.validated;
+    const { role, action } = req.validated;
     const currentRoles = user.userRoles && user.userRoles.length ? user.userRoles.map((r) => r.role) : [];
 
+    if (action === 'remove') {
+      if (!currentRoles.includes(role)) {
+        return successResponse(res, {
+          user: serializeAuthSessionUser(user),
+          token: req.headers.authorization?.split(' ')[1],
+        }, 'Capability unchanged (you do not have the ' + role + ' role).');
+      }
+
+      if (!canSelfServiceRemoveRole(user, role, currentRoles)) {
+        return errorResponse(
+          res,
+          'You must keep at least one of student or coach. Add the other role before removing this one.',
+          400,
+        );
+      }
+
+      await UserRole.destroy({ where: { user_id: user.id, role } });
+
+      const updatedRoles = currentRoles.filter((r) => r !== role).sort();
+      await logAudit(
+        req.user.id,
+        'user_self_service_role_removed',
+        'users',
+        user.id,
+        { roles: currentRoles },
+        { roles: updatedRoles },
+        req,
+      );
+
+      await user.reload({
+        include: [{ model: UserRole, as: 'userRoles', attributes: ['role'] }],
+      });
+
+      const newToken = jwt.sign({ userId: user.id, tokenVersion: user.token_version ?? 0 }, JWT_SECRET, {
+        expiresIn: JWT_EXPIRES_IN,
+      });
+
+      return successResponse(res, {
+        user: serializeAuthSessionUser(user),
+        token: newToken,
+      }, 'Role removed successfully. Historical bookings and profile data are retained. Use the new token for subsequent requests.');
+    }
+
+    // action === 'add'
     if (!canSelfServiceAddRole(user, role, currentRoles)) {
       return errorResponse(res, 'This role has been restricted by an administrator', 403);
     }
@@ -482,8 +529,8 @@ export const addUserRole = async (req, res) => {
       token: newToken,
     }, 'Role added successfully. Use the new token for subsequent requests.');
   } catch (error) {
-    logger.error('Add role (PUT /api/auth/me/role) error:', error);
-    return errorResponse(res, 'Failed to add role', 500);
+    logger.error('Manage role (PUT /api/auth/me/role) error:', error);
+    return errorResponse(res, 'Failed to update role', 500);
   }
 };
 
@@ -749,6 +796,8 @@ export const confirmEmailVerification = async (req, res) => {
   try {
     const { token } = req.validated;
 
+    // Token stays on the user until it expires or a new verification email replaces it.
+    // Re-clicks on the same valid link return a friendly success — no repeat side effects.
     const user = await User.findOne({
       where: {
         email_verification_token: token,
@@ -760,17 +809,19 @@ export const confirmEmailVerification = async (req, res) => {
       return errorResponse(res, 'Invalid or expired verification token', 400);
     }
 
+    if (user.email_verified_at) {
+      return successResponse(res, null, 'Email already verified');
+    }
+
     const beforeState = user.toJSON();
+    const verifiedAt = new Date();
 
     await user.update({
-      email_verified_at: user.email_verified_at || new Date(),
-      email_verification_token: null,
-      email_verification_expires: null,
-      email_verification_last_sent_at: null,
+      email_verified_at: verifiedAt,
     });
 
     await logAudit(user.id, 'email_verified', 'users', user.id, beforeState, {
-      email_verified_at: user.email_verified_at,
+      email_verified_at: verifiedAt,
     }, req);
 
     return successResponse(res, null, 'Email verified successfully');

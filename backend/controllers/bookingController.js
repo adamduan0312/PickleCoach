@@ -50,6 +50,11 @@ import {
   assertPreLessonCancelAllowed,
   assertBookingStatusAllowsPreLessonCancel,
 } from '../utils/bookingCancelEligibility.js';
+import { assertCoachMayAcceptPending } from '../utils/coachAcceptanceTimeout.js';
+import {
+  getFinancialReviewUntil,
+  shouldHoldPostLessonWindowGatedRefund,
+} from '../utils/financialReviewWindow.js';
 import {
   buildAdminBookingsWhere,
   buildCoachInboxBookingsWhere,
@@ -74,12 +79,14 @@ function primaryStudentInclude() {
   };
 }
 
-/** Privileged court-address viewers: booking coach or admin. */
+/** Privileged court-address viewers: booking coach or admin.
+ * MVP: student reliability is not a coach-facing booking field (use /students/me/reliability or admin reliability APIs).
+ */
 function coachViewerSerializeOptions(viewerUserId, booking, roles = []) {
   const isCoach = Number(viewerUserId) === Number(booking?.coach_id);
   const isAdmin = Array.isArray(roles) && roles.includes('admin');
   return {
-    includeStudentReliability: isCoach,
+    includeStudentReliability: false,
     viewerIsPrivileged: isCoach || isAdmin,
   };
 }
@@ -183,7 +190,7 @@ export const getCoachBookings = async (req, res) => {
     successMessage: 'Coach bookings retrieved successfully',
     failureMessage: 'Failed to retrieve coach bookings',
     logLabel: 'Get coach bookings error',
-    studentReliabilityMode: true,
+    studentReliabilityMode: false,
   });
 };
 
@@ -250,7 +257,7 @@ export const getBookingById = async (req, res) => {
       res,
       serializeBookingDetailPayload(payload, {
         serializePayment: (payment) => serializePaymentSummary(payment, { isAdmin: isAdminViewer }),
-        includeStudentReliability: Number(req.user.id) === Number(booking.coach_id),
+        includeStudentReliability: false,
         viewerIsPrivileged:
           Number(req.user.id) === Number(booking.coach_id) || isAdminViewer,
       }),
@@ -395,7 +402,8 @@ const logAdminAttendanceChange = async ({ req, bookingId, fromStatus, toStatus, 
 
 /**
  * Mark a confirmed/awaiting_verification booking as completed.
- * Coach-only endpoint. Admin override should use /api/admin/bookings/:id/complete (if introduced).
+ * Coach-only. Confirms attendance only — does **not** release payout. Payout waits
+ * until 24 hours after lesson end with no open dispute.
  */
 export const completeBooking = async (req, res) => {
   try {
@@ -551,6 +559,14 @@ export const markBookingNoShow = async (req, res) => {
       },
       coachViewerSerializeOptions(req.user.id, updated, req.user.roles || []),
     );
+    void notificationService.notifyStudentNoShow(id, { markedBy: 'coach' }).catch((err) => {
+      logger.warn({
+        component: 'booking',
+        event: 'student_no_show_notify_failed',
+        bookingId: id,
+        message: err?.message,
+      });
+    });
     return successResponse(res, responseData, 'Booking marked as student_no_show');
   } catch (error) {
     const sm = respondIfBookingStateMachineError(res, error);
@@ -592,6 +608,14 @@ export const acceptBooking = async (req, res) => {
       if (req.user.id !== booking.coach_id) {
         const err = new Error('Only the coach for this booking can accept it');
         err.statusCode = 403;
+        throw err;
+      }
+
+      const acceptWindow = assertCoachMayAcceptPending(booking);
+      if (!acceptWindow.ok) {
+        const err = new Error(acceptWindow.message);
+        err.statusCode = acceptWindow.status;
+        err.code = acceptWindow.code;
         throw err;
       }
 
@@ -638,13 +662,15 @@ export const acceptBooking = async (req, res) => {
 
     return successResponse(
       res,
-      serializeBookingListItem(payload, { includeStudentReliability: true, viewerIsPrivileged: true }),
+      serializeBookingListItem(payload, { includeStudentReliability: false, viewerIsPrivileged: true }),
       acceptMessage,
     );
   } catch (error) {
     if (error?.statusCode === 404) return errorResponse(res, error.message, 404);
     if (error?.statusCode === 403) return errorResponse(res, error.message, 403);
-    if (error?.statusCode === 400) return errorResponse(res, error.message, 400);
+    if (error?.statusCode === 400) {
+      return errorResponse(res, error.message, 400, null, error.code ? { code: error.code } : undefined);
+    }
     const sm = respondIfBookingStateMachineError(res, error);
     if (sm) return sm;
     const pay = respondIfPaymentAuthorizationError(res, error);
@@ -748,7 +774,7 @@ export const declineBooking = async (req, res) => {
 
     return successResponse(
       res,
-      serializeBookingListItem(updated, { includeStudentReliability: true, viewerIsPrivileged: true }),
+      serializeBookingListItem(updated, { includeStudentReliability: false, viewerIsPrivileged: true }),
       'Booking declined',
     );
   } catch (error) {
@@ -1221,42 +1247,6 @@ export const adminMarkCoachNoShow = async (req, res) => {
     const beforeState = booking.toJSON();
     const fromStatus = booking.status;
 
-    const scheduledCoachRefund = {
-      enqueue: false,
-      paymentId: null,
-      refundCents: 0,
-      skipReason: 'no_refundable_payment',
-    };
-    const refundStatePreTxn = await paymentService.getLatestBookingRefundState(booking.id);
-    const payPre = refundStatePreTxn.payment;
-    if (!payPre) {
-      scheduledCoachRefund.skipReason = 'payment_missing';
-    } else if (!payPre.charge_id) {
-      scheduledCoachRefund.paymentId = payPre.id;
-      scheduledCoachRefund.skipReason = 'charge_missing';
-    } else {
-      scheduledCoachRefund.paymentId = payPre.id;
-      const remainingCents = Math.max(
-        0,
-        refundStatePreTxn.chargeAmountCents - refundStatePreTxn.refundedSoFarCents,
-      );
-      if (payPre.refund_status === 'pending') {
-        scheduledCoachRefund.skipReason = 'refund_pending';
-      } else if (refundStatePreTxn.hasQueuedPaymentActionRefund) {
-        scheduledCoachRefund.skipReason = 'refund_pipeline_pending';
-      } else if (remainingCents < 1) {
-        scheduledCoachRefund.skipReason = 'already_fully_refunded';
-      } else if (!['captured', 'partially_refunded'].includes(payPre.payment_status)) {
-        scheduledCoachRefund.skipReason = `payment_status_not_refundable:${payPre.payment_status}`;
-      } else {
-        scheduledCoachRefund.enqueue = true;
-        scheduledCoachRefund.refundCents = remainingCents;
-        scheduledCoachRefund.skipReason = null;
-      }
-    }
-
-    let coachRefundPaymentActionId = null;
-
     await sequelize.transaction(async (tx) => {
       const locked = await Booking.findByPk(id, { transaction: tx, lock: tx.LOCK.UPDATE });
       if (!locked) {
@@ -1286,24 +1276,6 @@ export const adminMarkCoachNoShow = async (req, res) => {
         patch: {},
         options: { transaction: tx },
       });
-
-      if (scheduledCoachRefund.enqueue && scheduledCoachRefund.paymentId) {
-        const created = await PaymentAction.create(
-          {
-            booking_id: locked.id,
-            payment_id: scheduledCoachRefund.paymentId,
-            dispute_id: null,
-            action_type: 'booking_coach_no_show_refund',
-            status: 'pending',
-            refund_cents: scheduledCoachRefund.refundCents,
-            idempotency_key: null,
-            stripe_idempotency_key: null,
-            attempts: 0,
-          },
-          { transaction: tx },
-        );
-        coachRefundPaymentActionId = created.id;
-      }
     });
 
     const updated = await Booking.findByPk(id, {
@@ -1345,14 +1317,16 @@ export const adminMarkCoachNoShow = async (req, res) => {
       }
     }
 
+    const refundPlan = await paymentService.enqueueCoachNoShowRefundIfEligible(booking.id);
     const autoRefund = {
-      status: coachRefundPaymentActionId ? 'queued' : 'skipped',
-      reason: coachRefundPaymentActionId ? null : scheduledCoachRefund.skipReason,
-      payment_id: scheduledCoachRefund.paymentId,
-      refund_cents: coachRefundPaymentActionId ? scheduledCoachRefund.refundCents : 0,
+      status: refundPlan.status,
+      reason: refundPlan.reason,
+      payment_id: refundPlan.payment_id,
+      refund_cents: refundPlan.refund_cents || 0,
       stripe_refund_id: null,
-      payment_action_id: coachRefundPaymentActionId,
-      refund_status: coachRefundPaymentActionId ? 'pending_stripe_execution' : null,
+      payment_action_id: refundPlan.payment_action_id,
+      refund_status: refundPlan.refund_status,
+      review_until: refundPlan.review_until,
     };
 
     const responseData = serializeBookingResponse(
@@ -1364,6 +1338,14 @@ export const adminMarkCoachNoShow = async (req, res) => {
       },
       coachViewerSerializeOptions(req.user.id, updated, req.user.roles || []),
     );
+    void notificationService.notifyCoachNoShow(id).catch((err) => {
+      logger.warn({
+        component: 'booking',
+        event: 'coach_no_show_notify_failed',
+        bookingId: id,
+        message: err?.message,
+      });
+    });
     return successResponse(res, responseData, 'Booking marked as coach_no_show');
   } catch (error) {
     if (error.statusCode === 404) {
@@ -1522,6 +1504,14 @@ export const adminMarkBookingNoShow = async (req, res) => {
       },
       coachViewerSerializeOptions(req.user.id, updated, req.user.roles || []),
     );
+    void notificationService.notifyStudentNoShow(id, { markedBy: 'admin' }).catch((err) => {
+      logger.warn({
+        component: 'booking',
+        event: 'admin_student_no_show_notify_failed',
+        bookingId: id,
+        message: err?.message,
+      });
+    });
     return successResponse(res, responseData, 'Booking marked as student_no_show');
   } catch (error) {
     const sm = respondIfBookingStateMachineError(res, error);
@@ -1615,6 +1605,20 @@ export const adminRefundBooking = async (req, res) => {
         409,
         null,
         { code: 'refund_requires_dispute_resolution' },
+      );
+    }
+
+    if (shouldHoldPostLessonWindowGatedRefund(booking, 'booking_admin_refund')) {
+      const until = getFinancialReviewUntil(booking);
+      return errorResponse(
+        res,
+        'The 24-hour post-lesson review period is still open. Automatic and admin refunds wait until it ends, unless you resolve an in-app dispute.',
+        409,
+        null,
+        {
+          code: 'financial_review_window_open',
+          review_until: until ? until.toISOString() : null,
+        },
       );
     }
 

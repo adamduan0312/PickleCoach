@@ -52,6 +52,14 @@ const CourtLocation = sequelize.define('court_locations', {
     type: DataTypes.ENUM('manual', 'import', 'api'),
     defaultValue: 'manual',
   },
+  osm_type: {
+    type: DataTypes.STRING(16),
+    allowNull: true,
+  },
+  osm_id: {
+    type: DataTypes.BIGINT,
+    allowNull: true,
+  },
   deleted_at: {
     type: DataTypes.DATE,
     allowNull: true,
@@ -68,6 +76,11 @@ const CourtLocation = sequelize.define('court_locations', {
       fields: ['name', 'address_line1', 'city', 'state', 'postal_code', 'country'],
       unique: true,
       name: 'unique_court',
+    },
+    {
+      fields: ['osm_type', 'osm_id'],
+      unique: true,
+      name: 'unique_court_osm',
     },
   ],
 });

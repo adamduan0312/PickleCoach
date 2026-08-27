@@ -349,6 +349,9 @@ export const listRefundsForCharge = async (chargeId, { limitPerPage = 100, maxPa
  * @returns {Promise<Object>} Transfer object
  */
 export const transferToConnectedAccount = async (connectedAccountId, amount, currency = 'usd', metadata = {}) => {
+  if (stripeTestDouble?.transferToConnectedAccount) {
+    return stripeTestDouble.transferToConnectedAccount(connectedAccountId, amount, currency, metadata);
+  }
   try {
     const transfer = await stripe.transfers.create({
       amount: Math.round(amount * 100), // Convert to cents

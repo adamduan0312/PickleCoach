@@ -196,6 +196,8 @@ const ADMIN_ORDER = [
   ['Authentication', 'Logout'],
   ['Courts', 'List/Search Courts'],
   ['Courts', 'Get Court By ID'],
+  ['Geo', 'Search Locations (Geocode)'],
+  ['Courts', 'Check Court Duplicates'],
   ['Lessons', 'Get Coach Lessons'],
   ['Lessons', 'Get Lesson By ID'],
   ['Disputes', 'Get My Disputes', null, 'Get All Disputes'],
@@ -244,6 +246,8 @@ const COACH_ORDER = [
   ['Reviews', 'Get Coach Reviews'],
   ['Coaches', 'Get Coach Reliability (Score Only)', null, 'Get Coach Reliability (browse)'],
   ['Coaches', 'Get Coach Courts'],
+  ['Geo', 'Search Locations (Geocode)'],
+  ['Courts', 'Check Court Duplicates'],
   ['Courts', 'Create Court'],
   ['Coaches', 'Add Court to Coach'],
   ['Coaches', 'List My Courts'],
@@ -301,6 +305,7 @@ const STUDENT_ORDER = [
   ['Authentication', 'Request Email Change'],
   ['Authentication', 'Confirm Email Change'],
   ['Authentication', 'Add Role (Self-Service)'],
+  ['Geo', 'Search Locations (Geocode)'],
   ['Coaches', 'List Coaches (Search)'],
   ['Coaches', 'Get Coach By ID'],
   ['Reviews', 'Get Coach Reviews'],
@@ -353,13 +358,13 @@ const adminFolder = buildFlowFolder(
 
 const coachFolder = buildFlowFolder(
   '2 – Flow: Coach',
-  'All coach endpoints in user-flow order. Run in sequence: Health → Register/Login → Profile → **GET /coaches/me/reliability** → Coach profile → Courts → **List Coaches (Search)** → **Get Coach By ID / Reviews / Reliability** (browse other coaches like a student) → **Get Coach Courts** → Availability → Stripe Connect → **GET /coaches/me/marketplace-status** → Lessons → Bookings → Payments / payment methods → **List My Received Reviews** (`GET /coaches/me/reviews`) → Messages → Disputes → Notifications (incl. delete) → Auth extras. See backend/POSTMAN_TESTING_GUIDE.md.\n\nBooking MVP: student uses booking-intents + confirm; coach uses PUT .../accept or PUT .../decline only for pending requests (coach on that booking only — role gate passes; ownership still requires the booking to belong to this coach). Schedule changes: cancel + book again (no reschedule API). Accept/decline/cancel notify the other party.\n\nReviews: coaches list **reviews about themselves** via `GET /coaches/me/reviews`. Only the booking primary student creates/updates/deletes reviews — use **3 – Flow: Student** for those. Browse another coach’s reviews: `GET /coaches/:id/reviews`.',
+  'All coach endpoints in user-flow order. Run in sequence: Health → Register/Login → Profile → **GET /coaches/me/reliability** → Coach profile → Availability → **List/Search Courts** (optional `q`) → browse coaches → **Search Locations (Geocode)** → **Check Court Duplicates** → **Create Court** (lat/lng required) → link/list courts → Stripe Connect → **GET /coaches/me/marketplace-status** → Lessons → Bookings → Payments / payment methods → **List My Received Reviews** (`GET /coaches/me/reviews`) → Messages → Disputes → Notifications (incl. delete) → Auth extras. See backend/POSTMAN_TESTING_GUIDE.md.\n\nBooking MVP: student uses booking-intents + confirm; coach uses PUT .../accept or PUT .../decline only for pending requests (coach on that booking only — role gate passes; ownership still requires the booking to belong to this coach). Schedule changes: cancel + book again (no reschedule API). Accept/decline/cancel notify the other party.\n\nReviews: coaches list **reviews about themselves** via `GET /coaches/me/reviews`. Only the booking primary student creates/updates/deletes reviews — use **3 – Flow: Student** for those. Browse another coach’s reviews: `GET /coaches/:id/reviews`.',
   COACH_ORDER
 );
 
 const studentFolder = buildFlowFolder(
   '3 – Flow: Student',
-  'All student endpoints in user-flow order. Run in sequence: Health → Register/Login → Profile → **GET /students/me/reliability** → Search coaches → Open coach → Reviews/reliability/courts/availability → Create Booking Intent → Confirm → Bookings (incl. cancel for own bookings) → Payments / payment methods → Written reviews CRUD → Messages → Disputes → Notifications (incl. delete) → Auth extras. See backend/POSTMAN_TESTING_GUIDE.md.\n\nBooking MVP: POST /booking-intents → Stripe authorize → POST /bookings/confirm creates a pending request; the coach accepts or declines with PUT .../accept | PUT .../decline. To change time: cancel this booking, then book again.\n\nReviews: `GET /api/reviews` is **410**. Use `GET /coaches/:id/reviews` (about a coach), `GET /students/me/reviews` (written by me), `GET /coaches/me/reviews` (about me, coach), `GET /admin/reviews` (admin).',
+  'All student endpoints in user-flow order. Run in sequence: Health → Register/Login → Profile → **GET /students/me/reliability** → **Search Locations (Geocode)** → Search coaches → Open coach → Reviews/reliability/courts/availability → Create Booking Intent → Confirm → Bookings (incl. cancel for own bookings) → Payments / payment methods → Written reviews CRUD → Messages → Disputes → Notifications (incl. delete) → Auth extras. See backend/POSTMAN_TESTING_GUIDE.md.\n\nBooking MVP: POST /booking-intents → Stripe authorize → POST /bookings/confirm creates a pending request; the coach accepts or declines with PUT .../accept | PUT .../decline. To change time: cancel this booking, then book again.\n\nReviews: `GET /api/reviews` is **410**. Use `GET /coaches/:id/reviews` (about a coach), `GET /students/me/reviews` (written by me), `GET /coaches/me/reviews` (about me, coach), `GET /admin/reviews` (admin).',
   STUDENT_ORDER
 );
 

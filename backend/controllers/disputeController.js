@@ -43,6 +43,7 @@ import {
   deriveResolvedBookingStatusFromDisputeResolve,
 } from '../utils/disputeResolveBookingStatus.js';
 import { formatDisputeResponse } from '../utils/disputeDto.js';
+import * as notificationService from '../services/notificationService.js';
 
 export { formatDisputeResponse };
 
@@ -139,6 +140,27 @@ export const getDisputes = async (req, res) => {
   }
 };
 
+export const getDisputeTypes = async (req, res) => {
+  try {
+    const types = await DisputeType.findAll({
+      attributes: ['id', 'code', 'name', 'description'],
+      order: [['id', 'ASC']],
+    });
+    const data = types
+      .filter((row) => isActiveDisputeTypeCode(row.code))
+      .map((row) => ({
+        id: row.id,
+        code: row.code,
+        name: row.name,
+        description: row.description,
+      }));
+    return successResponse(res, data, 'Dispute types retrieved successfully');
+  } catch (error) {
+    logger.error('Get dispute types error:', error);
+    return errorResponse(res, 'Failed to retrieve dispute types', 500);
+  }
+};
+
 export const getDisputeById = async (req, res) => {
   try {
     const { id } = req.params;
@@ -194,11 +216,12 @@ export const createDispute = async (req, res) => {
       return errorResponse(res, 'Unauthorized', 403);
     }
 
-    const createEligibility = checkDisputeCreateBookingEligibility(booking);
+    const createEligibility = checkDisputeCreateBookingEligibility(booking, new Date(), { isAdmin });
     if (!createEligibility.ok) {
       return errorResponse(res, createEligibility.message, 400, null, {
         code: createEligibility.code,
         booking_status: booking.status,
+        ...(createEligibility.review_until ? { review_until: createEligibility.review_until } : {}),
       });
     }
 
@@ -270,15 +293,63 @@ export const createDispute = async (req, res) => {
       return errorResponse(res, initial.message, 500, null, { code: initial.code });
     }
 
-    const dispute = await Dispute.create({
-      booking_id,
-      dispute_type_id,
-      notes: notes != null && String(notes).trim() !== '' ? String(notes).trim() : null,
-      opened_by: openedBy,
-      status: 'open',
+    const dispute = await sequelize.transaction(async (transaction) => {
+      const locked = await Booking.findByPk(booking_id, {
+        transaction,
+        lock: transaction.LOCK.UPDATE,
+      });
+      if (!locked) {
+        const err = new Error('Booking not found');
+        err.statusCode = 404;
+        throw err;
+      }
+      const lockedEligibility = checkDisputeCreateBookingEligibility(locked, new Date(), { isAdmin });
+      if (!lockedEligibility.ok) {
+        const err = new Error(lockedEligibility.message);
+        err.statusCode = 400;
+        err.code = lockedEligibility.code;
+        err.booking_status = locked.status;
+        err.review_until = lockedEligibility.review_until;
+        throw err;
+      }
+      const existingLocked = await Dispute.findOne({
+        where: { booking_id, status: { [Op.in]: ['open', 'under_review'] } },
+        transaction,
+        lock: transaction.LOCK.UPDATE,
+      });
+      if (existingLocked) {
+        const err = new Error('Active dispute already exists for this booking');
+        err.statusCode = 409;
+        throw err;
+      }
+      return Dispute.create(
+        {
+          booking_id,
+          dispute_type_id,
+          notes: notes != null && String(notes).trim() !== '' ? String(notes).trim() : null,
+          opened_by: openedBy,
+          status: 'open',
+        },
+        { transaction },
+      );
     });
 
     await logAudit(req.user.id, 'dispute_created', 'disputes', dispute.id, null, dispute.toJSON(), req);
+
+    void notificationService.notifyDisputeOpened({
+      bookingId: booking.id,
+      disputeId: dispute.id,
+      openedBy,
+      disputeTypeCode: disputeType.code,
+    }).catch((err) => {
+      logger.warn({
+        component: 'disputes',
+        event: 'dispute_opened_notify_failed',
+        bookingId: booking.id,
+        disputeId: dispute.id,
+        message: err?.message,
+      });
+    });
 
     return successResponse(
       res,
@@ -289,6 +360,19 @@ export const createDispute = async (req, res) => {
       201,
     );
   } catch (error) {
+    if (error.statusCode) {
+      const extra = {};
+      if (error.code) extra.code = error.code;
+      if (error.booking_status) extra.booking_status = error.booking_status;
+      if (error.review_until) extra.review_until = error.review_until;
+      return errorResponse(
+        res,
+        error.message,
+        error.statusCode,
+        null,
+        extra,
+      );
+    }
     logger.error('Create dispute error:', error);
     const mysqlFkChildRow =
       error.name === 'SequelizeForeignKeyConstraintError' ||
@@ -656,6 +740,23 @@ export const resolveDispute = async (req, res) => {
           shouldApplyAttendanceOutcome && { outcome, derived_booking_status: resolvedBookingStatus }),
       },
     };
+
+    void notificationService.notifyDisputeResolved({
+      bookingId: booking.id,
+      disputeId: dispute.id,
+      outcome: outcome ?? null,
+      financialAction,
+      bookingStatus: resolvedBookingStatus,
+      decision,
+    }).catch((err) => {
+      logger.warn({
+        component: 'disputes',
+        event: 'dispute_resolved_notify_failed',
+        bookingId: booking.id,
+        disputeId: dispute.id,
+        message: err?.message,
+      });
+    });
 
     return successResponse(res, payload, 'Dispute resolved successfully');
   } catch (error) {

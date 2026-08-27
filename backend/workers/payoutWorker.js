@@ -1,4 +1,4 @@
-import { Booking, Payment, User, CoachProfile, CancellationHistory, PaymentAction } from '../models/index.js';
+import { Booking, Payment, User, CoachProfile, CancellationHistory, PaymentAction, Dispute, sequelize } from '../models/index.js';
 import { Op } from 'sequelize';
 import { logger } from '../config/logger.js';
 import * as paymentService from '../services/paymentService.js';
@@ -9,20 +9,150 @@ import {
 } from '../utils/lateCancelPayout.js';
 import { isPaymentEscrowPayable } from '../utils/payoutEscrowEligibility.js';
 import { nextBookingPayoutStatusAfterReleaseEscrow } from '../utils/bookingPayoutStatus.js';
+import {
+  bookingStatusUsesPostLessonPayoutClock,
+  isPostLessonFinancialReviewElapsed,
+} from '../utils/financialReviewWindow.js';
+
+/**
+ * One held-escrow payment through the same gates as `processPayouts`.
+ * Exported so cutoff-race integration tests can target a fixture without
+ * scanning every payable row in the database.
+ */
+export async function processHeldEscrowPayment(payment) {
+  if (!isPaymentEscrowPayable(payment)) {
+    logger.info(
+      `Skipping payout for payment ${payment.id} - escrow_status "${payment.escrow_status}" not payable`,
+    );
+    return { skipped: true, reason: 'escrow_not_payable' };
+  }
+
+  if (bookingStatusUsesPostLessonPayoutClock(payment.booking.status)
+    && !isPostLessonFinancialReviewElapsed(payment.booking)) {
+    logger.info(
+      `Skipping payout for payment ${payment.id} - 24h post-lesson financial review window has not ended`,
+    );
+    return { skipped: true, reason: 'review_window' };
+  }
+
+  if (payment.booking.status === 'cancelled') {
+    const history = await CancellationHistory.findOne({
+      where: { booking_id: payment.booking_id },
+      order: [['id', 'DESC']],
+    });
+    if (!isLateCancelRetainedRevenueEligibleFromHistory(history)) {
+      return { skipped: true, reason: 'late_cancel_ineligible' };
+    }
+    const pendingCancelRefund = await PaymentAction.findOne({
+      where: {
+        booking_id: payment.booking_id,
+        action_type: 'booking_cancel_refund',
+        status: 'pending',
+      },
+    });
+    if (pendingCancelRefund) {
+      logger.info(`Skipping late-cancel payout for payment ${payment.id} - cancel refund action pending`);
+      return { skipped: true, reason: 'cancel_refund_pending' };
+    }
+    if (payment.refund_status === 'pending') {
+      logger.info(`Skipping late-cancel payout for payment ${payment.id} - refund pending`);
+      return { skipped: true, reason: 'refund_pending' };
+    }
+    if (!isLateCancelRefundSettledForPayout(payment)) {
+      logger.info(`Skipping late-cancel payout for payment ${payment.id} - partial refund not settled yet`);
+      return { skipped: true, reason: 'late_cancel_refund_unsettled' };
+    }
+  }
+
+  // Serialize against dispute create: lock the booking, recheck window + open disputes.
+  let payoutBlockedReason = null;
+  await sequelize.transaction(async (transaction) => {
+    const lockedBooking = await Booking.findByPk(payment.booking_id, {
+      transaction,
+      lock: transaction.LOCK.UPDATE,
+    });
+    if (!lockedBooking) {
+      payoutBlockedReason = 'booking_missing';
+      return;
+    }
+    if (
+      bookingStatusUsesPostLessonPayoutClock(lockedBooking.status)
+      && !isPostLessonFinancialReviewElapsed(lockedBooking)
+    ) {
+      payoutBlockedReason = 'review_window';
+      return;
+    }
+    const lockedDisputes = await Dispute.findAll({
+      where: {
+        booking_id: lockedBooking.id,
+        status: { [Op.in]: [...ACTIVE_DISPUTE_STATUSES] },
+      },
+      transaction,
+    });
+    if (lockedDisputes.length > 0) {
+      payoutBlockedReason = 'open_dispute';
+    }
+  });
+  if (payoutBlockedReason) {
+    logger.info(`Skipping payout for payment ${payment.id} - ${payoutBlockedReason}`);
+    return { skipped: true, reason: payoutBlockedReason };
+  }
+
+  const pendingSettlementRefund = await PaymentAction.findOne({
+    where: {
+      booking_id: payment.booking_id,
+      action_type: {
+        [Op.in]: [
+          'dispute_refund_full',
+          'dispute_refund_partial',
+          'booking_admin_refund',
+          'booking_coach_no_show_refund',
+        ],
+      },
+      status: 'pending',
+    },
+  });
+  if (pendingSettlementRefund) {
+    logger.info(
+      `Skipping payout for payment ${payment.id} - refund action pending (${pendingSettlementRefund.action_type})`,
+    );
+    return { skipped: true, reason: 'refund_action_pending' };
+  }
+
+  if (payment.refund_status === 'pending') {
+    logger.info(`Skipping payout for payment ${payment.id} - refund pending`);
+    return { skipped: true, reason: 'refund_pending' };
+  }
+
+  const coachStripeAccountId = payment.coach.coachProfile?.stripe_account_id || null;
+  await paymentService.releaseEscrow(payment.id, coachStripeAccountId);
+
+  await payment.reload();
+  await payment.booking.reload();
+  const nextPayoutStatus = nextBookingPayoutStatusAfterReleaseEscrow({
+    currentPayoutStatus: payment.booking.payout_status,
+    escrowStatus: payment.escrow_status,
+  });
+  if (nextPayoutStatus !== payment.booking.payout_status) {
+    await payment.booking.update({ payout_status: nextPayoutStatus });
+  }
+
+  logger.info(`Processed payout for payment ${payment.id}`);
+  return { skipped: false, reason: null };
+}
 
 /**
  * Process payouts for completed bookings and student late-cancels with retained revenue.
  * Runs every 10 minutes
  *
- * Selection: payments with booking.status in completed / student_no_show,
- * or cancelled with a student late-cancel penalty on cancellation_history (coach compensation).
- *
- * `awaiting_verification` is intentionally excluded: the 24h post-lesson window ends when
- * `autoConfirmWorker` moves the booking to `completed` (lesson end + 24h). Payout runs on
- * `completed` so lifecycle, dispute window, and money stay aligned.
+ * Post-lesson payouts (`completed`, `student_no_show`) wait until lesson end + 24h
+ * regardless of Complete / no-show clicks. Open disputes block payout. Late-cancel
+ * `cancelled` payouts are pre-lesson and do not use this clock.
  */
 export const processPayouts = async () => {
   try {
+    await settleCoachNoShowRefunds();
+
     const payments = await Payment.findAll({
       where: {
         escrow_status: 'held',
@@ -61,98 +191,7 @@ export const processPayouts = async () => {
 
     for (const payment of payments) {
       try {
-        // Defense-in-depth: never release money on booking status alone. A
-        // `completed` booking can still have `escrow_status = 'disputed'`
-        // (chargeback-opened dispute resolved back to completed without Stripe
-        // escrow reconciliation). Escrow state is the payout authority.
-        if (!isPaymentEscrowPayable(payment)) {
-          logger.info(
-            `Skipping payout for payment ${payment.id} - escrow_status "${payment.escrow_status}" not payable`,
-          );
-          continue;
-        }
-
-        if (payment.booking.status === 'cancelled') {
-          const history = await CancellationHistory.findOne({
-            where: { booking_id: payment.booking_id },
-            order: [['id', 'DESC']],
-          });
-          if (!isLateCancelRetainedRevenueEligibleFromHistory(history)) {
-            continue;
-          }
-          const pendingCancelRefund = await PaymentAction.findOne({
-            where: {
-              booking_id: payment.booking_id,
-              action_type: 'booking_cancel_refund',
-              status: 'pending',
-            },
-          });
-          if (pendingCancelRefund) {
-            logger.info(`Skipping late-cancel payout for payment ${payment.id} - cancel refund action pending`);
-            continue;
-          }
-          if (payment.refund_status === 'pending') {
-            logger.info(`Skipping late-cancel payout for payment ${payment.id} - refund pending`);
-            continue;
-          }
-          if (!isLateCancelRefundSettledForPayout(payment)) {
-            logger.info(`Skipping late-cancel payout for payment ${payment.id} - partial refund not settled yet`);
-            continue;
-          }
-        }
-
-        // Check for open disputes
-        const disputes = await payment.booking.getDisputes({
-          where: {
-            status: { [Op.in]: [...ACTIVE_DISPUTE_STATUSES] },
-          },
-        });
-
-        if (disputes.length > 0) {
-          logger.info(`Skipping payout for payment ${payment.id} - open dispute exists`);
-          continue;
-        }
-
-        // Dispute-approved refunds enqueue payment_actions before refund_status flips to pending.
-        // Block escrow release until those actions finish (same idea as booking_cancel_refund).
-        const pendingDisputeRefund = await PaymentAction.findOne({
-          where: {
-            booking_id: payment.booking_id,
-            action_type: { [Op.in]: ['dispute_refund_full', 'dispute_refund_partial'] },
-            status: 'pending',
-          },
-        });
-        if (pendingDisputeRefund) {
-          logger.info(
-            `Skipping payout for payment ${payment.id} - dispute refund action pending (${pendingDisputeRefund.action_type})`,
-          );
-          continue;
-        }
-
-        // Refunds are finalized from Stripe charge webhooks; do not release escrow while refund is pending.
-        if (payment.refund_status === 'pending') {
-          logger.info(`Skipping payout for payment ${payment.id} - refund pending`);
-          continue;
-        }
-
-        // Get coach's Stripe Connect account ID from coach profile
-        // This is stored in coach_profiles.stripe_account_id when coach completes Stripe onboarding
-        const coachStripeAccountId = payment.coach.coachProfile?.stripe_account_id || null;
-
-        // Process payout
-        await paymentService.releaseEscrow(payment.id, coachStripeAccountId);
-
-        await payment.reload();
-        await payment.booking.reload();
-        const nextPayoutStatus = nextBookingPayoutStatusAfterReleaseEscrow({
-          currentPayoutStatus: payment.booking.payout_status,
-          escrowStatus: payment.escrow_status,
-        });
-        if (nextPayoutStatus !== payment.booking.payout_status) {
-          await payment.booking.update({ payout_status: nextPayoutStatus });
-        }
-
-        logger.info(`Processed payout for payment ${payment.id}`);
+        await processHeldEscrowPayment(payment);
       } catch (error) {
         logger.error(`Error processing payout for payment ${payment.id}:`, error);
         // Continue with next payment
@@ -167,6 +206,28 @@ export const processPayouts = async () => {
     throw error;
   }
 };
+
+/**
+ * After the 24h review window, enqueue student refunds for coach_no_show bookings
+ * that have no open dispute. Marks do not refund immediately.
+ */
+async function settleCoachNoShowRefunds() {
+  const bookings = await Booking.findAll({
+    where: { status: 'coach_no_show' },
+    attributes: ['id', 'scheduled_at', 'duration_minutes', 'status'],
+  });
+  for (const booking of bookings) {
+    if (!isPostLessonFinancialReviewElapsed(booking)) continue;
+    try {
+      const result = await paymentService.enqueueCoachNoShowRefundIfEligible(booking.id);
+      if (result.status === 'queued') {
+        logger.info(`Queued coach_no_show refund for booking ${booking.id} after review window`);
+      }
+    } catch (error) {
+      logger.error(`Error settling coach_no_show refund for booking ${booking.id}:`, error);
+    }
+  }
+}
 
 /**
  * Bookings left at `processing` after a confirmed release (webhook already ran,

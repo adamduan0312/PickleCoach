@@ -44,8 +44,13 @@ export const buildBookingConfirmedNotificationContent = (payload = {}) => {
 export const buildBookingRequestCoachNotificationContent = (payload = {}) => {
   const studentName = payload.student_name || 'A student';
   const lessonTitle = payload.lesson_title || 'Lesson';
-  const headline = 'New booking request';
-  const summary = `${studentName} requested ${lessonTitle}.`;
+  const deadlineLabel = payload.coach_acceptance_deadline_label;
+  const headline = deadlineLabel
+    ? `Booking request — respond by ${deadlineLabel}`
+    : 'New booking request';
+  const summary = deadlineLabel
+    ? `${studentName} requested ${lessonTitle}. Please accept or decline by ${deadlineLabel}.`
+    : `New booking request from ${studentName}. Open PickleCoach to accept or decline.`;
   return {
     headline,
     summary,
@@ -70,6 +75,10 @@ export const buildPreLessonReminderNotificationContent = (payload = {}) => {
     summary = is1h
       ? `Your lesson with ${coachName} starts in 1 hour.`
       : `Your lesson with ${coachName} is tomorrow.`;
+  }
+
+  if (payload.court_name) {
+    summary = `${summary} ${payload.court_name}.`;
   }
 
   return {
@@ -156,6 +165,142 @@ export const buildStripePayoutsEnabledNotificationContent = () => ({
   summary: 'Your Stripe account is ready — you can receive payouts and appear in the marketplace.',
   route: '/coach/onboarding',
 });
+
+/** Student: coach never accepted/declined; pending booking expired and auth voided. */
+export const buildBookingRequestExpiredNotificationContent = () => ({
+  headline: 'Booking request expired',
+  summary:
+    'Your coach did not respond in time, so this booking request expired. Your payment authorization was released — you were not charged.',
+});
+
+/** Coach: student left a review on a completed lesson. */
+export const buildReviewReceivedNotificationContent = ({ rating, studentName } = {}) => {
+  const stars = rating != null && Number.isFinite(Number(rating)) ? Number(rating) : null;
+  const from = studentName || 'A student';
+  const headline = 'New review received';
+  const summary =
+    stars != null
+      ? `${from} left a ${stars}-star review on your lesson.`
+      : `${from} left a review on your lesson.`;
+  return { headline, summary, preview: stars != null ? `${stars}★` : undefined };
+};
+
+/** Student: Stripe confirmed a refund on the original charge. */
+export const buildRefundSucceededNotificationContent = ({ refundAmount } = {}) => {
+  const amount = refundAmount != null && Number(refundAmount) > 0
+    ? Number(refundAmount).toFixed(2)
+    : null;
+  return {
+    headline: 'Refund completed',
+    summary: amount
+      ? `Your refund of $${amount} has been completed. It may take a few business days to appear on your statement.`
+      : 'Your refund has been completed. It may take a few business days to appear on your statement.',
+  };
+};
+
+export const DISPUTE_TYPE_LABELS = {
+  coach_no_show_claim: 'coach no-show',
+  student_no_show_claim: 'student no-show',
+  misconduct: 'misconduct',
+  lesson_not_completed: 'lesson not completed',
+  other: 'other',
+};
+
+/** Student recipient when the booking is marked `student_no_show`. */
+export const buildStudentNoShowNotificationContent = ({ markedBy } = {}) => {
+  const headline = 'You were marked as a no-show';
+  const summary =
+    markedBy === 'admin'
+      ? 'An administrator marked you as not attending this lesson. If this is incorrect, you have 24 hours after the lesson to dispute it.'
+      : 'Your coach marked you as not attending this lesson. If this is incorrect, you have 24 hours after the lesson to dispute it.';
+  return { headline, summary };
+};
+
+/** Student or coach recipient when the booking is marked `coach_no_show`. */
+export const buildCoachNoShowNotificationContent = ({ audience } = {}) => {
+  if (audience === 'coach') {
+    return {
+      headline: 'You were marked as a no-show',
+      summary:
+        'This lesson was recorded as a coach no-show. You will not receive a payout for this booking.',
+    };
+  }
+  return {
+    headline: 'Your coach was marked as a no-show',
+    summary:
+      'This lesson was recorded as a coach no-show. Your payment will be refunded after the 24-hour review period, unless a dispute is still open.',
+  };
+};
+
+export const buildDisputeOpenedNotificationContent = ({ openedBy, disputeTypeCode } = {}) => {
+  const typeLabel = DISPUTE_TYPE_LABELS[disputeTypeCode] || 'an issue';
+  const who =
+    openedBy === 'student' ? 'The student' : openedBy === 'coach' ? 'Your coach' : 'Support';
+  return {
+    headline: 'A dispute was opened',
+    summary: `${who} opened a dispute on this booking (${typeLabel}). Payment is on hold until it is reviewed.`,
+    preview: typeLabel,
+  };
+};
+
+function attendanceDeterminationPhrase(status) {
+  if (status === 'coach_no_show') return 'a coach no-show';
+  if (status === 'student_no_show') return 'a student no-show';
+  if (status === 'completed') return 'completed';
+  return null;
+}
+
+function disputeResolvedMoneyLine({ audience, financialAction, bookingStatus }) {
+  const refunding =
+    financialAction === 'refund_student' || financialAction === 'refund_student_partial';
+  const partial = financialAction === 'refund_student_partial';
+
+  if (audience === 'student') {
+    if (refunding) {
+      return partial ? 'A partial refund will be issued.' : 'Your payment will be refunded.';
+    }
+    if (bookingStatus === 'student_no_show' || bookingStatus === 'completed') {
+      return "Your coach's payout will proceed.";
+    }
+    return 'No refund will be issued.';
+  }
+
+  if (refunding) {
+    return partial
+      ? 'A partial refund will be issued to the student. You will not receive a full payout for this booking.'
+      : 'The student will be refunded. You will not receive a payout for this booking.';
+  }
+  return 'Your payout will proceed.';
+}
+
+/** Student or coach recipient after admin resolve. */
+export const buildDisputeResolvedNotificationContent = ({
+  audience,
+  outcome,
+  financialAction,
+  bookingStatus,
+  decision,
+} = {}) => {
+  const headline = 'Dispute resolved';
+  const status = bookingStatus || outcome || null;
+  const money = disputeResolvedMoneyLine({ audience, financialAction, bookingStatus: status });
+  const determination = attendanceDeterminationPhrase(status);
+
+  let summary;
+  if (determination === 'completed') {
+    summary = `This dispute was reviewed and the booking was determined to have been completed. ${money}`;
+  } else if (determination) {
+    summary = `This dispute was reviewed and the booking was determined to be ${determination}. ${money}`;
+  } else {
+    const reviewed =
+      decision === 'rejected'
+        ? 'This dispute was reviewed and was not upheld.'
+        : 'This dispute was reviewed.';
+    summary = `${reviewed} ${money}`;
+  }
+
+  return { headline, summary };
+};
 
 /**
  * Preview + deep-link fields for the in-app notification bell.

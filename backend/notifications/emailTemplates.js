@@ -3,12 +3,53 @@
  * Presentation only — orchestration lives in services/notificationService.js.
  *
  * MVP reminder email: pre_lesson_24h only (pre_lesson_1h is in-app only).
- * Chat (new_message) is in-app only — no email template.
+ * Chat (`new_message`), `dispute_opened`, and `review_received` are in-app only — no email template.
  */
+
+import { bookingRequestCoachTimeoutCopy } from '../utils/coachAcceptanceTimeout.js';
 
 /** Shared primary action link style (inline for email clients). */
 export const EMAIL_BUTTON_STYLE =
   'background-color:#0a7;color:#ffffff;padding:10px 20px;text-decoration:none;border-radius:5px;display:inline-block;font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:600;';
+
+function emailDetailRow(label, value) {
+  if (value == null || String(value).trim() === '') return '';
+  return `<p style="margin:0 0 8px 0;"><strong>${label}:</strong> ${value}</p>`;
+}
+
+/**
+ * Rich pre-lesson reminder body: other party + lesson + when + booking court.
+ */
+function preLesson24hBody(payload = {}) {
+  const isCoach = payload.audience === 'coach';
+  const counterpartLabel = isCoach ? 'Student' : 'Coach';
+  const counterpartName = isCoach
+    ? (payload.student_name || 'Your student')
+    : (payload.coach_name || 'Your coach');
+
+  const detailRows = [
+    emailDetailRow(counterpartLabel, counterpartName),
+    emailDetailRow('Lesson', payload.lesson_title || 'Lesson'),
+    emailDetailRow('Date', payload.lesson_date),
+    emailDetailRow('Time', payload.lesson_time),
+    emailDetailRow('Location', payload.court_name),
+    emailDetailRow('Address', payload.court_address),
+  ].filter(Boolean).join('\n      ');
+
+  // Fallback when structured date/time were not preformatted (older payloads / tests).
+  const whenFallback =
+    !payload.lesson_date && !payload.lesson_time && payload.scheduled_at
+      ? `<p style="margin:0 0 12px 0;">Scheduled: ${new Date(payload.scheduled_at).toLocaleString()}</p>`
+      : '';
+
+  return `
+      <h2 style="margin:0 0 12px 0;font-size:20px;font-weight:700;color:#222222;">Lesson Reminder - Tomorrow</h2>
+      <p style="margin:0 0 16px 0;">Your pickleball lesson is scheduled for tomorrow.</p>
+      ${detailRows}
+      ${whenFallback}
+      <p style="margin:16px 0 0 0;">Don't forget!</p>
+    `;
+}
 
 const SUPPORTED_EMAIL_TYPES = [
   'pre_lesson_24h',
@@ -22,9 +63,17 @@ const SUPPORTED_EMAIL_TYPES = [
   'booking_request_coach',
   'stripe_payouts_disabled',
   'stripe_payouts_enabled',
+  'student_no_show',
+  'coach_no_show',
+  'dispute_resolved',
+  'booking_request_expired',
+  'refund_succeeded',
 ];
 
-export function getEmailSubject(type, _payload) {
+export function getEmailSubject(type, payload) {
+  const bookingRequestSubject = payload?.coach_acceptance_deadline_label
+    ? `Booking request — respond by ${payload.coach_acceptance_deadline_label}`
+    : 'New booking request — PickleCoach';
   const subjects = {
     pre_lesson_24h: 'Reminder: Your Pickleball Lesson Tomorrow',
     booking_confirmed: 'Booking Confirmed',
@@ -34,9 +83,14 @@ export function getEmailSubject(type, _payload) {
     email_verification: 'Verify Your PickleCoach Email',
     email_change_confirm: 'Confirm Your New PickleCoach Email',
     email_changed_notification: 'Your PickleCoach Email Was Changed',
-    booking_request_coach: 'New booking request — PickleCoach',
+    booking_request_coach: bookingRequestSubject,
     stripe_payouts_disabled: 'Action needed: payouts paused on your PickleCoach account',
     stripe_payouts_enabled: 'Payouts enabled on your PickleCoach account',
+    student_no_show: 'You were marked as a no-show',
+    coach_no_show: payload?.headline || 'Coach no-show recorded',
+    dispute_resolved: 'Dispute resolved',
+    booking_request_expired: 'Booking request expired',
+    refund_succeeded: 'Refund completed',
   };
   return subjects[type] || 'Notification from PickleCoach';
 }
@@ -101,12 +155,7 @@ export function getEmailBodyFragment(type, payload = {}) {
   const scheduledAt = payload?.scheduled_at ? new Date(payload.scheduled_at).toLocaleString() : 'N/A';
 
   const templates = {
-    pre_lesson_24h: `
-      <h2 style="margin:0 0 12px 0;font-size:20px;font-weight:700;color:#222222;">Lesson Reminder - Tomorrow</h2>
-      <p style="margin:0 0 12px 0;">Your pickleball lesson is scheduled for tomorrow at ${scheduledAt}.</p>
-      <p style="margin:0 0 12px 0;">Coach: ${payload?.coach_name || 'Your coach'}</p>
-      <p style="margin:0;">Don't forget!</p>
-    `,
+    pre_lesson_24h: preLesson24hBody(payload),
     booking_confirmed: `
       <h2 style="margin:0 0 12px 0;font-size:20px;font-weight:700;color:#222222;">Booking Confirmed</h2>
       <p style="margin:0 0 12px 0;">Your lesson with <strong>${payload?.coach_name || 'your coach'}</strong> is confirmed.</p>
@@ -167,8 +216,11 @@ export function getEmailBodyFragment(type, payload = {}) {
       <h2 style="margin:0 0 12px 0;font-size:20px;font-weight:700;color:#222222;">You have a new booking request</h2>
       <p style="margin:0 0 12px 0;"><strong>${payload?.student_name || 'A student'}</strong> requested a lesson: <strong>${payload?.lesson_title || 'Lesson'}</strong>.</p>
       <p style="margin:0 0 12px 0;">Scheduled: ${scheduledAt}</p>
-      <p style="margin:0 0 12px 0;">Booking ID: ${payload?.booking_id ?? ''}</p>
-      <p style="margin:0;">Please open PickleCoach and accept or decline this request before it expires.</p>
+      ${payload?.coach_acceptance_deadline_label
+        ? `<p style="margin:0 0 12px 0;"><strong>Please accept or decline by ${payload.coach_acceptance_deadline_label}.</strong></p>
+      <p style="margin:0 0 12px 0;">If you don’t respond by then, the request expires automatically and the student’s payment authorization is released.</p>`
+        : `<p style="margin:0 0 12px 0;">${bookingRequestCoachTimeoutCopy(payload?.coach_acceptance_timeout_hours, payload?.min_booking_lead_hours)}</p>`}
+      <p style="margin:0;">Booking ID: ${payload?.booking_id ?? ''}</p>
     `,
     stripe_payouts_disabled: `
       <h2 style="margin:0 0 12px 0;font-size:20px;font-weight:700;color:#222222;">Payouts Paused — Action Needed</h2>
@@ -180,6 +232,32 @@ export function getEmailBodyFragment(type, payload = {}) {
       <h2 style="margin:0 0 12px 0;font-size:20px;font-weight:700;color:#222222;">Payouts Enabled</h2>
       <p style="margin:0 0 12px 0;">Your Stripe account is ready — you can now receive payouts.</p>
       <p style="margin:0;">Your coach profile can appear in the marketplace as soon as your listing checklist (lesson, court, availability) is complete.</p>
+    `,
+    student_no_show: `
+      <h2 style="margin:0 0 12px 0;font-size:20px;font-weight:700;color:#222222;">${payload?.headline || 'You were marked as a no-show'}</h2>
+      <p style="margin:0 0 12px 0;">${payload?.summary || 'You were marked as not attending this lesson.'}</p>
+      <p style="margin:0;">Booking ID: ${payload?.booking_id ?? ''}</p>
+    `,
+    coach_no_show: `
+      <h2 style="margin:0 0 12px 0;font-size:20px;font-weight:700;color:#222222;">${payload?.headline || 'Coach no-show recorded'}</h2>
+      <p style="margin:0 0 12px 0;">${payload?.summary || 'This lesson was recorded as a coach no-show.'}</p>
+      <p style="margin:0;">Booking ID: ${payload?.booking_id ?? ''}</p>
+    `,
+    dispute_resolved: `
+      <h2 style="margin:0 0 12px 0;font-size:20px;font-weight:700;color:#222222;">${payload?.headline || 'Dispute resolved'}</h2>
+      <p style="margin:0 0 12px 0;">${payload?.summary || 'This dispute was reviewed.'}</p>
+      <p style="margin:0;">Booking ID: ${payload?.booking_id ?? ''}</p>
+    `,
+    booking_request_expired: `
+      <h2 style="margin:0 0 12px 0;font-size:20px;font-weight:700;color:#222222;">${payload?.headline || 'Booking request expired'}</h2>
+      <p style="margin:0 0 12px 0;">${payload?.summary || 'Your coach did not respond in time, so this booking request expired. Your payment authorization was released.'}</p>
+      <p style="margin:0 0 12px 0;"><strong>${payload?.lesson_title || 'Lesson'}</strong> — ${scheduledAt}</p>
+      <p style="margin:0;">Booking ID: ${payload?.booking_id ?? ''}</p>
+    `,
+    refund_succeeded: `
+      <h2 style="margin:0 0 12px 0;font-size:20px;font-weight:700;color:#222222;">${payload?.headline || 'Refund completed'}</h2>
+      <p style="margin:0 0 12px 0;">${payload?.summary || 'Your refund has been completed.'}</p>
+      <p style="margin:0;">Booking ID: ${payload?.booking_id ?? ''}</p>
     `,
   };
 

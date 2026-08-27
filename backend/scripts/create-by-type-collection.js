@@ -36,6 +36,7 @@ function pathToFolder(pathSegments) {
   if (first === 'auth') return 'Authentication';
   if (first === 'coaches') return 'Coaches';
   if (first === 'students') return 'Students';
+  if (first === 'geo') return 'Geo';
   if (first === 'courts') return 'Courts';
   if (first === 'lessons') return 'Lessons';
   if (first === 'bookings') return 'Bookings';
@@ -54,6 +55,7 @@ const FOLDER_ORDER = [
   'Authentication',
   'Coaches',
   'Students',
+  'Geo',
   'Courts',
   'Lessons',
   'Bookings',

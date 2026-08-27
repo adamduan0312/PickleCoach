@@ -128,8 +128,8 @@ See `POSTMAN_SETUP_GUIDE.md` for detailed instructions and all endpoint test scr
 
 Use this sequence when adding courts to a coach in Postman (or in the app):
 
-1. **Create courts** (public or private): **`POST /api/courts`** only — **court fields only** (no `coach_notes` or legacy `notes`; either returns **400**). Coach is **auto-linked**; response includes `court` and `coachCourt` (link row without `coach_notes`). For **coach-specific link notes**, call **`POST /api/coaches/me/courts`** with the same `court_id` and **`coach_notes`** (**200** updates the auto-linked row). **Distance rule:** If the coach already has other courts, the new court must be within **100 miles** of one of them.
-2. **Add an existing court**: **`POST /api/coaches/me/courts`** with `court_id` (required), optional **`coach_notes`**. If already linked and you omit **`coach_notes`**, you get **409**; with **`coach_notes`**, link text is updated (**200**). **Distance rule:** New court must be within **100 miles** of one of your existing courts (if you have any).
+1. **Create courts** (public or private): **`POST /api/courts`** only — **court fields only** (no `coach_notes` or legacy `notes`; either returns **400**). Coach is **auto-linked**; response includes `court` and `coachCourt` (link row without `coach_notes`). For **coach-specific link notes**, call **`POST /api/coaches/me/courts`** with the same `court_id` and **`coach_notes`** (**200** updates the auto-linked row). Coaches may link/create courts **anywhere** — there is no teaching-area distance limit.
+2. **Add an existing court**: **`POST /api/coaches/me/courts`** with `court_id` (required), optional **`coach_notes`**. If already linked and you omit **`coach_notes`**, you get **409**; with **`coach_notes`**, link text is updated (**200**). Coaches may link courts **anywhere** — there is no teaching-area distance limit.
 3. **Remove a court from your profile** (e.g. when moving): **`DELETE /api/coaches/me/courts/:courtId`** where **`courtId`** is **`court_locations.id`** (same as **`court_id`** / **`court.id`** from List My Courts). This only removes **your** link; it does not delete the shared court. Then add courts in the new city and update your profile **location**.
 4. **List your courts**: **`GET /api/coaches/me/courts`** returns all linked courts (use **`court_id`** in the unlink URL).
 
@@ -703,7 +703,7 @@ pm.test("Profile updated successfully", function () {
 - Method: `GET`
 - URL: `{{api_url}}/coaches`
 - Headers: None (public endpoint)
-- Query params (all optional): `lat`, `lng`, `radius` (miles, default 10), `min_skill_rating`, `max_skill_rating`, `min_rating`, `page`, `limit` – use lat/lng/radius to find coaches near a location (e.g. "coaches near me").
+- Query params (all optional): `lat`, `lng`, `radius` (miles, default **25** at launch), `min_skill_rating`, `max_skill_rating`, `min_rating`, `page`, `limit` – use lat/lng/radius to find coaches near a location (e.g. "coaches near me").
 - Body: None
 
 **Test Script:**
@@ -2021,7 +2021,7 @@ Authorization: Bearer <token>
 
 ### `PUT /api/auth/me/role`
 - **Auth**: Required
-- **Description**: **Add** the **student** or **coach** role (self-service). Does **not** remove roles — you can have both. Admins cannot use this. Response may include a new **token** when a role was added. Removing coach/admin access is admin-only via **`PUT /api/users/:id`** and explicit **`roles`**; coach profile and Stripe data stay for payouts/history. After adding coach, create a profile with `POST /api/coaches/profile` if needed.
+- **Description**: **Add or remove** the **student** or **coach** role (self-service). Body: `{ "role": "student"|"coach", "action": "add"|"remove" }` (`action` defaults to **add**). You can have both. **Remove** only drops the `user_roles` row — coach profile, bookings, Stripe, etc. stay. Must keep at least one of student/coach. Admins cannot use this. Response may include a new **token**. After adding coach, create a profile with `POST /api/coaches/profile` if needed.
 - **UI mode**: Server returns **`roles`** (all permissions). Use client-side **`activeRole`** / mode (`student` vs `coach`) to show one dashboard at a time — not stored by this API.
 - **Request Body**: `{ "role": "student" | "coach" }` (required).
 - **Response** (Status: 200): `{ "success": true, "message": "Role added successfully...", "data": { "user": { id, full_name, email, roles: [...], ... }, "token": "..." } }`.
@@ -2336,8 +2336,8 @@ Authorization: Bearer <token>
 - **Error responses**: `403` (not coach or not own), `404` (not found), `500` (server error).
 
 **Coach courts workflow**
-- **Create courts**: **`POST /api/courts`** (no `coach_notes` / `notes` on this route). Coach is auto-linked. Use **`POST /api/coaches/me/courts`** with the same `court_id` and **`coach_notes`** to set or change link notes (**200** after auto-link). **Distance rule:** New court must be within **100 miles** of one of your existing courts (if any).
-- **Add existing court**: **`POST /api/coaches/me/courts`** with `court_id`; duplicate without **`coach_notes`** → **409**. **Distance rule:** Court must be within **100 miles** of one of your existing courts (if any).
+- **Create courts**: **`POST /api/courts`** (no `coach_notes` / `notes` on this route). Coach is auto-linked. Use **`POST /api/coaches/me/courts`** with the same `court_id` and **`coach_notes`** to set or change link notes (**200** after auto-link). Coaches may link/create courts **anywhere** — there is no teaching-area distance limit.
+- **Add existing court**: **`POST /api/coaches/me/courts`** with `court_id`; duplicate without **`coach_notes`** → **409**. Coaches may link courts **anywhere** — there is no teaching-area distance limit.
 - **Remove court from profile**: **`DELETE /api/coaches/me/courts/:courtId`** (`courtId` = `court_locations.id`, same as `court_id` from GET). Unlinks you only; does not delete the global court.
 - **List your courts**: **`GET /api/coaches/me/courts`** (use **`court_id`** for unlink).
 
@@ -2385,7 +2385,7 @@ Authorization: Bearer <token>
   }
   ```
 - **Response**: **201** when a new link is created; **200** when the coach was already linked and the body included **`coach_notes`** (coach_notes updated only). `data` contains `coachCourt` (id, coach_id, court_id, coach_notes, created_at, updated_at) and `court` (id, name, address, latitude, longitude, is_private). `rate_modifier` is reserved in DB for future pricing and is not returned on coach APIs.
-- **Error responses**: `400` (court_id missing/invalid or court &gt;100 miles from your existing courts), `404` (court not found), `409` (already linked and **`coach_notes`** omitted).
+- **Error responses**: `400` (court_id missing/invalid), `404` (court not found), `409` (already linked and **`coach_notes`** omitted).
 
 ### `DELETE /api/coaches/me/courts/:courtId`
 - **Auth**: Required (coach only)

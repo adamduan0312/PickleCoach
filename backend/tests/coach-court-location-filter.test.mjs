@@ -41,6 +41,15 @@ describe('getCoachesQuerySchema court_location_id', () => {
     assert.equal(value.min_rating, 4);
   });
 
+  it('defaults radius to 25 miles when omitted (launch sparse-market default)', () => {
+    const { error, value } = getCoachesQuerySchema.validate(
+      { lat: 25.7, lng: -80.2 },
+      { convert: true, abortEarly: false },
+    );
+    assert.equal(error, undefined);
+    assert.equal(value.radius, 25);
+  });
+
   it('rejects non-positive court_location_id', () => {
     const { error } = getCoachesQuerySchema.validate(
       { court_location_id: 0 },

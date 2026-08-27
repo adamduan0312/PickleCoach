@@ -32,6 +32,9 @@ export function createInMemoryPaymentIntentDouble() {
     /** @type {number} */ cancelCallCount: 0,
     /** @type {number} */ retrieveChargeCallCount: 0,
     /** @type {number} */ createRefundCallCount: 0,
+    /** @type {number} */ transferCallCount: 0,
+    /** @type {Array<object>} */ transfers: [],
+    transferSeq: 1,
     /** When set, next capturePaymentIntent throws this Error (then clears). */
     failNextCapture: null,
     /** When set, next createRefund throws this Error (then clears). */
@@ -159,6 +162,20 @@ export function createInMemoryPaymentIntentDouble() {
       row.refunds = [...(row.refunds || []), refund];
       if (idempotencyKey) api.refundIdByIdempotencyKey.set(String(idempotencyKey), id);
       return refund;
+    },
+
+    async transferToConnectedAccount(connectedAccountId, amount, currency = 'usd', metadata = {}) {
+      api.transferCallCount += 1;
+      const id = `tr_test_${runId}_${api.transferSeq++}`;
+      const transfer = {
+        id,
+        amount: Math.round(Number(amount) * 100),
+        currency: String(currency || 'usd').toLowerCase(),
+        destination: connectedAccountId,
+        metadata: metadata && typeof metadata === 'object' ? { ...metadata } : {},
+      };
+      api.transfers.push(transfer);
+      return transfer;
     },
 
     /**

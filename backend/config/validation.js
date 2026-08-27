@@ -180,6 +180,8 @@ export const updateProfileSchema = Joi.object({
 
 export const addUserRoleSchema = Joi.object({
   role: Joi.string().valid('student', 'coach').required(),
+  /** Default `add` keeps older clients working. `remove` drops the role without deleting historical data. */
+  action: Joi.string().valid('add', 'remove').default('add'),
 });
 
 export const updateUserSchema = Joi.object({
@@ -500,7 +502,7 @@ export const getCoachesQuerySchema = Joi.object({
   limit: Joi.number().integer().min(1).max(10000).optional(),
   lat: Joi.number().min(-90).max(90).optional(),
   lng: Joi.number().min(-180).max(180).optional(),
-  radius: Joi.number().positive().max(500).default(10), // miles, cap 500
+  radius: Joi.number().positive().max(500).default(25), // miles; launch default favors sparse markets
   /** Playing skill (`skill_rating` 2.0–6.0); excludes null skill_rating. Not review stars. */
   min_skill_rating: coachSkillRatingValueSchema.optional(),
   /** Playing skill upper bound; not review stars. */
@@ -523,6 +525,12 @@ export const getCoachesQuerySchema = Joi.object({
     });
   }
   return value;
+});
+
+/** GET /api/geo/search — ZIP / city / address → lat/lng for Discover. */
+export const geocodeSearchQuerySchema = Joi.object({
+  q: Joi.string().trim().min(2).max(200).required(),
+  limit: Joi.number().integer().min(1).max(10).default(5),
 });
 
 export const getLessonsQuerySchema = Joi.object({
@@ -639,13 +647,15 @@ export const getAuditLogsQuerySchema = Joi.object({
   record_id: Joi.number().integer().min(0).optional(),
 });
 
-/** GET /api/courts — public directory only (`is_private: false`). List-all: omit lat/lng; omit page & limit to return all (server-capped). Pass page and/or limit to paginate. Geo: lat+lng together; optional radius. */
+/** GET /api/courts — public directory only (`is_private: false`). List-all: omit lat/lng; omit page & limit to return all (server-capped). Pass page and/or limit to paginate. Geo: lat+lng together; optional radius. Text: optional `q` filters name/address/city/ZIP. */
 export const searchCourtsQuerySchema = Joi.object({
   page: Joi.number().integer().min(1).optional(),
   limit: Joi.number().integer().min(1).max(10000).optional(),
   lat: Joi.number().min(-90).max(90).optional(),
   lng: Joi.number().min(-180).max(180).optional(),
   radius: Joi.number().positive().max(100).default(10), // miles (geo search only)
+  /** Free-text filter over public courts (name, street, city, ZIP). */
+  q: Joi.string().trim().min(1).max(200).optional(),
 }).and('lat', 'lng');
 
 /** US MVP: exactly two letters (uppercase after convert). */
@@ -676,6 +686,7 @@ const usPostalCodeSchema = Joi.string()
 /**
  * POST /api/courts — structured address (no free-text `address`).
  * country optional (defaults US); state/postal_code US-MVP rules.
+ * Coaches should send geocoded lat/lng. `acknowledge_possible_duplicates` continues create after a "possible" warning.
  */
 export const createCourtBodySchema = Joi.object({
   name: Joi.string().trim().min(1).max(255).required()
@@ -694,4 +705,21 @@ export const createCourtBodySchema = Joi.object({
   latitude: Joi.number().min(-90).max(90).optional().allow(null),
   longitude: Joi.number().min(-180).max(180).optional().allow(null),
   is_private: Joi.boolean().default(false),
+  /** When true, skip "possible" duplicate soft-block (high-confidence still blocked). */
+  acknowledge_possible_duplicates: Joi.boolean().default(false),
+});
+
+/**
+ * POST /api/courts/duplicate-check — proximity + fuzzy candidates before create.
+ * Requires geocoded lat/lng. Does not create a court.
+ */
+export const courtDuplicateCheckBodySchema = Joi.object({
+  name: Joi.string().trim().min(1).max(255).required(),
+  address_line1: Joi.string().trim().min(1).max(255).required(),
+  city: Joi.string().trim().min(1).max(100).required(),
+  state: usStateSchema,
+  postal_code: usPostalCodeSchema,
+  country: Joi.string().trim().uppercase().length(2).pattern(/^[A-Z]{2}$/).default('US'),
+  latitude: Joi.number().min(-90).max(90).required(),
+  longitude: Joi.number().min(-180).max(180).required(),
 });

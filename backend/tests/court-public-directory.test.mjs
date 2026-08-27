@@ -101,15 +101,26 @@ describe('GET /api/courts (searchCourts) uses public directory where', () => {
         },
       ];
     };
-    const req = { validated: { lat: 40.7128, lng: -74.006, radius: 10 } };
-    const res = { json(payload) {
-      this.payload = payload;
-    } };
-    await searchCourts(req, res);
-    assert.equal(whereArg.is_private, false);
-    assert.equal(whereArg.deleted_at, null);
-    assert.ok(whereArg.latitude);
-    assert.ok(whereArg.longitude);
+    // Geo search always attempts OSM discovery; fail soft so this unit test stays offline.
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = async () => {
+      throw new Error('network disabled in unit test');
+    };
+    try {
+      const req = { validated: { lat: 40.7128, lng: -74.006, radius: 10 } };
+      const res = { json(payload) {
+        this.payload = payload;
+      } };
+      await searchCourts(req, res);
+      assert.equal(whereArg.is_private, false);
+      assert.equal(whereArg.deleted_at, null);
+      assert.ok(whereArg.latitude);
+      assert.ok(whereArg.longitude);
+      assert.equal(res.payload?.data?.length, 1);
+      assert.match(String(res.payload?.message || ''), /external discovery unavailable|successfully/);
+    } finally {
+      globalThis.fetch = origFetch;
+    }
   });
 });
 

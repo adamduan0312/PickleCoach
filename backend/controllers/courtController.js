@@ -8,9 +8,7 @@ import { parseCoachCourtLinkCoachNotesFromBody } from '../utils/coachCourtLinkNo
 import { publicCourtDirectoryWhere } from '../utils/courtPublicDirectory.js';
 import { findPublicActiveCoach } from '../utils/userLifecycle.js';
 import { serializeCourtForPublicViewer } from '../utils/courtAddressVisibility.js';
-
-/** Max miles a new court can be from a coach's existing courts (prevents linking/creating courts far away) */
-const MAX_COURT_DISTANCE_MILES = 100;
+import { distanceMiles as courtDupDistanceMiles, rankCourtDuplicateCandidates } from '../utils/courtDuplicateMatch.js';
 
 /** Safety cap when listing all courts with no pagination (DoS prevention). */
 const MAX_LIST_ALL_COURTS = 10000;
@@ -29,6 +27,9 @@ const PUBLIC_COURT_LIST_ATTRIBUTES = [
   'longitude',
   'is_private',
 ];
+
+/** Geo list/re-query cap — aligned with OSM discovery import cap. */
+const GEO_COURT_RESULT_LIMIT = 100;
 
 /** Coach–court link fields in coach/student APIs (rate_modifier stored in DB for future pricing). */
 const COACH_COURT_LINK_API_ATTRIBUTES = [
@@ -52,20 +53,7 @@ const COACH_COURT_LINK_POST_COURT_RESPONSE_ATTRIBUTES = [
 /**
  * Distance between two points in miles (Haversine)
  */
-const distanceMiles = (lat1, lng1, lat2, lng2) => {
-  if (lat1 == null || lng1 == null || lat2 == null || lng2 == null) return null;
-  const R = 3959;
-  const dLat = ((lat2 - lat1) * Math.PI) / 180;
-  const dLng = ((lng2 - lng1) * Math.PI) / 180;
-  const a =
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos((lat1 * Math.PI) / 180) *
-      Math.cos((lat2 * Math.PI) / 180) *
-      Math.sin(dLng / 2) *
-      Math.sin(dLng / 2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return R * c;
-};
+const distanceMiles = (lat1, lng1, lat2, lng2) => courtDupDistanceMiles(lat1, lng1, lat2, lng2);
 
 /** Closest first for geo search; courts missing coords sort last. */
 const sortCourtsByDistanceFrom = (courts, originLat, originLng) =>
@@ -77,6 +65,38 @@ const sortCourtsByDistanceFrom = (courts, originLat, originLng) =>
     return na - nb;
   });
 
+/** Text `q` → LIKE across public directory fields. */
+function textSearchWhere(q) {
+  if (!q) return null;
+  const term = `%${String(q).trim()}%`;
+  return {
+    [Op.or]: [
+      { name: { [Op.like]: term } },
+      { address_line1: { [Op.like]: term } },
+      { city: { [Op.like]: term } },
+      { postal_code: { [Op.like]: term } },
+      { state: { [Op.like]: term } },
+    ],
+  };
+}
+
+/**
+ * Load active courts near a point for duplicate matching (includes private — coaches may create near private).
+ */
+async function findCourtsNearForDuplicateCheck(lat, lng, radiusMiles = 1) {
+  const latRange = radiusMiles / 69;
+  const lngRange = radiusMiles / (69 * Math.cos(lat * Math.PI / 180));
+  return CourtLocation.findAll({
+    where: {
+      deleted_at: null,
+      latitude: { [Op.between]: [lat - latRange, lat + latRange] },
+      longitude: { [Op.between]: [lng - lngRange, lng + lngRange] },
+    },
+    attributes: PUBLIC_COURT_LIST_ATTRIBUTES,
+    limit: 50,
+  });
+}
+
 /**
  * GET /api/courts
  * Public directory only: excludes courts with `is_private: true` (discovery flag —
@@ -84,16 +104,20 @@ const sortCourtsByDistanceFrom = (courts, originLat, originLng) =>
  * Note: coach court lists still redact private *addresses* for students; that is
  * address visibility, not directory discovery.
  * - No lat/lng: all courts (capped) when page & limit omitted; else paginated.
- * - With lat/lng (+ radius): bounding box; results ordered by distance; lazy import if empty.
+ * - With lat/lng (+ radius) and **no** `q`: local public courts + OSM/Overpass discovery
+ *   (always attempt external discovery; existing local courts do not block it).
+ * - Optional `q`: text filter on name / street / city / ZIP / state (DB-only; no Overpass).
  */
 export const searchCourts = async (req, res) => {
   try {
-    const { lat, lng, radius, page, limit } = req.validated;
+    const { lat, lng, radius, page, limit, q } = req.validated;
+    const textWhere = textSearchWhere(q);
 
     if (lat == null || lng == null) {
+      const where = publicCourtDirectoryWhere(textWhere ? { [Op.and]: [textWhere] } : {});
       if (page == null && limit == null) {
         const rows = await CourtLocation.findAll({
-          where: publicCourtDirectoryWhere(),
+          where,
           attributes: PUBLIC_COURT_LIST_ATTRIBUTES,
           order: [['id', 'ASC']],
           limit: MAX_LIST_ALL_COURTS,
@@ -107,7 +131,7 @@ export const searchCourts = async (req, res) => {
       const offset = (pageNum - 1) * limitNum;
 
       const { count, rows } = await CourtLocation.findAndCountAll({
-        where: publicCourtDirectoryWhere(),
+        where,
         attributes: PUBLIC_COURT_LIST_ATTRIBUTES,
         limit: limitNum,
         offset,
@@ -135,47 +159,56 @@ export const searchCourts = async (req, res) => {
     const latRange = radiusMiles / 69; // ~69 miles per degree latitude
     const lngRange = radiusMiles / (69 * Math.cos(latitude * Math.PI / 180));
 
-    const courts = await CourtLocation.findAll({
-      where: publicCourtDirectoryWhere({
-        latitude: {
-          [Op.between]: [latitude - latRange, latitude + latRange],
-        },
-        longitude: {
-          [Op.between]: [longitude - lngRange, longitude + lngRange],
-        },
-      }),
-      attributes: PUBLIC_COURT_LIST_ATTRIBUTES,
-      limit: 100,
+    const geoParts = {
+      latitude: {
+        [Op.between]: [latitude - latRange, latitude + latRange],
+      },
+      longitude: {
+        [Op.between]: [longitude - lngRange, longitude + lngRange],
+      },
+    };
+    const where = publicCourtDirectoryWhere(
+      textWhere ? { [Op.and]: [geoParts, textWhere] } : geoParts,
+    );
+
+    const mapGeoResults = (rows) => sortCourtsByDistanceFrom(rows, latitude, longitude).map((c) => {
+      const plain = c.get ? c.get({ plain: true }) : { ...c };
+      const d = distanceMiles(latitude, longitude, plain.latitude, plain.longitude);
+      if (d != null) plain.distance_miles = Math.round(d * 10) / 10;
+      return plain;
     });
 
-    const ordered = sortCourtsByDistanceFrom(courts, latitude, longitude);
+    const loadLocalGeoCourts = async () => {
+      const rows = await CourtLocation.findAll({
+        where,
+        attributes: PUBLIC_COURT_LIST_ATTRIBUTES,
+        limit: GEO_COURT_RESULT_LIMIT,
+      });
+      return mapGeoResults(rows);
+    };
 
-    // Lazy import: If no courts found, import from external APIs
-    if (ordered.length === 0) {
+    let ordered = await loadLocalGeoCourts();
+
+    // Geographic nearby discovery: always attempt OSM when there is no text `q`.
+    // Existing local courts must NOT skip Overpass. Text search stays DB-only.
+    if (!q) {
       try {
-        const { lazyImportCourts } = await import('../services/courtImportService.js');
-        const importedCourts = await lazyImportCourts(latitude, longitude, radiusMiles);
-        
-        // Re-fetch courts after import
-        const allCourts = await CourtLocation.findAll({
-          where: publicCourtDirectoryWhere({
-            latitude: {
-              [Op.between]: [latitude - latRange, latitude + latRange],
-            },
-            longitude: {
-              [Op.between]: [longitude - lngRange, longitude + lngRange],
-            },
-          }),
-          attributes: PUBLIC_COURT_LIST_ATTRIBUTES,
-          limit: 100,
-        });
-        
-        const sorted = sortCourtsByDistanceFrom(allCourts, latitude, longitude);
-        return res.json(createResponse(sorted, `Courts retrieved successfully (${importedCourts.length} imported)`));
+        const { discoverCourtsNearby } = await import('../services/courtImportService.js');
+        const importedCourts = await discoverCourtsNearby(latitude, longitude, radiusMiles);
+        ordered = await loadLocalGeoCourts();
+        const msg = importedCourts.length > 0
+          ? `Courts retrieved successfully (${importedCourts.length} imported)`
+          : 'Courts retrieved successfully';
+        return res.json(createResponse(ordered, msg));
       } catch (importError) {
-        logger.error('Court lazy import failed:', importError);
-        // Return empty array if import fails
-        return res.json(createResponse([], 'Courts retrieved successfully (import failed)'));
+        logger.error('Court nearby OSM discovery failed:', importError);
+        // Keep local results (possibly empty) — never 500 solely because Overpass failed.
+        return res.json(createResponse(
+          ordered,
+          ordered.length > 0
+            ? 'Courts retrieved successfully (external discovery unavailable)'
+            : 'Courts retrieved successfully (external discovery unavailable)',
+        ));
       }
     }
 
@@ -230,6 +263,39 @@ export const getCourt = async (req, res) => {
 };
 
 /**
+ * POST /api/courts/duplicate-check
+ * Geocoded proposal → nearby PickleCoach courts with high/possible confidence.
+ * Does not create. Auth: coach or admin.
+ */
+export const checkCourtDuplicates = async (req, res) => {
+  try {
+    const userRoles = req.user.roles || [];
+    if (!userRoles.includes('coach') && !userRoles.includes('admin')) {
+      return res.status(403).json(createErrorResponse('Only coaches and admins can check court duplicates'));
+    }
+
+    const proposed = {
+      name: req.validated.name,
+      address_line1: req.validated.address_line1,
+      city: req.validated.city,
+      state: req.validated.state,
+      postal_code: req.validated.postal_code,
+      country: req.validated.country || 'US',
+      latitude: req.validated.latitude,
+      longitude: req.validated.longitude,
+    };
+
+    const nearby = await findCourtsNearForDuplicateCheck(proposed.latitude, proposed.longitude, 1);
+    const ranked = rankCourtDuplicateCandidates(proposed, nearby.map((c) => c.get({ plain: true })));
+
+    return res.json(createResponse(ranked, 'Duplicate check complete'));
+  } catch (error) {
+    logger.error('Error checking court duplicates:', error);
+    return res.status(500).json(createErrorResponse('Failed to check for duplicate courts'));
+  }
+};
+
+/**
  * DELETE /api/courts/:id
  * Soft delete a court (global marketplace row). **Admin only** — coaches remove courts from their profile with
  * `DELETE /api/coaches/me/courts/:courtId` (unlink only), not this route.
@@ -265,8 +331,10 @@ export const deleteCourt = async (req, res) => {
  *
  * Rules:
  * - Exact identity (active or soft-deleted) → reuse (restore if soft-deleted); never overwrite fields.
- * - Same name, different address among active courts → 409 COURT_NAME_CONFLICT.
+ * - Court names are NOT globally unique — "Holiday Park" may exist in many cities/states.
+ * - Same/nearby coordinates (geographic duplicate gate) → 409 with existing candidates to select.
  * - Different name, same address → allow (multiple courts at one venue).
+ * - OSM imports use osm_type + osm_id as stable external identity (separate from this path).
  */
 export const createCourt = async (req, res) => {
   try {
@@ -280,6 +348,7 @@ export const createCourt = async (req, res) => {
       latitude,
       longitude,
       is_private,
+      acknowledge_possible_duplicates,
     } = req.validated || req.body;
     const userId = req.user.id;
     const userRoles = req.user.roles || [];
@@ -292,6 +361,13 @@ export const createCourt = async (req, res) => {
     const coachCourtFieldRejection = courtCreatePayloadRejectsCoachCourtFields(req.body);
     if (coachCourtFieldRejection.rejected) {
       return res.status(400).json(createErrorResponse(coachCourtFieldRejection.message));
+    }
+
+    // Coaches must geocode before create so distance + duplicate checks are meaningful.
+    if (userRoles.includes('coach') && (latitude == null || longitude == null)) {
+      return res.status(400).json(createErrorResponse(
+        'latitude and longitude are required when creating a court. Confirm the address location first.',
+      ));
     }
 
     const identityFields = {
@@ -316,23 +392,41 @@ export const createCourt = async (req, res) => {
       }
       // Reuse — do not overwrite name/address/coords/is_private.
     } else {
-      // Same display name at a different address → refuse (protect shared identity).
-      const sameNameActive = await CourtLocation.findOne({
-        where: { name, deleted_at: null },
-      });
-      if (sameNameActive) {
-        return res.status(409).json({
-          success: false,
-          error: 'COURT_NAME_CONFLICT',
-          message:
-            'A court with this name already exists at a different location. Please verify the address or choose a different court name.',
-        });
-      }
+      // Proximity / fuzzy duplicate gate (new rows only). Names alone never block create —
+      // the same display name can legitimately exist in different cities/states.
+      if (latitude != null && longitude != null) {
+        const nearby = await findCourtsNearForDuplicateCheck(
+          parseFloat(latitude),
+          parseFloat(longitude),
+          1,
+        );
+        const ranked = rankCourtDuplicateCandidates(
+          {
+            ...identityFields,
+            latitude: parseFloat(latitude),
+            longitude: parseFloat(longitude),
+          },
+          nearby.map((c) => c.get({ plain: true })),
+        );
 
-      if (userRoles.includes('coach')) {
-        const distanceError = await coachCourtDistanceError(userId, latitude, longitude);
-        if (distanceError) {
-          return res.status(400).json(createErrorResponse(distanceError));
+        if (ranked.high_confidence.length > 0) {
+          return res.status(409).json({
+            success: false,
+            error: 'COURT_DUPLICATE_HIGH',
+            message:
+              'We found an existing court that is very likely this location. Please use the existing court instead of creating a new one.',
+            data: ranked,
+          });
+        }
+
+        if (ranked.possible.length > 0 && !acknowledge_possible_duplicates) {
+          return res.status(409).json({
+            success: false,
+            error: 'COURT_DUPLICATE_POSSIBLE',
+            message:
+              'We found nearby courts that may already be this location. Review them, or confirm this is a different location.',
+            data: ranked,
+          });
         }
       }
 
@@ -363,18 +457,8 @@ export const createCourt = async (req, res) => {
     }
 
     // Coaches are linked to the court (create or reuse). Existing shared fields are not overwritten.
+    // Coaches may teach at any valid court — no geographic cluster limit between their courts.
     if (userRoles.includes('coach')) {
-      if (!courtWasCreated) {
-        const distanceError = await coachCourtDistanceError(
-          userId,
-          court.latitude,
-          court.longitude,
-        );
-        if (distanceError) {
-          return res.status(400).json(createErrorResponse(distanceError));
-        }
-      }
-
       let coachCourt = await CoachCourtLocation.findOne({
         where: { coach_id: userId, court_id: court.id },
       });
@@ -440,30 +524,6 @@ export const createCourt = async (req, res) => {
     return res.status(500).json(createErrorResponse('Failed to create court'));
   }
 };
-
-/**
- * When a coach already has located courts, a new/linked court must be within MAX_COURT_DISTANCE_MILES.
- * @returns {Promise<string|null>} error message or null if OK
- */
-async function coachCourtDistanceError(coachId, latitude, longitude) {
-  const existingLinks = await CoachCourtLocation.findAll({
-    where: { coach_id: coachId },
-    include: [{ model: CourtLocation, as: 'court', attributes: ['id', 'latitude', 'longitude'] }],
-  });
-  const existingCourtsWithLocation = existingLinks
-    .map((l) => l.court)
-    .filter((c) => c && c.latitude != null && c.longitude != null);
-  const newLat = latitude != null ? parseFloat(latitude) : null;
-  const newLng = longitude != null ? parseFloat(longitude) : null;
-  if (existingCourtsWithLocation.length === 0 || newLat == null || newLng == null) {
-    return null;
-  }
-  const withinRange = existingCourtsWithLocation.some(
-    (c) => distanceMiles(newLat, newLng, c.latitude, c.longitude) <= MAX_COURT_DISTANCE_MILES,
-  );
-  if (withinRange) return null;
-  return `New court must be within ${MAX_COURT_DISTANCE_MILES} miles of your existing courts. When you move, remove old courts first then add new ones.`;
-}
 
 /**
  * GET /api/coaches/:id/courts
@@ -598,31 +658,6 @@ export const addCoachCourt = async (req, res) => {
     });
     if (!courtToAdd) {
       return res.status(404).json(createErrorResponse('Court not found'));
-    }
-
-    // New court must be within MAX_COURT_DISTANCE_MILES of one of the coach's existing courts (if any)
-    const existingLinks = await CoachCourtLocation.findAll({
-      where: { coach_id: userId },
-      include: [{ model: CourtLocation, as: 'court', attributes: ['id', 'latitude', 'longitude'] }],
-    });
-    const existingCourtsWithLocation = existingLinks
-      .map((l) => l.court)
-      .filter((c) => c && c.latitude != null && c.longitude != null);
-    const newLat = courtToAdd.latitude != null ? parseFloat(courtToAdd.latitude) : null;
-    const newLng = courtToAdd.longitude != null ? parseFloat(courtToAdd.longitude) : null;
-    if (existingCourtsWithLocation.length > 0 && newLat != null && newLng != null) {
-      const withinRange = existingCourtsWithLocation.some(
-        (c) => distanceMiles(newLat, newLng, c.latitude, c.longitude) <= MAX_COURT_DISTANCE_MILES
-      );
-      if (!withinRange) {
-        return res
-          .status(400)
-          .json(
-            createErrorResponse(
-              `This court is more than ${MAX_COURT_DISTANCE_MILES} miles from your existing courts. Only link courts you can actually coach at. When you move, remove old courts first then add new ones.`
-            )
-          );
-      }
     }
 
     // Check if already linked

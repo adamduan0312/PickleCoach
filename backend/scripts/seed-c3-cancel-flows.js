@@ -470,8 +470,8 @@ async function main() {
 
   if (only.has('C4')) {
     console.log('Seeding C4 completion → escrow → Connect payout…');
-    // Capture against a valid future slot, then move wall-clock so lesson already ended.
-    const endedStart = new Date(Date.now() - lessonDurationMs(lesson) - 15 * 60 * 1000);
+    // Capture against a valid future slot, then age the lesson so the 24h review window has already ended.
+    const endedStart = new Date(Date.now() - lessonDurationMs(lesson) - 25 * 60 * 60 * 1000);
     const r = await createCapturedConfirmed({
       student,
       lesson,
@@ -483,7 +483,7 @@ async function main() {
     results.push({
       scenario: 'C4_completion_escrow_payout',
       note:
-        'Already confirmed + captured; scheduled_at moved so lesson end is in the past. Skip auto-wait: coach POST complete.',
+        'Already confirmed + captured; scheduled_at moved so lesson end was 25h ago (24h financial review window elapsed). Complete confirms attendance only; payoutWorker can then release escrow.',
       booking_id: r.booking.id,
       payment_id: r.payment.id,
       payment_intent_id: r.payment_intent_id,

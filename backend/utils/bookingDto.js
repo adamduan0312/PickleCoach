@@ -1,5 +1,20 @@
 import { isMessagingLocked } from './bookingMessaging.js';
 import { serializeCourtLocationForBooking } from './courtAddressVisibility.js';
+import { serializeFinancialReview } from './financialReviewWindow.js';
+import { getCoachAcceptanceTimeoutHours, getMinBookingLeadHours, getCoachAcceptanceDeadlineAt } from './coachAcceptanceTimeout.js';
+
+function attachPendingAcceptanceFields(dto, plain) {
+  if (!dto || dto.status !== 'pending') return dto;
+  dto.coach_acceptance_timeout_hours = getCoachAcceptanceTimeoutHours();
+  dto.min_booking_lead_hours = getMinBookingLeadHours();
+  if (plain?.created_at && plain?.scheduled_at) {
+    dto.coach_acceptance_deadline_at = getCoachAcceptanceDeadlineAt({
+      requestAt: plain.created_at,
+      scheduledAt: plain.scheduled_at,
+    }).toISOString();
+  }
+  return dto;
+}
 
 /** Core booking fields for list, disputes, and embedded summaries. */
 export const BOOKING_SUMMARY_FIELD_NAMES = [
@@ -116,8 +131,9 @@ export function resolveStudentReliabilityScore(userOrReliability) {
 /**
  * @param {object|null|undefined} user
  * @param {{ includeStudentReliability?: boolean }} [opts]
- *   When `includeStudentReliability` is true (coach already authorized on the booking),
- *   adds `reliability_score` only — never event history, penalties, or decay internals.
+ *   Opt-in only. Coach booking routes do not set this for MVP — student reliability
+ *   is an internal / self / admin signal, not a coach marketplace field.
+ *   When true, adds `reliability_score` only — never event history, penalties, or decay internals.
  */
 export function serializeUserPartySummary(user, { includeStudentReliability = false } = {}) {
   if (!user) return null;
@@ -158,6 +174,7 @@ export function serializeBookingSummary(booking) {
   const plain = toPlain(booking);
   const dto = pickFields(plain, BOOKING_SUMMARY_FIELD_NAMES);
   dto.messaging_locked = isMessagingLocked(plain);
+  dto.financial_review = serializeFinancialReview(plain);
   return dto;
 }
 
@@ -184,10 +201,12 @@ export function serializeBookingForDisputes(booking) {
 export function serializeBookingDetailCore(booking) {
   if (!booking) return null;
   const plain = toPlain(booking);
-  return {
+  const dto = {
     ...serializeBookingSummary(plain),
     ...pickFields(plain, BOOKING_DETAIL_EXTRA_FIELD_NAMES),
+    financial_review: serializeFinancialReview(plain),
   };
+  return attachPendingAcceptanceFields(dto, plain);
 }
 
 /**
@@ -196,7 +215,7 @@ export function serializeBookingDetailCore(booking) {
  *   includeStudentReliability?: boolean,
  *   viewerIsPrivileged?: boolean,
  * }} [opts]
- *   Coach-only: attach `primaryStudent.reliability_score` (default 100 when no row).
+ *   `includeStudentReliability` is opt-in and unused by coach booking routes (MVP).
  *   `viewerIsPrivileged` — coach on booking or admin; sees exact private-court address.
  */
 export function serializeBookingListItem(
@@ -216,6 +235,7 @@ export function serializeBookingListItem(
   } = plain;
 
   const dto = serializeBookingSummary(bookingCore);
+  attachPendingAcceptanceFields(dto, plain);
   if (lesson !== undefined) dto.lesson = serializeLessonSummary(lesson);
   if (coach !== undefined) dto.coach = serializeUserPartySummary(coach);
   if (primaryStudent !== undefined) {

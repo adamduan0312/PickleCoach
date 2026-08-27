@@ -12,6 +12,12 @@ import { withNotificationRoute } from '../notifications/notificationRoutes.js';
 import { getEmailSubject, getEmailContent } from '../notifications/emailTemplates.js';
 import { getSMSContent } from '../notifications/smsTemplates.js';
 import {
+  getCoachAcceptanceTimeoutHours,
+  getMinBookingLeadHours,
+  getCoachAcceptanceDeadlineAt,
+} from '../utils/coachAcceptanceTimeout.js';
+import { buildLessonReminderDetailFields } from '../utils/lessonReminderCopy.js';
+import {
   buildBookingConfirmedNotificationContent,
   buildBookingRequestCoachNotificationContent,
   buildPreLessonReminderNotificationContent,
@@ -20,6 +26,13 @@ import {
   buildNewMessageNotificationPayload,
   buildStripePayoutsDisabledNotificationContent,
   buildStripePayoutsEnabledNotificationContent,
+  buildStudentNoShowNotificationContent,
+  buildCoachNoShowNotificationContent,
+  buildDisputeOpenedNotificationContent,
+  buildDisputeResolvedNotificationContent,
+  buildBookingRequestExpiredNotificationContent,
+  buildReviewReceivedNotificationContent,
+  buildRefundSucceededNotificationContent,
 } from '../notifications/payloadBuilders.js';
 
 /**
@@ -163,8 +176,9 @@ export const sendNotification = async (notificationId) => {
 /**
  * Deliver in-app notification always; email when the user has an email on file.
  */
-const deliverDualChannel = async (userId, type, payload, { email } = {}) => {
-  const inApp = await createNotification(userId, type, 'in_app', payload);
+const deliverDualChannel = async (userId, type, payload, { email, entity_type = null, entity_id = null } = {}) => {
+  const entityOpts = { entity_type, entity_id };
+  const inApp = await createNotification(userId, type, 'in_app', payload, entityOpts);
   try {
     await sendNotification(inApp.id);
   } catch (error) {
@@ -172,7 +186,7 @@ const deliverDualChannel = async (userId, type, payload, { email } = {}) => {
   }
 
   if (email) {
-    const emailNotif = await createNotification(userId, type, 'email', payload);
+    const emailNotif = await createNotification(userId, type, 'email', payload, entityOpts);
     try {
       await sendNotification(emailNotif.id);
     } catch (error) {
@@ -187,9 +201,29 @@ export function reminderIncludesEmail(reminderType) {
 }
 
 /**
+ * True when this user already got this reminder for the booking (any channel).
+ * Prevents duplicate emails when multiple API processes run the reminder cron.
+ */
+async function reminderAlreadyDelivered(userId, type, bookingId) {
+  if (!userId || !bookingId) return false;
+  const existing = await Notification.findOne({
+    where: {
+      user_id: userId,
+      type,
+      entity_type: 'booking',
+      entity_id: bookingId,
+    },
+    attributes: ['id'],
+  });
+  return !!existing;
+}
+
+/**
  * Send reminder notification for a booking.
  * MVP: 24h → in-app + email; 1h → in-app only (student and coach).
- * @param {Object} booking - Booking object with coach and primaryStudent
+ * Idempotent per user + booking + reminder type (safe under overlapping worker runs).
+ * Email/in-app payloads include the other party, lesson, when, and booking.courtLocation.
+ * @param {Object} booking - Booking with coach, primaryStudent, lesson, courtLocation
  * @param {string} reminderType - '24h' or '1h'
  */
 export const sendReminderNotification = async (booking, reminderType) => {
@@ -205,46 +239,82 @@ export const sendReminderNotification = async (booking, reminderType) => {
       return;
     }
 
+    const type = `pre_lesson_${hours}h`;
     const includeEmail = reminderIncludesEmail(reminderType);
+    const entityOpts = { entity_type: 'booking', entity_id: booking.id };
 
     if (booking.primaryStudent) {
-      const studentBase = {
-        booking_id: booking.id,
-        scheduled_at: booking.scheduled_at,
-        coach_name: booking.coach?.full_name || 'Coach',
-        lesson_title: booking.lesson?.title,
-        reminder_type: reminderType,
-        audience: 'student',
-      };
-      await deliverDualChannel(
-        booking.primary_student_id,
-        `pre_lesson_${hours}h`,
-        {
-          ...studentBase,
-          ...buildPreLessonReminderNotificationContent(studentBase),
-        },
-        { email: includeEmail ? booking.primaryStudent.email : undefined },
-      );
+      if (await reminderAlreadyDelivered(booking.primary_student_id, type, booking.id)) {
+        logger.info({
+          component: 'notification',
+          event: 'reminder_skip_duplicate',
+          reminderType,
+          audience: 'student',
+          bookingId: booking.id,
+          userId: booking.primary_student_id,
+        });
+      } else {
+        const details = buildLessonReminderDetailFields(
+          booking,
+          booking.primaryStudent.timezone || booking.coach?.timezone || 'UTC',
+          { audience: 'student' },
+        );
+        const studentBase = {
+          booking_id: booking.id,
+          scheduled_at: booking.scheduled_at,
+          coach_name: booking.coach?.full_name || 'Coach',
+          student_name: booking.primaryStudent?.full_name || 'Student',
+          reminder_type: reminderType,
+          audience: 'student',
+          ...details,
+        };
+        await deliverDualChannel(
+          booking.primary_student_id,
+          type,
+          {
+            ...studentBase,
+            ...buildPreLessonReminderNotificationContent(studentBase),
+          },
+          { email: includeEmail ? booking.primaryStudent.email : undefined, ...entityOpts },
+        );
+      }
     }
 
     if (booking.coach) {
-      const coachBase = {
-        booking_id: booking.id,
-        scheduled_at: booking.scheduled_at,
-        student_name: booking.primaryStudent?.full_name || 'Student',
-        lesson_title: booking.lesson?.title,
-        reminder_type: reminderType,
-        audience: 'coach',
-      };
-      await deliverDualChannel(
-        booking.coach_id,
-        `pre_lesson_${hours}h`,
-        {
-          ...coachBase,
-          ...buildPreLessonReminderNotificationContent(coachBase),
-        },
-        { email: includeEmail ? booking.coach.email : undefined },
-      );
+      if (await reminderAlreadyDelivered(booking.coach_id, type, booking.id)) {
+        logger.info({
+          component: 'notification',
+          event: 'reminder_skip_duplicate',
+          reminderType,
+          audience: 'coach',
+          bookingId: booking.id,
+          userId: booking.coach_id,
+        });
+      } else {
+        const details = buildLessonReminderDetailFields(
+          booking,
+          booking.coach.timezone || booking.primaryStudent?.timezone || 'UTC',
+          { audience: 'coach' },
+        );
+        const coachBase = {
+          booking_id: booking.id,
+          scheduled_at: booking.scheduled_at,
+          student_name: booking.primaryStudent?.full_name || 'Student',
+          coach_name: booking.coach?.full_name || 'Coach',
+          reminder_type: reminderType,
+          audience: 'coach',
+          ...details,
+        };
+        await deliverDualChannel(
+          booking.coach_id,
+          type,
+          {
+            ...coachBase,
+            ...buildPreLessonReminderNotificationContent(coachBase),
+          },
+          { email: includeEmail ? booking.coach.email : undefined, ...entityOpts },
+        );
+      }
     }
   } catch (error) {
     logger.error('Error sending reminder notification:', error);
@@ -260,7 +330,7 @@ export const notifyCoachNewBookingRequest = async (bookingId) => {
 
   const booking = await Booking.findByPk(bookingId, {
     include: [
-      { model: User, as: 'coach', attributes: ['id', 'full_name', 'email'] },
+      { model: User, as: 'coach', attributes: ['id', 'full_name', 'email', 'timezone'] },
       { model: User, as: 'primaryStudent', attributes: ['id', 'full_name', 'email'] },
       { model: Lesson, as: 'lesson', attributes: ['id', 'title'] },
     ],
@@ -271,12 +341,35 @@ export const notifyCoachNewBookingRequest = async (bookingId) => {
     return;
   }
 
+  const deadlineAt = getCoachAcceptanceDeadlineAt({
+    requestAt: booking.created_at,
+    scheduledAt: booking.scheduled_at,
+  });
+  const coachTz = booking.coach?.timezone || 'UTC';
+  let deadlineLabel;
+  try {
+    deadlineLabel = new Intl.DateTimeFormat('en-US', {
+      timeZone: coachTz,
+      weekday: 'long',
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    }).format(deadlineAt);
+  } catch {
+    deadlineLabel = deadlineAt.toLocaleString();
+  }
+
   const basePayload = {
     booking_id: booking.id,
     scheduled_at: booking.scheduled_at,
     student_name: booking.primaryStudent?.full_name || 'A student',
     lesson_title: booking.lesson?.title || 'Lesson',
     coach_name: booking.coach?.full_name,
+    coach_acceptance_timeout_hours: getCoachAcceptanceTimeoutHours(),
+    min_booking_lead_hours: getMinBookingLeadHours(),
+    coach_acceptance_deadline_at: deadlineAt.toISOString(),
+    coach_acceptance_deadline_label: deadlineLabel,
   };
   const payload = {
     ...basePayload,
@@ -494,4 +587,246 @@ export const notifyNewMessage = async ({ booking, message, sender, conversationI
   }
 
   return notification;
+};
+
+function uniqueUserIds(...ids) {
+  const out = [];
+  for (const id of ids) {
+    if (id == null) continue;
+    const n = Number(id);
+    if (!Number.isFinite(n) || out.includes(n)) continue;
+    out.push(n);
+  }
+  return out;
+}
+
+/** Who should receive a dispute-opened ping (in-app). Never the opener. */
+export const resolveDisputeOpenedRecipients = ({ openedBy, coachId, studentId } = {}) => {
+  const coach = coachId != null ? Number(coachId) : null;
+  const student = studentId != null ? Number(studentId) : null;
+  if (openedBy === 'admin') return uniqueUserIds(coach, student);
+  if (openedBy === 'student') return uniqueUserIds(coach).filter((id) => id !== student);
+  if (openedBy === 'coach') return uniqueUserIds(student).filter((id) => id !== coach);
+  return [];
+};
+
+const bookingNotifyBase = (booking) => ({
+  booking_id: booking.id,
+  scheduled_at: booking.scheduled_at,
+  lesson_title: booking.lesson?.title || 'Lesson',
+  coach_name: booking.coach?.full_name,
+  student_name: booking.primaryStudent?.full_name,
+});
+
+/** Student: in-app + email when booking is marked student_no_show. */
+export const notifyStudentNoShow = async (bookingId, { markedBy } = {}) => {
+  const booking = await loadBookingNotificationContext(bookingId);
+  if (!booking?.primary_student_id) return;
+
+  const payload = {
+    ...bookingNotifyBase(booking),
+    marked_by: markedBy === 'admin' ? 'admin' : 'coach',
+    ...buildStudentNoShowNotificationContent({ markedBy }),
+  };
+
+  await deliverDualChannel(
+    booking.primary_student_id,
+    'student_no_show',
+    payload,
+    { email: booking.primaryStudent?.email },
+  );
+};
+
+/** Student + coach: in-app + email when admin marks coach_no_show. */
+export const notifyCoachNoShow = async (bookingId) => {
+  const booking = await loadBookingNotificationContext(bookingId);
+  if (!booking) return;
+
+  const base = bookingNotifyBase(booking);
+  const recipients = uniqueUserIds(booking.primary_student_id, booking.coach_id);
+
+  for (const userId of recipients) {
+    const audience = Number(booking.primary_student_id) === userId ? 'student' : 'coach';
+    const email =
+      audience === 'coach' ? booking.coach?.email : booking.primaryStudent?.email;
+    const payload = {
+      ...base,
+      audience,
+      ...buildCoachNoShowNotificationContent({ audience }),
+    };
+    await deliverDualChannel(userId, 'coach_no_show', payload, { email });
+  }
+};
+
+/** In-app only: other party (or both when admin opens). */
+export const notifyDisputeOpened = async ({
+  bookingId,
+  disputeId,
+  openedBy,
+  disputeTypeCode,
+} = {}) => {
+  const booking = await loadBookingNotificationContext(bookingId);
+  if (!booking) return;
+
+  const recipientIds = resolveDisputeOpenedRecipients({
+    openedBy,
+    coachId: booking.coach_id,
+    studentId: booking.primary_student_id,
+  });
+  if (recipientIds.length === 0) return;
+
+  const content = buildDisputeOpenedNotificationContent({ openedBy, disputeTypeCode });
+  const payload = {
+    ...bookingNotifyBase(booking),
+    dispute_id: disputeId ?? null,
+    opened_by: openedBy || null,
+    dispute_type_code: disputeTypeCode || null,
+    ...content,
+  };
+
+  for (const userId of recipientIds) {
+    const inApp = await createNotification(userId, 'dispute_opened', 'in_app', payload, {
+      entity_type: 'dispute',
+      entity_id: disputeId ?? null,
+    });
+    try {
+      await sendNotification(inApp.id);
+    } catch (error) {
+      logger.warn({
+        component: 'notification',
+        event: 'dispute_opened_in_app_send_failed',
+        userId,
+        disputeId,
+        message: error?.message,
+      });
+    }
+  }
+};
+
+/** Student + coach: in-app + email after admin resolve. */
+export const notifyDisputeResolved = async ({
+  bookingId,
+  disputeId,
+  outcome,
+  financialAction,
+  bookingStatus,
+  decision,
+} = {}) => {
+  const booking = await loadBookingNotificationContext(bookingId);
+  if (!booking) return;
+
+  const recipients = uniqueUserIds(booking.primary_student_id, booking.coach_id);
+  const base = {
+    ...bookingNotifyBase(booking),
+    dispute_id: disputeId ?? null,
+    outcome: outcome ?? null,
+    financial_action: financialAction ?? null,
+    booking_status: bookingStatus ?? null,
+    decision: decision ?? null,
+  };
+
+  for (const userId of recipients) {
+    const audience = Number(booking.primary_student_id) === userId ? 'student' : 'coach';
+    const email =
+      audience === 'coach' ? booking.coach?.email : booking.primaryStudent?.email;
+    const payload = {
+      ...base,
+      audience,
+      ...buildDisputeResolvedNotificationContent({
+        audience,
+        outcome,
+        financialAction,
+        bookingStatus,
+        decision,
+      }),
+    };
+    await deliverDualChannel(userId, 'dispute_resolved', payload, { email });
+  }
+};
+
+/**
+ * Student: pending booking expired because the coach never accepted/declined.
+ * Authorization was voided — explain both expiry and that they were not charged.
+ */
+export const notifyBookingRequestExpired = async (bookingId) => {
+  const booking = await loadBookingNotificationContext(bookingId);
+  if (!booking?.primary_student_id) return;
+
+  const payload = {
+    ...bookingNotifyBase(booking),
+    cancelled_by: 'system',
+    ...buildBookingRequestExpiredNotificationContent(),
+  };
+
+  await deliverDualChannel(
+    booking.primary_student_id,
+    'booking_request_expired',
+    payload,
+    { email: booking.primaryStudent?.email },
+  );
+};
+
+/** Coach: in-app only when a student leaves a review. */
+export const notifyReviewReceived = async ({
+  reviewId,
+  bookingId,
+  coachId,
+  rating,
+  studentName,
+} = {}) => {
+  if (coachId == null) return;
+
+  const content = buildReviewReceivedNotificationContent({ rating, studentName });
+  const payload = {
+    review_id: reviewId ?? null,
+    booking_id: bookingId ?? null,
+    rating: rating ?? null,
+    student_name: studentName || null,
+    route: reviewId != null ? `/reviews/${reviewId}` : undefined,
+    ...content,
+  };
+
+  const inApp = await createNotification(coachId, 'review_received', 'in_app', payload, {
+    entity_type: 'review',
+    entity_id: reviewId ?? null,
+  });
+  try {
+    await sendNotification(inApp.id);
+  } catch (error) {
+    logger.warn({
+      component: 'notification',
+      event: 'review_received_in_app_send_failed',
+      coachId,
+      reviewId,
+      message: error?.message,
+    });
+  }
+};
+
+/**
+ * Student: Stripe confirmed a refund (charge.refunded / reconciliation mirror).
+ * Call only when refunded amount on the payment actually increased.
+ */
+export const notifyRefundSucceeded = async ({
+  bookingId,
+  paymentId,
+  refundAmount,
+} = {}) => {
+  if (bookingId == null) return;
+  const booking = await loadBookingNotificationContext(bookingId);
+  if (!booking?.primary_student_id) return;
+
+  const payload = {
+    ...bookingNotifyBase(booking),
+    payment_id: paymentId ?? null,
+    refund_amount: refundAmount ?? null,
+    ...buildRefundSucceededNotificationContent({ refundAmount }),
+  };
+
+  await deliverDualChannel(
+    booking.primary_student_id,
+    'refund_succeeded',
+    payload,
+    { email: booking.primaryStudent?.email },
+  );
 };

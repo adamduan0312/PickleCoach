@@ -11,6 +11,13 @@ import {
   buildBookingCancelledNotificationContent,
   buildPreLessonReminderNotificationContent,
   buildNewMessageNotificationPayload,
+  buildStudentNoShowNotificationContent,
+  buildCoachNoShowNotificationContent,
+  buildDisputeOpenedNotificationContent,
+  buildDisputeResolvedNotificationContent,
+  buildBookingRequestExpiredNotificationContent,
+  buildReviewReceivedNotificationContent,
+  buildRefundSucceededNotificationContent,
 } from '../notifications/payloadBuilders.js';
 import { withNotificationRoute } from '../notifications/notificationRoutes.js';
 
@@ -51,14 +58,16 @@ describe('in-app notification UI contract', () => {
       booking_id: 81,
       student_name: 'Jamie',
       lesson_title: 'Serve Practice',
+      coach_acceptance_deadline_label: 'Thursday, Aug 27, 8:00 AM',
     };
     const payload = withNotificationRoute('booking_request_coach', {
       ...base,
       ...buildBookingRequestCoachNotificationContent(base),
     });
     assertInAppUiContract(payload, { type: 'booking_request_coach', expectPreview: true });
-    assert.equal(payload.headline, 'New booking request');
+    assert.equal(payload.headline, 'Booking request — respond by Thursday, Aug 27, 8:00 AM');
     assert.match(payload.summary, /Jamie/);
+    assert.match(payload.summary, /Thursday, Aug 27, 8:00 AM/);
     assert.equal(payload.route, '/bookings/81');
   });
 
@@ -122,5 +131,72 @@ describe('in-app notification UI contract', () => {
     );
     assertInAppUiContract(message, { type: 'new_message', expectPreview: true });
     assert.equal(message.route, '/messages/42');
+  });
+
+  it('student_no_show / coach_no_show / dispute_opened / dispute_resolved satisfy the contract', () => {
+    const studentNs = withNotificationRoute('student_no_show', {
+      booking_id: 81,
+      ...buildStudentNoShowNotificationContent({ markedBy: 'coach' }),
+    });
+    assertInAppUiContract(studentNs, { type: 'student_no_show' });
+    assert.equal(studentNs.headline, 'You were marked as a no-show');
+    assert.match(studentNs.summary, /24 hours/);
+
+    const coachNsStudent = withNotificationRoute('coach_no_show', {
+      booking_id: 81,
+      ...buildCoachNoShowNotificationContent({ audience: 'student' }),
+    });
+    assertInAppUiContract(coachNsStudent, { type: 'coach_no_show' });
+    assert.match(coachNsStudent.headline, /coach was marked/i);
+
+    const opened = withNotificationRoute('dispute_opened', {
+      booking_id: 81,
+      dispute_id: 21,
+      ...buildDisputeOpenedNotificationContent({
+        openedBy: 'student',
+        disputeTypeCode: 'coach_no_show_claim',
+      }),
+    });
+    assertInAppUiContract(opened, { type: 'dispute_opened', expectPreview: true });
+    assert.equal(opened.route, '/bookings/81');
+
+    const resolved = withNotificationRoute('dispute_resolved', {
+      booking_id: 81,
+      dispute_id: 21,
+      ...buildDisputeResolvedNotificationContent({
+        audience: 'student',
+        outcome: 'coach_no_show',
+        financialAction: 'refund_student',
+        bookingStatus: 'coach_no_show',
+      }),
+    });
+    assertInAppUiContract(resolved, { type: 'dispute_resolved' });
+    assert.match(resolved.summary, /refunded/);
+  });
+
+  it('booking_request_expired / review_received / refund_succeeded satisfy the contract', () => {
+    const expired = withNotificationRoute('booking_request_expired', {
+      booking_id: 81,
+      ...buildBookingRequestExpiredNotificationContent(),
+    });
+    assertInAppUiContract(expired, { type: 'booking_request_expired' });
+    assert.match(expired.summary, /authorization was released/);
+    assert.equal(expired.route, '/bookings/81');
+
+    const review = withNotificationRoute('review_received', {
+      booking_id: 81,
+      route: '/reviews/15',
+      ...buildReviewReceivedNotificationContent({ rating: 5, studentName: 'Ada' }),
+    });
+    assertInAppUiContract(review, { type: 'review_received', expectPreview: true });
+    assert.equal(review.route, '/reviews/15');
+
+    const refund = withNotificationRoute('refund_succeeded', {
+      booking_id: 81,
+      ...buildRefundSucceededNotificationContent({ refundAmount: 42.5 }),
+    });
+    assertInAppUiContract(refund, { type: 'refund_succeeded' });
+    assert.match(refund.summary, /\$42\.50/);
+    assert.equal(refund.route, '/bookings/81');
   });
 });

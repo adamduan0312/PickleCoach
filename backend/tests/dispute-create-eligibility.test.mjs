@@ -46,6 +46,35 @@ describe('disputeCreateEligibility', () => {
     assert.equal(r.code, 'dispute_create_cancelled_booking');
   });
 
+  it('blocks student/coach creates after the 24h review window', () => {
+    const afterWindow = new Date('2026-07-02T16:05:00.000Z');
+    const r = checkDisputeCreateBookingEligibility(
+      { ...baseBooking, status: 'completed' },
+      afterWindow,
+    );
+    assert.equal(r.ok, false);
+    assert.equal(r.code, 'dispute_create_financial_review_closed');
+  });
+
+  it('allows admin creates after the 24h review window', () => {
+    const afterWindow = new Date('2026-07-02T16:05:00.000Z');
+    const r = checkDisputeCreateBookingEligibility(
+      { ...baseBooking, status: 'completed' },
+      afterWindow,
+      { isAdmin: true },
+    );
+    assert.equal(r.ok, true);
+  });
+
+  it('allows student/coach creates during the 24h window', () => {
+    const duringWindow = new Date('2026-07-01T20:00:00.000Z');
+    const r = checkDisputeCreateBookingEligibility(
+      { ...baseBooking, status: 'awaiting_verification' },
+      duringWindow,
+    );
+    assert.equal(r.ok, true);
+  });
+
   it('lessonHasEnded matches scheduled_at + duration_minutes', () => {
     const booking = { scheduled_at: lessonStart, duration_minutes: 60 };
     assert.equal(lessonHasEnded(booking, duringLesson), false);

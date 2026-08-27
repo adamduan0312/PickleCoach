@@ -14,6 +14,7 @@ import messageRoutes from './messageRoutes.js';
 import disputeRoutes from './disputeRoutes.js';
 import notificationRoutes from './notificationRoutes.js';
 import adminRoutes from './adminRoutes.js';
+import geoRoutes from './geoRoutes.js';
 import * as webhookController from '../controllers/webhookController.js';
 
 const router = express.Router();
@@ -21,6 +22,7 @@ const router = express.Router();
 router.use('/auth', authRoutes);
 router.use('/users', userRoutes);
 router.use('/coaches', coachRoutes);
+router.use('/geo', geoRoutes);
 router.use('/students', studentRoutes);
 router.use('/courts', courtRoutes);
 router.use('/lessons', lessonRoutes);

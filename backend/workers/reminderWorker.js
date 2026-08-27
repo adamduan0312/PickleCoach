@@ -1,11 +1,23 @@
-import { Booking, User, Lesson } from '../models/index.js';
+import { Booking, User, Lesson, CourtLocation } from '../models/index.js';
 import { Op } from 'sequelize';
 import { logger } from '../config/logger.js';
 import * as notificationService from '../services/notificationService.js';
 
+const reminderIncludes = [
+  { model: User, as: 'coach', attributes: ['id', 'full_name', 'email', 'timezone'] },
+  { model: User, as: 'primaryStudent', attributes: ['id', 'full_name', 'email', 'timezone'] },
+  { model: Lesson, as: 'lesson', attributes: ['id', 'title'] },
+  {
+    model: CourtLocation,
+    as: 'courtLocation',
+    attributes: ['id', 'name', 'address_line1', 'city', 'state', 'postal_code', 'country', 'is_private'],
+  },
+];
+
 /**
  * Send reminder notifications for upcoming bookings.
  * MVP: 24h (in-app + email) and 1h (in-app only). Runs every minute.
+ * Court comes from booking.court_location_id (the court chosen at checkout).
  */
 export const sendReminderNotifications = async () => {
   const now = new Date();
@@ -24,11 +36,7 @@ export const sendReminderNotifications = async () => {
           [Op.between]: [in24Hours, in24HoursEnd],
         },
       },
-      include: [
-        { model: User, as: 'coach', attributes: ['id', 'full_name', 'email'] },
-        { model: User, as: 'primaryStudent', attributes: ['id', 'full_name', 'email'] },
-        { model: Lesson, as: 'lesson', attributes: ['id', 'title'] },
-      ],
+      include: reminderIncludes,
     });
 
     for (const booking of bookings24h) {
@@ -42,11 +50,7 @@ export const sendReminderNotifications = async () => {
           [Op.between]: [in1Hour, in1HourEnd],
         },
       },
-      include: [
-        { model: User, as: 'coach', attributes: ['id', 'full_name', 'email'] },
-        { model: User, as: 'primaryStudent', attributes: ['id', 'full_name', 'email'] },
-        { model: Lesson, as: 'lesson', attributes: ['id', 'title'] },
-      ],
+      include: reminderIncludes,
     });
 
     for (const booking of bookings1h) {

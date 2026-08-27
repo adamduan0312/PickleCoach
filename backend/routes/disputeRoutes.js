@@ -8,6 +8,7 @@ import { loadResolveDisputeTypeForValidation } from '../middleware/disputeValida
 const router = express.Router();
 
 router.get('/', authenticate, validateQuery(getDisputesQuerySchema), disputeController.getDisputes);
+router.get('/types', authenticate, disputeController.getDisputeTypes);
 router.get('/:id', authenticate, disputeController.getDisputeById);
 router.post('/', authenticate, requireVerifiedEmailUnlessAdmin, validateRequest(createDisputeSchema), disputeController.createDispute);
 router.put(

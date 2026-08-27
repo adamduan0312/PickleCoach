@@ -32,6 +32,7 @@ import {
 import { COACH_BOOKING_REQUEST_NOTIFIED_METADATA_KEY } from '../utils/paymentAuthorizationGate.js';
 import { isPubliclyActiveUser } from '../utils/userLifecycle.js';
 import { escrowForUncapturedAuthorization } from '../utils/paymentEscrowStatus.js';
+import { assertMinBookingLeadTime } from '../utils/coachAcceptanceTimeout.js';
 
 async function ensureStripeCustomer(student, transaction = null) {
   let stripeCustomerId = student.stripe_customer_id || null;
@@ -102,6 +103,10 @@ export async function validateBookingRequestContext({
   const scheduledDate = new Date(scheduledAt);
   if (Number.isNaN(scheduledDate.getTime()) || scheduledDate < new Date()) {
     return { ok: false, status: 400, message: 'Cannot book in the past' };
+  }
+  const leadCheck = assertMinBookingLeadTime(scheduledDate);
+  if (!leadCheck.ok) {
+    return leadCheck;
   }
   if (courtLocationId == null) {
     return {
@@ -282,6 +287,13 @@ export async function confirmBookingFromPaymentIntent({ studentId, paymentIntent
   if (!lesson || !lesson.is_active) {
     const err = new Error('Lesson not found or inactive');
     err.statusCode = 404;
+    throw err;
+  }
+
+  if (lesson.coach_id === studentId) {
+    const err = new Error('You cannot book your own lesson. Coach and student must be different users.');
+    err.statusCode = 400;
+    err.code = 'cannot_book_self';
     throw err;
   }
 

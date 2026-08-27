@@ -89,6 +89,24 @@ export function canSelfServiceAddRole(user, roleToAdd, currentDbRoles) {
 }
 
 /**
+ * Self-service may remove `student` or `coach` when at least one of those remains.
+ * Does not delete historical coach/student data — only the `user_roles` assignment.
+ * Admin role is never removable here (self-service schema excludes it).
+ * @param {import('sequelize').Model | object} _user reserved for future governance floors
+ * @param {'student' | 'coach'} roleToRemove
+ * @param {string[]} currentDbRoles roles currently in DB (before remove)
+ */
+export function canSelfServiceRemoveRole(_user, roleToRemove, currentDbRoles) {
+  if (roleToRemove !== 'student' && roleToRemove !== 'coach') return false;
+  const roles = Array.isArray(currentDbRoles) ? currentDbRoles : [];
+  if (!roles.includes(roleToRemove)) return true; // noop; handler returns unchanged
+  const marketplaceLeft = roles.filter(
+    (r) => (r === 'student' || r === 'coach') && r !== roleToRemove,
+  );
+  return marketplaceLeft.length >= 1;
+}
+
+/**
  * @param {import('sequelize').Model | object} user
  * @param {string[]} effectiveRoles
  */

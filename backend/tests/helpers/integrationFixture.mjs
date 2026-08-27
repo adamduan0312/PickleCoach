@@ -14,6 +14,8 @@ import {
   Booking,
   Payment,
   PaymentAction,
+  Payout,
+  Dispute,
   CancellationHistory,
   Notification,
   Conversation,
@@ -179,8 +181,10 @@ export async function createBookingJourneyFixture({ studentCount = 1 } = {}) {
       const paymentIds = payments.map((p) => p.id);
       if (paymentIds.length) {
         await PaymentAction.destroy({ where: { payment_id: paymentIds } });
+        await Payout.destroy({ where: { payment_id: paymentIds } });
       }
       await PaymentAction.destroy({ where: { booking_id: bookingIds } });
+      await Dispute.destroy({ where: { booking_id: bookingIds } });
       await CancellationHistory.destroy({ where: { booking_id: bookingIds } });
       await Payment.destroy({ where: { booking_id: bookingIds } });
       const conversations = await Conversation.findAll({

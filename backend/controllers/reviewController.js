@@ -7,6 +7,7 @@ import { recalculateCoachRatingFromReviews } from '../utils/recalculateCoachRati
 import { logger } from '../config/logger.js';
 import { serializeReview } from '../utils/reviewDto.js';
 import * as userLifecycle from '../utils/userLifecycle.js';
+import * as notificationService from '../services/notificationService.js';
 
 const MAX_LIST_ALL_REVIEWS = 10000;
 
@@ -198,6 +199,22 @@ export const createReview = async (req, res) => {
     await recalculateCoachRatingFromReviews(booking.coach_id);
 
     await logAudit(req.user.id, 'review_created', 'reviews', review.id, null, review.toJSON(), req);
+
+    void notificationService.notifyReviewReceived({
+      reviewId: review.id,
+      bookingId: booking.id,
+      coachId: booking.coach_id,
+      rating: review.rating,
+      studentName: req.user.full_name,
+    }).catch((err) => {
+      logger.warn({
+        component: 'reviews',
+        event: 'review_received_notify_failed',
+        reviewId: review.id,
+        bookingId: booking.id,
+        message: err?.message,
+      });
+    });
 
     return successResponse(res, serializeReview(review), 'Review created successfully', 201);
   } catch (error) {
