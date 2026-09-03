@@ -5,7 +5,7 @@ import { FormField } from '../../components/ui/FormField.jsx';
 import { PasswordField } from '../../components/ui/PasswordField.jsx';
 import { Alert } from '../../components/ui/States.jsx';
 import { useAuth } from '../../auth/AuthContext.jsx';
-import { homePathFor } from '../../auth/paths.js';
+import { postLoginPath } from '../../auth/paths.js';
 
 export function LoginPage() {
   const { login } = useAuth();
@@ -21,9 +21,9 @@ export function LoginPage() {
     setBusy(true);
     setError(null);
     try {
-      const user = await login({ email, password });
+      const { user, mode } = await login({ email, password });
       const from = location.state?.from;
-      navigate(from || homePathFor(user, null), { replace: true });
+      navigate(postLoginPath(user, mode, from), { replace: true });
     } catch (err) {
       setError(err.message);
     } finally {

@@ -65,6 +65,18 @@ describe('coachAcceptanceTimeout', () => {
     assert.equal(deadline.toISOString(), '2026-08-27T14:00:00.000Z');
   });
 
+  it('deadline is request+24h for a lesson several days out (Sep 1 request, Sep 3 lesson)', () => {
+    const requestAt = new Date('2026-09-01T13:49:00.000Z'); // Mon 9:49 AM America/New_York
+    const scheduledAt = new Date('2026-09-03T19:00:00.000Z'); // Thu 3:00 PM America/New_York
+    const deadline = getCoachAcceptanceDeadlineAt({
+      requestAt,
+      scheduledAt,
+      maxHours: 24,
+      leadHours: 2,
+    });
+    assert.equal(deadline.toISOString(), '2026-09-02T13:49:00.000Z'); // Tue 9:49 AM ET
+  });
+
   it('rejects booking requests inside the min lead window', () => {
     const now = new Date('2026-08-27T13:00:00.000Z'); // 9am
     const lesson = new Date('2026-08-27T14:00:00.000Z'); // 10am — only 1h out

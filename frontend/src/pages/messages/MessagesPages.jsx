@@ -3,7 +3,8 @@ import { Link, useParams } from 'react-router-dom';
 import { messagesApi, asList } from '../../api/index.js';
 import { useAsync } from '../../hooks/useAsync.js';
 import { EmptyState, ErrorState, LoadingState, Alert } from '../../components/ui/States.jsx';
-import { formatInZone, detectLocalTimezone } from '../../utils/datetime.js';
+import { CharacterCounter } from '../../components/ui/CharacterLimit.jsx';
+import { CHAR_LIMITS } from '../../utils/charLimits.js';
 import { useAuth } from '../../auth/AuthContext.jsx';
 
 export function ConversationsPage() {
@@ -107,7 +108,16 @@ export function ConversationPage() {
           <div ref={bottomRef} />
         </div>
         <form className="chat-composer" onSubmit={send}>
-          <textarea value={text} onChange={(e) => setText(e.target.value)} disabled={locked || busy} placeholder={locked ? 'Messaging locked' : 'Write a message'} />
+          <div className="chat-composer-input">
+            <textarea
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              disabled={locked || busy}
+              placeholder={locked ? 'Messaging locked' : 'Write a message'}
+              maxLength={CHAR_LIMITS.messageText}
+            />
+            <CharacterCounter value={text} max={CHAR_LIMITS.messageText} subtle />
+          </div>
           <button className="btn" type="submit" disabled={locked || busy || !text.trim()}>Send</button>
         </form>
       </div>

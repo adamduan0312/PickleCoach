@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { loadStripe } from '@stripe/stripe-js';
 import { Elements, PaymentElement, useElements, useStripe } from '@stripe/react-stripe-js';
@@ -8,7 +8,8 @@ import { Avatar } from '../../components/ui/Avatar.jsx';
 import { formatMoney, courtLabel, teachingLocationLabel } from '../../utils/format.js';
 import { formatDateInZone, formatTimeInZone, detectLocalTimezone } from '../../utils/datetime.js';
 import { useAuth } from '../../auth/AuthContext.jsx';
-import { pendingRequestTimeoutCopy, coachAcceptanceTimeoutHours, minBookingLeadHours } from '../../domain/bookingStatus.js';
+import { CheckoutPolicyExplainer } from '../../components/bookings/CheckoutPolicyExplainer.jsx';
+import { bookingApiErrorCopy, bookingApiErrorMessage, stripePaymentFormErrorCopy } from '../../domain/bookingErrors.js';
 
 const STRIPE_PUBLISHABLE_KEY = import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY || '';
 const stripePromise = STRIPE_PUBLISHABLE_KEY ? loadStripe(STRIPE_PUBLISHABLE_KEY) : null;
@@ -80,6 +81,11 @@ export function BookingCheckoutPage() {
     return () => { cancelled = true; };
   }, [missingParams, coachId, lessonId, courtId, scheduledAt, user?.id]);
 
+  const stripeElementsOptions = useMemo(
+    () => (intent?.client_secret ? { clientSecret: intent.client_secret } : null),
+    [intent?.client_secret],
+  );
+
   if (missingParams) {
     return (
       <div className="page checkout-page">
@@ -91,12 +97,22 @@ export function BookingCheckoutPage() {
   }
 
   if (error && !intent) {
+    const scheduleCopy = bookingApiErrorCopy(error);
     return (
       <div className="page checkout-page">
         <h1>Checkout</h1>
         {meta ? <BookingSummary meta={meta} scheduledAt={scheduledAt} tz={tz} amount={null} currency={null} /> : null}
-        <ErrorState error={error} />
-        <Link to={`/coaches/${coachId}`}>Back to coach</Link>
+        {scheduleCopy ? (
+          <div className="error-box">
+            <div className="alert error">
+              <strong>{scheduleCopy.title}</strong>
+              <div className="small" style={{ marginTop: 6 }}>{scheduleCopy.body}</div>
+            </div>
+          </div>
+        ) : (
+          <ErrorState error={bookingApiErrorMessage(error)} />
+        )}
+        <BookingScheduleErrorRecovery kind={scheduleCopy?.kind} coachId={coachId} />
       </div>
     );
   }
@@ -135,9 +151,11 @@ export function BookingCheckoutPage() {
 
       <section className="card checkout-payment" aria-labelledby="checkout-payment-heading">
         <h2 id="checkout-payment-heading">Payment</h2>
-        <Elements stripe={stripePromise} options={{ clientSecret: intent.client_secret }}>
-          <CheckoutForm intent={intent} />
-        </Elements>
+        {stripeElementsOptions ? (
+          <Elements stripe={stripePromise} options={stripeElementsOptions}>
+            <CheckoutForm intent={intent} coachId={coachId} />
+          </Elements>
+        ) : null}
       </section>
 
       <p className="small muted" style={{ marginTop: 16 }}>
@@ -193,71 +211,168 @@ function BookingSummary({ meta, scheduledAt, tz, amount, currency }) {
   );
 }
 
-function CheckoutForm({ intent }) {
+function BookingScheduleErrorRecovery({ kind, coachId }) {
+  const coachHref = coachId ? `/coaches/${coachId}` : null;
+  if (kind === 'student_schedule') {
+    return (
+      <p className="row" style={{ marginTop: 12, gap: '0.75rem' }}>
+        {coachHref ? <Link to={coachHref}>Choose another time</Link> : null}
+        <Link to="/bookings">View my bookings</Link>
+      </p>
+    );
+  }
+  if (kind === 'slot_taken') {
+    return (
+      <p style={{ marginTop: 12 }}>
+        {coachHref
+          ? <Link to={coachHref}>Choose another time</Link>
+          : <Link to="/bookings">Go to bookings</Link>}
+      </p>
+    );
+  }
+  return (
+    <p style={{ marginTop: 12 }}>
+      {coachHref
+        ? <Link to={coachHref}>Back to coach</Link>
+        : <Link to="/bookings">Go to bookings</Link>}
+    </p>
+  );
+}
+
+function CheckoutForm({ intent, coachId }) {
   const stripe = useStripe();
   const elements = useElements();
   const navigate = useNavigate();
   const [busy, setBusy] = useState(false);
+  const [busyPhase, setBusyPhase] = useState(null);
   const [error, setError] = useState(null);
+  const [paymentElementReady, setPaymentElementReady] = useState(false);
+  const [paymentElementLoadError, setPaymentElementLoadError] = useState(null);
+  const submitStartedRef = useRef(false);
+
+  useEffect(() => {
+    setPaymentElementReady(false);
+    setPaymentElementLoadError(null);
+  }, [intent.client_secret]);
+
+  const confirmingHref = useMemo(() => {
+    const q = new URLSearchParams({
+      pi: intent.payment_intent_id,
+    });
+    if (coachId) q.set('coach', String(coachId));
+    return `/bookings/confirming?${q.toString()}`;
+  }, [intent.payment_intent_id, coachId]);
 
   const returnUrl = useMemo(
-    () => `${window.location.origin}/bookings/confirming?pi=${encodeURIComponent(intent.payment_intent_id)}`,
-    [intent.payment_intent_id],
+    () => `${window.location.origin}${confirmingHref}`,
+    [confirmingHref],
   );
 
   const amountLabel = formatMoney(intent.amount, intent.currency);
+  const canAuthorize = Boolean(stripe && elements && paymentElementReady && !paymentElementLoadError && !busy);
 
   async function onSubmit(e) {
     e.preventDefault();
-    if (!stripe || !elements) return;
+    if (!canAuthorize || submitStartedRef.current) return;
+    submitStartedRef.current = true;
     setBusy(true);
+    setBusyPhase('authorize');
     setError(null);
     try {
+      const submitted = await elements.submit();
+      if (submitted?.error) {
+        setError(submitted.error);
+        return;
+      }
+
       const result = await stripe.confirmPayment({
         elements,
         confirmParams: { return_url: returnUrl },
         redirect: 'if_required',
       });
       if (result.error) {
-        setError(result.error.message);
-        setBusy(false);
+        setError(result.error);
         return;
       }
-      const confirmed = await bookingsApi.confirm(intent.payment_intent_id);
-      const bookingId = confirmed.data?.booking?.id;
-      navigate(bookingId ? `/bookings/${bookingId}?booked=1` : '/bookings');
+
+      if (result.paymentIntent?.status === 'requires_action') {
+        navigate(confirmingHref, { replace: true });
+        return;
+      }
+
+      setBusyPhase('confirm');
+      const confirmRes = await bookingsApi.confirm(intent.payment_intent_id);
+      const bookingId = confirmRes.data?.booking?.id;
+      navigate(bookingId ? `/bookings/${bookingId}` : '/bookings', { replace: true });
     } catch (err) {
-      setError(err.message);
+      setError(err);
+    } finally {
       setBusy(false);
+      setBusyPhase(null);
+      submitStartedRef.current = false;
     }
   }
 
+  const scheduleCopy = bookingApiErrorCopy(error);
+  const stripeFormCopy = !scheduleCopy ? stripePaymentFormErrorCopy(error) : null;
+  const errorMessage = error && !scheduleCopy && !stripeFormCopy
+    ? bookingApiErrorMessage(error)
+    : null;
+  const loadFailureCopy = paymentElementLoadError
+    ? stripePaymentFormErrorCopy(paymentElementLoadError)
+      || {
+        title: 'Payment form isn’t ready.',
+        body: 'Check your connection, then refresh this page and try again.',
+      }
+    : null;
+
   return (
     <form className="stack checkout-payment-form" onSubmit={onSubmit}>
-      <PaymentElement />
+      <PaymentElement
+        onReady={() => {
+          setPaymentElementReady(true);
+          setPaymentElementLoadError(null);
+        }}
+        onLoadError={(event) => {
+          const loadErr = event?.error || event || new Error('Payment form failed to load.');
+          setPaymentElementReady(false);
+          setPaymentElementLoadError(loadErr);
+        }}
+      />
 
-      <div className="checkout-auth-explainer">
-        <h3 className="checkout-auth-explainer-title">What happens when you authorize</h3>
-        <ul className="checkout-auth-explainer-list">
-          <li>Your card is authorized for {amountLabel} — you are not charged yet.</li>
-          <li>
-            {pendingRequestTimeoutCopy(
-              {
-                coach_acceptance_timeout_hours: coachAcceptanceTimeoutHours({}),
-                min_booking_lead_hours: minBookingLeadHours({}),
-              },
-              { audience: 'student' },
-            )}
-          </li>
-          <li>If the coach declines or does not respond in time, the authorization is released.</li>
-          <li>After the lesson, you have 24 hours to report a payment or lesson problem before payment is normally finalized.</li>
-        </ul>
-      </div>
+      {!paymentElementReady && !paymentElementLoadError ? (
+        <p className="small muted" role="status">Payment form is still loading…</p>
+      ) : null}
 
-      <Alert tone="error">{error}</Alert>
+      <CheckoutPolicyExplainer amountLabel={amountLabel} />
 
-      <button className="btn checkout-authorize-cta" type="submit" disabled={!stripe || busy}>
-        {busy ? 'Authorizing…' : `Authorize ${amountLabel}`}
+      {scheduleCopy ? (
+        <Alert tone="error">
+          <strong>{scheduleCopy.title}</strong>
+          <div className="small" style={{ marginTop: 6 }}>{scheduleCopy.body}</div>
+        </Alert>
+      ) : loadFailureCopy ? (
+        <Alert tone="error">
+          <strong>{loadFailureCopy.title}</strong>
+          <div className="small" style={{ marginTop: 6 }}>{loadFailureCopy.body}</div>
+        </Alert>
+      ) : stripeFormCopy ? (
+        <Alert tone="error">
+          <strong>{stripeFormCopy.title}</strong>
+          <div className="small" style={{ marginTop: 6 }}>{stripeFormCopy.body}</div>
+        </Alert>
+      ) : (
+        <Alert tone="error">{errorMessage}</Alert>
+      )}
+
+      {scheduleCopy ? (
+        <BookingScheduleErrorRecovery kind={scheduleCopy.kind} coachId={coachId} />
+      ) : null}
+
+      <button className="btn checkout-authorize-cta" type="submit" disabled={!canAuthorize}>
+        {busy
+          ? (busyPhase === 'confirm' ? 'Completing booking…' : 'Authorizing…')
+          : `Authorize ${amountLabel}`}
       </button>
 
       {isStripeTestMode ? (

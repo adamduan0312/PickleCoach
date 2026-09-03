@@ -18,6 +18,8 @@ import {
   buildBookingRequestExpiredNotificationContent,
   buildReviewReceivedNotificationContent,
   buildRefundSucceededNotificationContent,
+  buildConfirmAttendanceReminderNotificationContent,
+  buildLessonCompletedNotificationContent,
 } from '../notifications/payloadBuilders.js';
 import { withNotificationRoute } from '../notifications/notificationRoutes.js';
 
@@ -172,6 +174,37 @@ describe('in-app notification UI contract', () => {
     });
     assertInAppUiContract(resolved, { type: 'dispute_resolved' });
     assert.match(resolved.summary, /refunded/);
+  });
+
+  it('confirm_attendance_reminder / lesson_completed satisfy the contract', () => {
+    const confirmAttendance = withNotificationRoute('confirm_attendance_reminder', {
+      booking_id: 81,
+      student_name: 'Mira Miami',
+      lesson_title: 'Serve Practice',
+      ...buildConfirmAttendanceReminderNotificationContent({
+        student_name: 'Mira Miami',
+        lesson_title: 'Serve Practice',
+      }),
+    });
+    assertInAppUiContract(confirmAttendance, { type: 'confirm_attendance_reminder', expectPreview: true });
+    assert.equal(confirmAttendance.headline, 'Confirm attendance');
+    assert.match(confirmAttendance.summary, /Mira Miami/);
+    assert.equal(confirmAttendance.route, '/bookings/81');
+
+    const lessonCompleted = withNotificationRoute('lesson_completed', {
+      booking_id: 81,
+      coach_name: 'Sarah',
+      lesson_title: 'Serve Practice',
+      ...buildLessonCompletedNotificationContent({
+        coach_name: 'Sarah',
+        lesson_title: 'Serve Practice',
+      }),
+    });
+    assertInAppUiContract(lessonCompleted, { type: 'lesson_completed', expectPreview: true });
+    assert.equal(lessonCompleted.headline, 'Lesson completed');
+    assert.match(lessonCompleted.summary, /Sarah/);
+    assert.match(lessonCompleted.summary, /24-hour review window/);
+    assert.equal(lessonCompleted.route, '/bookings/81');
   });
 
   it('booking_request_expired / review_received / refund_succeeded satisfy the contract', () => {

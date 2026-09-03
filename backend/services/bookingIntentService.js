@@ -28,6 +28,7 @@ import {
   isPaymentIntentAuthorizedForBookingConfirm,
   parseBookingIntentMetadata,
   SLOT_NO_LONGER_AVAILABLE_CODE,
+  STUDENT_SCHEDULE_CONFLICT_CODE,
 } from '../utils/bookingIntentContract.js';
 import { COACH_BOOKING_REQUEST_NOTIFIED_METADATA_KEY } from '../utils/paymentAuthorizationGate.js';
 import { isPubliclyActiveUser } from '../utils/userLifecycle.js';
@@ -136,13 +137,14 @@ export async function validateBookingRequestContext({
     lessonId,
     scheduledDate.toISOString(),
     finalDuration,
+    { studentId },
   );
   if (!availabilityCheck.available) {
     return {
       ok: false,
       status: 400,
       message: availabilityCheck.reason || 'This time slot is no longer available.',
-      code: SLOT_NO_LONGER_AVAILABLE_CODE,
+      code: availabilityCheck.code || SLOT_NO_LONGER_AVAILABLE_CODE,
     };
   }
   return {
@@ -234,12 +236,20 @@ export async function createBookingIntent({
 }
 
 /**
- * Confirm booking after client-side authorization. Idempotent per payment_intent_id.
+ * Idempotent confirm lookup — same payment_intent_id or idempotency_key for this student.
+ * @param {{ paymentIntentId: string, studentId: number, idempotencyKey?: string|null, transaction?: import('sequelize').Transaction }} params
  */
-export async function confirmBookingFromPaymentIntent({ studentId, paymentIntentId }) {
+async function findConfirmIdempotentResult({
+  paymentIntentId,
+  studentId,
+  idempotencyKey = null,
+  transaction = null,
+}) {
+  const findOpts = transaction ? { transaction } : {};
   const existingPayment = await Payment.findOne({
     where: { payment_intent_id: paymentIntentId },
     include: [{ model: Booking, as: 'booking' }],
+    ...findOpts,
   });
   if (existingPayment?.booking) {
     return {
@@ -248,6 +258,32 @@ export async function confirmBookingFromPaymentIntent({ studentId, paymentIntent
       idempotentReplay: true,
     };
   }
+  if (idempotencyKey) {
+    const existingBooking = await Booking.findOne({
+      where: {
+        idempotency_key: idempotencyKey,
+        primary_student_id: studentId,
+      },
+      ...findOpts,
+    });
+    if (existingBooking) {
+      const pay = await Payment.findOne({
+        where: { booking_id: existingBooking.id },
+        order: [['id', 'DESC']],
+        ...findOpts,
+      });
+      return { booking: existingBooking, payment: pay, idempotentReplay: true };
+    }
+  }
+  return null;
+}
+
+/**
+ * Confirm booking after client-side authorization. Idempotent per payment_intent_id.
+ */
+export async function confirmBookingFromPaymentIntent({ studentId, paymentIntentId }) {
+  const existing = await findConfirmIdempotentResult({ paymentIntentId, studentId });
+  if (existing) return existing;
 
   const paymentIntent = await stripeService.getPaymentIntent(paymentIntentId);
   const parsedMeta = parseBookingIntentMetadata(paymentIntent.metadata, studentId);
@@ -267,21 +303,12 @@ export async function confirmBookingFromPaymentIntent({ studentId, paymentIntent
     throw err;
   }
 
-  if (parsedMeta.idempotencyKey) {
-    const existingBooking = await Booking.findOne({
-      where: {
-        idempotency_key: parsedMeta.idempotencyKey,
-        primary_student_id: studentId,
-      },
-    });
-    if (existingBooking) {
-      const pay = await Payment.findOne({
-        where: { booking_id: existingBooking.id },
-        order: [['id', 'DESC']],
-      });
-      return { booking: existingBooking, payment: pay, idempotentReplay: true };
-    }
-  }
+  const idempotentBeforeTx = await findConfirmIdempotentResult({
+    paymentIntentId,
+    studentId,
+    idempotencyKey: parsedMeta.idempotencyKey,
+  });
+  if (idempotentBeforeTx) return idempotentBeforeTx;
 
   const lesson = await Lesson.findByPk(parsedMeta.lessonId);
   if (!lesson || !lesson.is_active) {
@@ -338,6 +365,17 @@ export async function confirmBookingFromPaymentIntent({ studentId, paymentIntent
       throw err;
     }
 
+    // Serialize cross-coach student overlap races (same student, different coaches, same time).
+    const studentRow = await User.findByPk(studentId, {
+      transaction,
+      lock: transaction.LOCK.UPDATE,
+    });
+    if (!studentRow) {
+      const err = new Error('Student not found');
+      err.statusCode = 404;
+      throw err;
+    }
+
     const court = await CourtLocation.findByPk(parsedMeta.courtLocationId, { transaction });
     if (!court || court.deleted_at) {
       const err = new Error('Court location not found');
@@ -355,15 +393,32 @@ export async function confirmBookingFromPaymentIntent({ studentId, paymentIntent
       throw err;
     }
 
+    const idempotentInTx = await findConfirmIdempotentResult({
+      paymentIntentId,
+      studentId,
+      idempotencyKey: parsedMeta.idempotencyKey,
+      transaction,
+    });
+    if (idempotentInTx) {
+      await transaction.rollback();
+      return idempotentInTx;
+    }
+
     const availabilityCheck = await checkBookingAvailability(
       lesson.id,
       parsedMeta.scheduledAt.toISOString(),
       finalDuration,
-      { transaction, coachId: lesson.coach_id },
+      { transaction, coachId: lesson.coach_id, studentId },
     );
 
     if (!availabilityCheck.available) {
       await transaction.rollback();
+      const racedConfirm = await findConfirmIdempotentResult({
+        paymentIntentId,
+        studentId,
+        idempotencyKey: parsedMeta.idempotencyKey,
+      });
+      if (racedConfirm) return racedConfirm;
       try {
         await stripeService.cancelPaymentIntent(paymentIntentId);
       } catch (cancelErr) {
@@ -374,11 +429,15 @@ export async function confirmBookingFromPaymentIntent({ studentId, paymentIntent
           message: cancelErr?.message || String(cancelErr),
         });
       }
+      const conflictCode = availabilityCheck.code || SLOT_NO_LONGER_AVAILABLE_CODE;
       const err = new Error(
-        availabilityCheck.reason || 'This time slot is no longer available.',
+        availabilityCheck.reason
+          || (conflictCode === STUDENT_SCHEDULE_CONFLICT_CODE
+            ? 'You already have a lesson that overlaps this time.'
+            : 'This time slot is no longer available.'),
       );
       err.statusCode = 409;
-      err.code = SLOT_NO_LONGER_AVAILABLE_CODE;
+      err.code = conflictCode;
       throw err;
     }
 
@@ -426,18 +485,6 @@ export async function confirmBookingFromPaymentIntent({ studentId, paymentIntent
       { transaction },
     );
 
-    await createAuditLog({
-      user_id: studentId,
-      action: 'booking_confirmed_after_authorization',
-      table_name: 'bookings',
-      record_id: booking.id,
-      after_state: {
-        payment_intent_id: paymentIntentId,
-        payment_status: 'authorized',
-        authorized_amount_cents: authorizedCents,
-      },
-    });
-
     await transaction.commit();
   } catch (txErr) {
     if (!transaction.finished) {
@@ -458,6 +505,18 @@ export async function confirmBookingFromPaymentIntent({ studentId, paymentIntent
     }
     throw txErr;
   }
+
+  void createAuditLog({
+    user_id: studentId,
+    action: 'booking_confirmed_after_authorization',
+    table_name: 'bookings',
+    record_id: booking.id,
+    after_state: {
+      payment_intent_id: paymentIntentId,
+      payment_status: 'authorized',
+      authorized_amount_cents: authorizedCents,
+    },
+  });
 
   void notificationService.notifyCoachNewBookingRequest(booking.id).catch((err) => {
     logger.warn({

@@ -9,6 +9,7 @@ import {
   CoachCourtLocation,
   CourtLocation,
   UserReliability,
+  sequelize,
 } from '../models/index.js';
 import { successResponse, errorResponse, paginatedResponse } from '../utils/response.js';
 import { getPagination, getPagingData } from '../utils/pagination.js';
@@ -384,45 +385,62 @@ export const createAvailability = async (req, res) => {
     const resolvedStartTime = normalizeTimeOfDay(start_time);
     const resolvedEndTime = normalizeTimeOfDay(end_time);
 
-    // Prevent overlapping availability: same coach, same weekday, overlapping date range and overlapping time range.
-    const existing = await CoachAvailability.findAll({
-      where: { coach_id, weekday },
-      attributes: ['id', 'start_date', 'end_date', 'start_time', 'end_time'],
-    });
-    for (const row of existing) {
-      const dateOverlap = dateRangesOverlap(
-        resolvedStartDate,
-        resolvedEndDate,
-        toYmdApi(row.start_date),
-        toYmdApi(row.end_date)
-      );
-      if (!dateOverlap) continue;
+    let availability;
+    try {
+      availability = await sequelize.transaction(async (t) => {
+        // Serialize concurrent create/update for this coach (empty-table gap-lock safe).
+        await User.findByPk(coach_id, { transaction: t, lock: t.LOCK.UPDATE });
 
-      const timeOverlap = timeRangesOverlap(
-        resolvedStartTime,
-        resolvedEndTime,
-        row.start_time,
-        row.end_time
-      );
-      if (timeOverlap) {
-        return errorResponse(
-          res,
-          'This availability overlaps an existing slot for the same day and date range. Use a non-overlapping time window (e.g. 09:00–12:00 and 13:00–17:00).',
-          400
+        const existing = await CoachAvailability.findAll({
+          where: { coach_id, weekday },
+          attributes: ['id', 'start_date', 'end_date', 'start_time', 'end_time'],
+          transaction: t,
+          lock: t.LOCK.UPDATE,
+        });
+        for (const row of existing) {
+          const dateOverlap = dateRangesOverlap(
+            resolvedStartDate,
+            resolvedEndDate,
+            toYmdApi(row.start_date),
+            toYmdApi(row.end_date)
+          );
+          if (!dateOverlap) continue;
+
+          const timeOverlap = timeRangesOverlap(
+            resolvedStartTime,
+            resolvedEndTime,
+            row.start_time,
+            row.end_time
+          );
+          if (timeOverlap) {
+            const err = new Error(
+              'This availability overlaps an existing slot for the same day and date range. Use a non-overlapping time window (e.g. 09:00–12:00 and 13:00–17:00).',
+            );
+            err.statusCode = 400;
+            throw err;
+          }
+        }
+
+        return CoachAvailability.create(
+          {
+            coach_id,
+            weekday,
+            start_date: resolvedStartDate,
+            end_date: resolvedEndDate,
+            start_time: resolvedStartTime,
+            end_time: resolvedEndTime,
+          },
+          { transaction: t },
         );
+      });
+    } catch (err) {
+      if (err?.statusCode === 400) {
+        return errorResponse(res, err.message, 400);
       }
+      throw err;
     }
 
-    const availability = await CoachAvailability.create({
-      coach_id,
-      weekday,
-      start_date: resolvedStartDate,
-      end_date: resolvedEndDate,
-      start_time: resolvedStartTime,
-      end_time: resolvedEndTime,
-    });
-
-    return successResponse(res, shapeAvailabilityForApi(availability), 'Availability created successfully', 201);
+    return successResponse(res, shapeAvailabilityForApi(availability), 'Availability created successfully');
   } catch (error) {
     logger.error('Create availability error:', error);
     return errorResponse(res, 'Failed to create availability', 500);
@@ -507,14 +525,6 @@ export const updateMyAvailability = async (req, res) => {
       return errorResponse(res, 'Invalid availability ID', 400);
     }
 
-    const row = await CoachAvailability.findByPk(availabilityId);
-    if (!row) {
-      return errorResponse(res, 'Availability not found', 404);
-    }
-    if (row.coach_id !== req.user.id) {
-      return errorResponse(res, 'You can only update your own availability', 403);
-    }
-
     const coach_id = req.user.id;
     const { weekday, start_date, end_date, start_time, end_time } = req.validated;
 
@@ -523,46 +533,79 @@ export const updateMyAvailability = async (req, res) => {
     const resolvedStartTime = normalizeTimeOfDay(start_time);
     const resolvedEndTime = normalizeTimeOfDay(end_time);
 
-    const existing = await CoachAvailability.findAll({
-      where: {
-        coach_id,
-        weekday,
-        id: { [Op.ne]: availabilityId },
-      },
-      attributes: ['id', 'start_date', 'end_date', 'start_time', 'end_time'],
-    });
-    for (const other of existing) {
-      const dateOverlap = dateRangesOverlap(
-        resolvedStartDate,
-        resolvedEndDate,
-        toYmdApi(other.start_date),
-        toYmdApi(other.end_date)
-      );
-      if (!dateOverlap) continue;
+    let row;
+    try {
+      row = await sequelize.transaction(async (t) => {
+        await User.findByPk(coach_id, { transaction: t, lock: t.LOCK.UPDATE });
 
-      const timeOverlap = timeRangesOverlap(
-        resolvedStartTime,
-        resolvedEndTime,
-        other.start_time,
-        other.end_time
-      );
-      if (timeOverlap) {
-        return errorResponse(
-          res,
-          'This availability overlaps an existing slot for the same day and date range. Use a non-overlapping time window (e.g. 09:00–12:00 and 13:00–17:00).',
-          400
+        const locked = await CoachAvailability.findByPk(availabilityId, {
+          transaction: t,
+          lock: t.LOCK.UPDATE,
+        });
+        if (!locked) {
+          const err = new Error('Availability not found');
+          err.statusCode = 404;
+          throw err;
+        }
+        if (locked.coach_id !== coach_id) {
+          const err = new Error('You can only update your own availability');
+          err.statusCode = 403;
+          throw err;
+        }
+
+        const existing = await CoachAvailability.findAll({
+          where: {
+            coach_id,
+            weekday,
+            id: { [Op.ne]: availabilityId },
+          },
+          attributes: ['id', 'start_date', 'end_date', 'start_time', 'end_time'],
+          transaction: t,
+          lock: t.LOCK.UPDATE,
+        });
+        for (const other of existing) {
+          const dateOverlap = dateRangesOverlap(
+            resolvedStartDate,
+            resolvedEndDate,
+            toYmdApi(other.start_date),
+            toYmdApi(other.end_date)
+          );
+          if (!dateOverlap) continue;
+
+          const timeOverlap = timeRangesOverlap(
+            resolvedStartTime,
+            resolvedEndTime,
+            other.start_time,
+            other.end_time
+          );
+          if (timeOverlap) {
+            const err = new Error(
+              'This availability overlaps an existing slot for the same day and date range. Use a non-overlapping time window (e.g. 09:00–12:00 and 13:00–17:00).',
+            );
+            err.statusCode = 400;
+            throw err;
+          }
+        }
+
+        await locked.update(
+          {
+            weekday,
+            start_date: resolvedStartDate,
+            end_date: resolvedEndDate,
+            start_time: resolvedStartTime,
+            end_time: resolvedEndTime,
+          },
+          { transaction: t },
         );
-      }
+        await locked.reload({ transaction: t });
+        return locked;
+      });
+    } catch (err) {
+      if (err?.statusCode === 404) return errorResponse(res, err.message, 404);
+      if (err?.statusCode === 403) return errorResponse(res, err.message, 403);
+      if (err?.statusCode === 400) return errorResponse(res, err.message, 400);
+      throw err;
     }
-
-    await row.update({
-      weekday,
-      start_date: resolvedStartDate,
-      end_date: resolvedEndDate,
-      start_time: resolvedStartTime,
-      end_time: resolvedEndTime,
-    });
-    await row.reload();
 
     return successResponse(res, shapeAvailabilityForApi(row), 'Availability updated successfully');
   } catch (error) {

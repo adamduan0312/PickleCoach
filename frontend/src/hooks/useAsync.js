@@ -9,6 +9,7 @@ export function useAsync(loader, deps = []) {
     let cancelled = false;
     setLoading(true);
     setError(null);
+    setData(null);
     Promise.resolve()
       .then(loader)
       .then((result) => {

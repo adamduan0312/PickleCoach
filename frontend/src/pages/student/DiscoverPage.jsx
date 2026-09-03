@@ -5,7 +5,8 @@ import { useAsync } from '../../hooks/useAsync.js';
 import { useAuth } from '../../auth/AuthContext.jsx';
 import { Alert, EmptyState, ErrorState, LoadingState } from '../../components/ui/States.jsx';
 import { Avatar } from '../../components/ui/Avatar.jsx';
-import { formatMilesAway, formatSkillRatingLine, formatReliabilityLabel, formatReliabilityHint, discoverTeachingPlaceLabel } from '../../utils/format.js';
+import { StarRating } from '../../components/ui/StarRating.jsx';
+import { formatMilesAway, formatSkillRatingLine, formatReliabilityLabel, formatReliabilityHint, discoverTeachingPlaceLabel, coachRatingCompactParts } from '../../utils/format.js';
 import {
   LOCATION_ACCESS_OFF_DETAIL,
   LOCATION_ACCESS_OFF_TITLE,
@@ -32,12 +33,6 @@ const RADIUS_OPTIONS = [
   { value: '50', label: '50 miles' },
 ];
 const DEFAULT_SEARCH_RADIUS = '25';
-const MIN_RATING_OPTIONS = [
-  { value: '', label: 'Any rating' },
-  { value: '3', label: '3.0+' },
-  { value: '4', label: '4.0+' },
-  { value: '4.5', label: '4.5+' },
-];
 
 export function DiscoverPage() {
   const { user } = useAuth();
@@ -45,7 +40,6 @@ export function DiscoverPage() {
   const [filters, setFilters] = useState({
     min_skill_rating: '',
     max_skill_rating: '',
-    min_rating: '',
     radius: DEFAULT_SEARCH_RADIUS,
   });
   /** @type {null | { lat: number, lng: number, label: string, source: 'geolocation' | 'search' }} */
@@ -61,7 +55,6 @@ export function DiscoverPage() {
   const [applied, setApplied] = useState({
     min_skill_rating: '',
     max_skill_rating: '',
-    min_rating: '',
     radius: DEFAULT_SEARCH_RADIUS,
     location: null,
   });
@@ -83,7 +76,6 @@ export function DiscoverPage() {
     const params = {};
     if (applied.min_skill_rating) params.min_skill_rating = applied.min_skill_rating;
     if (applied.max_skill_rating) params.max_skill_rating = applied.max_skill_rating;
-    if (applied.min_rating) params.min_rating = applied.min_rating;
     if (applied.location?.lat != null && applied.location?.lng != null) {
       params.lat = applied.location.lat;
       params.lng = applied.location.lng;
@@ -112,7 +104,6 @@ export function DiscoverPage() {
     setApplied({
       min_skill_rating: f.min_skill_rating,
       max_skill_rating: f.max_skill_rating,
-      min_rating: f.min_rating,
       radius: f.radius,
       location: nextLocation,
     });
@@ -126,7 +117,6 @@ export function DiscoverPage() {
     const cleared = {
       min_skill_rating: '',
       max_skill_rating: '',
-      min_rating: '',
       radius: DEFAULT_SEARCH_RADIUS,
     };
     setFilters(cleared);
@@ -307,7 +297,7 @@ export function DiscoverPage() {
 
   const emptyDetail = hasLocation
     ? `No coaches within ${applied.radius || DEFAULT_SEARCH_RADIUS} miles. Try a larger radius, another location, or fewer filters.`
-    : 'No coaches match your current filters. Try widening skill or rating, or set a location to search nearby (default 25 miles).';
+    : 'No coaches match your current filters. Try widening skill level or set a location to search nearby (default 25 miles).';
 
   return (
     <div className="page discover-page">
@@ -476,18 +466,6 @@ export function DiscoverPage() {
             {skillError ? <span className="error" role="alert">{skillError}</span> : null}
           </div>
           <div className="field">
-            <label htmlFor="min_rating">Minimum review rating</label>
-            <select
-              id="min_rating"
-              value={filters.min_rating}
-              onChange={(e) => setFilters((f) => ({ ...f, min_rating: e.target.value }))}
-            >
-              {MIN_RATING_OPTIONS.map((o) => (
-                <option key={o.value || 'any'} value={o.value}>{o.label}</option>
-              ))}
-            </select>
-          </div>
-          <div className="field">
             <label htmlFor="radius">Search radius</label>
             <select
               id="radius"
@@ -518,7 +496,7 @@ export function DiscoverPage() {
       </form>
 
       <div className="discover-results" style={{ marginTop: 16 }} aria-live="polite">
-        {loading ? <LoadingState label="Loading coaches…" /> : null}
+        {loading ? <LoadingState label={hasLocation ? 'Finding coaches near this location…' : 'Loading coaches…'} /> : null}
         {error ? (
           <ErrorState error={error} onRetry={() => setReloadToken((n) => n + 1)} />
         ) : null}
@@ -576,9 +554,7 @@ export function DiscoverPage() {
                 const distanceAway = hasLocation ? formatMilesAway(coach.distance_miles) : null;
                 const skillLine = formatSkillRatingLine(coach.skill_rating, coach.rating_system);
                 const reliabilityLine = formatReliabilityLabel(coach.reliability_score);
-                const ratingText = coach.rating_average != null
-                  ? `${Number(coach.rating_average).toFixed(1)} · ${coach.rating_count || 0} review${Number(coach.rating_count) === 1 ? '' : 's'}`
-                  : 'No reviews yet';
+                const ratingParts = coachRatingCompactParts(coach.rating_average, coach.rating_count);
                 return (
                   <Link
                     key={coach.id}
@@ -603,13 +579,14 @@ export function DiscoverPage() {
                       <li>
                         <span className="discover-stat-label">Reviews</span>
                         <span className="discover-stat-value">
-                          {coach.rating_average != null ? (
+                          {ratingParts.hasReviews ? (
                             <>
-                              <span className="discover-stat-star" aria-hidden="true">★</span>
-                              {' '}
-                              {ratingText}
+                              {ratingParts.value}{' '}
+                              <StarRating variant="compact" />
+                              {' · '}
+                              {ratingParts.reviewLabel}
                             </>
-                          ) : ratingText}
+                          ) : 'No reviews yet'}
                         </span>
                       </li>
                       {skillLine ? (

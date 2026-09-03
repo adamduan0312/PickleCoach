@@ -25,7 +25,8 @@ export function AppShell({ children }) {
   const coach = hasCoachRole(roles);
   const admin = hasAdminRole(roles);
 
-  // Keep email_verified_at (and the verify banner) in sync with the backend.
+  // Reload authorization (roles, email_verified_at) on navigation and when the tab
+  // becomes visible so a session cannot keep a removed role's UI after an admin change.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -37,18 +38,16 @@ export function AppShell({ children }) {
       if (cancelled) return;
     })();
     return () => { cancelled = true; };
-  }, [refreshProfile]);
+  }, [refreshProfile, location.pathname]);
 
-  // If they verified in another tab, drop the banner when they come back.
   useEffect(() => {
-    if (user?.email_verified_at) return undefined;
     function onVisible() {
       if (document.visibilityState !== 'visible') return;
       refreshProfile().catch(() => {});
     }
     document.addEventListener('visibilitychange', onVisible);
     return () => document.removeEventListener('visibilitychange', onVisible);
-  }, [user?.email_verified_at, refreshProfile]);
+  }, [refreshProfile]);
 
   function closeOverlays() {
     setDrawer(false);
@@ -83,10 +82,11 @@ export function AppShell({ children }) {
 
   const links = [];
   if (mode === 'admin' && admin) {
-    links.push({ to: '/admin', label: 'Admin' });
+    links.push({ to: '/admin', label: 'Dashboard' });
     links.push({ to: '/admin/users', label: 'Users' });
     links.push({ to: '/admin/bookings', label: 'Bookings' });
     links.push({ to: '/admin/disputes', label: 'Disputes' });
+    links.push({ to: '/admin/payments', label: 'Payments' });
   } else if (mode === 'coach' && coach) {
     links.push({ to: '/coach', label: 'Dashboard' });
     links.push({ to: '/coach/bookings', label: 'Bookings' });

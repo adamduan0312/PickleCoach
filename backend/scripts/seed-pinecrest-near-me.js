@@ -39,6 +39,9 @@ export const PINECREST_ORIGIN = {
   lng: -80.3080,
 };
 
+const LESSON_TITLE = 'Private Lesson';
+const LESSON_LEGACY_TITLE = 'Pinecrest Near-Me Lesson';
+
 /**
  * Courts / coaches at increasing distance from Pinecrest for radius tests.
  * Distances are approximate straight-line miles.
@@ -47,8 +50,8 @@ const COACHES = [
   {
     emailLocal: 'coach.pinecrest.gardens',
     fullName: 'Piper Pinecrest',
-    headline: '~0.5 mi — Pinecrest Gardens / Red Road',
-    bio: 'Neighborhood coach for Discover “near me” booking tests (Pinecrest).',
+    headline: 'Pinecrest Gardens area coach',
+    bio: 'Friendly, structured lessons for players who want to feel more confident at the kitchen line. We build consistency with dinks, resets, and smarter point construction.',
     skill_rating: 3.5,
     rating_system: 'self',
     rating_average: 4.6,
@@ -57,7 +60,8 @@ const COACHES = [
     location: 'Pinecrest, FL',
     approxMiles: 0.5,
     court: {
-      name: 'Near-Me Fixture — Pinecrest Gardens Courts',
+      name: 'Pinecrest Gardens Courts',
+      legacyName: 'Near-Me Fixture — Pinecrest Gardens Courts',
       address_line1: '11000 SW 57th Ave',
       city: 'Pinecrest',
       state: 'FL',
@@ -70,8 +74,8 @@ const COACHES = [
   {
     emailLocal: 'coach.pinecrest.killian',
     fullName: 'Kai Killian',
-    headline: '~1.5 mi — Killian Dr / SW 112th',
-    bio: 'Pinecrest coach along Killian for short-radius booking QA.',
+    headline: 'Skill-building lessons in Pinecrest',
+    bio: 'I work with recreational and league players who want cleaner mechanics and better match habits. Sessions combine drilling, situational play, and clear feedback you can apply right away.',
     skill_rating: 4.0,
     rating_system: 'DUPR',
     rating_average: 4.7,
@@ -80,7 +84,8 @@ const COACHES = [
     location: 'Pinecrest, FL',
     approxMiles: 1.5,
     court: {
-      name: 'Near-Me Fixture — Pinecrest Community Courts',
+      name: 'Pinecrest Community Courts',
+      legacyName: 'Near-Me Fixture — Pinecrest Community Courts',
       address_line1: '12645 SW 112th St',
       city: 'Pinecrest',
       state: 'FL',
@@ -93,8 +98,8 @@ const COACHES = [
   {
     emailLocal: 'coach.pinecrest.palmetto',
     fullName: 'Paloma Bay',
-    headline: '~3 mi — Palmetto Bay / Coral Reef Park',
-    bio: 'Just south of Pinecrest for 5–10 mile radius testing.',
+    headline: 'Palmetto Bay doubles specialist',
+    bio: 'Doubles-focused coaching for partners who want better stacking, transition timing, and communication. I keep lessons energetic and practical for players with busy schedules.',
     skill_rating: 4.5,
     rating_system: 'UTR-P',
     rating_average: 4.8,
@@ -103,7 +108,8 @@ const COACHES = [
     location: 'Palmetto Bay, FL',
     approxMiles: 3.0,
     court: {
-      name: 'Near-Me Fixture — Coral Reef Park Courts',
+      name: 'Coral Reef Park Courts',
+      legacyName: 'Near-Me Fixture — Coral Reef Park Courts',
       address_line1: '7895 SW 152nd St',
       city: 'Palmetto Bay',
       state: 'FL',
@@ -116,8 +122,8 @@ const COACHES = [
   {
     emailLocal: 'coach.pinecrest.tropical',
     fullName: 'Talia Kendall',
-    headline: '~5 mi — Tropical Park / Kendall',
-    bio: 'Appears at radius ≥10 from Pinecrest; useful for radius filter QA.',
+    headline: 'Kendall / Tropical Park area coach',
+    bio: 'Patient coaching for beginners and early intermediates who want a strong foundation. We focus on balance, paddle prep, and keeping rallies going without overcomplicating the game.',
     skill_rating: 3.0,
     rating_system: 'self',
     rating_average: 4.3,
@@ -126,7 +132,8 @@ const COACHES = [
     location: 'Kendall, FL',
     approxMiles: 5.0,
     court: {
-      name: 'Near-Me Fixture — Tropical Park Courts',
+      name: 'Tropical Park Courts',
+      legacyName: 'Near-Me Fixture — Tropical Park Courts',
       address_line1: '7900 SW 40th St',
       city: 'Miami',
       state: 'FL',
@@ -139,8 +146,8 @@ const COACHES = [
   {
     emailLocal: 'coach.pinecrest.miami',
     fullName: 'Mira Miami',
-    headline: '~12 mi — Downtown Miami / Bayfront',
-    bio: 'Outside a 10-mile Pinecrest radius; should appear at 25 mi.',
+    headline: 'Downtown Miami competitive coach',
+    bio: 'I help players build confidence, improve consistency, and develop smarter shot selection. My lessons are tailored to your current skill level and focused on practical improvement you can take into your next game.',
     skill_rating: 5.0,
     rating_system: 'DUPR',
     rating_average: 4.9,
@@ -149,7 +156,8 @@ const COACHES = [
     location: 'Miami, FL',
     approxMiles: 12.0,
     court: {
-      name: 'Near-Me Fixture — Margaret Pace Park Courts',
+      name: 'Margaret Pace Park Courts',
+      legacyName: 'Near-Me Fixture — Margaret Pace Park Courts',
       address_line1: '1745 N Bayshore Dr',
       city: 'Miami',
       state: 'FL',
@@ -162,17 +170,19 @@ const COACHES = [
 ];
 
 async function ensureCourt(spec, createdByUserId) {
-  const existing = await CourtLocation.findOne({
-    where: {
-      name: spec.name,
-      city: spec.city,
-      state: spec.state,
-      postal_code: spec.postal_code,
-      deleted_at: null,
-    },
-  });
+  const whereBase = {
+    city: spec.city,
+    state: spec.state,
+    postal_code: spec.postal_code,
+    deleted_at: null,
+  };
+  let existing = await CourtLocation.findOne({ where: { name: spec.name, ...whereBase } });
+  if (!existing && spec.legacyName) {
+    existing = await CourtLocation.findOne({ where: { name: spec.legacyName, ...whereBase } });
+  }
   if (existing) {
     await existing.update({
+      name: spec.name,
       address_line1: spec.address_line1,
       latitude: spec.latitude,
       longitude: spec.longitude,
@@ -180,8 +190,9 @@ async function ensureCourt(spec, createdByUserId) {
     });
     return existing;
   }
+  const { legacyName: _legacyName, ...courtFields } = spec;
   return CourtLocation.create({
-    ...spec,
+    ...courtFields,
     country: 'US',
     is_private: false,
     source: 'manual',
@@ -242,17 +253,22 @@ async function ensureCoach(spec, passwordHash) {
   const court = await ensureCourt(spec.court, user.id);
   await CoachCourtLocation.findOrCreate({
     where: { coach_id: user.id, court_id: court.id },
-    defaults: { coach_notes: `Near Pinecrest (~${spec.approxMiles} mi)` },
+    defaults: { coach_notes: `Primary teaching court near ${spec.location}` },
   });
 
   let lesson = await Lesson.findOne({
-    where: { coach_id: user.id, title: 'Pinecrest Near-Me Lesson', deleted_at: null },
+    where: { coach_id: user.id, title: LESSON_TITLE, deleted_at: null },
   });
+  if (!lesson) {
+    lesson = await Lesson.findOne({
+      where: { coach_id: user.id, title: LESSON_LEGACY_TITLE, deleted_at: null },
+    });
+  }
   if (!lesson) {
     lesson = await Lesson.create({
       coach_id: user.id,
-      title: 'Pinecrest Near-Me Lesson',
-      description: 'Marketplace lesson for Pinecrest near-me booking tests.',
+      title: LESSON_TITLE,
+      description: 'One-on-one coaching session tailored to your goals and current skill level.',
       price: spec.lessonPrice,
       duration_minutes: 60,
       max_students: 1,
@@ -260,6 +276,8 @@ async function ensureCoach(spec, passwordHash) {
     });
   } else {
     await lesson.update({
+      title: LESSON_TITLE,
+      description: 'One-on-one coaching session tailored to your goals and current skill level.',
       is_active: true,
       deleted_at: null,
       price: spec.lessonPrice,

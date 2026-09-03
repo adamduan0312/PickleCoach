@@ -34,12 +34,17 @@ describe('confirm double-book race guards', () => {
     assert.match(confirmSection, /CoachProfile\.findOne\(/);
     assert.match(confirmSection, /lock:\s*transaction\.LOCK\.UPDATE/);
     assert.match(confirmSection, /checkBookingAvailability\(/);
-    assert.match(confirmSection, /\{\s*transaction,\s*coachId:\s*lesson\.coach_id\s*\}/);
+    assert.match(confirmSection, /\{\s*transaction,\s*coachId:\s*lesson\.coach_id,\s*studentId\s*\}/);
   });
 
   it('overlap check is coach-scoped and accepts a transaction option', () => {
     assert.match(bookingServiceSrc, /coach_id:\s*coachId/);
     assert.match(bookingServiceSrc, /transaction\s*=\s*null/);
+  });
+
+  it('also checks student-scoped schedule overlap when studentId is provided', () => {
+    assert.match(bookingServiceSrc, /primary_student_id:\s*studentId/);
+    assert.match(bookingServiceSrc, /checkStudentScheduleConflict/);
   });
 });
 
@@ -124,6 +129,23 @@ describe('payout vs dispute refund race', () => {
     const disputeIdx = payoutWorkerSrc.indexOf("payoutBlockedReason = 'open_dispute'");
     const releaseIdx = payoutWorkerSrc.indexOf('paymentService.releaseEscrow');
     assert.ok(lockIdx > 0 && disputeIdx > lockIdx && releaseIdx > disputeIdx);
+  });
+
+  it('releaseEscrow claims held escrow under a payment lock before Stripe transfer', () => {
+    const releaseIdx = paymentServiceSrc.indexOf('export const releaseEscrow');
+    const nextExport = paymentServiceSrc.indexOf('\nexport const ', releaseIdx + 1);
+    const section = paymentServiceSrc.slice(releaseIdx, nextExport);
+    assert.match(section, /lock:\s*transaction\.LOCK\.UPDATE/);
+    assert.match(section, /escrow_status:\s*'pending_release'/);
+    assert.match(section, /shouldParkPayoutAfterFailedAttempts/);
+    assert.match(section, /manual_payout_required/);
+    const claimIdx = section.indexOf("escrow_status: 'pending_release'");
+    const transferIdx = section.indexOf('stripeService.transferToConnectedAccount');
+    assert.ok(claimIdx > 0 && transferIdx > claimIdx, 'claim must precede Stripe transfer');
+  });
+
+  it('payout worker treats releaseEscrow skipped as non-fatal', () => {
+    assert.match(payoutWorkerSrc, /releaseResult\?\.skipped/);
   });
 
   it('Connect transfers honor the Stripe test double so cutoff races never hit live Stripe', () => {

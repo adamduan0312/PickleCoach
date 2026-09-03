@@ -8,6 +8,8 @@ import {
   stringSimilarity,
   classifyCourtDuplicate,
   rankCourtDuplicateCandidates,
+  filterCourtsForDuplicateCheck,
+  isCourtVisibleInDuplicateCheck,
 } from '../utils/courtDuplicateMatch.js';
 
 describe('courtDuplicateMatch', () => {
@@ -102,5 +104,62 @@ describe('courtDuplicateMatch', () => {
     assert.ok(ranked.high_confidence.length + ranked.possible.length >= 1);
     assert.ok(!ranked.high_confidence.find((c) => c.id === 99));
     assert.ok(!ranked.possible.find((c) => c.id === 99));
+  });
+});
+
+describe('private court visibility in duplicate check', () => {
+  const privateCourt = {
+    id: 9,
+    name: 'Secret',
+    address_line1: '1 Hidden Rd',
+    is_private: true,
+    created_by_user_id: 10,
+    latitude: 26.2,
+    longitude: -80.2,
+  };
+  const publicCourt = {
+    id: 1,
+    name: 'Public',
+    address_line1: '2 Main St',
+    is_private: false,
+    created_by_user_id: 99,
+  };
+
+  it('public courts always visible; private hidden from non-owners', () => {
+    assert.equal(
+      isCourtVisibleInDuplicateCheck(publicCourt, { viewerUserId: 3, ownedCourtIds: new Set() }),
+      true,
+    );
+    assert.equal(
+      isCourtVisibleInDuplicateCheck(privateCourt, { viewerUserId: 3, ownedCourtIds: new Set() }),
+      false,
+    );
+  });
+
+  it('private courts visible to creator, linked coach, or admin', () => {
+    assert.equal(
+      isCourtVisibleInDuplicateCheck(privateCourt, { viewerUserId: 10, ownedCourtIds: new Set() }),
+      true,
+    );
+    assert.equal(
+      isCourtVisibleInDuplicateCheck(privateCourt, {
+        viewerUserId: 3,
+        ownedCourtIds: new Set([9]),
+      }),
+      true,
+    );
+    assert.equal(
+      isCourtVisibleInDuplicateCheck(privateCourt, { viewerIsAdmin: true, viewerUserId: 1 }),
+      true,
+    );
+  });
+
+  it('filterCourtsForDuplicateCheck drops non-owned private', () => {
+    const out = filterCourtsForDuplicateCheck([publicCourt, privateCourt], {
+      viewerUserId: 3,
+      ownedCourtIds: new Set(),
+    });
+    assert.equal(out.length, 1);
+    assert.equal(out[0].id, 1);
   });
 });

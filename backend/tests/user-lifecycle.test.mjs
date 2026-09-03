@@ -14,6 +14,7 @@ import { login } from '../controllers/authController.js';
 
 const origUserFindByPk = User.findByPk;
 const origUserFindOne = User.findOne;
+const origUserCount = User.count;
 const origCoachFindOne = CoachProfile.findOne;
 const origRoleFindOne = UserRole.findOne;
 const origRoleFindAll = UserRole.findAll;
@@ -22,6 +23,7 @@ const origTx = sequelize.transaction;
 afterEach(() => {
   User.findByPk = origUserFindByPk;
   User.findOne = origUserFindOne;
+  User.count = origUserCount;
   CoachProfile.findOne = origCoachFindOne;
   UserRole.findOne = origRoleFindOne;
   UserRole.findAll = origRoleFindAll;
@@ -178,6 +180,7 @@ describe('PUT /api/users/:id lifecycle (updateUser)', () => {
   it('admin can suspend without deleting', async () => {
     const { user, state } = makeUser();
     User.findByPk = async () => user;
+    UserRole.findAll = async () => [{ role: 'coach' }];
     sequelize.transaction = async (fn) => fn({});
 
     let coachFindCalls = 0;
@@ -200,6 +203,66 @@ describe('PUT /api/users/:id lifecycle (updateUser)', () => {
     assert.equal(coachFindCalls, 0);
     assert.equal(res.body.data.is_active, false);
     assert.equal(res.body.data.deleted_at, null);
+  });
+
+  it('blocks suspending the last live admin', async () => {
+    const { user, state } = makeUser({
+      id: 10,
+      is_active: true,
+      deleted_at: null,
+      userRoles: [{ role: 'admin' }],
+    });
+    User.findByPk = async () => user;
+    UserRole.findAll = async () => [{ role: 'admin' }];
+    const origCount = User.count;
+    User.count = async () => 0;
+    sequelize.transaction = async (fn) => fn({});
+
+    try {
+      const req = {
+        params: { id: '10' },
+        user: { id: 1, roles: ['admin'] },
+        validated: { is_active: false },
+      };
+      const res = mockRes();
+      await updateUser(req, res);
+
+      assert.equal(res.statusCode, 409);
+      assert.match(res.body.message || '', /At least one admin must remain/i);
+      assert.equal(state.is_active, true);
+    } finally {
+      User.count = origCount;
+    }
+  });
+
+  it('blocks self-suspend when actor is the only live admin', async () => {
+    const { user, state } = makeUser({
+      id: 1,
+      is_active: true,
+      deleted_at: null,
+      userRoles: [{ role: 'admin' }],
+    });
+    User.findByPk = async () => user;
+    UserRole.findAll = async () => [{ role: 'admin' }];
+    const origCount = User.count;
+    User.count = async () => 0;
+    sequelize.transaction = async (fn) => fn({});
+
+    try {
+      const req = {
+        params: { id: '1' },
+        user: { id: 1, roles: ['admin'] },
+        validated: { is_active: false },
+      };
+      const res = mockRes();
+      await updateUser(req, res);
+
+      assert.equal(res.statusCode, 409);
+      assert.match(res.body.message || '', /cannot suspend yourself/i);
+      assert.equal(state.is_active, true);
+    } finally {
+      User.count = origCount;
+    }
   });
 
   it('admin can reactivate a suspended user', async () => {
@@ -417,6 +480,77 @@ describe('authenticate middleware lifecycle', () => {
       assert.equal(res.statusCode, 401);
       assert.match(res.body.error || '', /suspended/i);
     }
+  });
+
+  it('rejects an already-issued JWT after mid-session soft-delete (DB re-check)', async () => {
+    const { user, state } = makeUser({ is_active: true, deleted_at: null });
+    User.findByPk = async () => user;
+    const token = jwt.sign({ userId: 10, tokenVersion: 0 }, secret);
+
+    {
+      const req = { headers: { authorization: `Bearer ${token}` } };
+      const res = mockRes();
+      let nextCalled = false;
+      await authenticate(req, res, () => {
+        nextCalled = true;
+      });
+      assert.equal(nextCalled, true);
+    }
+
+    state.is_active = false;
+    state.deleted_at = new Date();
+    {
+      const req = { headers: { authorization: `Bearer ${token}` } };
+      const res = mockRes();
+      let nextCalled = false;
+      await authenticate(req, res, () => {
+        nextCalled = true;
+      });
+      assert.equal(nextCalled, false);
+      assert.equal(res.statusCode, 401);
+      assert.match(res.body.error || '', /deleted/i);
+    }
+  });
+
+  it('rejects JWT when token_version no longer matches (revoked)', async () => {
+    const { user, state } = makeUser({ token_version: 0 });
+    User.findByPk = async () => user;
+    const token = jwt.sign({ userId: 10, tokenVersion: 0 }, secret);
+
+    {
+      const req = { headers: { authorization: `Bearer ${token}` } };
+      const res = mockRes();
+      let nextCalled = false;
+      await authenticate(req, res, () => {
+        nextCalled = true;
+      });
+      assert.equal(nextCalled, true);
+    }
+
+    state.token_version = 1;
+    {
+      const req = { headers: { authorization: `Bearer ${token}` } };
+      const res = mockRes();
+      let nextCalled = false;
+      await authenticate(req, res, () => {
+        nextCalled = true;
+      });
+      assert.equal(nextCalled, false);
+      assert.equal(res.statusCode, 401);
+      assert.match(res.body.error || '', /revoked/i);
+    }
+  });
+
+  it('rejects a malformed JWT as invalid token', async () => {
+    const req = { headers: { authorization: 'Bearer not-a-jwt' } };
+    const res = mockRes();
+    let nextCalled = false;
+    await authenticate(req, res, () => {
+      nextCalled = true;
+    });
+    assert.equal(nextCalled, false);
+    assert.equal(res.statusCode, 401);
+    assert.match(res.body.error || '', /Invalid token/i);
   });
 });
 

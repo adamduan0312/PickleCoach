@@ -39,9 +39,18 @@ test('serializeBookingSummary trims persistence internals', () => {
   assert.equal(dto.messaging_locked, true);
   assert.equal(dto.idempotency_key, undefined);
   assert.equal(dto.payout_status, undefined);
+  assert.equal(dto.active_issue, null);
   assert.ok(dto.financial_review);
   assert.equal(typeof dto.financial_review.review_until, 'string');
   assert.equal(typeof dto.financial_review.window_open, 'boolean');
+});
+
+test('serializeBookingSummary passes through active_issue when attached', () => {
+  const dto = serializeBookingSummary({
+    ...fullBooking,
+    active_issue: { id: 9, status: 'open', opened_by: 'student' },
+  });
+  assert.deepEqual(dto.active_issue, { id: 9, status: 'open', opened_by: 'student' });
 });
 
 test('serializeBookingDetailCore includes lifecycle fields', () => {
@@ -74,6 +83,18 @@ test('serializeBookingListItem exposes acceptance deadline for pending rows', ()
   });
   assert.equal(dto.coach_acceptance_deadline_at, '2026-08-27T12:00:00.000Z');
   assert.equal(dto.min_booking_lead_hours, 2);
+  assert.equal(dto.created_at, '2026-08-26T14:00:00.000Z');
+});
+
+test('serializeBookingListItem deadline is request+24h when lesson is days away', () => {
+  const dto = serializeBookingListItem({
+    ...fullBooking,
+    status: 'pending',
+    created_at: '2026-09-01T13:49:00.000Z',
+    scheduled_at: '2026-09-03T19:00:00.000Z',
+  });
+  assert.equal(dto.created_at, '2026-09-01T13:49:00.000Z');
+  assert.equal(dto.coach_acceptance_deadline_at, '2026-09-02T13:49:00.000Z');
 });
 
 test('serializeBookingListItem trims nested associations', () => {

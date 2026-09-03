@@ -76,13 +76,13 @@ function bookingRow({ id, coach_id, primary_student_id }) {
 }
 
 function stubListQuery(rows) {
-  let capturedWhere = null;
+  let capturedOpts = null;
   Booking.findAndCountAll = async (opts) => {
-    capturedWhere = opts.where;
+    capturedOpts = opts;
     return { rows, count: rows.length };
   };
   Conversation.findAll = async () => [];
-  return () => capturedWhere;
+  return () => capturedOpts;
 }
 
 describe('bookingListQuery where builders', () => {
@@ -154,7 +154,7 @@ describe('GET /api/students/me/bookings authorize (student)', () => {
 
 describe('booking list controllers', () => {
   it('coach GET inbox only uses coach_id and always includes student reliability', async () => {
-    const getWhere = stubListQuery([bookingRow({ id: 1, coach_id: 5, primary_student_id: 20 })]);
+    const getOpts = stubListQuery([bookingRow({ id: 1, coach_id: 5, primary_student_id: 20 })]);
     const req = {
       validated: {},
       user: { id: 5, roles: ['coach'] },
@@ -164,13 +164,13 @@ describe('booking list controllers', () => {
     await getCoachBookings(req, res);
 
     assert.equal(res.statusCode, 200);
-    assert.equal(getWhere().coach_id, 5);
-    assert.equal(getWhere().primary_student_id, undefined);
+    assert.equal(getOpts().where.coach_id, 5);
+    assert.equal(getOpts().where.primary_student_id, undefined);
     assert.equal(res.payload.data[0].primaryStudent?.reliability_score, 88);
   });
 
   it('student GET dashboard only uses primary_student_id and omits student reliability', async () => {
-    const getWhere = stubListQuery([bookingRow({ id: 1, coach_id: 99, primary_student_id: 10 })]);
+    const getOpts = stubListQuery([bookingRow({ id: 1, coach_id: 99, primary_student_id: 10 })]);
     const req = {
       validated: {},
       user: { id: 10, roles: ['student'] },
@@ -180,8 +180,25 @@ describe('booking list controllers', () => {
     await getStudentBookings(req, res);
 
     assert.equal(res.statusCode, 200);
-    assert.equal(getWhere().primary_student_id, 10);
-    assert.equal(getWhere().coach_id, undefined);
+    assert.equal(getOpts().where.primary_student_id, 10);
+    assert.equal(getOpts().where.coach_id, undefined);
     assert.equal(res.payload.data[0].primaryStudent?.reliability_score, undefined);
+  });
+
+  it('lists use upcoming-first order (soonest upcoming, then recent past)', async () => {
+    const getOpts = stubListQuery([bookingRow({ id: 1, coach_id: 5, primary_student_id: 20 })]);
+    const req = {
+      validated: {},
+      user: { id: 5, roles: ['coach'] },
+      baseUrl: '/api/coaches',
+    };
+    const res = mockRes();
+    await getCoachBookings(req, res);
+    assert.equal(res.statusCode, 200);
+    const order = getOpts().order;
+    assert.ok(Array.isArray(order) && order.length >= 2);
+    const orderSql = order.map((clause) => String(clause[0]?.val ?? clause[0] ?? '')).join(' ');
+    assert.match(orderSql, /UTC_TIMESTAMP/);
+    assert.match(orderSql, /scheduled_at/);
   });
 });

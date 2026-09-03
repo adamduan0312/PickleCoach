@@ -3,6 +3,7 @@ import { coachesApi, courtsApi, geoApi, asList } from '../../api/index.js';
 import { useAsync } from '../../hooks/useAsync.js';
 import { Alert, EmptyState, ErrorState, LoadingState } from '../../components/ui/States.jsx';
 import { FormField } from '../../components/ui/FormField.jsx';
+import { CHAR_LIMITS } from '../../utils/charLimits.js';
 import { courtLabel, formatCourtAddressLines, formatMiles } from '../../utils/format.js';
 import { isCourtAlreadyLinked, linkedCourtIdSet } from '../../utils/coachCourts.js';
 
@@ -394,9 +395,9 @@ export function CoachCourtsPage() {
             </button>
           </div>
           <form className="stack" onSubmit={confirmAddress}>
-            <FormField label="Name" name="name" value={form.name} onChange={update} required />
-            <FormField label="Street address" name="address_line1" value={form.address_line1} onChange={update} required />
-            <FormField label="City" name="city" value={form.city} onChange={update} required />
+            <FormField label="Name" name="name" value={form.name} onChange={update} required maxLength={CHAR_LIMITS.courtName} />
+            <FormField label="Street address" name="address_line1" value={form.address_line1} onChange={update} required maxLength={CHAR_LIMITS.courtAddress} />
+            <FormField label="City" name="city" value={form.city} onChange={update} required maxLength={CHAR_LIMITS.courtCity} />
             <FormField label="State (2-letter)" name="state" value={form.state} onChange={update} required maxLength={2} />
             <FormField label="ZIP" name="postal_code" value={form.postal_code} onChange={update} required />
             <label className="row">

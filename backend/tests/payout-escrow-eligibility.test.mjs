@@ -8,7 +8,9 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   PAYOUT_ELIGIBLE_ESCROW_STATUS,
+  MAX_FAILED_CONNECT_PAYOUT_ATTEMPTS,
   isPaymentEscrowPayable,
+  shouldParkPayoutAfterFailedAttempts,
 } from '../utils/payoutEscrowEligibility.js';
 
 describe('payout escrow eligibility', () => {
@@ -43,5 +45,12 @@ describe('payout escrow eligibility', () => {
     assert.equal(isPaymentEscrowPayable(null), false);
     assert.equal(isPaymentEscrowPayable(undefined), false);
     assert.equal(isPaymentEscrowPayable({}), false);
+  });
+
+  it('parks Connect retries after MAX_FAILED_CONNECT_PAYOUT_ATTEMPTS', () => {
+    assert.equal(MAX_FAILED_CONNECT_PAYOUT_ATTEMPTS, 5);
+    assert.equal(shouldParkPayoutAfterFailedAttempts(4), false);
+    assert.equal(shouldParkPayoutAfterFailedAttempts(5), true);
+    assert.equal(shouldParkPayoutAfterFailedAttempts(749), true);
   });
 });

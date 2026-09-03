@@ -10,6 +10,7 @@ import {
   BookingTransitionVia,
 } from '../services/bookingStateMachine.js';
 import { ACTIVE_DISPUTE_STATUSES } from '../services/disputeStateMachine.js';
+import * as notificationService from '../services/notificationService.js';
 
 /**
  * Move confirmed → awaiting_verification when lesson end time has passed.
@@ -24,26 +25,41 @@ const moveConfirmedToAwaitingVerification = async () => {
         ? sequelize.literal("(scheduled_at + duration_minutes * interval '1 minute') <= NOW()")
         : sequelize.literal("datetime(scheduled_at, '+' || duration_minutes || ' minutes') <= datetime('now')");
 
+  const whereClause = {
+    status: 'confirmed',
+    [Op.and]: [lessonEndPastLiteral],
+  };
+
+  const candidates = await Booking.findAll({
+    where: whereClause,
+    attributes: ['id'],
+  });
+  if (candidates.length === 0) return;
+
   assertBulkBookingStatusTransition(
     'confirmed',
     'awaiting_verification',
     BookingTransitionVia.WORKER_LESSON_END_TO_AWAITING_VERIFICATION,
   );
-  const updated = await Booking.update(
+  await Booking.update(
     {
       status: 'awaiting_verification',
       messaging_locked: messagingLockedValueForStatus('awaiting_verification'),
     },
-    {
-      where: {
-        status: 'confirmed',
-        [Op.and]: [lessonEndPastLiteral],
-      },
-    }
+    { where: whereClause },
   );
 
-  if (updated[0] > 0) {
-    logger.info(`Moved ${updated[0]} booking(s) from confirmed to awaiting_verification (lesson time passed)`);
+  logger.info(`Moved ${candidates.length} booking(s) from confirmed to awaiting_verification (lesson time passed)`);
+
+  for (const row of candidates) {
+    void notificationService.notifyCoachConfirmAttendanceReminder(row.id).catch((err) => {
+      logger.warn({
+        component: 'auto_confirm_worker',
+        event: 'confirm_attendance_reminder_notify_failed',
+        bookingId: row.id,
+        message: err?.message,
+      });
+    });
   }
 };
 
@@ -91,34 +107,53 @@ export const autoConfirmLessons = async () => {
     });
 
     for (const booking of bookings) {
-      // Check if there's an open dispute
-      const hasOpenDispute = await booking.getDisputes({
-        where: {
-          status: { [Op.in]: [...ACTIVE_DISPUTE_STATUSES] },
-        },
-      });
+      try {
+        await sequelize.transaction(async (transaction) => {
+          const locked = await Booking.findByPk(booking.id, {
+            transaction,
+            lock: transaction.LOCK.UPDATE,
+          });
+          if (!locked || locked.status !== 'awaiting_verification') {
+            return;
+          }
 
-      if (hasOpenDispute.length > 0) {
-        logger.info(`Skipping auto-confirm for booking ${booking.id} - open dispute exists`);
-        continue;
+          const hasOpenDispute = await locked.getDisputes({
+            where: {
+              status: { [Op.in]: [...ACTIVE_DISPUTE_STATUSES] },
+            },
+            transaction,
+          });
+
+          if (hasOpenDispute.length > 0) {
+            logger.info(`Skipping auto-confirm for booking ${locked.id} - open dispute exists`);
+            return;
+          }
+
+          await applyBookingStatusTransition(locked, {
+            toStatus: 'completed',
+            via: BookingTransitionVia.MARK_COMPLETED,
+            patch: { payout_status: 'pending' },
+            options: { transaction },
+          });
+
+          await createAuditLog({
+            user_id: null,
+            action: 'booking_auto_confirmed',
+            table_name: 'bookings',
+            record_id: locked.id,
+            after_state: { status: 'completed', payout_status: 'pending' },
+          });
+
+          logger.info(`Auto-confirmed booking ${locked.id}`);
+        });
+      } catch (err) {
+        logger.warn({
+          component: 'auto_confirm_worker',
+          event: 'auto_confirm_booking_failed',
+          bookingId: booking.id,
+          message: err?.message || String(err),
+        });
       }
-
-      // Auto-confirm the booking
-      await applyBookingStatusTransition(booking, {
-        toStatus: 'completed',
-        via: BookingTransitionVia.MARK_COMPLETED,
-        patch: { payout_status: 'pending' },
-      });
-
-      await createAuditLog({
-        user_id: null,
-        action: 'booking_auto_confirmed',
-        table_name: 'bookings',
-        record_id: booking.id,
-        after_state: { status: 'completed', payout_status: 'pending' },
-      });
-
-      logger.info(`Auto-confirmed booking ${booking.id}`);
     }
 
     logger.info(`Auto-confirm worker processed ${bookings.length} bookings`);

@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import Payment from '../models/Payment.js';
 import Payout from '../models/Payout.js';
-import { validateAdminRoleRemovalSafeguards } from '../utils/userRoleChangeGuards.js';
+import { validateAdminRoleRemovalSafeguards, validateAdminSuspendSafeguards } from '../utils/userRoleChangeGuards.js';
 
 describe('validateAdminRoleRemovalSafeguards', () => {
   it('allows removal when another admin exists', () => {
@@ -66,6 +66,62 @@ describe('validateAdminRoleRemovalSafeguards', () => {
       previousRoles: ['student', 'coach'],
       nextRoles: ['student'],
       otherAdminUserCount: 0,
+    });
+    assert.equal(r.ok, true);
+  });
+});
+
+describe('validateAdminSuspendSafeguards', () => {
+  it('allows suspending a non-admin', () => {
+    const r = validateAdminSuspendSafeguards({
+      actorUserId: 1,
+      targetUserId: 2,
+      targetIsLiveAdmin: false,
+      otherAdminUserCount: 0,
+    });
+    assert.equal(r.ok, true);
+  });
+
+  it('allows suspending an admin when another live admin exists', () => {
+    const r = validateAdminSuspendSafeguards({
+      actorUserId: 1,
+      targetUserId: 2,
+      targetIsLiveAdmin: true,
+      otherAdminUserCount: 1,
+    });
+    assert.equal(r.ok, true);
+  });
+
+  it('blocks suspending the last live admin', () => {
+    const r = validateAdminSuspendSafeguards({
+      actorUserId: 1,
+      targetUserId: 2,
+      targetIsLiveAdmin: true,
+      otherAdminUserCount: 0,
+    });
+    assert.equal(r.ok, false);
+    assert.equal(r.status, 409);
+    assert.match(r.message, /At least one admin must remain/i);
+  });
+
+  it('blocks self-suspend when you are the only live admin', () => {
+    const r = validateAdminSuspendSafeguards({
+      actorUserId: 1,
+      targetUserId: 1,
+      targetIsLiveAdmin: true,
+      otherAdminUserCount: 0,
+    });
+    assert.equal(r.ok, false);
+    assert.equal(r.status, 409);
+    assert.match(r.message, /cannot suspend yourself/i);
+  });
+
+  it('allows self-suspend when another live admin exists', () => {
+    const r = validateAdminSuspendSafeguards({
+      actorUserId: 1,
+      targetUserId: 1,
+      targetIsLiveAdmin: true,
+      otherAdminUserCount: 2,
     });
     assert.equal(r.ok, true);
   });

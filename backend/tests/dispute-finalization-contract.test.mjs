@@ -56,6 +56,38 @@ test('coach complete and student-no-show call checkAttendanceFinalized', () => {
   assert.match(noShowSlice, /checkAttendanceFinalized\(booking\)/);
 });
 
+test('coach complete and student-no-show reject active disputes (dispute owns attendance outcome)', () => {
+  const src = readFileSync(bookingControllerPath, 'utf8');
+  const completeIdx = src.indexOf('export const completeBooking');
+  const noShowIdx = src.indexOf('export const markBookingNoShow');
+  const adminCoachIdx = src.indexOf('export const adminMarkCoachNoShow');
+  assert.ok(completeIdx > 0 && noShowIdx > 0 && adminCoachIdx > completeIdx);
+
+  const completeSlice = src.slice(completeIdx, noShowIdx);
+  const noShowSlice = src.slice(noShowIdx, adminCoachIdx);
+
+  for (const [label, slice] of [
+    ['completeBooking', completeSlice],
+    ['markBookingNoShow', noShowSlice],
+  ]) {
+    assert.match(
+      slice,
+      /ACTIVE_DISPUTE_STATUSES/,
+      `${label} must query active dispute statuses`,
+    );
+    assert.match(
+      slice,
+      /disputed_use_resolve_dispute/,
+      `${label} must return disputed_use_resolve_dispute when an issue is open`,
+    );
+    assert.match(
+      slice,
+      /activeDispute \|\| booking\.status === 'disputed'/,
+      `${label} must block both open disputes and Stripe disputed status`,
+    );
+  }
+});
+
 test('accept and decline lock booking row like cancel', () => {
   const src = readFileSync(bookingControllerPath, 'utf8');
   const acceptIdx = src.indexOf('export const acceptBooking');

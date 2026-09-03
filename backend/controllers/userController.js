@@ -4,7 +4,7 @@ import { successResponse, errorResponse, paginatedResponse } from '../utils/resp
 import { getPagination, getPagingData } from '../utils/pagination.js';
 import { logger } from '../config/logger.js';
 import { serializeAdminUserList, serializeAdminUserDetail } from '../utils/userDto.js';
-import { validateAdminRoleRemovalSafeguards, countOtherLiveAdmins } from '../utils/userRoleChangeGuards.js';
+import { validateAdminRoleRemovalSafeguards, countOtherLiveAdmins, validateAdminSuspendSafeguards } from '../utils/userRoleChangeGuards.js';
 import { effectiveRolesFromGovernance, serializeRoleState } from '../utils/roleGovernance.js';
 import { softDeleteUserAccount, restoreUserAccount } from '../utils/userLifecycle.js';
 
@@ -171,6 +171,27 @@ export const updateUser = async (req, res) => {
         });
         if (!guard.ok) {
           return errorResponse(res, guard.message, guard.status);
+        }
+      }
+    }
+
+    // Last-live-admin lockout: suspending the sole active admin must not succeed.
+    if (suspending && !user.deleted_at && user.is_active !== false) {
+      const targetRoles = await UserRole.findAll({
+        where: { user_id: user.id },
+        attributes: ['role'],
+      }).then((rows) => rows.map((r) => r.role));
+      const targetIsLiveAdmin = targetRoles.includes('admin');
+      if (targetIsLiveAdmin) {
+        const otherAdminCount = await countOtherLiveAdmins(user.id);
+        const suspendGuard = validateAdminSuspendSafeguards({
+          actorUserId: req.user.id,
+          targetUserId: user.id,
+          targetIsLiveAdmin: true,
+          otherAdminUserCount: otherAdminCount,
+        });
+        if (!suspendGuard.ok) {
+          return errorResponse(res, suspendGuard.message, suspendGuard.status);
         }
       }
     }

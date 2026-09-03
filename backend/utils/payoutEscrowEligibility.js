@@ -3,15 +3,21 @@
  * "is this payment's money releasable to the coach".
  *
  * IMPORTANT: booking.status alone NEVER means a payment is payable. A booking
- * can be `completed` while its payment sits in `escrow_status = 'disputed'`
- * until Stripe terminal reconciliation (`STRIPE_DISPUTE_TERMINAL`) or admin
- * paths reconcile escrow. The payout worker gates on escrow_status, not booking status.
+ * can be `completed` while payout is still `pending` / `processing`, or blocked
+ * by dispute / failed Connect transfer. Do not show "Coach paid" from attendance status.
+ *
+ * `failed + released` (pre-capture void) is never payable — payoutWorker also
+ * requires `captured` / `partially_refunded`.
  */
 
-/** Only `held` escrow is releasable; every other state is parked money.
- * `failed + released` (pre-capture void) is never payable — payoutWorker also
- * requires `captured` / `partially_refunded`. */
+/** Only `held` escrow is releasable; every other state is parked money. */
 export const PAYOUT_ELIGIBLE_ESCROW_STATUS = 'held';
+
+/**
+ * After this many failed Connect transfer attempts for one payment, park escrow
+ * at `manual_payout_required` so the worker stops creating payout rows every tick.
+ */
+export const MAX_FAILED_CONNECT_PAYOUT_ATTEMPTS = 5;
 
 /**
  * @param {{ escrow_status?: string | null } | null | undefined} payment
@@ -19,4 +25,13 @@ export const PAYOUT_ELIGIBLE_ESCROW_STATUS = 'held';
  */
 export function isPaymentEscrowPayable(payment) {
   return payment?.escrow_status === PAYOUT_ELIGIBLE_ESCROW_STATUS;
+}
+
+/**
+ * @param {number} failedPayoutCount
+ * @returns {boolean}
+ */
+export function shouldParkPayoutAfterFailedAttempts(failedPayoutCount) {
+  const n = Number(failedPayoutCount);
+  return Number.isFinite(n) && n >= MAX_FAILED_CONNECT_PAYOUT_ATTEMPTS;
 }

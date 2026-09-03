@@ -122,7 +122,7 @@ export const cancellationSchema = Joi.object({
 
 /** Coach decline (pending booking): required message to student; optional analytics reason code */
 export const declineBookingSchema = Joi.object({
-  message_to_student: Joi.string().trim().min(10).max(500).required(),
+  message_to_student: Joi.string().trim().min(3).max(500).required(),
   decline_reason_code: Joi.string().valid(...getValidDeclineReasonCodes()).allow('').optional(),
 });
 

@@ -125,7 +125,13 @@ export async function processHeldEscrowPayment(payment) {
   }
 
   const coachStripeAccountId = payment.coach.coachProfile?.stripe_account_id || null;
-  await paymentService.releaseEscrow(payment.id, coachStripeAccountId);
+  const releaseResult = await paymentService.releaseEscrow(payment.id, coachStripeAccountId);
+  if (releaseResult?.skipped) {
+    logger.info(
+      `Skipping payout for payment ${payment.id} - ${releaseResult.reason || 'release_skipped'}`,
+    );
+    return { skipped: true, reason: releaseResult.reason || 'release_skipped' };
+  }
 
   await payment.reload();
   await payment.booking.reload();

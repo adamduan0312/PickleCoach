@@ -9,7 +9,9 @@ export function NotificationsPage() {
   const { data, error, loading, setData } = useAsync(async () => {
     const res = await notificationsApi.list();
     const list = asList(res.data);
-    return list.filter((n) => n.channel === 'in_app' || n.payload?.headline);
+    // Email/SMS rows share the same headline payload for delivery; only in-app belongs in the feed
+    // (matches GET /notifications/unread-count, which counts channel=in_app only).
+    return list.filter((n) => n.channel === 'in_app');
   }, []);
 
   async function open(n) {

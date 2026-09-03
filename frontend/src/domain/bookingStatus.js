@@ -1,10 +1,10 @@
 const STATUS_LABELS = {
   pending: 'Booking requested',
   confirmed: 'Confirmed',
-  awaiting_verification: 'Lesson ended — confirm attendance',
+  awaiting_verification: 'Awaiting verification',
   completed: 'Completed',
   cancelled: 'Cancelled',
-  disputed: 'Payment disputed',
+  disputed: 'Disputed',
   student_no_show: 'Student no-show',
   coach_no_show: 'Coach no-show',
 };
@@ -31,15 +31,36 @@ const PAYMENT_LABELS = {
   pending_void: 'Authorization releasing',
 };
 
+/** Open in-app report (`disputes` row) — distinct from Stripe `bookings.status = disputed`. */
+export function hasOpenIssueReport(booking) {
+  return Boolean(booking?.active_issue?.id);
+}
+
 export function bookingStatusLabel(status, { audience } = {}) {
   if (!status) return 'Unknown';
   if (status === 'awaiting_verification') {
-    return audience === 'coach'
-      ? 'Lesson ended — confirm attendance'
-      : 'Waiting for coach to confirm attendance';
+    return 'Awaiting verification';
   }
   if (status === 'pending' && audience === 'coach') return 'Response needed';
   return STATUS_LABELS[status] || String(status).replace(/_/g, ' ');
+}
+
+/**
+ * User-facing badge for a booking row.
+ * In-app open report → "Issue reported"; Stripe chargeback status → "Disputed".
+ */
+export function bookingDisplayLabel(booking, { audience } = {}) {
+  if (!booking) return 'Unknown';
+  if (hasOpenIssueReport(booking) && booking.status !== 'disputed') {
+    return 'Issue reported';
+  }
+  return bookingStatusLabel(booking.status, { audience });
+}
+
+export function bookingDisplayTone(booking) {
+  if (!booking) return 'neutral';
+  if (hasOpenIssueReport(booking) && booking.status !== 'disputed') return 'warning';
+  return bookingStatusTone(booking.status);
 }
 
 export function bookingStatusTone(status) {
@@ -88,8 +109,8 @@ export function cancelMoneyConsequenceCopy(booking, payment, { audience } = {}) 
 
   if (booking.status === 'pending' || authorizedOnly) {
     return audience === 'coach'
-      ? 'The student’s payment authorization will be released. They won’t be charged.'
-      : 'Your payment authorization will be released. You won’t be charged.';
+      ? 'The student’s payment has only been authorized — they haven’t been charged. Cancelling releases the authorization.'
+      : 'Your payment has only been authorized — you haven’t been charged. Cancelling releases the authorization.';
   }
 
   if (booking.status !== 'confirmed') return null;
@@ -105,11 +126,106 @@ export function cancelMoneyConsequenceCopy(booking, payment, { audience } = {}) 
   if (isLate) {
     return 'Late cancellation: a refund of approximately half of the lesson amount may apply. The exact refund amount is calculated when the refund is processed.';
   }
-  return 'You’ll receive a full refund of the captured payment under the cancellation policy.';
+  // Policy: full refund when ≥24h before start (isLateCancel=false → refundCents = total).
+  return 'You’ll receive a full refund of the captured lesson amount. The exact refund amount is calculated when the refund is processed.';
 }
 
 export function canStudentCancel(booking) {
   return booking && ['pending', 'confirmed'].includes(booking.status);
+}
+
+/** Coach cancel is for confirmed lessons — not pending requests (use decline). */
+export function canCoachCancel(booking) {
+  return booking && booking.status === 'confirmed';
+}
+
+/**
+ * Upcoming soonest-first, then past most-recent-first (lesson date only).
+ * @param {Array<{ scheduled_at?: string|Date }>} bookings
+ * @param {number} [nowMs]
+ */
+export function sortBookingsUpcomingFirst(bookings, nowMs = Date.now()) {
+  if (!Array.isArray(bookings) || bookings.length < 2) return bookings || [];
+  const upcoming = [];
+  const past = [];
+  for (const b of bookings) {
+    const t = new Date(b.scheduled_at).getTime();
+    if (Number.isFinite(t) && t >= nowMs) upcoming.push(b);
+    else past.push(b);
+  }
+  upcoming.sort((a, b) => new Date(a.scheduled_at) - new Date(b.scheduled_at));
+  past.sort((a, b) => new Date(b.scheduled_at) - new Date(a.scheduled_at));
+  return [...upcoming, ...past];
+}
+
+function lessonStartMs(booking) {
+  const t = new Date(booking?.scheduled_at).getTime();
+  return Number.isFinite(t) ? t : 0;
+}
+
+const LIST_CANCELLED_GROUP = 4;
+
+/**
+ * My Bookings tab filters — `awaiting_verification` and terminal post-lesson statuses stay on All only.
+ */
+export const BOOKING_LIST_STATUS_FILTERS = ['', 'pending', 'confirmed', 'completed', 'cancelled'];
+
+/** True when a booking should appear under the selected list filter tab. */
+export function bookingIncludedInListFilter(booking, filterStatus) {
+  if (!filterStatus) return true;
+  return booking?.status === filterStatus;
+}
+
+/**
+ * Default “All” list order.
+ *
+ * Student: pending → upcoming → awaiting_verification → other past → cancelled.
+ * Coach: pending → awaiting_verification (action) → upcoming → other past → cancelled.
+ *
+ * Within pending/upcoming: soonest lesson first.
+ * Within awaiting/past/cancelled: most recent lesson first.
+ */
+export function sortBookingsForList(bookings, nowMs = Date.now(), { audience = 'student' } = {}) {
+  if (!Array.isArray(bookings) || bookings.length < 2) return bookings || [];
+
+  function lifecycleGroup(booking) {
+    const status = booking?.status;
+    if (status === 'pending') return 0;
+    if (status === 'cancelled') return LIST_CANCELLED_GROUP;
+
+    const upcoming = lessonStartMs(booking) >= nowMs;
+
+    if (audience === 'coach' && status === 'awaiting_verification') {
+      return 1;
+    }
+
+    if (upcoming) {
+      return audience === 'coach' ? 2 : 1;
+    }
+
+    if (status === 'awaiting_verification') {
+      return 2;
+    }
+
+    return 3;
+  }
+
+  function sortSoonestFirst(group) {
+    if (audience === 'coach') {
+      return group === 0 || group === 2;
+    }
+    return group === 0 || group === 1;
+  }
+
+  return [...bookings].sort((a, b) => {
+    const ga = lifecycleGroup(a);
+    const gb = lifecycleGroup(b);
+    if (ga !== gb) return ga - gb;
+    const ta = lessonStartMs(a);
+    const tb = lessonStartMs(b);
+    if (sortSoonestFirst(ga)) return ta - tb;
+    return tb - ta;
+  });
 }
 
 export function canCoachAccept(booking) {
@@ -136,6 +252,43 @@ export function coachAcceptanceDeadlineAt(booking) {
 }
 
 /**
+ * Checkout-only policy (before payment). Do not reuse pending wait copy —
+ * that assumes authorization already happened.
+ */
+export function checkoutAcceptancePolicyCopy(bookingLike = {}) {
+  const n = coachAcceptanceTimeoutHours(bookingLike);
+  const lead = minBookingLeadHours(bookingLike);
+  const unit = n === 1 ? 'hour' : 'hours';
+  const leadUnit = lead === 1 ? 'hour' : 'hours';
+  if (lead <= 0) {
+    return `The coach has ${n} ${unit} from this request to accept or decline.`;
+  }
+  return `The coach has up to ${n} ${unit} to accept, but must accept at least ${lead} ${leadUnit} before the lesson starts (whichever comes first).`;
+}
+
+/** Checkout — cancellation & no-show policy lines (student-facing, before commit). */
+export function checkoutCancellationNoShowPolicyLines() {
+  return [
+    'Cancel 24+ hours before your lesson for a full refund.',
+    'Cancellations within 24 hours may receive a 50% refund.',
+    'If you don\'t show up for your lesson, your payment may not be refunded and your reliability score may be affected.',
+  ];
+}
+
+/** Coach confirm dialog before POST .../student-no-show. */
+export function studentNoShowConfirmTitle() {
+  return 'Mark student as no-show?';
+}
+
+export function studentNoShowConfirmBody() {
+  return 'If you mark this student as a no-show, the booking payment will not be automatically refunded and the student\'s reliability score may be affected.\n\nThis action can be reviewed if the student reports an issue.';
+}
+
+/** Subtle reminder on confirmed student bookings (what happens next). */
+export const confirmedStudentNoShowReminder =
+  'No-shows may affect your reliability score and may not be eligible for a refund.';
+
+/**
  * Pending-request guidance. Prefer the concrete deadline when the API provides it.
  */
 export function pendingRequestTimeoutCopy(booking, { audience } = {}) {
@@ -147,16 +300,16 @@ export function pendingRequestTimeoutCopy(booking, { audience } = {}) {
 
   if (deadlineIso) {
     if (audience === 'student') {
-      return 'The coach must accept or decline by the response deadline below. If they don’t respond in time, the request is cancelled and your payment authorization is released.';
+      return 'Your payment has only been authorized — you haven’t been charged. If the coach declines or doesn’t respond in time, the authorization is released.';
     }
     return 'Please accept or decline by the response deadline below. If you don’t respond in time, the request is cancelled automatically and the student’s payment authorization is released.';
   }
 
   if (audience === 'student') {
     if (lead <= 0) {
-      return `The coach has ${n} ${unit} from this request to accept or decline. If they don’t respond, the request is cancelled automatically and your payment authorization is released.`;
+      return `Your payment has only been authorized — you haven’t been charged. The coach has ${n} ${unit} to accept or decline. If they decline or don’t respond, the authorization is released.`;
     }
-    return `The coach has up to ${n} ${unit} to accept, but must accept at least ${lead} ${leadUnit} before the lesson starts (whichever comes first). If they don’t respond in time, the request is cancelled and your payment authorization is released.`;
+    return `Your payment has only been authorized — you haven’t been charged. The coach has up to ${n} ${unit} to accept, but must accept at least ${lead} ${leadUnit} before the lesson (whichever comes first). If they decline or don’t respond in time, the authorization is released.`;
   }
   if (lead <= 0) {
     return `Please accept or decline this request in PickleCoach within ${n} ${unit} of this request. If you don’t respond, the request is cancelled automatically and the student’s payment authorization is released.`;
@@ -178,22 +331,118 @@ export function hasLessonEnded(booking, now = Date.now()) {
 }
 
 export function canCoachComplete(booking, now = Date.now()) {
+  if (hasOpenIssueReport(booking) || booking?.status === 'disputed') return false;
   return booking
     && ['confirmed', 'awaiting_verification'].includes(booking.status)
     && hasLessonEnded(booking, now);
 }
 
 export function canCoachMarkNoShow(booking, now = Date.now()) {
+  if (hasOpenIssueReport(booking) || booking?.status === 'disputed') return false;
   return booking
     && ['confirmed', 'awaiting_verification'].includes(booking.status)
     && hasLessonEnded(booking, now);
 }
 
+/** True when coach attendance actions must wait for dispute resolution. */
+export function coachAttendanceBlockedByIssue(booking) {
+  return hasOpenIssueReport(booking) || booking?.status === 'disputed';
+}
+
 export function canReportLessonIssue(booking) {
   if (!booking?.financial_review?.window_open) return false;
+  if (hasOpenIssueReport(booking)) return false;
+  if (!isPostLessonReviewEligible(booking)) return false;
   return ['confirmed', 'awaiting_verification', 'completed', 'student_no_show', 'coach_no_show', 'disputed'].includes(
     booking.status,
   );
+}
+
+/** Statuses where a lesson occurred or post-lesson attendance was recorded (excludes cancelled/pending). */
+const POST_LESSON_REVIEW_ELIGIBLE_STATUSES = new Set([
+  'awaiting_verification',
+  'completed',
+  'student_no_show',
+  'coach_no_show',
+  'disputed',
+]);
+
+/**
+ * Post-lesson review window UI applies — lesson ended and booking is not a pre-lesson terminal state.
+ * Guards against cancelled/expired requests showing review timers when scheduled_at is in the past.
+ */
+export function isPostLessonReviewEligible(booking, now = Date.now()) {
+  if (!booking?.status) return false;
+  if (booking.status === 'cancelled' || booking.status === 'pending') return false;
+  if (!hasLessonEnded(booking, now)) return false;
+  if (POST_LESSON_REVIEW_ELIGIBLE_STATUSES.has(booking.status)) return true;
+  return booking.status === 'confirmed';
+}
+
+/** Student dashboard — only bookings where the student must take action. */
+export function studentNeedsAttention(booking, now = Date.now()) {
+  if (!booking?.status) return false;
+  if (hasOpenIssueReport(booking) || booking.status === 'disputed') return true;
+  if (
+    booking.status === 'student_no_show'
+    && isPostLessonReviewEligible(booking, now)
+    && booking.financial_review?.window_open
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/** Student dashboard — past lessons for completed history. */
+export function studentRecentLesson(booking, now = Date.now()) {
+  if (!booking?.status) return false;
+  if (booking.status === 'cancelled' || booking.status === 'pending') return false;
+  if (!hasLessonEnded(booking, now)) return false;
+  if (POST_LESSON_REVIEW_ELIGIBLE_STATUSES.has(booking.status)) return true;
+  return booking.status === 'confirmed';
+}
+
+/** Short action-oriented line for student dashboard "Needs attention" links. */
+export function studentNeedsAttentionSummary(booking) {
+  if (!booking?.status) return 'View booking';
+  if (hasOpenIssueReport(booking) || booking.status === 'disputed') return 'Issue reported — view booking';
+  if (booking.status === 'student_no_show') return 'Review no-show outcome — report if incorrect';
+  return bookingStatusLabel(booking.status, { audience: 'student' });
+}
+
+/**
+ * Student booking-detail banner copy for the post-lesson review window.
+ * Informational when no action is required; clearer when the student should respond.
+ */
+export function studentReviewWindowBannerCopy(booking, { remaining, deadlineFormatted }, now = Date.now()) {
+  if (studentNeedsAttention(booking, now)) {
+    if (booking.status === 'student_no_show' && !hasOpenIssueReport(booking)) {
+      return {
+        tone: 'warning',
+        title: 'Review no-show outcome',
+        body: `You were marked as a no-show. If that is incorrect, report an issue before the review window closes (${remaining}, until ${deadlineFormatted}).`,
+      };
+    }
+    if (hasOpenIssueReport(booking) || booking.status === 'disputed') {
+      return {
+        tone: 'warning',
+        title: 'Issue reported',
+        body: 'Your report is under review. Payout is protected while this issue is being reviewed.',
+      };
+    }
+  }
+  if (booking.status === 'awaiting_verification') {
+    return {
+      tone: 'info',
+      title: 'Review window open',
+      body: `Your lesson time has passed. The coach still needs to confirm attendance. If something went wrong, you can report an issue within 24 hours of the lesson (${remaining} remaining, until ${deadlineFormatted}).`,
+    };
+  }
+  return {
+    tone: 'info',
+    title: 'Review window open',
+    body: `Your lesson is complete. If something went wrong, you can report an issue within 24 hours of the lesson (${remaining} remaining, until ${deadlineFormatted}).`,
+  };
 }
 
 /** Short cancelled-booking outcome for history rows. */
@@ -225,15 +474,15 @@ export function bookingOutcomeCopy(booking, { audience } = {}) {
   if (booking.status === 'student_no_show') {
     return audience === 'coach'
       ? 'Student no-show recorded. There is no student refund. Your payout follows the normal post-lesson review window if no issue is reported.'
-      : 'You were marked as a no-show. There is no refund for this lesson. You can report a problem during the review window if something is wrong.';
+      : 'The coach reported that you did not attend. Your payment was not automatically refunded, and this may affect your reliability score. You can report a problem during the review window if something is wrong.';
   }
   if (booking.status === 'coach_no_show') {
     return audience === 'student'
-      ? 'If your coach doesn’t show up, you’ll receive a full refund of the remaining captured lesson amount after the review window. If you have an open dispute, the refund may be handled through the dispute process instead.'
+      ? 'Your coach did not attend this lesson. After the review window, you may receive a full refund of the remaining captured amount unless an open dispute is still being resolved.'
       : 'Coach no-show recorded. After the review window, the student is refunded the remaining captured lesson amount (ordinarily the full charge if nothing was refunded earlier), unless an open dispute routes the outcome through dispute resolution. This affects your reliability score.';
   }
-  if (booking.status === 'disputed') {
-    return 'A payment or lesson issue was reported. Payout stays protected until the dispute is resolved.';
+  if (booking.status === 'disputed' || hasOpenIssueReport(booking)) {
+    return 'Your report is under review. Payout is protected while this issue is being reviewed.';
   }
   return null;
 }

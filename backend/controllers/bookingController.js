@@ -41,6 +41,11 @@ import {
   serializeBookingResponse,
   serializeBookingSummary,
 } from '../utils/bookingDto.js';
+import {
+  attachActiveIssue,
+  attachActiveIssuesToBookingDtos,
+  loadActiveIssuesByBookingId,
+} from '../utils/bookingActiveIssue.js';
 import { serializePaymentSummary } from '../utils/paymentDto.js';
 import {
   shouldQueueLateCancelCoachPayout,
@@ -114,6 +119,13 @@ function respondIfBookingStateMachineError(res, error) {
 
 const MAX_LIST_ALL_BOOKINGS = 10000;
 
+/** Upcoming soonest-first, then past most-recent-first (UTC). */
+const BOOKING_LIST_ORDER = [
+  [sequelize.literal('(scheduled_at < UTC_TIMESTAMP())'), 'ASC'],
+  [sequelize.literal('CASE WHEN scheduled_at >= UTC_TIMESTAMP() THEN scheduled_at END'), 'ASC'],
+  [sequelize.literal('CASE WHEN scheduled_at < UTC_TIMESTAMP() THEN scheduled_at END'), 'DESC'],
+];
+
 /**
  * Shared list responder for coach / student / admin booking lists.
  * @param {'per_row_coach' | true | false} studentReliabilityMode
@@ -138,7 +150,7 @@ async function respondWithBookingList(req, res, {
       include: bookingListIncludes(),
       limit: queryLimit,
       offset,
-      order: [['scheduled_at', 'DESC']],
+      order: BOOKING_LIST_ORDER,
     });
 
     const serializeOpts = (row) => {
@@ -161,18 +173,22 @@ async function respondWithBookingList(req, res, {
 
     if (!isPaginated) {
       const data = await attachConversationSummaries(bookings.rows, req.user.id, roles);
+      const items = data.map((row) => serializeBookingListItem(row, serializeOpts(row)));
+      await attachActiveIssuesToBookingDtos(items);
       return successResponse(
         res,
-        data.map((row) => serializeBookingListItem(row, serializeOpts(row))),
+        items,
         successMessage,
       );
     }
 
     const response = getPagingData(bookings, page, queryLimit);
     response.items = await attachConversationSummaries(response.items, req.user.id, roles);
+    const items = response.items.map((row) => serializeBookingListItem(row, serializeOpts(row)));
+    await attachActiveIssuesToBookingDtos(items);
     return paginatedResponse(
       res,
-      response.items.map((row) => serializeBookingListItem(row, serializeOpts(row))),
+      items,
       response.pagination,
       successMessage,
     );
@@ -253,14 +269,18 @@ export const getBookingById = async (req, res) => {
       req.user.roles || [],
     );
 
+    const dto = serializeBookingDetailPayload(payload, {
+      serializePayment: (payment) => serializePaymentSummary(payment, { isAdmin: isAdminViewer }),
+      includeStudentReliability: false,
+      viewerIsPrivileged:
+        Number(req.user.id) === Number(booking.coach_id) || isAdminViewer,
+    });
+    const issueMap = await loadActiveIssuesByBookingId([booking.id]);
+    attachActiveIssue(dto, issueMap);
+
     return successResponse(
       res,
-      serializeBookingDetailPayload(payload, {
-        serializePayment: (payment) => serializePaymentSummary(payment, { isAdmin: isAdminViewer }),
-        includeStudentReliability: false,
-        viewerIsPrivileged:
-          Number(req.user.id) === Number(booking.coach_id) || isAdminViewer,
-      }),
+      dto,
       'Booking retrieved successfully',
     );
   } catch (error) {
@@ -408,37 +428,80 @@ const logAdminAttendanceChange = async ({ req, bookingId, fromStatus, toStatus, 
 export const completeBooking = async (req, res) => {
   try {
     const { id } = req.params;
-    const booking = await Booking.findByPk(id);
-    if (!booking) return errorResponse(res, 'Booking not found', 404);
-    if (req.user.id !== booking.coach_id) return errorResponse(res, 'Only the coach for this booking can complete it', 403);
+    let beforeState = null;
 
-    const finalizedCheck = checkAttendanceFinalized(booking);
-    if (!finalizedCheck.ok) {
-      return errorResponse(res, finalizedCheck.message, 409, null, { code: finalizedCheck.code });
-    }
+    await sequelize.transaction(async (t) => {
+      const booking = await Booking.findByPk(id, { transaction: t, lock: t.LOCK.UPDATE });
+      if (!booking) {
+        const err = new Error('Booking not found');
+        err.statusCode = 404;
+        throw err;
+      }
+      if (req.user.id !== booking.coach_id) {
+        const err = new Error('Only the coach for this booking can complete it');
+        err.statusCode = 403;
+        throw err;
+      }
 
-    if (!['confirmed', 'awaiting_verification'].includes(booking.status)) {
-      return errorResponse(
-        res,
-        `Booking must be confirmed or awaiting_verification to complete (current: ${booking.status}).`,
-        400
-      );
-    }
-    if (!lessonHasEnded(booking)) {
-      return errorResponse(
-        res,
-        'Cannot mark booking as completed before the lesson end time. Wait until the lesson has finished.',
-        400
-      );
-    }
+      const activeDispute = await Dispute.findOne({
+        where: {
+          booking_id: booking.id,
+          status: { [Op.in]: [...ACTIVE_DISPUTE_STATUSES] },
+        },
+        attributes: ['id', 'status'],
+        transaction: t,
+      });
+      if (activeDispute || booking.status === 'disputed') {
+        const err = new Error(
+          'This booking has an active dispute. Resolve the dispute first to set the final booking outcome.',
+        );
+        err.statusCode = 409;
+        err.code = 'disputed_use_resolve_dispute';
+        err.booking_status = booking.status;
+        throw err;
+      }
 
-    const beforeState = booking.toJSON();
-    await applyBookingStatusTransition(booking, {
-      toStatus: 'completed',
-      via: BookingTransitionVia.MARK_COMPLETED,
-      patch: { payout_status: 'pending' },
+      const finalizedCheck = checkAttendanceFinalized(booking);
+      if (!finalizedCheck.ok) {
+        const err = new Error(finalizedCheck.message);
+        err.statusCode = 409;
+        err.code = finalizedCheck.code;
+        throw err;
+      }
+
+      if (!['confirmed', 'awaiting_verification'].includes(booking.status)) {
+        const err = new Error(
+          `Booking must be confirmed or awaiting_verification to complete (current: ${booking.status}).`,
+        );
+        err.statusCode = 400;
+        throw err;
+      }
+      if (!lessonHasEnded(booking)) {
+        const err = new Error(
+          'Cannot mark booking as completed before the lesson end time. Wait until the lesson has finished.',
+        );
+        err.statusCode = 400;
+        throw err;
+      }
+
+      beforeState = booking.toJSON();
+      await applyBookingStatusTransition(booking, {
+        toStatus: 'completed',
+        via: BookingTransitionVia.MARK_COMPLETED,
+        patch: { payout_status: 'pending' },
+        options: { transaction: t },
+      });
+      await logAudit(req.user.id, 'booking_completed', 'bookings', booking.id, beforeState, booking.toJSON(), req);
     });
-    await logAudit(req.user.id, 'booking_completed', 'bookings', booking.id, beforeState, booking.toJSON(), req);
+
+    void notificationService.notifyStudentLessonCompleted(id).catch((err) => {
+      logger.warn({
+        component: 'booking',
+        event: 'lesson_completed_notify_failed',
+        bookingId: id,
+        message: err?.message,
+      });
+    });
 
     const updated = await Booking.findByPk(id, {
       include: [
@@ -453,6 +516,12 @@ export const completeBooking = async (req, res) => {
       'Booking marked as completed',
     );
   } catch (error) {
+    if (error?.statusCode === 404) return errorResponse(res, error.message, 404);
+    if (error?.statusCode === 403) return errorResponse(res, error.message, 403);
+    if (error?.statusCode === 409) {
+      return errorResponse(res, error.message, 409, null, error.code ? { code: error.code } : undefined);
+    }
+    if (error?.statusCode === 400) return errorResponse(res, error.message, 400);
     const sm = respondIfBookingStateMachineError(res, error);
     if (sm) return sm;
     logger.error('Complete booking error:', error);
@@ -471,73 +540,89 @@ export const completeBooking = async (req, res) => {
 export const markBookingNoShow = async (req, res) => {
   try {
     const { id } = req.params;
-    const booking = await Booking.findByPk(id);
-    if (!booking) return errorResponse(res, 'Booking not found', 404);
-    const isAdmin = (req.user.roles || []).includes('admin');
-    const isCoach = req.user.id === booking.coach_id;
-    const isAdminRoute = (req.baseUrl || '').includes('/admin');
-    // Strict separation: coach route only; admins must use /api/admin/bookings/:id/student-no-show.
-    if (!isCoach && !(isAdmin && isAdminRoute)) return errorResponse(res, 'Unauthorized', 403);
+    let primaryStudentId = null;
 
-    if (booking.status === 'coach_no_show') {
-      return errorResponse(
-        res,
-        'This booking is already marked coach_no_show. Use student no-show only when the student did not attend.',
-        400
-      );
-    }
-    const activeDispute = await Dispute.findOne({
-      where: {
-        booking_id: booking.id,
-        status: { [Op.in]: [...ACTIVE_DISPUTE_STATUSES] },
-      },
-      attributes: ['id', 'status'],
-    });
-    if (activeDispute || booking.status === 'disputed') {
-      return errorResponse(
-        res,
-        'This booking has an active dispute. Resolve the dispute first to set the final booking outcome.',
-        409,
-        null,
-        { code: 'disputed_use_resolve_dispute', booking_status: booking.status },
-      );
-    }
-    const finalizedCheck = checkAttendanceFinalized(booking);
-    if (!finalizedCheck.ok) {
-      return errorResponse(res, finalizedCheck.message, 409, null, { code: finalizedCheck.code });
-    }
-    const allowedStatuses = ['confirmed', 'awaiting_verification'];
-    if (!allowedStatuses.includes(booking.status)) {
-      const allowedLabel = 'confirmed or awaiting_verification';
-      return errorResponse(
-        res,
-        `Booking must be ${allowedLabel} to mark student_no_show (current: ${booking.status}).`,
-        400
-      );
-    }
-    if (!lessonHasEnded(booking)) {
-      return errorResponse(
-        res,
-        'Cannot mark booking as student_no_show before the lesson end time.',
-        400
-      );
-    }
+    await sequelize.transaction(async (t) => {
+      const booking = await Booking.findByPk(id, { transaction: t, lock: t.LOCK.UPDATE });
+      if (!booking) {
+        const err = new Error('Booking not found');
+        err.statusCode = 404;
+        throw err;
+      }
+      const isAdmin = (req.user.roles || []).includes('admin');
+      const isCoach = req.user.id === booking.coach_id;
+      const isAdminRoute = (req.baseUrl || '').includes('/admin');
+      // Strict separation: coach route only; admins must use /api/admin/bookings/:id/student-no-show.
+      if (!isCoach && !(isAdmin && isAdminRoute)) {
+        const err = new Error('Unauthorized');
+        err.statusCode = 403;
+        throw err;
+      }
 
-    const beforeState = booking.toJSON();
-    await applyBookingStatusTransition(booking, {
-      toStatus: 'student_no_show',
-      via: BookingTransitionVia.COACH_MARK_STUDENT_NO_SHOW,
-      patch: {},
+      if (booking.status === 'coach_no_show') {
+        const err = new Error(
+          'This booking is already marked coach_no_show. Use student no-show only when the student did not attend.',
+        );
+        err.statusCode = 400;
+        throw err;
+      }
+      const activeDispute = await Dispute.findOne({
+        where: {
+          booking_id: booking.id,
+          status: { [Op.in]: [...ACTIVE_DISPUTE_STATUSES] },
+        },
+        attributes: ['id', 'status'],
+        transaction: t,
+      });
+      if (activeDispute || booking.status === 'disputed') {
+        const err = new Error(
+          'This booking has an active dispute. Resolve the dispute first to set the final booking outcome.',
+        );
+        err.statusCode = 409;
+        err.code = 'disputed_use_resolve_dispute';
+        err.booking_status = booking.status;
+        throw err;
+      }
+      const finalizedCheck = checkAttendanceFinalized(booking);
+      if (!finalizedCheck.ok) {
+        const err = new Error(finalizedCheck.message);
+        err.statusCode = 409;
+        err.code = finalizedCheck.code;
+        throw err;
+      }
+      const allowedStatuses = ['confirmed', 'awaiting_verification'];
+      if (!allowedStatuses.includes(booking.status)) {
+        const allowedLabel = 'confirmed or awaiting_verification';
+        const err = new Error(
+          `Booking must be ${allowedLabel} to mark student_no_show (current: ${booking.status}).`,
+        );
+        err.statusCode = 400;
+        throw err;
+      }
+      if (!lessonHasEnded(booking)) {
+        const err = new Error('Cannot mark booking as student_no_show before the lesson end time.');
+        err.statusCode = 400;
+        throw err;
+      }
+
+      const beforeState = booking.toJSON();
+      primaryStudentId = booking.primary_student_id;
+      await applyBookingStatusTransition(booking, {
+        toStatus: 'student_no_show',
+        via: BookingTransitionVia.COACH_MARK_STUDENT_NO_SHOW,
+        patch: {},
+        options: { transaction: t },
+      });
+      await logAudit(
+        req.user.id,
+        'booking_marked_student_no_show',
+        'bookings',
+        booking.id,
+        beforeState,
+        booking.toJSON(),
+        req,
+      );
     });
-    await logAudit(
-      req.user.id,
-      'booking_marked_student_no_show',
-      'bookings',
-      booking.id,
-      beforeState,
-      booking.toJSON(),
-      req,
-    );
 
     const updated = await Booking.findByPk(id, {
       include: [
@@ -546,8 +631,8 @@ export const markBookingNoShow = async (req, res) => {
         primaryStudentInclude(),
       ],
     });
-    if (booking.primary_student_id != null) {
-      await updateUserReliability(booking.primary_student_id, 'student').catch((err) =>
+    if (primaryStudentId != null) {
+      await updateUserReliability(primaryStudentId, 'student').catch((err) =>
         logger.error('Failed to update student reliability after student_no_show:', err),
       );
     }
@@ -569,6 +654,15 @@ export const markBookingNoShow = async (req, res) => {
     });
     return successResponse(res, responseData, 'Booking marked as student_no_show');
   } catch (error) {
+    if (error?.statusCode === 404) return errorResponse(res, error.message, 404);
+    if (error?.statusCode === 403) return errorResponse(res, error.message, 403);
+    if (error?.statusCode === 409) {
+      return errorResponse(res, error.message, 409, null, {
+        ...(error.code ? { code: error.code } : {}),
+        ...(error.booking_status ? { booking_status: error.booking_status } : {}),
+      });
+    }
+    if (error?.statusCode === 400) return errorResponse(res, error.message, 400);
     const sm = respondIfBookingStateMachineError(res, error);
     if (sm) return sm;
     logger.error('No-show booking error:', error);

@@ -61,3 +61,34 @@ export function validateAdminRoleRemovalSafeguards(p) {
   }
   return { ok: true };
 }
+
+/**
+ * Validates suspending a user (`is_active: false`) so the last live admin cannot be locked out.
+ * Soft-deleted / already-inactive admins are not "live" — suspending them is a no-op for this guard.
+ *
+ * @param {{
+ *   actorUserId: number,
+ *   targetUserId: number,
+ *   targetIsLiveAdmin: boolean,
+ *   otherAdminUserCount: number,
+ * }} p
+ * `otherAdminUserCount` — must be **`await countOtherLiveAdmins(targetUserId)`**.
+ * @returns {{ ok: true } | { ok: false, status: number, message: string }}
+ */
+export function validateAdminSuspendSafeguards(p) {
+  const { actorUserId, targetUserId, targetIsLiveAdmin, otherAdminUserCount } = p;
+  if (!targetIsLiveAdmin) {
+    return { ok: true };
+  }
+  if (otherAdminUserCount < 1) {
+    const self = Number(actorUserId) === Number(targetUserId);
+    return {
+      ok: false,
+      status: 409,
+      message: self
+        ? 'You cannot suspend yourself while you are the only live admin.'
+        : 'At least one admin must remain in the system.',
+    };
+  }
+  return { ok: true };
+}

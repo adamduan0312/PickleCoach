@@ -7,6 +7,7 @@ export function GuestOnly({ children }) {
   const { isAuthenticated, bootstrapping, user, mode } = useAuth();
   if (bootstrapping) return <LoadingState label="Loading session…" />;
   if (isAuthenticated) {
+    // Same destination as a fresh login with no return URL.
     return <Navigate to={homePathFor(user, mode)} replace />;
   }
   return children;

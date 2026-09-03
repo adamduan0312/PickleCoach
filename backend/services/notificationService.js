@@ -6,7 +6,9 @@
  * - payloadBuilders.js — in-app headline/summary/preview
  * - notificationRoutes.js — payload.route deep links
  */
+import { UniqueConstraintError, Op, QueryTypes } from 'sequelize';
 import { Notification, User } from '../models/index.js';
+import { sequelize } from '../models/sequelize.js';
 import { logger } from '../config/logger.js';
 import { withNotificationRoute } from '../notifications/notificationRoutes.js';
 import { getEmailSubject, getEmailContent } from '../notifications/emailTemplates.js';
@@ -26,6 +28,8 @@ import {
   buildNewMessageNotificationPayload,
   buildStripePayoutsDisabledNotificationContent,
   buildStripePayoutsEnabledNotificationContent,
+  buildConfirmAttendanceReminderNotificationContent,
+  buildLessonCompletedNotificationContent,
   buildStudentNoShowNotificationContent,
   buildCoachNoShowNotificationContent,
   buildDisputeOpenedNotificationContent,
@@ -118,59 +122,166 @@ const sendSMS = async (to, message) => {
   }
 };
 
-export const createNotification = async (userId, type, channel, payload, options = {}) => {
-  // In-app: include payload.route at the call site when adding new types (see notifications/notificationRoutes.js).
-  const { entity_type = null, entity_id = null } = options;
-  return await Notification.create({
+function isUniqueNotificationConflict(err) {
+  return err instanceof UniqueConstraintError || err?.name === 'SequelizeUniqueConstraintError';
+}
+
+function bookingEntity(bookingOrId) {
+  const id = typeof bookingOrId === 'object' && bookingOrId != null ? bookingOrId.id : bookingOrId;
+  return { entity_type: 'booking', entity_id: id };
+}
+
+/**
+ * One row per (user, type, channel, entity) when entity is set.
+ * Concurrent creates lose the unique race and reload the winner.
+ */
+async function findOrCreateLogicalNotification({
+  userId,
+  type,
+  channel,
+  payload,
+  entity_type,
+  entity_id,
+}) {
+  const where = {
     user_id: userId,
     type,
     channel,
     entity_type,
     entity_id,
-    payload: withNotificationRoute(type, payload || {}),
+  };
+  const existing = await Notification.findOne({ where });
+  if (existing) return existing;
+
+  try {
+    return await Notification.create({
+      ...where,
+      payload,
+      status: 'pending',
+    });
+  } catch (err) {
+    if (!isUniqueNotificationConflict(err)) throw err;
+    const raced = await Notification.findOne({ where });
+    if (raced) return raced;
+    throw err;
+  }
+}
+
+export const createNotification = async (userId, type, channel, payload, options = {}) => {
+  // In-app: include payload.route at the call site when adding new types (see notifications/notificationRoutes.js).
+  const { entity_type = null, entity_id = null } = options;
+  const routed = withNotificationRoute(type, payload || {});
+  if (entity_type && entity_id != null) {
+    return findOrCreateLogicalNotification({
+      userId,
+      type,
+      channel,
+      payload: routed,
+      entity_type,
+      entity_id,
+    });
+  }
+  return Notification.create({
+    user_id: userId,
+    type,
+    channel,
+    entity_type,
+    entity_id,
+    payload: routed,
     status: 'pending',
   });
 };
 
-export const sendNotification = async (notificationId) => {
-  const notification = await Notification.findByPk(notificationId, {
-    include: [{ model: User, as: 'user', attributes: ['email', 'phone'] }],
+async function withProviderSendLock(notificationId, fn) {
+  const name = `pc_notif_send_${Number(notificationId)}`;
+  const gotRows = await sequelize.query('SELECT GET_LOCK(:name, 15) AS got', {
+    replacements: { name },
+    type: QueryTypes.SELECT,
   });
+  const got = Number(gotRows?.[0]?.got);
+  if (got !== 1) {
+    return Notification.findByPk(notificationId);
+  }
+  try {
+    return await fn();
+  } finally {
+    await sequelize.query('SELECT RELEASE_LOCK(:name) AS released', {
+      replacements: { name },
+      type: QueryTypes.SELECT,
+    });
+  }
+}
 
+export const sendNotification = async (notificationId) => {
+  const load = () =>
+    Notification.findByPk(notificationId, {
+      include: [{ model: User, as: 'user', attributes: ['email', 'phone'] }],
+    });
+
+  const notification = await load();
   if (!notification) {
     throw new Error('Notification not found');
   }
+  if (notification.status === 'sent') {
+    return notification;
+  }
 
-  let sent = false;
+  const needsProviderLock =
+    notification.channel === 'email' || notification.channel === 'sms';
 
-  try {
-    if (notification.channel === 'email' && notification.user?.email) {
-      const subject = getEmailSubject(notification.type, notification.payload);
-      const htmlContent = getEmailContent(notification.type, notification.payload);
-      sent = await sendEmail(notification.user.email, subject, htmlContent);
-    } else if (notification.channel === 'sms' && notification.user?.phone) {
-      const message = getSMSContent(notification.type, notification.payload);
-      sent = await sendSMS(notification.user.phone, message);
-    } else if (notification.channel === 'in_app') {
-      // Stored for in-app feed; no external provider
-      sent = true;
+  const deliver = async () => {
+    const current = await load();
+    if (!current) {
+      throw new Error('Notification not found');
+    }
+    if (current.status === 'sent') {
+      return current;
     }
 
-    await notification.update({
-      status: sent ? 'sent' : 'failed',
-      sent_at: sent ? new Date() : null,
-      error_message: sent ? null : 'Failed to send notification',
-    });
+    let sent = false;
+    try {
+      if (current.channel === 'email' && current.user?.email) {
+        const subject = getEmailSubject(current.type, current.payload);
+        const htmlContent = getEmailContent(current.type, current.payload);
+        sent = await sendEmail(current.user.email, subject, htmlContent);
+      } else if (current.channel === 'sms' && current.user?.phone) {
+        const message = getSMSContent(current.type, current.payload);
+        sent = await sendSMS(current.user.phone, message);
+      } else if (current.channel === 'in_app') {
+        sent = true;
+      }
 
-    return notification;
-  } catch (error) {
-    logger.error('Error sending notification:', error);
-    await notification.update({
-      status: 'failed',
-      error_message: error.message,
-    });
-    throw error;
+      await Notification.update(
+        {
+          status: sent ? 'sent' : 'failed',
+          sent_at: sent ? new Date() : null,
+          error_message: sent ? null : 'Failed to send notification',
+        },
+        { where: { id: notificationId, status: { [Op.ne]: 'sent' } } },
+      );
+
+      return (await Notification.findByPk(notificationId)) || current;
+    } catch (error) {
+      logger.error('Error sending notification:', error);
+      try {
+        await Notification.update(
+          {
+            status: 'failed',
+            error_message: error.message,
+          },
+          { where: { id: notificationId, status: { [Op.ne]: 'sent' } } },
+        );
+      } catch {
+        // Row may have been deleted (test cleanup / user cascade).
+      }
+      throw error;
+    }
+  };
+
+  if (needsProviderLock) {
+    return withProviderSendLock(notificationId, deliver);
   }
+  return deliver();
 };
 
 /**
@@ -187,6 +298,9 @@ const deliverDualChannel = async (userId, type, payload, { email, entity_type = 
 
   if (email) {
     const emailNotif = await createNotification(userId, type, 'email', payload, entityOpts);
+    if (emailNotif.status === 'sent') {
+      return;
+    }
     try {
       await sendNotification(emailNotif.id);
     } catch (error) {
@@ -389,7 +503,7 @@ export const notifyCoachNewBookingRequest = async (bookingId) => {
     booking.coach_id,
     'booking_request_coach',
     payload,
-    { email: booking.coach?.email },
+    { email: booking.coach?.email, ...bookingEntity(booking) },
   );
 };
 
@@ -424,7 +538,7 @@ export const notifyBookingAccepted = async (bookingId) => {
     booking.primary_student_id,
     'booking_confirmed',
     payload,
-    { email: booking.primaryStudent?.email },
+    { email: booking.primaryStudent?.email, ...bookingEntity(booking) },
   );
 };
 
@@ -450,7 +564,7 @@ export const notifyBookingDeclined = async (bookingId) => {
     booking.primary_student_id,
     'booking_declined',
     payload,
-    { email: booking.primaryStudent?.email },
+    { email: booking.primaryStudent?.email, ...bookingEntity(booking) },
   );
 };
 
@@ -493,7 +607,7 @@ export const notifyBookingCancelled = async (bookingId, {
         booking.primary_student_id,
         'booking_cancelled',
         payload,
-        { email: booking.primaryStudent?.email },
+        { email: booking.primaryStudent?.email, ...bookingEntity(booking) },
       );
     }
     return;
@@ -504,7 +618,7 @@ export const notifyBookingCancelled = async (bookingId, {
       booking.coach_id,
       'booking_cancelled',
       payload,
-      { email: booking.coach?.email },
+      { email: booking.coach?.email, ...bookingEntity(booking) },
     );
   }
 };
@@ -618,6 +732,73 @@ const bookingNotifyBase = (booking) => ({
   student_name: booking.primaryStudent?.full_name,
 });
 
+/** Coach: in-app only when the lesson ends and attendance is still unconfirmed. */
+export const notifyCoachConfirmAttendanceReminder = async (bookingId) => {
+  const booking = await loadBookingNotificationContext(bookingId);
+  if (!booking?.coach_id) return null;
+
+  const type = 'confirm_attendance_reminder';
+  if (await reminderAlreadyDelivered(booking.coach_id, type, booking.id)) {
+    logger.info({
+      component: 'notification',
+      event: 'confirm_attendance_reminder_skip_duplicate',
+      bookingId: booking.id,
+      userId: booking.coach_id,
+    });
+    return null;
+  }
+
+  const payload = {
+    ...bookingNotifyBase(booking),
+    ...buildConfirmAttendanceReminderNotificationContent(bookingNotifyBase(booking)),
+  };
+
+  const inApp = await createNotification(booking.coach_id, type, 'in_app', payload, {
+    entity_type: 'booking',
+    entity_id: booking.id,
+  });
+  try {
+    await sendNotification(inApp.id);
+  } catch (error) {
+    logger.warn({
+      component: 'notification',
+      event: 'confirm_attendance_reminder_in_app_send_failed',
+      bookingId: booking.id,
+      userId: booking.coach_id,
+      message: error?.message,
+    });
+  }
+  return inApp;
+};
+
+/** Student: in-app only when the coach marks the lesson complete. */
+export const notifyStudentLessonCompleted = async (bookingId) => {
+  const booking = await loadBookingNotificationContext(bookingId);
+  if (!booking?.primary_student_id) return null;
+
+  const payload = {
+    ...bookingNotifyBase(booking),
+    ...buildLessonCompletedNotificationContent(bookingNotifyBase(booking)),
+  };
+
+  const inApp = await createNotification(booking.primary_student_id, 'lesson_completed', 'in_app', payload, {
+    entity_type: 'booking',
+    entity_id: booking.id,
+  });
+  try {
+    await sendNotification(inApp.id);
+  } catch (error) {
+    logger.warn({
+      component: 'notification',
+      event: 'lesson_completed_in_app_send_failed',
+      bookingId: booking.id,
+      userId: booking.primary_student_id,
+      message: error?.message,
+    });
+  }
+  return inApp;
+};
+
 /** Student: in-app + email when booking is marked student_no_show. */
 export const notifyStudentNoShow = async (bookingId, { markedBy } = {}) => {
   const booking = await loadBookingNotificationContext(bookingId);
@@ -633,7 +814,7 @@ export const notifyStudentNoShow = async (bookingId, { markedBy } = {}) => {
     booking.primary_student_id,
     'student_no_show',
     payload,
-    { email: booking.primaryStudent?.email },
+    { email: booking.primaryStudent?.email, ...bookingEntity(booking) },
   );
 };
 
@@ -654,7 +835,10 @@ export const notifyCoachNoShow = async (bookingId) => {
       audience,
       ...buildCoachNoShowNotificationContent({ audience }),
     };
-    await deliverDualChannel(userId, 'coach_no_show', payload, { email });
+    await deliverDualChannel(userId, 'coach_no_show', payload, {
+      email,
+      ...bookingEntity(booking),
+    });
   }
 };
 
@@ -740,7 +924,11 @@ export const notifyDisputeResolved = async ({
         decision,
       }),
     };
-    await deliverDualChannel(userId, 'dispute_resolved', payload, { email });
+    await deliverDualChannel(userId, 'dispute_resolved', payload, {
+      email,
+      entity_type: disputeId != null ? 'dispute' : 'booking',
+      entity_id: disputeId ?? booking.id,
+    });
   }
 };
 
@@ -762,7 +950,7 @@ export const notifyBookingRequestExpired = async (bookingId) => {
     booking.primary_student_id,
     'booking_request_expired',
     payload,
-    { email: booking.primaryStudent?.email },
+    { email: booking.primaryStudent?.email, ...bookingEntity(booking) },
   );
 };
 
@@ -827,6 +1015,6 @@ export const notifyRefundSucceeded = async ({
     booking.primary_student_id,
     'refund_succeeded',
     payload,
-    { email: booking.primaryStudent?.email },
+    { email: booking.primaryStudent?.email, ...bookingEntity(booking) },
   );
 };

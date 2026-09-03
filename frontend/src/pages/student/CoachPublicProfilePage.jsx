@@ -4,6 +4,7 @@ import { coachesApi, asList } from '../../api/index.js';
 import { useAsync } from '../../hooks/useAsync.js';
 import { Alert, EmptyState, ErrorState, LoadingState } from '../../components/ui/States.jsx';
 import { Avatar } from '../../components/ui/Avatar.jsx';
+import { StarRating } from '../../components/ui/StarRating.jsx';
 import {
   formatMoney,
   courtLabel,
@@ -11,14 +12,34 @@ import {
   formatReliabilityLabel,
   formatReliabilityHint,
   teachingLocationLabel,
+  coachReviewSummary,
+  coachRatingCompactParts,
 } from '../../utils/format.js';
-import { buildAvailabilitySlots, formatDateInZone, formatTimeInZone, detectLocalTimezone } from '../../utils/datetime.js';
+import {
+  buildAvailabilitySlots,
+  groupSlotsByDate,
+  formatDateInZone,
+  formatTimeInZone,
+  detectLocalTimezone,
+  AVAILABILITY_LOOKAHEAD_DAYS,
+  AVAILABILITY_INITIAL_SLOT_COUNT,
+  AVAILABILITY_SLOT_PAGE_SIZE,
+} from '../../utils/datetime.js';
 import { useAuth } from '../../auth/AuthContext.jsx';
 
 function courtTeachingLabel(court) {
   const name = court?.name || 'Court';
   const area = teachingLocationLabel(court);
   return area ? `${name} · ${area}` : courtLabel(court);
+}
+
+function reviewStudentName(review) {
+  return review?.student?.full_name || review?.reviewer_name || null;
+}
+
+function reviewRatingValue(review) {
+  const n = Number(review?.rating);
+  return Number.isFinite(n) && n > 0 ? n : null;
 }
 
 export function CoachPublicProfilePage() {
@@ -29,6 +50,7 @@ export function CoachPublicProfilePage() {
   const [lessonId, setLessonId] = useState('');
   const [courtId, setCourtId] = useState('');
   const [slotIso, setSlotIso] = useState('');
+  const [visibleSlotCount, setVisibleSlotCount] = useState(AVAILABILITY_INITIAL_SLOT_COUNT);
 
   const { data, error, loading } = useAsync(async () => {
     const [coachRes, lessonsRes, courtsRes, availabilityRes, reviewsRes] = await Promise.all([
@@ -57,18 +79,34 @@ export function CoachPublicProfilePage() {
       availabilities: data.availability,
       durationMinutes: selectedLesson.duration_minutes,
       coachTimezone: data.coach?.timezone || 'UTC',
+      daysAhead: AVAILABILITY_LOOKAHEAD_DAYS,
     });
   }, [data, selectedLesson]);
+
+  const visibleSlots = useMemo(
+    () => slots.slice(0, visibleSlotCount),
+    [slots, visibleSlotCount],
+  );
+  const slotGroups = useMemo(
+    () => groupSlotsByDate(visibleSlots, viewerTz),
+    [visibleSlots, viewerTz],
+  );
+  const hasMoreSlots = visibleSlotCount < slots.length;
 
   function selectLesson(nextId) {
     setLessonId(String(nextId));
     setCourtId('');
     setSlotIso('');
+    setVisibleSlotCount(AVAILABILITY_INITIAL_SLOT_COUNT);
   }
 
   function selectCourt(nextId) {
     setCourtId(String(nextId));
     setSlotIso('');
+  }
+
+  function showMoreSlots() {
+    setVisibleSlotCount((n) => Math.min(n + AVAILABILITY_SLOT_PAGE_SIZE, slots.length));
   }
 
   function continueBooking() {
@@ -85,9 +123,17 @@ export function CoachPublicProfilePage() {
   const profile = coach.coachProfile || {};
   const skillLine = formatSkillRatingLine(profile.skill_rating, profile.rating_system);
   const reliabilityLine = formatReliabilityLabel(coach.reliability?.reliability_score);
-  const ratingText = profile.rating_average != null
-    ? `${Number(profile.rating_average).toFixed(1)} (${profile.rating_count || 0} review${Number(profile.rating_count) === 1 ? '' : 's'})`
-    : 'No reviews yet';
+  const listedReviews = data.reviews || [];
+  const profileSummary = coachReviewSummary(profile.rating_average, profile.rating_count);
+  let hasReviews = profileSummary.hasReviews;
+  let ratingAverage = profileSummary.ratingAverage;
+  let reviewCount = profileSummary.reviewCount;
+  if (!hasReviews && listedReviews.length > 0) {
+    reviewCount = listedReviews.length;
+    ratingAverage = listedReviews.reduce((sum, r) => sum + (Number(r.rating) || 0), 0) / listedReviews.length;
+    hasReviews = Number.isFinite(ratingAverage) && reviewCount > 0;
+  }
+  const ratingParts = coachRatingCompactParts(ratingAverage, reviewCount);
   const canBook = !isOwnProfile && data.lessons.length > 0;
   const bookingReady = Boolean(lessonId && courtId && slotIso);
 
@@ -102,15 +148,17 @@ export function CoachPublicProfilePage() {
             <ul className="coach-profile-highlights" aria-label="Coach highlights">
               <li>
                 <span className="coach-highlight-label">Reviews</span>
-                <span>
-                  {profile.rating_average != null ? (
-                    <>
-                      <span className="discover-stat-star" aria-hidden="true">★</span>
-                      {' '}
-                      {ratingText}
-                    </>
-                  ) : ratingText}
-                </span>
+                {hasReviews ? (
+                  <div className="coach-profile-rating-display">
+                    <span className="coach-rating-score">{ratingAverage.toFixed(1)} / 5</span>
+                    <StarRating rating={ratingAverage} className="coach-profile-stars" />
+                    <span className="coach-rating-count">
+                      {reviewCount} review{reviewCount === 1 ? '' : 's'}
+                    </span>
+                  </div>
+                ) : (
+                  <span>No reviews yet</span>
+                )}
               </li>
               {skillLine ? (
                 <li>
@@ -156,7 +204,14 @@ export function CoachPublicProfilePage() {
               const cid = c.court_id || c.id;
               return (
                 <li key={cid}>
-                  <span className="coach-teaching-pin" aria-hidden="true">🎾</span>
+                  <span className="coach-teaching-pin" aria-hidden="true">
+                    <svg className="coach-teaching-pin-icon" viewBox="0 0 24 24" width="16" height="16" focusable="false">
+                      <path
+                        fill="currentColor"
+                        d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 0 5z"
+                      />
+                    </svg>
+                  </span>
                   <span>{courtTeachingLabel(c)}</span>
                 </li>
               );
@@ -237,28 +292,46 @@ export function CoachPublicProfilePage() {
               <div className="coach-booking-step">
                 <h3 className="coach-booking-step-title">3. Choose when</h3>
                 <p className="small muted coach-section-intro">
-                  Times in your timezone ({viewerTz}). Coach timezone: {coach.timezone || 'UTC'}.
+                  Next available times in your timezone ({viewerTz}). Coach timezone: {coach.timezone || 'UTC'}.
                 </p>
                 {slots.length === 0 ? (
                   <EmptyState
                     title="No upcoming slots"
-                    detail="This coach has availability windows, but none in the next few weeks — or none that fit this lesson length."
+                    detail={`This coach has availability windows, but none in the next ${AVAILABILITY_LOOKAHEAD_DAYS} days — or none that fit this lesson length.`}
                   />
                 ) : (
-                  <div className="slot-grid">
-                    {slots.slice(0, 36).map((s) => (
+                  <>
+                    <div className="slot-day-list">
+                      {slotGroups.map((group) => (
+                        <div key={group.dateKey} className="slot-day-group">
+                          <h4 className="slot-day-heading">{group.dateLabel}</h4>
+                          <div className="slot-grid slot-grid-times">
+                            {group.slots.map((s) => (
+                              <button
+                                type="button"
+                                key={s.scheduled_at}
+                                className={`slot${slotIso === s.scheduled_at ? ' selected' : ''}`}
+                                onClick={() => setSlotIso(s.scheduled_at)}
+                                disabled={isOwnProfile}
+                              >
+                                <strong>{formatTimeInZone(s.scheduled_at, viewerTz)}</strong>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    {hasMoreSlots ? (
                       <button
                         type="button"
-                        key={s.scheduled_at}
-                        className={`slot${slotIso === s.scheduled_at ? ' selected' : ''}`}
-                        onClick={() => setSlotIso(s.scheduled_at)}
+                        className="btn secondary slot-see-more"
+                        onClick={showMoreSlots}
                         disabled={isOwnProfile}
                       >
-                        <div className="small">{formatDateInZone(s.scheduled_at, viewerTz)}</div>
-                        <strong>{formatTimeInZone(s.scheduled_at, viewerTz)}</strong>
+                        See more times
                       </button>
-                    ))}
-                  </div>
+                    ) : null}
+                  </>
                 )}
               </div>
             ) : null}
@@ -298,17 +371,48 @@ export function CoachPublicProfilePage() {
       </section>
 
       <section className="card coach-profile-section">
-        <h2>Reviews</h2>
-        {data.reviews.length === 0 ? <EmptyState title="No reviews yet" /> : null}
-        <div className="stack coach-reviews">
-          {data.reviews.slice(0, 8).map((r) => (
-            <div key={r.id || r.created_at} className="coach-review">
-              <strong>{'★'.repeat(r.rating || 0)}</strong>
-              <div className="small">{r.comment || 'No comment.'}</div>
-              <div className="small muted">{r.student?.full_name || r.reviewer_name || ''}</div>
-            </div>
-          ))}
-        </div>
+        <h2>What students say</h2>
+        {listedReviews.length > 0 ? (
+          <div className="stack coach-reviews">
+            {listedReviews.slice(0, 8).map((r) => {
+              const studentName = reviewStudentName(r);
+              const ratingValue = reviewRatingValue(r);
+              const comment = typeof r.comment === 'string' ? r.comment.trim() : '';
+              return (
+                <article key={r.id || r.created_at} className="coach-review">
+                  <div className="coach-review-header">
+                    {studentName ? <strong>{studentName}</strong> : null}
+                    {r.created_at ? (
+                      <time className="small muted" dateTime={r.created_at}>
+                        {formatDateInZone(r.created_at, viewerTz)}
+                      </time>
+                    ) : null}
+                  </div>
+                  {ratingValue != null ? (
+                    <div className="coach-review-rating">
+                      <StarRating rating={ratingValue} />
+                    </div>
+                  ) : null}
+                  {comment ? <p className="coach-review-comment">{comment}</p> : null}
+                </article>
+              );
+            })}
+          </div>
+        ) : hasReviews ? (
+          <p className="muted" style={{ margin: 0 }}>
+            {ratingParts.hasReviews ? (
+              <>
+                {ratingParts.value}{' '}
+                <StarRating variant="compact" />
+                {' · '}
+                {ratingParts.reviewLabel}
+              </>
+            ) : null}
+            . Individual review comments aren’t listed on this profile yet.
+          </p>
+        ) : (
+          <EmptyState title="No reviews yet" detail="Reviews from students will show up here after completed lessons." />
+        )}
       </section>
 
       <p className="small muted" style={{ marginTop: 16 }}>

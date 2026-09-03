@@ -10,6 +10,9 @@ export const BOOKING_INTENT_FLOW_METADATA = 'authorize_then_book';
 
 export const SLOT_NO_LONGER_AVAILABLE_CODE = 'slot_no_longer_available';
 
+/** Student already has a pending/confirmed lesson overlapping this time (any coach). */
+export const STUDENT_SCHEDULE_CONFLICT_CODE = 'student_schedule_conflict';
+
 /**
  * @param {import('stripe').Stripe.PaymentIntent} paymentIntent
  */

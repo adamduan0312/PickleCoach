@@ -8,7 +8,7 @@ import { parseCoachCourtLinkCoachNotesFromBody } from '../utils/coachCourtLinkNo
 import { publicCourtDirectoryWhere } from '../utils/courtPublicDirectory.js';
 import { findPublicActiveCoach } from '../utils/userLifecycle.js';
 import { serializeCourtForPublicViewer } from '../utils/courtAddressVisibility.js';
-import { distanceMiles as courtDupDistanceMiles, rankCourtDuplicateCandidates } from '../utils/courtDuplicateMatch.js';
+import { distanceMiles as courtDupDistanceMiles, rankCourtDuplicateCandidates, filterCourtsForDuplicateCheck } from '../utils/courtDuplicateMatch.js';
 
 /** Safety cap when listing all courts with no pagination (DoS prevention). */
 const MAX_LIST_ALL_COURTS = 10000;
@@ -83,17 +83,44 @@ function textSearchWhere(q) {
 /**
  * Load active courts near a point for duplicate matching (includes private — coaches may create near private).
  */
-async function findCourtsNearForDuplicateCheck(lat, lng, radiusMiles = 1) {
+/** Duplicate-check needs creator id so private courts can be shown to their owner. */
+const DUPLICATE_CHECK_COURT_ATTRIBUTES = [...PUBLIC_COURT_LIST_ATTRIBUTES, 'created_by_user_id'];
+
+/**
+ * Court ids this coach already teaches at (linked), for private-court duplicate visibility.
+ * @param {number} coachUserId
+ * @returns {Promise<Set<number>>}
+ */
+async function ownedCourtIdsForCoach(coachUserId) {
+  const links = await CoachCourtLocation.findAll({
+    where: { coach_id: coachUserId },
+    attributes: ['court_id'],
+  });
+  return new Set(links.map((r) => Number(r.court_id)).filter((id) => Number.isFinite(id)));
+}
+
+/**
+ * Nearby courts eligible for duplicate detection for this viewer.
+ * Private courts owned by other coaches are excluded (no street/GPS leak).
+ * @returns {Promise<object[]>} plain court rows (not Sequelize models)
+ */
+async function findCourtsNearForDuplicateCheck(lat, lng, radiusMiles = 1, viewer = {}) {
   const latRange = radiusMiles / 69;
   const lngRange = radiusMiles / (69 * Math.cos(lat * Math.PI / 180));
-  return CourtLocation.findAll({
+  const rows = await CourtLocation.findAll({
     where: {
       deleted_at: null,
       latitude: { [Op.between]: [lat - latRange, lat + latRange] },
       longitude: { [Op.between]: [lng - lngRange, lng + lngRange] },
     },
-    attributes: PUBLIC_COURT_LIST_ATTRIBUTES,
+    attributes: DUPLICATE_CHECK_COURT_ATTRIBUTES,
     limit: 50,
+  });
+  const plain = rows.map((c) => c.get({ plain: true }));
+  return filterCourtsForDuplicateCheck(plain, {
+    viewerUserId: viewer.viewerUserId,
+    viewerIsAdmin: viewer.viewerIsAdmin,
+    ownedCourtIds: viewer.ownedCourtIds,
   });
 }
 
@@ -285,8 +312,15 @@ export const checkCourtDuplicates = async (req, res) => {
       longitude: req.validated.longitude,
     };
 
-    const nearby = await findCourtsNearForDuplicateCheck(proposed.latitude, proposed.longitude, 1);
-    const ranked = rankCourtDuplicateCandidates(proposed, nearby.map((c) => c.get({ plain: true })));
+    const viewerUserId = req.user.id;
+    const viewerIsAdmin = userRoles.includes('admin');
+    const ownedCourtIds = viewerIsAdmin ? null : await ownedCourtIdsForCoach(viewerUserId);
+    const nearby = await findCourtsNearForDuplicateCheck(proposed.latitude, proposed.longitude, 1, {
+      viewerUserId,
+      viewerIsAdmin,
+      ownedCourtIds,
+    });
+    const ranked = rankCourtDuplicateCandidates(proposed, nearby);
 
     return res.json(createResponse(ranked, 'Duplicate check complete'));
   } catch (error) {
@@ -395,10 +429,14 @@ export const createCourt = async (req, res) => {
       // Proximity / fuzzy duplicate gate (new rows only). Names alone never block create —
       // the same display name can legitimately exist in different cities/states.
       if (latitude != null && longitude != null) {
+        const viewerUserId = userId;
+        const viewerIsAdmin = userRoles.includes('admin');
+        const ownedCourtIds = viewerIsAdmin ? null : await ownedCourtIdsForCoach(viewerUserId);
         const nearby = await findCourtsNearForDuplicateCheck(
           parseFloat(latitude),
           parseFloat(longitude),
           1,
+          { viewerUserId, viewerIsAdmin, ownedCourtIds },
         );
         const ranked = rankCourtDuplicateCandidates(
           {
@@ -406,7 +444,7 @@ export const createCourt = async (req, res) => {
             latitude: parseFloat(latitude),
             longitude: parseFloat(longitude),
           },
-          nearby.map((c) => c.get({ plain: true })),
+          nearby,
         );
 
         if (ranked.high_confidence.length > 0) {

@@ -59,6 +59,14 @@ import {
   escrowAfterUncapturedVoid,
   escrowForUncapturedAuthorization,
 } from '../utils/paymentEscrowStatus.js';
+import {
+  MAX_FAILED_CONNECT_PAYOUT_ATTEMPTS,
+  shouldParkPayoutAfterFailedAttempts,
+} from '../utils/payoutEscrowEligibility.js';
+import {
+  classifyConnectTransferWebhook,
+  shouldFinalizeBookingFromTransferWebhook,
+} from '../utils/connectTransferWebhook.js';
 
 /**
  * Advance `bookings.payout_status` to `paid` after Stripe confirms the Connect
@@ -634,6 +642,12 @@ export const expirePendingBookingNoCoachResponse = async (bookingId) => {
  * Payable when booking is completed / student_no_show,
  * or cancelled after a student late cancel with retained penalty revenue.
  * (`awaiting_verification` waits for auto-complete → `completed` first.)
+ *
+ * Concurrency: claims `held` → `pending_release` under a payment row lock before
+ * calling Stripe, so overlapping worker ticks cannot create duplicate transfers.
+ * After too many failed Connect attempts, parks at `manual_payout_required`.
+ *
+ * @returns {Promise<{ payment: object, payout?: object, skipped?: boolean, reason?: string }>}
  */
 export const releaseEscrow = async (paymentId, coachStripeAccountId = null) => {
   const payment = await Payment.findByPk(paymentId, {
@@ -645,6 +659,14 @@ export const releaseEscrow = async (paymentId, coachStripeAccountId = null) => {
 
   if (!payment) {
     throw new Error('Payment not found');
+  }
+
+  if (payment.escrow_status === 'pending_release' || payment.escrow_status === 'released') {
+    return { payment, skipped: true, reason: 'already_claimed_or_released' };
+  }
+
+  if (payment.escrow_status === 'manual_payout_required') {
+    return { payment, skipped: true, reason: 'manual_payout_required' };
   }
 
   if (payment.escrow_status !== 'held') {
@@ -710,14 +732,84 @@ export const releaseEscrow = async (paymentId, coachStripeAccountId = null) => {
   }
   const payoutAmountDollars = centsToDecimalString(payoutCents);
 
-  // Create payout record
-  const payout = await Payout.create({
-    coach_id: payment.coach_id,
-    payment_id: paymentId,
-    amount: payoutAmountDollars,
-    currency: 'USD',
-    status: 'pending',
+  let payout;
+  let claimSkipped = null;
+
+  await sequelize.transaction(async (transaction) => {
+    const locked = await Payment.findByPk(paymentId, {
+      transaction,
+      lock: transaction.LOCK.UPDATE,
+    });
+    if (!locked) {
+      claimSkipped = { reason: 'payment_missing' };
+      return;
+    }
+    if (locked.escrow_status !== 'held') {
+      claimSkipped = { reason: 'already_claimed_or_released', payment: locked };
+      return;
+    }
+    if (locked.transfer_id) {
+      claimSkipped = { reason: 'transfer_already_set', payment: locked };
+      return;
+    }
+
+    const inFlight = await Payout.findOne({
+      where: {
+        payment_id: paymentId,
+        status: 'pending',
+        external_payout_id: { [Op.ne]: null },
+      },
+      transaction,
+      lock: transaction.LOCK.UPDATE,
+    });
+    if (inFlight) {
+      claimSkipped = { reason: 'payout_in_flight', payment: locked, payout: inFlight };
+      return;
+    }
+
+    const failedCount = await Payout.count({
+      where: { payment_id: paymentId, status: 'failed' },
+      transaction,
+    });
+    if (shouldParkPayoutAfterFailedAttempts(failedCount)) {
+      await locked.update({ escrow_status: 'manual_payout_required' }, { transaction });
+      logger.warn({
+        component: 'stripe',
+        event: 'payout_parked_after_failures',
+        paymentId,
+        failedCount,
+        maxAttempts: MAX_FAILED_CONNECT_PAYOUT_ATTEMPTS,
+      });
+      claimSkipped = { reason: 'manual_payout_required', payment: locked };
+      return;
+    }
+
+    payout = await Payout.create(
+      {
+        coach_id: locked.coach_id,
+        payment_id: paymentId,
+        amount: payoutAmountDollars,
+        currency: 'USD',
+        status: 'pending',
+      },
+      { transaction },
+    );
+
+    // Claim before Stripe so a concurrent worker cannot also create a transfer.
+    await locked.update({ escrow_status: 'pending_release' }, { transaction });
   });
+
+  if (claimSkipped) {
+    const latest = claimSkipped.payment || (await Payment.findByPk(paymentId));
+    return {
+      payment: latest,
+      payout: claimSkipped.payout,
+      skipped: true,
+      reason: claimSkipped.reason,
+    };
+  }
+
+  await payment.reload();
 
   if (payoutCents < 1) {
     await payout.update({ status: 'paid', processed_at: new Date() });
@@ -773,9 +865,24 @@ export const releaseEscrow = async (paymentId, coachStripeAccountId = null) => {
       });
     } catch (error) {
       logger.error('Error transferring to coach account:', error);
-      await payout.update({
-        status: 'failed',
+      await payout.update({ status: 'failed' });
+
+      const failedCount = await Payout.count({
+        where: { payment_id: paymentId, status: 'failed' },
       });
+      if (shouldParkPayoutAfterFailedAttempts(failedCount)) {
+        await payment.update({ escrow_status: 'manual_payout_required' });
+        logger.warn({
+          component: 'stripe',
+          event: 'payout_parked_after_failures',
+          paymentId,
+          failedCount,
+          maxAttempts: MAX_FAILED_CONNECT_PAYOUT_ATTEMPTS,
+        });
+      } else {
+        // Allow a bounded retry on the next worker tick.
+        await payment.update({ escrow_status: 'held', transfer_id: null });
+      }
       throw error;
     }
   } else {
@@ -823,6 +930,11 @@ export const releaseEscrow = async (paymentId, coachStripeAccountId = null) => {
 
 /**
  * Finalize escrow + payout from Stripe transfer webhook (transfer.created / transfer.paid).
+ *
+ * Canonical path (matches `payments.transfer_id`, or unset): release escrow + mark booking paid.
+ * Duplicate path (second Connect transfer for the same payment): acknowledge that payout row and
+ * log for ops reversal — do **not** finalize booking/escrow. A duplicate success must not mark
+ * the booking paid when the canonical transfer failed or never confirmed.
  */
 export const finalizeTransferFromStripe = async (transfer) => {
   const paymentIdRaw = transfer.metadata?.payment_id;
@@ -848,22 +960,37 @@ export const finalizeTransferFromStripe = async (transfer) => {
     throw new Error(`Payment not found for transfer ${transfer.id}; retry when payout metadata exists`);
   }
 
-  if (payment.transfer_id && payment.transfer_id !== transfer.id) {
+  if (payout && payout.payment_id != null && Number(payout.payment_id) !== Number(payment.id)) {
     logger.warn({
       component: 'stripe',
-      event: 'transfer_metadata_mismatch',
+      event: 'transfer_payout_payment_mismatch',
+      paymentId: payment.id,
+      payoutId: payout.id,
+      payoutPaymentId: payout.payment_id,
+      transferId: transfer.id,
+    });
+    return { skipped: true, reason: 'payout_payment_mismatch' };
+  }
+
+  const classification = classifyConnectTransferWebhook({
+    paymentTransferId: payment.transfer_id,
+    webhookTransferId: transfer.id,
+  });
+  const mayFinalizeBooking = shouldFinalizeBookingFromTransferWebhook(classification);
+  const isDuplicateTransfer = classification === 'duplicate';
+
+  if (isDuplicateTransfer) {
+    logger.warn({
+      component: 'stripe',
+      event: 'duplicate_transfer_webhook',
+      severity: 'warn',
       paymentId: payment.id,
       localTransferId: payment.transfer_id,
       stripeTransferId: transfer.id,
+      payoutId: payout?.id ?? null,
+      note: 'Duplicate Connect transfer for this payment. Do not finalize booking from this event; reverse the extra transfer in Stripe. Canonical transfer webhook (or reconcile of payments.transfer_id) finalizes escrow.',
     });
-    return { skipped: true };
-  }
 
-  if (!payment.transfer_id) {
-    await payment.update({ transfer_id: transfer.id });
-  }
-
-  if (payment.escrow_status === 'released') {
     if (payout && payout.status !== 'paid') {
       await payout.update({
         status: 'paid',
@@ -871,11 +998,55 @@ export const finalizeTransferFromStripe = async (transfer) => {
         processed_at: payout.processed_at || new Date(),
       });
     }
-    await markBookingPayoutPaid(payment.booking_id);
-    return { idempotent: true, payment };
+
+    await createAuditLog({
+      user_id: payment.coach_id,
+      action: 'duplicate_transfer_detected',
+      table_name: 'payments',
+      record_id: payment.id,
+      after_state: {
+        transfer_id: transfer.id,
+        canonical_transfer_id: payment.transfer_id,
+        payout_id: payout?.id ?? null,
+        escrow_status: payment.escrow_status,
+        booking_id: payment.booking_id,
+        note: 'Booking/escrow NOT finalized from duplicate webhook',
+      },
+    });
+
+    return {
+      payment,
+      payout,
+      duplicate: true,
+      finalizedBooking: false,
+      reason: 'duplicate_transfer',
+    };
   }
 
-  if (payment.escrow_status !== 'pending_release') {
+  if (!payment.transfer_id) {
+    await payment.update({ transfer_id: transfer.id });
+  }
+
+  if (payout && payout.status !== 'paid') {
+    await payout.update({
+      status: 'paid',
+      external_payout_id: transfer.id,
+      processed_at: payout.processed_at || new Date(),
+    });
+  }
+
+  if (payment.escrow_status === 'released') {
+    await markBookingPayoutPaid(payment.booking_id);
+    return {
+      idempotent: true,
+      payment,
+      payout,
+      duplicate: false,
+      finalizedBooking: true,
+    };
+  }
+
+  if (payment.escrow_status !== 'pending_release' && payment.escrow_status !== 'held') {
     logger.warn({
       component: 'stripe',
       event: 'transfer_webhook_unexpected_escrow',
@@ -885,15 +1056,17 @@ export const finalizeTransferFromStripe = async (transfer) => {
     });
   }
 
-  await payment.update({ escrow_status: 'released' });
-
-  if (payout) {
-    await payout.update({
-      status: 'paid',
-      external_payout_id: transfer.id,
-      processed_at: new Date(),
-    });
+  if (!mayFinalizeBooking) {
+    return {
+      payment,
+      payout,
+      duplicate: false,
+      finalizedBooking: false,
+      reason: 'not_canonical',
+    };
   }
+
+  await payment.update({ escrow_status: 'released' });
 
   if (payout) {
     await createAuditLog({
@@ -909,6 +1082,8 @@ export const finalizeTransferFromStripe = async (transfer) => {
         payment_id: payment.id,
         booking_payout_status: 'paid',
         source: 'stripe_webhook',
+        duplicate_transfer: false,
+        canonical_transfer_id: payment.transfer_id || transfer.id,
       },
     });
   }
@@ -922,9 +1097,177 @@ export const finalizeTransferFromStripe = async (transfer) => {
     transferId: transfer.id,
     payoutId: payout?.id,
     bookingId: payment.booking_id,
+    duplicate: false,
   });
 
-  return { payment, payout };
+  return { payment, payout, duplicate: false, finalizedBooking: true };
+};
+
+/**
+ * Handle Stripe `transfer.reversed`.
+ *
+ * Defined MVP behavior:
+ * - Non-canonical (duplicate) transfer reverse: acknowledge + audit only. Expected when ops
+ *   reverses an extra Connect transfer; do not mutate booking/escrow.
+ * - Canonical transfer reverse (funds returned to the platform): park escrow at
+ *   `manual_payout_required`, mark the payout row `failed`, and if booking payout was
+ *   `paid`/`processing` roll it back to `pending`. Do **not** auto-create a replacement
+ *   Connect transfer — requires ops review (fraud, bank failure, Stripe reverse, etc.).
+ *
+ * Idempotent when already parked at `manual_payout_required` for this transfer.
+ */
+export const handleTransferReversedFromStripe = async (transfer) => {
+  const transferId = transfer?.id ? String(transfer.id) : null;
+  if (!transferId) {
+    return { skipped: true, reason: 'missing_transfer_id' };
+  }
+
+  const paymentIdRaw = transfer.metadata?.payment_id;
+  const payoutIdRaw = transfer.metadata?.payout_id;
+  const paymentId = paymentIdRaw != null ? parseInt(String(paymentIdRaw), 10) : null;
+  const payoutId = payoutIdRaw != null ? parseInt(String(payoutIdRaw), 10) : null;
+
+  let payout =
+    Number.isFinite(payoutId) && payoutId > 0 ? await Payout.findByPk(payoutId) : null;
+  if (!payout) {
+    payout = await Payout.findOne({ where: { external_payout_id: transferId } });
+  }
+
+  let payment =
+    Number.isFinite(paymentId) && paymentId > 0 ? await Payment.findByPk(paymentId) : null;
+  if (!payment && payout?.payment_id) {
+    payment = await Payment.findByPk(payout.payment_id);
+  }
+  if (!payment) {
+    payment = await Payment.findOne({ where: { transfer_id: transferId } });
+  }
+
+  if (!payment) {
+    logger.warn({
+      component: 'stripe',
+      event: 'transfer_reversed_payment_not_found',
+      transferId,
+      severity: 'warn',
+    });
+    return { skipped: true, reason: 'payment_not_found' };
+  }
+
+  const classification = classifyConnectTransferWebhook({
+    paymentTransferId: payment.transfer_id,
+    webhookTransferId: transferId,
+  });
+
+  if (classification === 'duplicate') {
+    logger.info({
+      component: 'stripe',
+      event: 'transfer_reversed_non_canonical',
+      paymentId: payment.id,
+      transferId,
+      canonicalTransferId: payment.transfer_id,
+      note: 'Duplicate/extra Connect transfer was reversed; booking/escrow unchanged',
+    });
+    await createAuditLog({
+      user_id: payment.coach_id,
+      action: 'transfer_reversed_non_canonical',
+      table_name: 'payments',
+      record_id: payment.id,
+      after_state: {
+        transfer_id: transferId,
+        canonical_transfer_id: payment.transfer_id,
+        payout_id: payout?.id ?? null,
+        booking_id: payment.booking_id,
+        note: 'Non-canonical transfer reverse acknowledged; no escrow mutation',
+      },
+    });
+    return {
+      payment,
+      payout,
+      skipped: true,
+      reason: 'non_canonical_duplicate_reversal',
+    };
+  }
+
+  return sequelize.transaction(async (transaction) => {
+    const locked = await Payment.findByPk(payment.id, {
+      transaction,
+      lock: transaction.LOCK.UPDATE,
+    });
+    if (!locked) {
+      return { skipped: true, reason: 'payment_missing_under_lock' };
+    }
+
+    let lockedPayout = payout
+      ? await Payout.findByPk(payout.id, { transaction, lock: transaction.LOCK.UPDATE })
+      : await Payout.findOne({
+          where: { external_payout_id: transferId },
+          transaction,
+          lock: transaction.LOCK.UPDATE,
+        });
+
+    const booking = locked.booking_id
+      ? await Booking.findByPk(locked.booking_id, {
+          transaction,
+          lock: transaction.LOCK.UPDATE,
+        })
+      : null;
+
+    if (
+      locked.escrow_status === 'manual_payout_required'
+      && (!lockedPayout || lockedPayout.status === 'failed')
+      && (!booking || !['paid', 'processing'].includes(String(booking.payout_status || '')))
+    ) {
+      return {
+        payment: locked,
+        payout: lockedPayout,
+        idempotent: true,
+        reason: 'already_parked_after_reversal',
+      };
+    }
+
+    await locked.update({ escrow_status: 'manual_payout_required' }, { transaction });
+
+    if (lockedPayout && lockedPayout.status !== 'failed') {
+      await lockedPayout.update({ status: 'failed' }, { transaction });
+    }
+
+    if (booking && ['paid', 'processing'].includes(String(booking.payout_status || ''))) {
+      await booking.update({ payout_status: 'pending' }, { transaction });
+    }
+
+    await createAuditLog({
+      user_id: locked.coach_id,
+      action: 'transfer_reversed_manual_review',
+      table_name: 'payments',
+      record_id: locked.id,
+      after_state: {
+        transfer_id: transferId,
+        escrow_status: 'manual_payout_required',
+        payout_id: lockedPayout?.id ?? null,
+        payout_status: lockedPayout ? 'failed' : null,
+        booking_id: locked.booking_id,
+        booking_payout_status: booking?.payout_status ?? null,
+        amount_reversed: transfer.amount_reversed ?? transfer.amount ?? null,
+        note: 'Canonical Connect transfer reversed — parked for manual payout review; no auto re-transfer',
+      },
+    });
+
+    logger.warn({
+      component: 'stripe',
+      event: 'transfer_reversed_manual_review',
+      severity: 'warn',
+      paymentId: locked.id,
+      transferId,
+      bookingId: locked.booking_id,
+      payoutId: lockedPayout?.id ?? null,
+    });
+
+    return {
+      payment: locked,
+      payout: lockedPayout,
+      parked: true,
+      reason: 'canonical_reversed_manual_review',
+    };
+  });
 };
 
 /**

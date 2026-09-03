@@ -55,6 +55,11 @@ const Notification = sequelize.define('notifications', {
     { fields: ['channel'] },
     { fields: ['entity_type', 'entity_id'] },
     { fields: ['user_id', 'channel', 'read_at'] },
+    {
+      unique: true,
+      fields: ['user_id', 'type', 'channel', 'entity_type', 'entity_id'],
+      name: 'notifications_logical_event_unique',
+    },
   ],
 });
 

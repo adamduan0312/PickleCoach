@@ -3,8 +3,9 @@ import { useAuth } from '../../auth/AuthContext.jsx';
 import { coachesApi, asList } from '../../api/index.js';
 import { useAsync } from '../../hooks/useAsync.js';
 import { EmptyState, ErrorState, LoadingState, StatusBadge } from '../../components/ui/States.jsx';
-import { bookingStatusLabel, bookingStatusTone, coachAcceptanceDeadlineAt } from '../../domain/bookingStatus.js';
-import { formatInZone, formatDateInZone, formatTimeInZone } from '../../utils/datetime.js';
+import { BookingListCardBody } from '../../components/bookings/BookingListCardBody.jsx';
+import { bookingDisplayLabel, bookingDisplayTone, coachAcceptanceDeadlineAt, sortBookingsForList } from '../../domain/bookingStatus.js';
+import { formatListWhenInZone } from '../../utils/datetime.js';
 
 const STEP_LABELS = {
   profile: 'Coach profile',
@@ -14,10 +15,9 @@ const STEP_LABELS = {
   stripe: 'Payouts enabled',
 };
 
-function respondByLabel(booking, tz) {
+function respondByWhen(booking, tz) {
   const iso = coachAcceptanceDeadlineAt(booking);
-  if (!iso) return null;
-  return `${formatDateInZone(iso, tz)} · ${formatTimeInZone(iso, tz)}`;
+  return iso ? formatListWhenInZone(iso, tz) : null;
 }
 
 export function CoachDashboardPage() {
@@ -30,7 +30,7 @@ export function CoachDashboardPage() {
     ]);
     return {
       market: statusRes.data,
-      pending: asList(bookingsRes.data),
+      pending: sortBookingsForList(asList(bookingsRes.data), undefined, { audience: 'coach' }),
     };
   }, [user?.id, readiness.coachUiPhase]);
 
@@ -95,23 +95,25 @@ export function CoachDashboardPage() {
           />
         ) : null}
         <div className="stack">
-          {(data?.pending || []).map((b) => {
-            const respondBy = respondByLabel(b, tz);
-            return (
-              <Link key={b.id} to={`/bookings/${b.id}`} className="spread" style={{ color: 'inherit', textDecoration: 'none' }}>
-                <div>
-                  <strong>{b.lesson?.title || 'Lesson'}</strong>
-                  <div className="small muted">{b.primaryStudent?.full_name} · {formatInZone(b.scheduled_at, tz)}</div>
-                  {respondBy ? (
-                    <div className="small" style={{ marginTop: 4 }}>
-                      <strong>Respond by {respondBy}</strong>
-                    </div>
-                  ) : null}
-                </div>
-                <StatusBadge status={b.status} label={bookingStatusLabel(b.status, { audience: 'coach' })} tone={bookingStatusTone(b.status)} />
-              </Link>
-            );
-          })}
+          {(data?.pending || []).map((b) => (
+            <Link
+              key={b.id}
+              to={`/bookings/${b.id}`}
+              className="spread booking-list-card"
+              style={{ color: 'inherit', textDecoration: 'none' }}
+            >
+              <BookingListCardBody
+                lessonTitle={b.lesson?.title || 'Lesson'}
+                partyName={b.primaryStudent?.full_name}
+                price={b.price}
+                lessonWhen={formatListWhenInZone(b.scheduled_at, tz)}
+                requestedWhen={b.created_at ? formatListWhenInZone(b.created_at, tz) : null}
+                deadlineWhen={respondByWhen(b, tz)}
+                audience="coach"
+              />
+              <StatusBadge status={b.status} label={bookingDisplayLabel(b, { audience: 'coach' })} tone={bookingDisplayTone(b)} />
+            </Link>
+          ))}
         </div>
       </div>
     </div>

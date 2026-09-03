@@ -33,9 +33,10 @@ import {
   AdminDisputeDetailPage,
   AdminDisputesPage,
   AdminHomePage,
+  AdminPaymentsPage,
   AdminUserDetailPage,
   AdminUsersPage,
-} from './pages/admin/AdminPages.jsx';
+} from './pages/admin/index.js';
 
 function ShellLayout() {
   return (
@@ -99,6 +100,7 @@ export default function App() {
             <Route path="/admin/bookings/:id" element={<RequireRole roles={['admin']}><BookingDetailPage admin /></RequireRole>} />
             <Route path="/admin/disputes" element={<RequireRole roles={['admin']}><AdminDisputesPage /></RequireRole>} />
             <Route path="/admin/disputes/:id" element={<RequireRole roles={['admin']}><AdminDisputeDetailPage /></RequireRole>} />
+            <Route path="/admin/payments" element={<RequireRole roles={['admin']}><AdminPaymentsPage /></RequireRole>} />
           </Route>
 
           <Route path="*" element={<NotFoundPage />} />

@@ -8,7 +8,7 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test": "node --test tests/userReadiness.test.mjs"
+    "test": "node --test tests/*.mjs"
   },
   "dependencies": {
     "@stripe/react-stripe-js": "^6.8.1",

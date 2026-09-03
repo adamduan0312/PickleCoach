@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { coachesApi } from '../../api/index.js';
 import { useAuth } from '../../auth/AuthContext.jsx';
 import { FormField } from '../../components/ui/FormField.jsx';
+import { CharacterCounter } from '../../components/ui/CharacterLimit.jsx';
+import { CHAR_LIMITS } from '../../utils/charLimits.js';
 import { Alert } from '../../components/ui/States.jsx';
 import { fieldError } from '../../utils/format.js';
 
@@ -61,7 +63,8 @@ export function CoachProfileEditPage() {
       <form className="card stack" onSubmit={onSubmit} style={{ maxWidth: 640 }}>
         <Alert tone="error">{error}</Alert>
         <Alert tone="success">{message}</Alert>
-        <FormField label="Headline" name="headline" value={form.headline} onChange={update} />
+        <FormField label="Headline" name="headline" value={form.headline} onChange={update} maxLength={CHAR_LIMITS.coachHeadline} />
+        <CharacterCounter value={form.headline} max={CHAR_LIMITS.coachHeadline} className="tight-top" />
         <FormField label="Bio" name="bio">
           <textarea id="bio" name="bio" value={form.bio} onChange={update} />
         </FormField>

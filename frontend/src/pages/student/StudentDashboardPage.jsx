@@ -4,8 +4,14 @@ import { useAuth } from '../../auth/AuthContext.jsx';
 import { studentsApi, asList } from '../../api/index.js';
 import { useAsync } from '../../hooks/useAsync.js';
 import { EmptyState, ErrorState, LoadingState, StatusBadge } from '../../components/ui/States.jsx';
-import { bookingStatusLabel, bookingStatusTone, coachAcceptanceDeadlineAt } from '../../domain/bookingStatus.js';
-import { formatDateInZone, formatTimeInZone, formatRemainingUntil, detectLocalTimezone } from '../../utils/datetime.js';
+import {
+  bookingDisplayLabel,
+  bookingDisplayTone,
+  coachAcceptanceDeadlineAt,
+  studentRecentLesson,
+  hasLessonEnded,
+} from '../../domain/bookingStatus.js';
+import { formatDateInZone, formatTimeInZone, detectLocalTimezone } from '../../utils/datetime.js';
 import {
   LOCATION_ACCESS_OFF_DETAIL,
   LOCATION_ACCESS_OFF_TITLE,
@@ -18,8 +24,6 @@ import {
   writeSessionGeo,
 } from '../../utils/geolocation.js';
 
-const UPCOMING_STATUSES = new Set(['pending', 'confirmed']);
-const RECENT_STATUSES = new Set(['awaiting_verification']);
 
 function bookingCourtName(booking) {
   const court = booking?.courtLocation;
@@ -93,11 +97,17 @@ export function StudentDashboardPage() {
   }, []);
 
   const bookings = data || [];
-  const upcoming = bookings.filter((b) => UPCOMING_STATUSES.has(b.status)).sort(sortByScheduledAsc);
+  const upcoming = bookings
+    .filter((b) => {
+      if (b.status === 'pending') return true;
+      if (b.status === 'confirmed') return !hasLessonEnded(b);
+      return false;
+    })
+    .sort(sortByScheduledAsc);
   const nextLesson = upcoming[0] || null;
   const moreUpcoming = upcoming.slice(1);
-  const needsAttention = bookings
-    .filter((b) => RECENT_STATUSES.has(b.status) || b.financial_review?.window_open)
+  const recentLessons = bookings
+    .filter((b) => studentRecentLesson(b))
     .sort((a, b) => new Date(b.scheduled_at).getTime() - new Date(a.scheduled_at).getTime());
 
   function goDiscover(e) {
@@ -133,14 +143,14 @@ export function StudentDashboardPage() {
     }
   }
 
-  const firstName = user?.full_name ? user.full_name.split(' ')[0] : '';
+  const firstName = user?.full_name?.trim().split(/\s+/).filter(Boolean)[0] || '';
   const hasTypedPlace = query.trim().length >= 2;
 
   return (
     <div className="page student-dashboard">
       <div className="page-header">
         <div>
-          <h1>Welcome{firstName ? `, ${firstName}` : ''}</h1>
+          <h1>{firstName ? `Welcome, ${firstName}` : 'Welcome'}</h1>
           <p className="muted">Find a coach and book your next lesson.</p>
         </div>
       </div>
@@ -230,75 +240,80 @@ export function StudentDashboardPage() {
         ) : null}
       </section>
 
-      <div className="grid-2" style={{ marginTop: 16 }}>
-        <section className="card dashboard-next-lesson" aria-labelledby="dashboard-next-lesson">
-          <h2 id="dashboard-next-lesson">Next lesson</h2>
-          {loading ? <LoadingState /> : null}
-          {error ? <ErrorState error={error} /> : null}
-          {!loading && !error && !nextLesson ? (
-            <EmptyState
-              title="No upcoming lessons"
-              detail="Your next lesson will appear here after you book one. Search above or browse Discover to find a coach."
-            />
-          ) : null}
-          {!loading && !error && nextLesson ? (
-            <div className="dashboard-next-body">
-              <div className="small muted" style={{ letterSpacing: '0.04em', textTransform: 'uppercase', fontWeight: 600 }}>
-                {bookingStatusLabel(nextLesson.status, { audience: 'student' })}
-              </div>
-              {nextLesson.status === 'pending' ? (
-                <p className="small" style={{ margin: '0.35rem 0 0' }}>
-                  Waiting for the coach to accept
-                  {coachAcceptanceDeadlineAt(nextLesson)
-                    ? ` · by ${formatDateInZone(coachAcceptanceDeadlineAt(nextLesson), tz)} · ${formatTimeInZone(coachAcceptanceDeadlineAt(nextLesson), tz)}`
-                    : ''}
-                  .
-                </p>
-              ) : null}
-              <h3 className="dashboard-next-title">{nextLesson.lesson?.title || 'Lesson'}</h3>
-              <p className="muted" style={{ margin: '0.25rem 0 0' }}>
-                with {nextLesson.coach?.full_name || 'Coach'}
-              </p>
-              <p style={{ margin: '0.75rem 0 0' }}>
-                <strong>{formatDateInZone(nextLesson.scheduled_at, tz)}</strong>
-                {' · '}
-                {formatTimeInZone(nextLesson.scheduled_at, tz)}
-              </p>
-              {bookingCourtName(nextLesson) ? (
-                <p className="muted" style={{ margin: '0.35rem 0 0' }}>{bookingCourtName(nextLesson)}</p>
-              ) : null}
-              <div style={{ marginTop: 16 }}>
-                <Link className="btn secondary" to={`/bookings/${nextLesson.id}`}>View booking</Link>
-              </div>
+      <section className="card dashboard-next-lesson" style={{ marginTop: 16 }} aria-labelledby="dashboard-upcoming-lesson">
+        <h2 id="dashboard-upcoming-lesson">Upcoming lesson</h2>
+        {loading ? <LoadingState /> : null}
+        {error ? <ErrorState error={error} /> : null}
+        {!loading && !error && !nextLesson ? (
+          <EmptyState
+            title="No upcoming lessons"
+            detail="Your next lesson will appear here after you book one. Search above or browse Discover to find a coach."
+          />
+        ) : null}
+        {!loading && !error && nextLesson ? (
+          <div className="dashboard-next-body">
+            <div className="small muted" style={{ letterSpacing: '0.04em', textTransform: 'uppercase', fontWeight: 600 }}>
+              {bookingDisplayLabel(nextLesson, { audience: 'student' })}
             </div>
-          ) : null}
-        </section>
-
-        <section className="card" aria-labelledby="dashboard-quick-actions">
-          <h2 id="dashboard-quick-actions">Quick actions</h2>
-          <div className="stack">
-            <Link className="btn secondary" to="/bookings">View all bookings</Link>
-            <Link className="btn ghost" to="/messages">Messages</Link>
-            <Link className="btn ghost" to="/settings">Manage profile</Link>
-          </div>
-          {needsAttention.length > 0 ? (
+            {nextLesson.status === 'pending' ? (
+              <p className="small" style={{ margin: '0.35rem 0 0' }}>
+                Waiting for the coach to accept
+                {coachAcceptanceDeadlineAt(nextLesson)
+                  ? ` · by ${formatDateInZone(coachAcceptanceDeadlineAt(nextLesson), tz)} · ${formatTimeInZone(coachAcceptanceDeadlineAt(nextLesson), tz)}`
+                  : ''}
+                .
+              </p>
+            ) : null}
+            <h3 className="dashboard-next-title">{nextLesson.lesson?.title || 'Lesson'}</h3>
+            <p className="muted" style={{ margin: '0.25rem 0 0' }}>
+              with {nextLesson.coach?.full_name || 'Coach'}
+            </p>
+            <p style={{ margin: '0.75rem 0 0' }}>
+              <strong>{formatDateInZone(nextLesson.scheduled_at, tz)}</strong>
+              {' · '}
+              {formatTimeInZone(nextLesson.scheduled_at, tz)}
+            </p>
+            {bookingCourtName(nextLesson) ? (
+              <p className="muted" style={{ margin: '0.35rem 0 0' }}>{bookingCourtName(nextLesson)}</p>
+            ) : null}
             <div style={{ marginTop: 16 }}>
-              <h3>Needs attention</h3>
-              <p className="small muted">
-                Recent lessons in verification or still in the post-lesson review window.
-              </p>
-              {needsAttention.slice(0, 4).map((b) => (
-                <Link key={b.id} to={`/bookings/${b.id}`} className="small" style={{ display: 'block', marginTop: 8 }}>
-                  {b.lesson?.title || 'Lesson'}
-                  {b.financial_review?.window_open
-                    ? ` — ${formatRemainingUntil(b.financial_review.review_until)} left to report an issue`
-                    : ` — ${bookingStatusLabel(b.status)}`}
-                </Link>
-              ))}
+              <Link className="btn secondary" to={`/bookings/${nextLesson.id}`}>View booking</Link>
             </div>
-          ) : null}
+          </div>
+        ) : null}
+      </section>
+
+      {recentLessons.length > 0 ? (
+        <section className="card" style={{ marginTop: 16 }} aria-labelledby="dashboard-recent-lessons">
+          <h2 id="dashboard-recent-lessons">Recent lessons</h2>
+          <div className="stack">
+            {recentLessons.slice(0, 5).map((b) => (
+              <Link key={b.id} to={`/bookings/${b.id}`} style={{ textDecoration: 'none', color: 'inherit' }}>
+                <div className="spread">
+                  <div>
+                    <strong>{b.lesson?.title || 'Lesson'}</strong>
+                    <div className="small muted">
+                      with {b.coach?.full_name || 'Coach'}
+                      {' · '}
+                      {formatDateInZone(b.scheduled_at, tz)}
+                      {' · '}
+                      {formatTimeInZone(b.scheduled_at, tz)}
+                    </div>
+                    {bookingCourtName(b) ? (
+                      <div className="small muted">{bookingCourtName(b)}</div>
+                    ) : null}
+                  </div>
+                  <StatusBadge
+                    status={b.status}
+                    label={bookingDisplayLabel(b, { audience: 'student' })}
+                    tone={bookingDisplayTone(b)}
+                  />
+                </div>
+              </Link>
+            ))}
+          </div>
         </section>
-      </div>
+      ) : null}
 
       {moreUpcoming.length > 0 ? (
         <section className="card" style={{ marginTop: 16 }} aria-labelledby="dashboard-upcoming">
@@ -320,7 +335,7 @@ export function StudentDashboardPage() {
                       <div className="small muted">{bookingCourtName(b)}</div>
                     ) : null}
                   </div>
-                  <StatusBadge status={b.status} label={bookingStatusLabel(b.status)} tone={bookingStatusTone(b.status)} />
+                  <StatusBadge status={b.status} label={bookingDisplayLabel(b)} tone={bookingDisplayTone(b)} />
                 </div>
               </Link>
             ))}

@@ -92,6 +92,25 @@ export function formatDateInZone(iso, timeZone) {
   }).format(date);
 }
 
+/** Booking list cards — weekday + month + day, no year. */
+export function formatListDateInZone(iso, timeZone) {
+  if (!iso) return '—';
+  const date = iso instanceof Date ? iso : new Date(iso);
+  if (Number.isNaN(date.getTime())) return '—';
+  return new Intl.DateTimeFormat(undefined, {
+    timeZone: timeZone || detectLocalTimezone(),
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+  }).format(date);
+}
+
+/** `Tue, Sep 8 · 10:00 AM` for list/scanning surfaces. */
+export function formatListWhenInZone(iso, timeZone) {
+  if (!iso) return '—';
+  return `${formatListDateInZone(iso, timeZone)} · ${formatTimeInZone(iso, timeZone)}`;
+}
+
 /** Milliseconds until `iso`, or 0 if missing/past. */
 export function remainingMsUntil(iso, now = new Date()) {
   if (!iso) return 0;
@@ -165,6 +184,19 @@ function minutesToHms(total) {
 }
 
 /**
+ * How far ahead to generate bookable slots from coach availability windows.
+ * Display limits (initial batch / "See more") live in the UI — this is not a
+ * product cap on how far students may book.
+ */
+export const AVAILABILITY_LOOKAHEAD_DAYS = 60;
+
+/** First batch of slots shown on the coach profile booking flow. */
+export const AVAILABILITY_INITIAL_SLOT_COUNT = 30;
+
+/** Extra slots revealed each time the student taps "See more times". */
+export const AVAILABILITY_SLOT_PAGE_SIZE = 30;
+
+/**
  * Build bookable UTC slots from recurring coach availability windows.
  * Availability times are interpreted in the coach's stored timezone.
  * Slots sooner than `minLeadHours` (default 2) are omitted so students cannot
@@ -174,7 +206,7 @@ export function buildAvailabilitySlots({
   availabilities = [],
   durationMinutes = 60,
   coachTimezone = 'UTC',
-  daysAhead = 21,
+  daysAhead = AVAILABILITY_LOOKAHEAD_DAYS,
   now = new Date(),
   minLeadHours = 2,
 }) {
@@ -215,6 +247,32 @@ export function buildAvailabilitySlots({
 
   slots.sort((a, b) => a.scheduled_at.localeCompare(b.scheduled_at));
   return slots;
+}
+
+/**
+ * Group slots by calendar day in the viewer timezone for compact date → times UI.
+ * @param {Array<{ scheduled_at: string }>} slots
+ * @param {string} timeZone
+ * @returns {Array<{ dateKey: string, dateLabel: string, slots: typeof slots }>}
+ */
+export function groupSlotsByDate(slots, timeZone) {
+  const groups = [];
+  const indexByKey = new Map();
+  for (const slot of slots) {
+    const dateKey = ymdInZone(new Date(slot.scheduled_at), timeZone);
+    let group = indexByKey.get(dateKey);
+    if (!group) {
+      group = {
+        dateKey,
+        dateLabel: formatDateInZone(slot.scheduled_at, timeZone),
+        slots: [],
+      };
+      indexByKey.set(dateKey, group);
+      groups.push(group);
+    }
+    group.slots.push(slot);
+  }
+  return groups;
 }
 
 export { WEEKDAYS };

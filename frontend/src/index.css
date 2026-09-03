@@ -143,6 +143,46 @@ button, input, select, textarea {
   transform: translateY(-1px);
 }
 
+/* My Bookings / coach schedule list cards */
+.booking-list-card.spread {
+  align-items: flex-start;
+}
+.booking-list-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  min-width: 0;
+  flex: 1;
+}
+.booking-list-card-title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--pc-ink);
+}
+.booking-list-card-party {
+  margin-top: 0.15rem;
+  font-size: 0.9375rem;
+  color: var(--pc-muted);
+}
+.booking-list-card-when {
+  margin-top: 0.35rem;
+  font-size: 1.0625rem;
+  font-weight: 600;
+  color: var(--pc-ink);
+  letter-spacing: -0.01em;
+}
+.booking-list-card-requested {
+  margin-top: 0.45rem;
+  font-size: 0.875rem;
+  color: var(--pc-muted);
+}
+.booking-list-card-deadline {
+  margin-top: 0.3rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--pc-ink);
+}
+
 .btn {
   display: inline-flex;
   align-items: center;
@@ -177,6 +217,19 @@ button, input, select, textarea {
   background: #fff;
 }
 .field textarea { min-height: 96px; resize: vertical; }
+.char-limit-meta {
+  display: block;
+  margin-top: 0.3rem;
+  font-size: 0.78rem;
+  color: var(--pc-muted);
+  text-align: right;
+}
+.char-limit-meta.tight-top {
+  margin-top: -0.35rem;
+}
+.char-limit-meta.subtle {
+  opacity: 0.85;
+}
 .field .error { color: var(--pc-danger); font-size: 0.8rem; }
 .field.invalid input,
 .field.invalid select,
@@ -234,6 +287,115 @@ button, input, select, textarea {
 .badge.danger { background: var(--pc-danger-soft); color: #8a241a; }
 .badge.info { background: var(--pc-info-soft); color: #1a4e8a; }
 .badge.neutral { background: #eee; color: #444; }
+
+.admin-page-subtitle {
+  margin: 0.35rem 0 0;
+  max-width: 42rem;
+}
+
+.admin-filter-row {
+  margin-bottom: 1rem;
+}
+
+.admin-status-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  align-items: flex-end;
+  min-width: 10.5rem;
+}
+
+.admin-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.admin-status-label {
+  font-size: 0.75rem;
+  font-weight: 650;
+  color: var(--pc-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.admin-status-stack--start {
+  align-items: flex-start;
+}
+
+.admin-status-stack--start .admin-status-row {
+  justify-content: flex-start;
+}
+
+.admin-section-card {
+  margin-top: 1rem;
+}
+
+.admin-actions-card {
+  border-color: var(--pc-warning-soft);
+  background: color-mix(in srgb, var(--pc-warning-soft) 35%, #fff);
+}
+
+.admin-money-block {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.admin-money-block h3 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.admin-resolve-fieldset {
+  border: 1px solid var(--pc-line);
+  border-radius: 12px;
+  padding: 0.75rem 0.9rem 0.9rem;
+  margin: 0;
+}
+
+.admin-resolve-fieldset legend {
+  padding: 0 0.35rem;
+  font-size: 0.85rem;
+  font-weight: 650;
+}
+
+.admin-resolve-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  font-size: 0.925rem;
+  cursor: pointer;
+}
+
+.admin-resolve-choice input {
+  margin-top: 0.2rem;
+}
+
+.admin-resolve-summary {
+  background: color-mix(in srgb, var(--pc-warning-soft) 40%, #fff);
+}
+
+.admin-resolve-summary-list {
+  margin: 0;
+  padding-left: 1.1rem;
+}
+
+.admin-resolve-summary-list li {
+  margin: 0.2rem 0;
+}
+
+@media (max-width: 720px) {
+  .admin-status-stack {
+    align-items: flex-start;
+    min-width: 0;
+    width: 100%;
+  }
+
+  .admin-status-row {
+    justify-content: flex-start;
+  }
+}
 
 .app-header {
   position: sticky;
@@ -420,6 +582,27 @@ table.data th { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0
   grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
   gap: 0.5rem;
 }
+.slot-grid-times {
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+}
+.slot-day-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+.slot-day-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+.slot-day-heading {
+  margin: 0;
+  font-size: 0.9rem;
+  font-weight: 650;
+}
+.slot-see-more {
+  margin-top: 0.85rem;
+}
 .slot {
   border: 1px solid var(--pc-line);
   background: #fff;
@@ -460,8 +643,13 @@ table.data th { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0
   gap: 0.5rem;
   border-top: 1px solid var(--pc-line);
   padding-top: 0.75rem;
+  align-items: flex-end;
 }
-.chat-composer textarea { flex: 1; min-height: 48px; }
+.chat-composer-input {
+  flex: 1;
+  min-width: 0;
+}
+.chat-composer textarea { width: 100%; min-height: 48px; }
 
 .mode-switch {
   display: inline-flex;
@@ -590,8 +778,26 @@ table.data th { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0
 .discover-stat-value {
   min-width: 0;
 }
-.discover-stat-star {
+.star-rating-gold {
   color: #c48a1a;
+}
+.star-rating-empty {
+  color: var(--pc-muted);
+  opacity: 0.5;
+}
+.star-rating-visual {
+  letter-spacing: 0.04em;
+  font-size: 0.95rem;
+  line-height: 1;
+}
+.star-rating-compact {
+  line-height: 1;
+}
+.coach-profile-stars.star-rating-visual {
+  font-size: 0.95rem;
+}
+.coach-review-rating .star-rating-visual {
+  font-size: 0.9rem;
 }
 .discover-coach-card .discover-card-cta {
   pointer-events: none;
@@ -630,6 +836,19 @@ table.data th { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0
 }
 .coach-profile-headline {
   margin: 0.25rem 0 0.75rem;
+  color: var(--pc-muted);
+}
+.coach-profile-rating-display {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.coach-rating-score {
+  font-weight: 700;
+  font-size: 1.05rem;
+}
+.coach-rating-count {
+  font-size: 0.85rem;
   color: var(--pc-muted);
 }
 .coach-profile-highlights {
@@ -681,6 +900,12 @@ table.data th { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0
 }
 .coach-teaching-pin {
   flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  color: var(--pc-muted);
+}
+.coach-teaching-pin-icon {
+  display: block;
 }
 .coach-booking-flow {
   display: grid;
@@ -784,12 +1009,26 @@ table.data th { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0
   gap: 0.85rem;
 }
 .coach-review {
-  padding-bottom: 0.65rem;
+  padding-bottom: 0.85rem;
   border-bottom: 1px solid var(--pc-line);
 }
 .coach-review:last-child {
   border-bottom: 0;
   padding-bottom: 0;
+}
+.coach-review-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem 0.75rem;
+  margin-bottom: 0.35rem;
+}
+.coach-review-rating {
+  margin-bottom: 0.35rem;
+}
+.coach-review-comment {
+  margin: 0;
+  line-height: 1.45;
 }
 @media (max-width: 560px) {
   .coach-profile-highlights li {
@@ -870,6 +1109,12 @@ table.data th { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0
   margin: 0 0 0.85rem;
   font-size: 1.15rem;
 }
+.checkout-policy-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
 .checkout-auth-explainer {
   margin-top: 0.35rem;
   padding: 0.85rem 1rem;
@@ -900,12 +1145,87 @@ table.data th { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0
   text-align: center;
 }
 
-.booking-confirmation-card {
-  border-color: var(--pc-green);
-  background: #fff;
+.booking-detail-content-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1rem;
+  margin-top: 1rem;
+  align-items: start;
 }
-.booking-confirmation-card h2 {
-  font-size: 1.35rem;
+@media (min-width: 768px) {
+  .booking-detail-content-grid:not(.booking-detail-content-grid--single) {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+.booking-detail-actions {
+  margin-top: 1rem;
+}
+.booking-detail-section-title {
+  margin: 0 0 0.75rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--pc-text-muted, #666);
+}
+.booking-detail-facts {
+  margin: 0;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.85rem 1.25rem;
+}
+@media (min-width: 640px) {
+  .booking-detail-facts {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+.booking-detail-facts > div {
+  display: grid;
+  gap: 0.15rem;
+  align-content: start;
+}
+.booking-detail-facts dt {
+  margin: 0;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--pc-muted);
+  font-weight: 650;
+}
+.booking-detail-facts dd {
+  margin: 0;
+  font-size: 0.98rem;
+  line-height: 1.4;
+}
+.booking-detail-facts-full {
+  grid-column: 1 / -1;
+}
+.booking-detail-facts-payment dd {
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+.booking-detail-payment-status {
+  display: block;
+  margin-top: 0.2rem;
+  font-weight: 400;
+}
+.booking-detail-steps {
+  margin: 0;
+  padding-left: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+.booking-detail-steps li {
+  line-height: 1.45;
+}
+.booking-detail-steps li strong {
+  display: block;
+  margin-bottom: 0.15rem;
+}
+.booking-detail-steps li span {
+  color: var(--pc-text-muted, #555);
+  font-size: 0.92rem;
 }
 
 .notice-banner {

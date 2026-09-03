@@ -39,6 +39,9 @@ export const ABIACA_ORIGIN = {
   lng: -80.2807362,
 };
 
+const LESSON_TITLE = 'Private Lesson';
+const LESSON_LEGACY_TITLE = 'Davie Near-Me Lesson';
+
 /**
  * Courts / coaches at increasing distance from Abiaca Cir for radius tests.
  * Distances are approximate straight-line miles.
@@ -47,8 +50,8 @@ const COACHES = [
   {
     emailLocal: 'coach.davie.abiaca',
     fullName: 'Ava Abiaca',
-    headline: '~0.3 mi — walks from Abiaca Cir',
-    bio: 'Neighborhood coach for Discover “near me” booking tests (Davie / Abiaca).',
+    headline: 'Beginner-friendly coach in Davie',
+    bio: 'I help new and returning players feel comfortable on court while building solid fundamentals. Lessons focus on footwork, consistent serves, and smart placement you can use in your next game.',
     skill_rating: 3.5,
     rating_system: 'self',
     rating_average: 4.7,
@@ -57,7 +60,8 @@ const COACHES = [
     location: 'Davie, FL',
     approxMiles: 0.3,
     court: {
-      name: 'Near-Me Fixture — Tree Tops Park Courts',
+      name: 'Tree Tops Park Courts',
+      legacyName: 'Near-Me Fixture — Tree Tops Park Courts',
       address_line1: '3900 SW 100th Ave',
       city: 'Davie',
       state: 'FL',
@@ -70,8 +74,8 @@ const COACHES = [
   {
     emailLocal: 'coach.davie.pineisland',
     fullName: 'Pete Pine',
-    headline: '~1 mi — Pine Island Rd corridor',
-    bio: 'Davie coach along Pine Island for short-radius booking QA.',
+    headline: 'Intermediate skills along Pine Island Rd',
+    bio: 'Structured lessons for players moving from recreational games to more competitive play. We work on third-shot drops, transition footwork, and keeping points alive under pressure.',
     skill_rating: 4.0,
     rating_system: 'DUPR',
     rating_average: 4.5,
@@ -80,7 +84,8 @@ const COACHES = [
     location: 'Davie, FL',
     approxMiles: 1.0,
     court: {
-      name: 'Near-Me Fixture — Pine Island Park Courts',
+      name: 'Pine Island Park Courts',
+      legacyName: 'Near-Me Fixture — Pine Island Park Courts',
       address_line1: '3801 S Pine Island Rd',
       city: 'Davie',
       state: 'FL',
@@ -93,8 +98,8 @@ const COACHES = [
   {
     emailLocal: 'coach.davie.cooper',
     fullName: 'Casey Cooper',
-    headline: '~3 mi — Cooper City edge',
-    bio: 'Just outside Davie for 5–10 mile radius testing.',
+    headline: 'Advanced strategy for competitive players',
+    bio: 'I coach intermediate and advanced players who want sharper decision-making, better partner communication, and a more reliable soft game. Every session is tailored to your goals.',
     skill_rating: 4.5,
     rating_system: 'UTR-P',
     rating_average: 4.8,
@@ -103,7 +108,8 @@ const COACHES = [
     location: 'Cooper City, FL',
     approxMiles: 3.0,
     court: {
-      name: 'Near-Me Fixture — Flamingo Gardens Area Courts',
+      name: 'Flamingo Gardens Area Courts',
+      legacyName: 'Near-Me Fixture — Flamingo Gardens Area Courts',
       address_line1: '3750 Flamingo Rd',
       city: 'Davie',
       state: 'FL',
@@ -116,8 +122,8 @@ const COACHES = [
   {
     emailLocal: 'coach.davie.sunrise',
     fullName: 'Sam Sunrise',
-    headline: '~6 mi — toward Sunrise / Sawgrass',
-    bio: 'Appears at radius ≥10 from Abiaca; useful for radius filter QA.',
+    headline: 'Patient coaching for building confidence',
+    bio: 'Whether you are picking up a paddle for the first time or getting back into the game, I keep lessons practical and encouraging. We focus on habits that make you more consistent week to week.',
     skill_rating: 3.0,
     rating_system: 'self',
     rating_average: 4.2,
@@ -126,7 +132,8 @@ const COACHES = [
     location: 'Sunrise, FL',
     approxMiles: 6.0,
     court: {
-      name: 'Near-Me Fixture — Sunrise Civic Courts',
+      name: 'Sunrise Civic Courts',
+      legacyName: 'Near-Me Fixture — Sunrise Civic Courts',
       address_line1: '10610 W Oakland Park Blvd',
       city: 'Sunrise',
       state: 'FL',
@@ -139,8 +146,8 @@ const COACHES = [
   {
     emailLocal: 'coach.davie.ftlaud',
     fullName: 'Frankie Lauderdale',
-    headline: '~12 mi — Fort Lauderdale (outside 10 mi)',
-    bio: 'Outside a 10-mile Abiaca radius; should appear at 25 mi.',
+    headline: 'Fort Lauderdale competitive pickleball coach',
+    bio: 'I help players build confidence, improve consistency, and develop smarter shot selection. My lessons are tailored to your current skill level and focused on practical improvement you can take into your next game.',
     skill_rating: 5.0,
     rating_system: 'DUPR',
     rating_average: 4.9,
@@ -149,7 +156,8 @@ const COACHES = [
     location: 'Fort Lauderdale, FL',
     approxMiles: 12.0,
     court: {
-      name: 'Near-Me Fixture — Holiday Park Courts',
+      name: 'Holiday Park Courts',
+      legacyName: 'Near-Me Fixture — Holiday Park Courts',
       // Real Google/park address; OSM may label the road "G Martin Harold Drive".
       address_line1: '1150 G. Harold Martin Dr',
       city: 'Fort Lauderdale',
@@ -163,17 +171,19 @@ const COACHES = [
 ];
 
 async function ensureCourt(spec, createdByUserId) {
-  const existing = await CourtLocation.findOne({
-    where: {
-      name: spec.name,
-      city: spec.city,
-      state: spec.state,
-      postal_code: spec.postal_code,
-      deleted_at: null,
-    },
-  });
+  const whereBase = {
+    city: spec.city,
+    state: spec.state,
+    postal_code: spec.postal_code,
+    deleted_at: null,
+  };
+  let existing = await CourtLocation.findOne({ where: { name: spec.name, ...whereBase } });
+  if (!existing && spec.legacyName) {
+    existing = await CourtLocation.findOne({ where: { name: spec.legacyName, ...whereBase } });
+  }
   if (existing) {
     await existing.update({
+      name: spec.name,
       address_line1: spec.address_line1,
       latitude: spec.latitude,
       longitude: spec.longitude,
@@ -181,8 +191,9 @@ async function ensureCourt(spec, createdByUserId) {
     });
     return existing;
   }
+  const { legacyName: _legacyName, ...courtFields } = spec;
   return CourtLocation.create({
-    ...spec,
+    ...courtFields,
     country: 'US',
     is_private: false,
     source: 'manual',
@@ -243,17 +254,22 @@ async function ensureCoach(spec, passwordHash) {
   const court = await ensureCourt(spec.court, user.id);
   await CoachCourtLocation.findOrCreate({
     where: { coach_id: user.id, court_id: court.id },
-    defaults: { coach_notes: `Near Abiaca Cir (~${spec.approxMiles} mi)` },
+    defaults: { coach_notes: `Primary teaching court near ${spec.location}` },
   });
 
   let lesson = await Lesson.findOne({
-    where: { coach_id: user.id, title: 'Davie Near-Me Lesson', deleted_at: null },
+    where: { coach_id: user.id, title: LESSON_TITLE, deleted_at: null },
   });
+  if (!lesson) {
+    lesson = await Lesson.findOne({
+      where: { coach_id: user.id, title: LESSON_LEGACY_TITLE, deleted_at: null },
+    });
+  }
   if (!lesson) {
     lesson = await Lesson.create({
       coach_id: user.id,
-      title: 'Davie Near-Me Lesson',
-      description: 'Marketplace lesson for Abiaca Cir / Davie near-me booking tests.',
+      title: LESSON_TITLE,
+      description: 'One-on-one coaching session tailored to your goals and current skill level.',
       price: spec.lessonPrice,
       duration_minutes: 60,
       max_students: 1,
@@ -261,6 +277,8 @@ async function ensureCoach(spec, passwordHash) {
     });
   } else {
     await lesson.update({
+      title: LESSON_TITLE,
+      description: 'One-on-one coaching session tailored to your goals and current skill level.',
       is_active: true,
       deleted_at: null,
       price: spec.lessonPrice,

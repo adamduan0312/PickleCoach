@@ -147,6 +147,10 @@ export const handleStripeWebhook = async (req, res) => {
         await handleTransferFinalized(event.data.object);
         break;
 
+      case 'transfer.reversed':
+        await handleTransferReversed(event.data.object);
+        break;
+
       case 'account.updated':
         await handleConnectAccountUpdated(event.data.object);
         break;
@@ -341,6 +345,19 @@ const handleTransferFinalized = async (transfer) => {
   await assertConsistencyAfterWebhook(
     Number.isFinite(paymentId) ? paymentId : null,
     'transfer.finalized'
+  );
+};
+
+const handleTransferReversed = async (transfer) => {
+  const result = await paymentService.handleTransferReversedFromStripe(transfer);
+  const paymentId =
+    result.payment?.id ??
+    (transfer.metadata?.payment_id != null
+      ? parseInt(String(transfer.metadata.payment_id), 10)
+      : null);
+  await assertConsistencyAfterWebhook(
+    Number.isFinite(paymentId) ? paymentId : null,
+    'transfer.reversed'
   );
 };
 

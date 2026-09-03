@@ -1,19 +1,25 @@
 import { useEffect, useState } from 'react';
-import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { bookingsApi, messagesApi, reviewsApi, adminApi, disputesApi, asList } from '../../api/index.js';
 import { useAsync } from '../../hooks/useAsync.js';
 import { Alert, EmptyState, ErrorState, LoadingState, StatusBadge } from '../../components/ui/States.jsx';
 import { FormField } from '../../components/ui/FormField.jsx';
+import { CharacterCounter, CharacterMaxHint } from '../../components/ui/CharacterLimit.jsx';
+import { AdminStatusStack } from '../../components/admin/AdminStatusStack.jsx';
+import { CHAR_LIMITS } from '../../utils/charLimits.js';
 import {
   bookingStatusLabel,
-  bookingStatusTone,
+  bookingDisplayLabel,
+  bookingDisplayTone,
+  hasOpenIssueReport,
   canCoachAccept,
   canCoachComplete,
   canCoachDecline,
+  canCoachCancel,
   canCoachMarkNoShow,
   canStudentCancel,
   canReportLessonIssue,
-  pendingRequestTimeoutCopy,
+  coachAttendanceBlockedByIssue,
   coachAcceptanceDeadlineAt,
   paymentStatusLabel,
   paymentAmountCaption,
@@ -22,12 +28,20 @@ import {
   bookingOutcomeCopy,
   messagingLockedCopy,
   hasLessonEnded,
+  isPostLessonReviewEligible,
+  studentReviewWindowBannerCopy,
+  confirmedStudentNoShowReminder,
+  studentNoShowConfirmTitle,
+  studentNoShowConfirmBody,
   CANCEL_REASONS,
   DECLINE_REASON_CODES,
 } from '../../domain/bookingStatus.js';
+import {
+  adminBookingMoneyStatusItems,
+  adminRefundStatusView,
+} from '../../domain/adminStatus.js';
 import { formatInZone, formatDateInZone, formatTimeInZone, formatRemainingUntil, detectLocalTimezone } from '../../utils/datetime.js';
-import { courtLabel, formatMoney, teachingLocationLabel } from '../../utils/format.js';
-import { Avatar } from '../../components/ui/Avatar.jsx';
+import { courtLabel, formatMoney } from '../../utils/format.js';
 import { useAuth } from '../../auth/AuthContext.jsx';
 
 function formatAcceptanceDeadline(iso, tz) {
@@ -35,138 +49,287 @@ function formatAcceptanceDeadline(iso, tz) {
   return `${formatDateInZone(iso, tz)} · ${formatTimeInZone(iso, tz)}`;
 }
 
-function confirmationWhereLabel(court) {
-  if (!court) return 'Court TBD';
-  const name = court.name || 'Court';
-  const area = teachingLocationLabel(court);
-  if (area) {
-    const city = String(area).split(',')[0].trim();
-    return city ? `${city} — ${name}` : `${area} — ${name}`;
-  }
-  return courtLabel(court);
+function lessonAmountLabel(payment, booking) {
+  const caption = payment ? paymentAmountCaption(payment) : null;
+  if (caption === 'Authorized') return 'Amount authorized';
+  if (caption === 'Charged') return 'Amount charged';
+  if (caption === 'Refunded') return 'Amount refunded';
+  if (caption === 'Partially refunded') return 'Amount partially refunded';
+  if (booking?.status === 'pending') return 'Amount authorized';
+  return caption ? `Amount (${caption.toLowerCase()})` : 'Amount';
 }
 
-/**
- * Shown once after checkout (?booked=1). Status-aware: requested vs confirmed.
- */
-function PostBookingConfirmationCard({ booking, payment, tz, onDismiss }) {
-  const isPending = booking.status === 'pending';
-  const isConfirmed = booking.status === 'confirmed';
-  const deadlineIso = coachAcceptanceDeadlineAt(booking);
-  const deadlineLabel = formatAcceptanceDeadline(deadlineIso, tz);
+function bookingDetailHeadline(booking, { audience }) {
+  if (hasOpenIssueReport(booking) && booking.status !== 'disputed') {
+    return 'Issue reported';
+  }
+  if (booking.status === 'pending') {
+    return audience === 'coach' ? 'Response needed' : 'Booking requested';
+  }
+  if (booking.status === 'confirmed') return 'Booking confirmed';
+  if (booking.status === 'completed') return 'Lesson completed';
+  return bookingStatusLabel(booking.status, { audience });
+}
+
+function bookingDetailLead(booking, { audience, tz }) {
+  const coachName = booking.coach?.full_name || 'the coach';
+  const studentName = booking.primaryStudent?.full_name || 'the student';
+  const deadlineLabel = formatAcceptanceDeadline(coachAcceptanceDeadlineAt(booking), tz);
+
+  // Coach: issue messaging lives in IssueReportedPanel (avoids triple repeat).
+  if (audience === 'coach' && (hasOpenIssueReport(booking) || booking.status === 'disputed')) {
+    return null;
+  }
+  if (hasOpenIssueReport(booking) && booking.status !== 'disputed') {
+    return 'Your report is under review. Payout is protected while this issue is being reviewed.';
+  }
+
+  switch (booking.status) {
+    case 'pending':
+      if (audience === 'coach') {
+        return deadlineLabel
+          ? `${studentName} requested a lesson. Please accept or decline by ${deadlineLabel}.`
+          : `${studentName} requested a lesson. Please accept or decline.`;
+      }
+      return `Your request was sent to ${coachName}. Your payment has been authorized but hasn't been charged.`;
+    case 'confirmed':
+      return audience === 'coach'
+        ? 'The lesson is confirmed and the student\'s payment has been captured.'
+        : 'Your lesson is confirmed and your payment has been captured.';
+    case 'awaiting_verification':
+      return audience === 'coach'
+        ? 'The lesson time has passed. Confirm attendance below.'
+        : 'The lesson time has passed. Waiting for your coach to confirm attendance.';
+    case 'completed':
+      return audience === 'coach'
+        ? 'This lesson is complete.'
+        : 'This lesson is complete.';
+    case 'cancelled':
+      return 'This booking was cancelled.';
+    case 'disputed':
+      return 'Your report is under review. Payout is protected while this issue is being reviewed.';
+    case 'student_no_show':
+    case 'coach_no_show':
+      return null;
+    default:
+      return null;
+  }
+}
+
+function bookingDetailNextSteps(booking, { audience, tz }) {
+  const deadlineLabel = formatAcceptanceDeadline(coachAcceptanceDeadlineAt(booking), tz);
   const whenLabel = `${formatDateInZone(booking.scheduled_at, tz)} · ${formatTimeInZone(booking.scheduled_at, tz)}`;
+
+  if (hasOpenIssueReport(booking) || booking.status === 'disputed') {
+    // Coach banner already explains the state; student lead covers theirs.
+    return [];
+  }
+
+  switch (booking.status) {
+    case 'pending':
+      if (audience === 'coach') {
+        return [
+          {
+            title: deadlineLabel ? `Respond by ${deadlineLabel}` : 'Accept or decline',
+            body: 'Accepting captures the student\'s payment. Declining or missing the deadline releases the authorization.',
+          },
+          {
+            title: 'The student is waiting',
+            body: 'They\'ll be notified when you respond.',
+          },
+        ];
+      }
+      return [
+        {
+          title: deadlineLabel ? `Coach responds by ${deadlineLabel}` : 'Coach accepts or declines',
+          body: deadlineLabel
+            ? `The coach has until ${deadlineLabel} to respond.`
+            : 'The coach will accept or decline your request.',
+        },
+        {
+          title: 'You\'ll be notified',
+          body: 'We\'ll let you know when the coach responds.',
+        },
+        {
+          title: 'If accepted',
+          body: 'The payment is captured according to the booking process.',
+        },
+      ];
+    case 'confirmed':
+      if (audience === 'coach') {
+        return [
+          {
+            title: 'Teach the lesson',
+            body: `Show up at the scheduled time (${whenLabel}).`,
+          },
+          {
+            title: 'After the lesson ends',
+            body: 'Mark the lesson complete or record a student no-show. These confirm attendance only — they do not release payment.',
+          },
+          {
+            title: 'Payout timing',
+            body: 'Payment is held for 24 hours after the lesson so either side can report a problem.',
+          },
+        ];
+      }
+      return [
+        {
+          title: 'Attend your lesson',
+          body: `Show up on time (${whenLabel}) at the court listed below. ${confirmedStudentNoShowReminder}`,
+        },
+        {
+          title: 'After the lesson',
+          body: 'The review and dispute window opens for 24 hours. Payment is not finalized until it closes.',
+        },
+      ];
+    case 'awaiting_verification':
+      if (audience === 'coach') {
+        return [
+          {
+            title: 'Confirm attendance',
+            body: 'Mark the lesson complete or record a student no-show.',
+          },
+          {
+            title: 'Payment is still protected',
+            body: 'Complete and no-show do not release payment. Either side can report a problem for 24 hours after the lesson.',
+          },
+        ];
+      }
+      return [
+        {
+          title: 'Waiting for coach confirmation',
+          body: 'Your coach will confirm whether the lesson took place.',
+        },
+        {
+          title: 'Report a problem if needed',
+          body: 'If something went wrong, you can report an issue during the review window.',
+        },
+      ];
+    case 'completed':
+    case 'student_no_show':
+    case 'coach_no_show':
+      if (audience === 'student') {
+        return [
+          {
+            title: 'Leave a review',
+            body: 'Share feedback about your coach if you haven\'t already.',
+          },
+          {
+            title: 'Review or dispute window',
+            body: 'If something went wrong, report an issue before the review period closes.',
+          },
+        ];
+      }
+      return [
+        {
+          title: 'Payout timing',
+          body: 'Payment is held for 24 hours after the lesson so either side can report a problem.',
+        },
+      ];
+    case 'disputed':
+      return [
+        {
+          title: 'Issue under review',
+          body: 'Payout stays protected while the report is open.',
+        },
+      ];
+    default:
+      return [];
+  }
+}
+
+function BookingDetailLessonSection({ booking, payment, tz, isCoach, admin }) {
+  const lessonWhenLabel = `${formatDateInZone(booking.scheduled_at, tz)} · ${formatTimeInZone(booking.scheduled_at, tz)}`;
+  const requestedLabel = booking.created_at
+    ? `${formatDateInZone(booking.created_at, tz)} · ${formatTimeInZone(booking.created_at, tz)}`
+    : null;
+  const lessonTitle = booking.lesson?.title || 'Lesson';
+  const duration = booking.duration_minutes != null ? ` · ${booking.duration_minutes} min` : '';
   const amount = payment?.total_charge_to_student ?? booking.price;
-  const title = isConfirmed
-    ? 'Booking confirmed'
-    : isPending
-      ? 'Booking requested'
-      : 'Booking submitted';
-  const lead = isConfirmed
-    ? 'Your lesson is confirmed. You’re all set.'
-    : isPending
-      ? 'Your payment is authorized. The coach still needs to accept before the lesson is confirmed.'
-      : 'Your booking was submitted.';
+  const amountLabel = lessonAmountLabel(payment, booking);
+  const paymentStatus = paymentStatusLabel(payment);
+  const whereLabel = courtLabel(booking.courtLocation);
 
   return (
-    <section className="card booking-confirmation-card" aria-labelledby="booking-confirmation-heading">
-      <div className="spread" style={{ alignItems: 'flex-start' }}>
-        <div>
-          <h2 id="booking-confirmation-heading" style={{ margin: 0 }}>{title}</h2>
-          <p className="muted" style={{ margin: '0.35rem 0 0' }}>{lead}</p>
-        </div>
-        <StatusBadge status={booking.status} label={bookingStatusLabel(booking.status)} tone={bookingStatusTone(booking.status)} />
-      </div>
-
-      <div className="checkout-summary-coach" style={{ marginTop: '1rem' }}>
-        <Avatar name={booking.coach?.full_name} src={booking.coach?.avatar_url} size="lg" />
-        <div>
-          <div className="checkout-summary-coach-name">{booking.coach?.full_name || 'Coach'}</div>
-          <div className="small muted">{booking.lesson?.title || 'Lesson'}</div>
-        </div>
-      </div>
-
-      <dl className="checkout-summary-list" style={{ marginTop: '1rem' }}>
+    <section className="card stack booking-detail-section booking-detail-lesson">
+      <h2 className="booking-detail-section-title">Your lesson</h2>
+      <dl className="booking-detail-facts">
+        {(!isCoach || admin) ? (
+          <div>
+            <dt>Coach</dt>
+            <dd>{booking.coach?.full_name || '—'}</dd>
+          </div>
+        ) : null}
+        {isCoach && !admin ? (
+          <div>
+            <dt>Student</dt>
+            <dd>{booking.primaryStudent?.full_name || '—'}</dd>
+          </div>
+        ) : null}
         <div>
           <dt>Lesson</dt>
-          <dd>
-            {booking.lesson?.title || 'Lesson'}
-            {booking.duration_minutes != null ? ` · ${booking.duration_minutes} minutes` : null}
-          </dd>
+          <dd>{lessonTitle}{duration}</dd>
         </div>
+        {admin ? (
+          <div className="booking-detail-facts-full">
+            <dt>Student</dt>
+            <dd>{booking.primaryStudent?.full_name || '—'}</dd>
+          </div>
+        ) : null}
+        {requestedLabel ? (
+          <div>
+            <dt>Requested</dt>
+            <dd>{requestedLabel}</dd>
+          </div>
+        ) : null}
         <div>
           <dt>When</dt>
-          <dd>{whenLabel}</dd>
+          <dd>{lessonWhenLabel}</dd>
         </div>
         <div>
           <dt>Where</dt>
-          <dd>{confirmationWhereLabel(booking.courtLocation)}</dd>
+          <dd>{whereLabel}</dd>
         </div>
-        <div className="checkout-summary-total">
-          <dt>{isConfirmed ? (paymentAmountCaption(payment) || 'Amount') : 'Amount authorized'}</dt>
-          <dd>{formatMoney(amount)}</dd>
-        </div>
-      </dl>
-
-      <div className="checkout-auth-explainer" style={{ marginTop: '1rem' }}>
-        <h3 className="checkout-auth-explainer-title">What happens next</h3>
-        {isPending ? (
-          <ul className="checkout-auth-explainer-list">
-            <li>
-              {deadlineLabel
-                ? `The coach has until ${deadlineLabel} to accept or decline.`
-                : 'The coach will accept or decline your request.'}
-            </li>
-            <li>You’ll get a notification when they respond.</li>
-            <li>If they decline or don’t respond in time, your payment authorization is released.</li>
-            <li>You can view this booking anytime from My bookings.</li>
-          </ul>
-        ) : isConfirmed ? (
-          <ul className="checkout-auth-explainer-list">
-            <li>Show up on time at the teaching location above.</li>
-            <li>You can message your coach from this booking.</li>
-            <li>After the lesson, you have 24 hours to report a payment or lesson problem.</li>
-          </ul>
-        ) : (
-          <ul className="checkout-auth-explainer-list">
-            <li>Open this booking for the latest status and actions.</li>
-          </ul>
-        )}
-      </div>
-
-      <div className="row" style={{ marginTop: '1rem' }}>
-        <Link className="btn" to="/bookings">View my bookings</Link>
-        {onDismiss ? (
-          <button type="button" className="btn ghost" onClick={onDismiss}>Dismiss</button>
+        {amount != null ? (
+          <div className="booking-detail-facts-payment">
+            <dt>{amountLabel}</dt>
+            <dd>
+              {formatMoney(amount)}
+              {paymentStatus ? <span className="small muted booking-detail-payment-status">{paymentStatus}</span> : null}
+            </dd>
+          </div>
         ) : null}
-      </div>
+        {isCoach && payment?.coach_payout_expected != null ? (
+          <div className="booking-detail-facts-full">
+            <dt>Expected payout</dt>
+            <dd>{formatMoney(payment.coach_payout_expected)}</dd>
+          </div>
+        ) : null}
+        {booking.decline_message_to_student ? (
+          <div className="booking-detail-facts-full">
+            <dt>Coach message</dt>
+            <dd>{booking.decline_message_to_student}</dd>
+          </div>
+        ) : null}
+      </dl>
     </section>
   );
 }
 
-function PendingAcceptanceBanner({ booking, isCoach, isStudent, tz }) {
-  if (booking?.status !== 'pending' || (!isCoach && !isStudent)) return null;
-  const deadlineIso = coachAcceptanceDeadlineAt(booking);
-  const deadlineLabel = formatAcceptanceDeadline(deadlineIso, tz);
-  const title = isCoach ? 'Response needed' : 'Waiting for coach';
-  const deadlineLine = deadlineLabel
-    ? (isCoach
-      ? `Please accept or decline this request by ${deadlineLabel}.`
-      : `The coach has until ${deadlineLabel} to accept.`)
-    : null;
-
+function BookingDetailNextStepsSection({ steps }) {
+  if (!steps.length) return null;
   return (
-    <div className="alert warning booking-acceptance-banner" role="status">
-      <strong>{title}</strong>
-      {deadlineLine ? <div style={{ marginTop: 4 }}>{deadlineLine}</div> : null}
-      <div className="small" style={{ marginTop: 6 }}>
-        {pendingRequestTimeoutCopy(booking, { audience: isCoach ? 'coach' : 'student' })}
-      </div>
-      {deadlineLabel ? (
-        <div className="small" style={{ marginTop: 8 }}>
-          <strong>Acceptance deadline:</strong> {deadlineLabel}
-        </div>
-      ) : null}
-    </div>
+    <section className="card stack booking-detail-section booking-detail-next-steps">
+      <h2 className="booking-detail-section-title">What happens next</h2>
+      <ol className="booking-detail-steps">
+        {steps.map((step) => (
+          <li key={step.title}>
+            <strong>{step.title}</strong>
+            <span>{step.body}</span>
+          </li>
+        ))}
+      </ol>
+    </section>
   );
 }
 
@@ -183,9 +346,6 @@ export function BookingDetailPage({ admin = false }) {
   const { id } = useParams();
   const { user } = useAuth();
   const navigate = useNavigate();
-  const [params, setParams] = useSearchParams();
-  const justBooked = params.get('booked') === '1';
-  const [showPostBooking, setShowPostBooking] = useState(justBooked);
   const [message, setMessage] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -201,13 +361,7 @@ export function BookingDetailPage({ admin = false }) {
   const isStudent = booking && user?.id === booking.primary_student_id;
   const payments = booking?.payments || (booking?.payment ? [booking.payment] : []);
   const payment = payments[0];
-
-  function dismissPostBooking() {
-    setShowPostBooking(false);
-    const next = new URLSearchParams(params);
-    next.delete('booked');
-    setParams(next, { replace: true });
-  }
+  const audience = isCoach ? 'coach' : isStudent ? 'student' : undefined;
 
   async function run(action, successMsg) {
     setBusy(true);
@@ -245,160 +399,186 @@ export function BookingDetailPage({ admin = false }) {
   if (loadError) return <div className="page"><ErrorState error={loadError} /></div>;
   if (!booking) return <div className="page"><EmptyState title="Booking not found" /></div>;
 
-  return (
-    <div className="page">
-      <div className="page-header">
-        <div>
-          <h1>{booking.lesson?.title || 'Booking'}</h1>
-          <p className="muted">{formatInZone(booking.scheduled_at, tz)} · {booking.duration_minutes} min</p>
-        </div>
-        <StatusBadge
-          status={booking.status}
-          label={bookingStatusLabel(booking.status, { audience: isCoach ? 'coach' : isStudent ? 'student' : undefined })}
-          tone={bookingStatusTone(booking.status)}
+  const bookingActions = (
+    <>
+      {!booking.messaging_locked ? (
+        <button className="btn secondary" type="button" disabled={busy} onClick={openMessages}>Open conversation</button>
+      ) : null}
+      {isCoach && canCoachAccept(booking) ? (
+        <button
+          className="btn"
+          type="button"
+          disabled={busy}
+          onClick={() => {
+            const ok = window.confirm(
+              'Accept this booking? The student’s card will be charged now. Declining or letting the request expire releases the authorization instead.',
+            );
+            if (!ok) return;
+            run(() => bookingsApi.accept(id), 'Booking accepted. The student’s payment has been captured.');
+          }}
+        >
+          Accept & charge student
+        </button>
+      ) : null}
+      {isCoach && canCoachDecline(booking) ? (
+        <DeclineForm busy={busy} onSubmit={(body) => run(() => bookingsApi.decline(id, body), 'Booking declined. Authorization released.')} />
+      ) : null}
+      {isCoach && ['confirmed', 'awaiting_verification'].includes(booking.status) && !hasLessonEnded(booking) && !coachAttendanceBlockedByIssue(booking) ? (
+        <p className="small muted">
+          Attendance actions (complete / student no-show) become available after the lesson ends.
+        </p>
+      ) : null}
+      {isCoach && coachAttendanceBlockedByIssue(booking) ? (
+        <p className="small muted" style={{ margin: 0 }}>
+          Attendance actions unavailable while this issue is under review.
+        </p>
+      ) : null}
+      {isCoach && (canCoachComplete(booking) || canCoachMarkNoShow(booking)) ? (
+        <p className="small muted">
+          Complete and no-show confirm attendance only. They do not release payment. Both sides have 24 hours after the lesson to report a problem.
+        </p>
+      ) : null}
+      {isCoach && canCoachComplete(booking) ? (
+        <button
+          className="btn secondary"
+          type="button"
+          disabled={busy}
+          onClick={() => {
+            const ok = window.confirm(
+              'Mark this lesson complete? This confirms attendance only. It does not release payment. Both sides have 24 hours after the lesson to report a problem before payment is normally finalized.',
+            );
+            if (!ok) return;
+            run(() => bookingsApi.complete(id, {}), 'Lesson marked complete. Payment is still held for 24 hours after the lesson ends.');
+          }}
+        >
+          Mark complete (does not release payment)
+        </button>
+      ) : null}
+      {isCoach && canCoachMarkNoShow(booking) ? (
+        <button
+          className="btn ghost"
+          type="button"
+          disabled={busy}
+          onClick={() => {
+            const ok = window.confirm(`${studentNoShowConfirmTitle()}\n\n${studentNoShowConfirmBody()}`);
+            if (!ok) return;
+            run(() => bookingsApi.studentNoShow(id, {}), 'Recorded student no-show. Payout still waits until 24 hours after the lesson ends if no issue is reported.');
+          }}
+        >
+          Student no-show (no refund)
+        </button>
+      ) : null}
+      {(isStudent && canStudentCancel(booking)) || (isCoach && canCoachCancel(booking)) ? (
+        <CancelForm
+          busy={busy}
+          consequence={cancelMoneyConsequenceCopy(booking, payment, { audience: isCoach ? 'coach' : 'student' })}
+          onSubmit={(body) => run(() => bookingsApi.cancel(id, body), 'Booking cancelled.')}
         />
-      </div>
+      ) : null}
+      {isStudent && ['completed', 'student_no_show', 'coach_no_show'].includes(booking.status) ? (
+        <ReviewForm bookingId={booking.id} busy={busy} onSubmit={(body) => run(() => reviewsApi.create(body), 'Review submitted.')} />
+      ) : null}
+      {admin ? <AdminBookingActions id={id} busy={busy} run={run} /> : null}
+      {(isStudent || isCoach) && canReportLessonIssue(booking) ? (
+        <ReportIssueForm
+          booking={booking}
+          isCoach={isCoach}
+          busy={busy}
+          onSubmit={(body) => run(() => disputesApi.create(body), 'Issue reported. Your report is under review. Payout is protected while this issue is being reviewed.')}
+        />
+      ) : null}
+      {booking.status !== 'pending' ? (
+        <p className="small muted">
+          There is no reschedule option yet. To change the time, cancel this booking and book a new slot.
+        </p>
+      ) : null}
+    </>
+  );
+
+  const headline = admin
+    ? `Booking #${booking.id}`
+    : bookingDetailHeadline(booking, { audience: audience || 'student' });
+  const lead = admin
+    ? `${booking.primaryStudent?.full_name || 'Student'} → ${booking.coach?.full_name || 'Coach'}`
+    : bookingDetailLead(booking, { audience: audience || 'student', tz });
+  const nextSteps = admin ? [] : bookingDetailNextSteps(booking, { audience: audience || 'student', tz });
+  const adminStatusItems = admin
+    ? [...adminBookingMoneyStatusItems({ booking, payment }), adminRefundStatusView(payment)]
+    : null;
+
+  return (
+    <div className="page booking-detail-page">
       <Alert tone="success">{message}</Alert>
       <Alert tone="error">{error}</Alert>
-      {showPostBooking && isStudent ? (
-        <div style={{ marginBottom: 16 }}>
-          <PostBookingConfirmationCard
-            booking={booking}
-            payment={payment}
-            tz={tz}
-            onDismiss={dismissPostBooking}
-          />
+
+      <div className="page-header">
+        <div>
+          <h1>{headline}</h1>
+          {lead ? <p className="muted">{lead}</p> : null}
         </div>
-      ) : null}
-      {!showPostBooking || !isStudent ? (
-        <PendingAcceptanceBanner booking={booking} isCoach={isCoach} isStudent={isStudent} tz={tz} />
-      ) : null}
+        {admin ? (
+          <AdminStatusStack items={adminStatusItems} />
+        ) : (
+          <StatusBadge
+            status={hasOpenIssueReport(booking) && booking.status !== 'disputed' ? 'issue' : booking.status}
+            label={bookingDisplayLabel(booking, { audience })}
+            tone={bookingDisplayTone(booking)}
+          />
+        )}
+      </div>
+
       {booking.status === 'cancelled' && cancelledOutcomeCopy(booking) ? (
         <Alert tone="info">{cancelledOutcomeCopy(booking)}</Alert>
       ) : null}
-      {['student_no_show', 'coach_no_show', 'disputed'].includes(booking.status)
-        && bookingOutcomeCopy(booking, { audience: isCoach ? 'coach' : isStudent ? 'student' : undefined }) ? (
+      {/* Open issue: student lead covers messaging; coach uses IssueReportedPanel below. */}
+      {!admin && !hasOpenIssueReport(booking)
+        && ['student_no_show', 'coach_no_show', 'disputed'].includes(booking.status)
+        && bookingOutcomeCopy(booking, { audience }) ? (
         <Alert tone={booking.status === 'disputed' ? 'warning' : 'info'}>
-          {bookingOutcomeCopy(booking, { audience: isCoach ? 'coach' : isStudent ? 'student' : undefined })}
+          {bookingOutcomeCopy(booking, { audience })}
         </Alert>
       ) : null}
-      <FinancialReviewBanner booking={booking} isCoach={isCoach} isStudent={isStudent} tz={tz} />
+      {!admin && isCoach && (hasOpenIssueReport(booking) || booking.status === 'disputed') ? (
+        <CoachIssueReportedPanel booking={booking} tz={tz} />
+      ) : null}
+      {!admin ? (
+        <FinancialReviewBanner booking={booking} isCoach={isCoach} isStudent={isStudent} tz={tz} />
+      ) : null}
 
-      <div className="grid-2">
-        <div className="card stack">
-          <div><strong>Coach:</strong> {booking.coach?.full_name || '—'}</div>
-          <div><strong>Student:</strong> {booking.primaryStudent?.full_name || '—'}</div>
-          <div><strong>Price:</strong> {formatMoney(booking.price)}</div>
-          <div><strong>Location:</strong> {courtLabel(booking.courtLocation)}</div>
-          {booking.decline_message_to_student ? (
-            <div><strong>Coach message:</strong> {booking.decline_message_to_student}</div>
-          ) : null}
-          {paymentStatusLabel(payment) ? <div>{paymentStatusLabel(payment)}</div> : null}
-          {payment?.total_charge_to_student != null ? (
-            <div className="small muted">
-              {paymentAmountCaption(payment) || 'Amount'}
-              :
-              {' '}
-              {formatMoney(payment.total_charge_to_student)}
-            </div>
-          ) : null}
-          {isCoach && payment?.coach_payout_expected != null ? (
-            <div className="small muted">Expected payout: {formatMoney(payment.coach_payout_expected)}</div>
-          ) : null}
-          {messagingLockedCopy(booking) ? (
-            <div className="small muted">{messagingLockedCopy(booking)}</div>
-          ) : null}
-        </div>
-        <div className="card stack">
-          <h2>Actions</h2>
-          {!booking.messaging_locked ? (
-            <button className="btn secondary" type="button" disabled={busy} onClick={openMessages}>Open conversation</button>
-          ) : null}
-          {isCoach && canCoachAccept(booking) ? (
-            <button
-              className="btn"
-              type="button"
-              disabled={busy}
-              onClick={() => {
-                const ok = window.confirm(
-                  'Accept this booking? The student’s card will be charged now. Declining or letting the request expire releases the authorization instead.',
-                );
-                if (!ok) return;
-                run(() => bookingsApi.accept(id), 'Booking accepted. The student’s payment has been captured.');
-              }}
-            >
-              Accept & charge student
-            </button>
-          ) : null}
-          {isCoach && canCoachDecline(booking) ? (
-            <DeclineForm busy={busy} onSubmit={(body) => run(() => bookingsApi.decline(id, body), 'Booking declined. Authorization released.')} />
-          ) : null}
-          {isCoach && ['confirmed', 'awaiting_verification'].includes(booking.status) && !hasLessonEnded(booking) ? (
-            <p className="small muted">
-              Attendance actions (complete / student no-show) become available after the lesson ends.
-            </p>
-          ) : null}
-          {isCoach && (canCoachComplete(booking) || canCoachMarkNoShow(booking)) ? (
-            <p className="small muted">
-              Complete and no-show confirm attendance only. They do not release payment. Both sides have 24 hours after the lesson to report a problem.
-            </p>
-          ) : null}
-          {isCoach && canCoachComplete(booking) ? (
-            <button
-              className="btn secondary"
-              type="button"
-              disabled={busy}
-              onClick={() => {
-                const ok = window.confirm(
-                  'Mark this lesson complete? This confirms attendance only. It does not release payment. Both sides have 24 hours after the lesson to report a problem before payment is normally finalized.',
-                );
-                if (!ok) return;
-                run(() => bookingsApi.complete(id, {}), 'Lesson marked complete. Payment is still held for 24 hours after the lesson ends.');
-              }}
-            >
-              Mark complete (does not release payment)
-            </button>
-          ) : null}
-          {isCoach && canCoachMarkNoShow(booking) ? (
-            <button
-              className="btn ghost"
-              type="button"
-              disabled={busy}
-              onClick={() => {
-                const ok = window.confirm(
-                  'Record student no-show? There is no student refund. Payout still waits until 24 hours after the lesson ends if no issue is reported. The student’s reliability score is affected; yours is not.',
-                );
-                if (!ok) return;
-                run(() => bookingsApi.studentNoShow(id, {}), 'Recorded student no-show. Payout still waits until 24 hours after the lesson ends if no issue is reported.');
-              }}
-            >
-              Student no-show (no refund)
-            </button>
-          ) : null}
-          {(isStudent || isCoach) && canStudentCancel(booking) ? (
-            <CancelForm
-              busy={busy}
-              consequence={cancelMoneyConsequenceCopy(booking, payment, { audience: isCoach ? 'coach' : 'student' })}
-              onSubmit={(body) => run(() => bookingsApi.cancel(id, body), 'Booking cancelled.')}
-            />
-          ) : null}
-          {isStudent && ['completed', 'student_no_show', 'coach_no_show'].includes(booking.status) ? (
-            <ReviewForm bookingId={booking.id} busy={busy} onSubmit={(body) => run(() => reviewsApi.create(body), 'Review submitted.')} />
-          ) : null}
-          {admin ? <AdminBookingActions id={id} busy={busy} run={run} /> : null}
-          {(isStudent || isCoach) && canReportLessonIssue(booking) ? (
-            <ReportIssueForm
-              booking={booking}
-              isCoach={isCoach}
-              busy={busy}
-              onSubmit={(body) => run(() => disputesApi.create(body), 'Issue reported. Payout stays protected while this report is open.')}
-            />
-          ) : null}
-          <p className="small muted">
-            There is no reschedule API. To change the time, cancel this booking and book a new slot.
-          </p>
-        </div>
+      <div className={`booking-detail-content-grid${nextSteps.length ? '' : ' booking-detail-content-grid--single'}`}>
+        <BookingDetailLessonSection booking={booking} payment={payment} tz={tz} isCoach={isCoach} admin={admin} />
+        <BookingDetailNextStepsSection steps={nextSteps} />
       </div>
+
+      {admin ? <AdminMoneyStateSection booking={booking} payment={payment} /> : null}
+
+      {admin && booking.status === 'cancelled' ? (
+        <section className="card stack booking-detail-section admin-section-card">
+          <h2 className="booking-detail-section-title">Cancellation</h2>
+          <dl className="booking-detail-facts">
+            <div>
+              <dt>Cancelled by</dt>
+              <dd>{booking.cancelled_by || '—'}</dd>
+            </div>
+            <div>
+              <dt>Cancelled at</dt>
+              <dd>{booking.cancelled_at ? formatInZone(booking.cancelled_at, tz) : '—'}</dd>
+            </div>
+            <div>
+              <dt>Refund</dt>
+              <dd>{adminRefundStatusView(payment).value}</dd>
+            </div>
+          </dl>
+        </section>
+      ) : null}
+
+      <section className="card stack booking-detail-section booking-detail-actions">
+        <h2 className="booking-detail-section-title">{admin ? 'Admin actions' : 'Booking actions'}</h2>
+        {messagingLockedCopy(booking) ? (
+          <p className="small muted" style={{ margin: 0 }}>{messagingLockedCopy(booking)}</p>
+        ) : null}
+        {bookingActions}
+      </section>
       {Array.isArray(booking.cancellationHistory) && booking.cancellationHistory.length > 0 ? (
         <div className="card" style={{ marginTop: 16 }}>
           <h2>Cancellation history</h2>
@@ -410,9 +590,42 @@ export function BookingDetailPage({ admin = false }) {
         </div>
       ) : null}
       <p className="small" style={{ marginTop: 16 }}>
-        <Link to={isCoach ? '/coach/bookings' : '/bookings'}>Back to list</Link>
+        <Link to={admin ? '/admin/bookings' : (isCoach ? '/coach/bookings' : '/bookings')}>Back to list</Link>
       </p>
     </div>
+  );
+}
+
+function CoachIssueReportedPanel({ booking, tz }) {
+  const now = useNow(15000);
+  const review = booking?.financial_review;
+  const remaining = review?.review_until
+    ? formatRemainingUntil(review.review_until, new Date(now))
+    : null;
+  const untilLabel = review?.review_until ? formatInZone(review.review_until, tz) : null;
+  const stillOpen = remaining && remaining !== 'ended';
+  const openedBy = booking?.active_issue?.opened_by;
+  const body = booking.status === 'disputed' && !hasOpenIssueReport(booking)
+    ? 'A payment dispute is open on this booking. Payout is blocked while it is under review.'
+    : openedBy === 'coach'
+      ? 'You reported an issue with this lesson. Payout is blocked while the issue is under review.'
+      : 'The student reported an issue with this lesson. Payout is blocked while the issue is under review.';
+
+  return (
+    <Alert tone="warning">
+      <strong>Issue reported</strong>
+      <div style={{ marginTop: 6 }}>{body}</div>
+      {stillOpen && untilLabel ? (
+        <div className="small" style={{ marginTop: 10 }}>
+          <strong>Financial review window:</strong> {remaining} remaining
+          <div className="muted">Until {untilLabel}</div>
+        </div>
+      ) : untilLabel ? (
+        <div className="small muted" style={{ marginTop: 10 }}>
+          Financial review window ended {untilLabel}. Payout remains blocked while the issue is open.
+        </div>
+      ) : null}
+    </Alert>
   );
 }
 
@@ -420,6 +633,7 @@ function FinancialReviewBanner({ booking, isCoach, isStudent, tz }) {
   const now = useNow(15000);
   const review = booking?.financial_review;
   if (!review?.review_until) return null;
+  if (!isPostLessonReviewEligible(booking, now)) return null;
   const lessonEnded = review.lesson_ended_at && new Date(review.lesson_ended_at).getTime() <= now;
   if (!lessonEnded && !review.window_open) return null;
   const deadline = formatInZone(review.review_until, tz);
@@ -436,11 +650,16 @@ function FinancialReviewBanner({ booking, isCoach, isStudent, tz }) {
   }
 
   if (stillOpen && (review.window_open || lessonEnded)) {
+    // Students with an open issue: no financial-window countdown (dispute blocks payout anyway).
+    if (isStudent && (hasOpenIssueReport(booking) || booking.status === 'disputed')) {
+      return null;
+    }
     if (isStudent) {
+      const copy = studentReviewWindowBannerCopy(booking, { remaining, deadlineFormatted: deadline }, now);
       return (
-        <Alert tone="info">
-          <strong>You have 24 hours after the lesson to report a problem before payment is finalized.</strong>
-          {' '}Time left: <strong>{remaining}</strong> (until {deadline}).
+        <Alert tone={copy.tone}>
+          <strong>{copy.title}</strong>
+          {' '}{copy.body}
         </Alert>
       );
     }
@@ -460,6 +679,9 @@ function FinancialReviewBanner({ booking, isCoach, isStudent, tz }) {
   }
 
   if (lessonEnded) {
+    if (isStudent && (hasOpenIssueReport(booking) || booking.status === 'disputed')) {
+      return null;
+    }
     return (
       <Alert tone="info">
         <strong>The review period has closed.</strong> This booking is normally financially final.
@@ -509,7 +731,18 @@ function ReportIssueForm({ booking, isCoach, busy, onSubmit }) {
           ))}
         </select>
       </FormField>
-      <FormField label="Notes (optional)" name="dispute_notes" value={notes} onChange={(e) => setNotes(e.target.value)} />
+      <FormField label="Notes (optional)" name="dispute_notes">
+        <>
+          <textarea
+            id="dispute_notes"
+            name="dispute_notes"
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            maxLength={CHAR_LIMITS.disputeNotes}
+          />
+          <CharacterCounter value={notes} max={CHAR_LIMITS.disputeNotes} />
+        </>
+      </FormField>
       <button className="btn danger" type="submit" disabled={busy || !disputeTypeId}>Report issue</button>
     </form>
   );
@@ -532,7 +765,18 @@ function CancelForm({ onSubmit, busy, consequence }) {
           {CANCEL_REASONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
         </select>
       </FormField>
-      <FormField label="Notes (optional)" name="reason_notes" value={notes} onChange={(e) => setNotes(e.target.value)} />
+      <FormField label="Notes (optional)" name="reason_notes">
+        <>
+          <textarea
+            id="reason_notes"
+            name="reason_notes"
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            maxLength={CHAR_LIMITS.cancelNotes}
+          />
+          <CharacterMaxHint max={CHAR_LIMITS.cancelNotes} />
+        </>
+      </FormField>
       <button className="btn danger" type="submit" disabled={busy}>Cancel booking</button>
     </form>
   );
@@ -541,23 +785,58 @@ function CancelForm({ onSubmit, busy, consequence }) {
 function DeclineForm({ onSubmit, busy }) {
   const [message_to_student, setMessage] = useState('');
   const [decline_reason_code, setCode] = useState('availability_conflict');
+  const trimmedMessage = message_to_student.trim();
+  const messageReady = trimmedMessage.length >= CHAR_LIMITS.declineMessageMin;
+
   return (
-    <form className="stack" onSubmit={(e) => { e.preventDefault(); onSubmit({ message_to_student, decline_reason_code }); }}>
+    <form
+      className="stack booking-decline-form"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (!messageReady) return;
+        onSubmit({ message_to_student: trimmedMessage, decline_reason_code });
+      }}
+    >
+      <h3 className="booking-decline-form-title" style={{ margin: 0, fontSize: '1rem' }}>Decline request</h3>
+      <p className="small muted" style={{ margin: 0 }}>
+        You&apos;re declining this lesson request. The student will be notified that you declined, and their
+        payment authorization will be released. A short message helps the student understand why you
+        couldn&apos;t accept.
+      </p>
       <div className="alert info" role="status">
-        <strong>Can’t take this lesson?</strong>
-        <div className="small" style={{ marginTop: 4 }}>
-          Decline so the student can keep looking. Their payment authorization will be released. Declining does not affect your reliability score.
-        </div>
+        <strong>Declining does not affect your reliability score.</strong>
       </div>
-      <FormField label="Message to student" name="message_to_student">
-        <textarea id="message_to_student" value={message_to_student} onChange={(e) => setMessage(e.target.value)} required minLength={10} />
+      <FormField label="Message to student — required" name="message_to_student" required>
+        <>
+          <p className="small muted" style={{ margin: '0 0 6px' }}>
+            This is what the student reads in their notification. For example: &ldquo;I&apos;m not available
+            at this time, but I&apos;d be happy to teach you another day.&rdquo;
+          </p>
+          <textarea
+            id="message_to_student"
+            name="message_to_student"
+            value={message_to_student}
+            onChange={(e) => setMessage(e.target.value)}
+            required
+            minLength={CHAR_LIMITS.declineMessageMin}
+            maxLength={CHAR_LIMITS.declineMessage}
+            placeholder="Not available at this time — please choose another slot."
+            rows={4}
+          />
+          <CharacterMaxHint max={CHAR_LIMITS.declineMessage} />
+        </>
       </FormField>
       <FormField label="Reason" name="decline_reason_code">
-        <select id="decline_reason_code" value={decline_reason_code} onChange={(e) => setCode(e.target.value)}>
-          {DECLINE_REASON_CODES.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
-        </select>
+        <>
+          <p className="small muted" style={{ margin: '0 0 6px' }}>
+            For PickleCoach records and reporting — not a substitute for your message above.
+          </p>
+          <select id="decline_reason_code" value={decline_reason_code} onChange={(e) => setCode(e.target.value)}>
+            {DECLINE_REASON_CODES.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
+          </select>
+        </>
       </FormField>
-      <button className="btn danger" type="submit" disabled={busy}>Decline request</button>
+      <button className="btn danger" type="submit" disabled={busy || !messageReady}>Decline request</button>
     </form>
   );
 }
@@ -572,17 +851,98 @@ function ReviewForm({ bookingId, onSubmit, busy }) {
           {[5, 4, 3, 2, 1].map((n) => <option key={n} value={n}>{n}</option>)}
         </select>
       </FormField>
-      <FormField label="Comment" name="comment" value={comment} onChange={(e) => setComment(e.target.value)} />
+      <FormField label="Comment (optional)" name="comment">
+        <>
+          <textarea
+            id="comment"
+            name="comment"
+            value={comment}
+            onChange={(e) => setComment(e.target.value)}
+            maxLength={CHAR_LIMITS.reviewComment}
+          />
+          <CharacterCounter value={comment} max={CHAR_LIMITS.reviewComment} />
+        </>
+      </FormField>
       <button className="btn secondary" type="submit" disabled={busy}>Submit review</button>
     </form>
   );
 }
 
+function AdminMoneyStateSection({ booking, payment }) {
+  const moneyItems = adminBookingMoneyStatusItems({ booking, payment });
+  const byKey = Object.fromEntries(moneyItems.map((item) => [item.key, item]));
+  const refund = adminRefundStatusView(payment);
+  return (
+    <section className="card stack booking-detail-section admin-section-card">
+      <h2 className="booking-detail-section-title">Money state</h2>
+      <p className="small muted" style={{ margin: 0 }}>
+        Student charge, escrow, refund, and coach payout are separate. A charge must never end up both refunded and paid out.
+      </p>
+      <AdminStatusStack items={[...moneyItems, refund]} />
+      <div className="admin-money-block">
+        <div>
+          <h3>Student payment</h3>
+          <div>{formatMoney(payment?.total_charge_to_student ?? booking.price)}</div>
+          <div className="small muted">
+            Status: {byKey.payment?.value || '—'}
+            {payment?.charge_id ? ` · Charge ${payment.charge_id}` : ''}
+          </div>
+        </div>
+        <div>
+          <h3>Platform / escrow</h3>
+          <div className="small">
+            Expected coach payout {formatMoney(payment?.coach_payout_expected)}
+            {payment?.platform_fee_amount != null ? ` · Platform fee ${formatMoney(payment.platform_fee_amount)}` : ''}
+          </div>
+          <div className="small muted">Escrow: {byKey.escrow?.value || '—'}</div>
+        </div>
+        <div>
+          <h3>Coach payout</h3>
+          <div className="small muted">
+            {byKey.payout?.value || '—'}
+            {payment?.transfer_id ? ` · Transfer ${payment.transfer_id}` : ''}
+          </div>
+        </div>
+        <div>
+          <h3>Refund</h3>
+          <div className="small muted">
+            {refund.value}
+            {payment?.refunded_amount != null && Number(payment.refunded_amount) > 0
+              ? ` · ${formatMoney(payment.refunded_amount)}`
+              : ''}
+          </div>
+        </div>
+      </div>
+      {booking.active_issue?.id ? (
+        <p className="small">
+          Open issue:{' '}
+          <Link to={`/admin/disputes/${booking.active_issue.id}`}>Dispute #{booking.active_issue.id}</Link>
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
 function AdminBookingActions({ id, busy, run }) {
   return (
-    <div className="stack">
-      <h3>Admin</h3>
-      <button className="btn secondary" type="button" disabled={busy} onClick={() => run(() => adminApi.refundBooking(id, { reason: 'requested_by_customer' }), 'Refund submitted.')}>Refund</button>
+    <div className="stack admin-actions-card" style={{ padding: '0.85rem', borderRadius: 12 }}>
+      <p className="small muted" style={{ margin: 0 }}>
+        Destructive money actions require confirmation. Prefer the dispute resolve API for open issue cases.
+      </p>
+      <button
+        className="btn secondary"
+        type="button"
+        disabled={busy}
+        onClick={() => {
+          const ok = window.confirm(
+            'Issue a refund for this booking?\n\nThis uses the admin refund endpoint and should not be used if a payout has already been sent.',
+          );
+          if (!ok) return;
+          run(() => adminApi.refundBooking(id, { reason: 'requested_by_customer' }), 'Refund submitted.');
+        }}
+      >
+        Refund
+      </button>
       <CancelForm busy={busy} onSubmit={(body) => run(() => adminApi.cancelBooking(id, body), 'Admin cancelled.')} />
     </div>
   );

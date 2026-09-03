@@ -1,6 +1,6 @@
 # Payment system audit — canonicalization phase (2026-05-21)
 
-- **Stripe webhook + replay** — `tests/payment-stripe-contract.test.mjs` locks idempotency (`shouldStripeWebhookSkipAsDuplicate`), `charge.refunded` mirror classification, `processRefund` pending-duplicate guard, idempotency key formats, partial-refund cent sequence, and `payment_actions` reconciliation typing. `transfer.reversed` is explicitly documented as not handled yet.
+- **Stripe webhook + replay** — `tests/payment-stripe-contract.test.mjs` locks idempotency (`shouldStripeWebhookSkipAsDuplicate`), `charge.refunded` mirror classification, `processRefund` pending-duplicate guard, idempotency key formats, partial-refund cent sequence, and `payment_actions` reconciliation typing. `transfer.reversed`: canonical reverse parks escrow at `manual_payout_required` (no auto re-transfer); non-canonical/duplicate reverse is acknowledged only.
 
 ## Objectives completed
 

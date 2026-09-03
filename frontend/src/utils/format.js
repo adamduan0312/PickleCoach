@@ -103,6 +103,61 @@ export function formatReliabilityHint() {
   return 'Based on cancels and no-shows';
 }
 
+/**
+ * Normalized coach review aggregate from API fields (does not recompute averages).
+ * @returns {{ hasReviews: boolean, ratingAverage: number | null, reviewCount: number }}
+ */
+export function coachReviewSummary(ratingAverage, ratingCount) {
+  const reviewCount = Number(ratingCount) || 0;
+  const avg = ratingAverage != null ? Number(ratingAverage) : null;
+  const hasReviews = reviewCount > 0 && avg != null && Number.isFinite(avg);
+  return {
+    hasReviews,
+    ratingAverage: hasReviews ? avg : null,
+    reviewCount,
+  };
+}
+
+/** Compact card line, e.g. "4.7 ★ · 23 reviews" or "No reviews yet". */
+export function formatCoachRatingCompact(ratingAverage, ratingCount) {
+  const parts = coachRatingCompactParts(ratingAverage, ratingCount);
+  if (!parts.hasReviews) return 'No reviews yet';
+  return `${parts.value} ★ · ${parts.reviewLabel}`;
+}
+
+/**
+ * Structured compact rating for UI — value and review count in normal text; star styled separately.
+ * @returns {{ hasReviews: false } | { hasReviews: true, value: string, reviewLabel: string }}
+ */
+export function coachRatingCompactParts(ratingAverage, ratingCount) {
+  const { hasReviews, ratingAverage: avg, reviewCount } = coachReviewSummary(ratingAverage, ratingCount);
+  if (!hasReviews) return { hasReviews: false };
+  return {
+    hasReviews: true,
+    value: avg.toFixed(1),
+    reviewLabel: `${reviewCount} review${reviewCount === 1 ? '' : 's'}`,
+  };
+}
+
+/** Visual star row rounded to nearest half, e.g. "★★★★½" for 4.7. */
+export function visualStarRatingParts(rating, maxStars = 5) {
+  const avg = Number(rating);
+  if (!Number.isFinite(avg) || avg <= 0) return null;
+  const clamped = Math.max(0, Math.min(maxStars, avg));
+  const roundedHalf = Math.round(clamped * 2) / 2;
+  const full = Math.floor(roundedHalf);
+  const hasHalf = roundedHalf % 1 === 0.5;
+  const empty = maxStars - full - (hasHalf ? 1 : 0);
+  return { full, hasHalf, empty, maxStars };
+}
+
+/** String helper for non-React contexts. Prefer `<StarRating />` in UI. */
+export function formatVisualStarRating(ratingAverage, maxStars = 5) {
+  const parts = visualStarRatingParts(ratingAverage, maxStars);
+  if (!parts) return '';
+  return `${'★'.repeat(parts.full)}${parts.hasHalf ? '½' : ''}${'☆'.repeat(Math.max(0, parts.empty))}`;
+}
+
 export function initials(name) {
   if (!name) return '?';
   const parts = String(name).trim().split(/\s+/).slice(0, 2);

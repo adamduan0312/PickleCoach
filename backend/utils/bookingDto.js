@@ -27,6 +27,7 @@ export const BOOKING_SUMMARY_FIELD_NAMES = [
   'price',
   'status',
   'court_location_id',
+  'created_at',
 ];
 
 /** Lean booking embed for messaging inbox / thread / start-conversation. */
@@ -175,6 +176,8 @@ export function serializeBookingSummary(booking) {
   const dto = pickFields(plain, BOOKING_SUMMARY_FIELD_NAMES);
   dto.messaging_locked = isMessagingLocked(plain);
   dto.financial_review = serializeFinancialReview(plain);
+  // Present when controllers attach open in-app dispute summary (null = none).
+  dto.active_issue = plain.active_issue !== undefined ? plain.active_issue : null;
   return dto;
 }
 

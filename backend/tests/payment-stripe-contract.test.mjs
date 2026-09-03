@@ -149,9 +149,21 @@ describe('payment_actions reconciliation typing', () => {
   });
 });
 
-describe('Connect transfer.reversed (documented gap)', () => {
-  it('webhook switch does not yet handle transfer.reversed — advanced follow-up', () => {
+describe('Connect transfer.reversed', () => {
+  it('webhook switch handles transfer.reversed via dedicated handler', () => {
     const src = readFileSync(webhookControllerPath, 'utf8');
-    assert.ok(!src.includes("transfer.reversed"), 'if added later, update this contract test');
+    assert.match(src, /case 'transfer\.reversed'/);
+    assert.match(src, /handleTransferReversed/);
+    assert.match(src, /handleTransferReversedFromStripe/);
+  });
+
+  it('paymentService parks canonical reverse at manual_payout_required and ignores duplicates', () => {
+    const paymentServicePath = join(__dirname, '../services/paymentService.js');
+    const src = readFileSync(paymentServicePath, 'utf8');
+    assert.match(src, /export const handleTransferReversedFromStripe/);
+    assert.match(src, /manual_payout_required/);
+    assert.match(src, /transfer_reversed_non_canonical/);
+    assert.match(src, /transfer_reversed_manual_review/);
+    assert.match(src, /non_canonical_duplicate_reversal/);
   });
 });

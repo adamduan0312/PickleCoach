@@ -368,6 +368,27 @@ export const transferToConnectedAccount = async (connectedAccountId, amount, cur
 };
 
 /**
+ * Reverse a Connect transfer (e.g. duplicate payout race). Amount defaults to full reverse.
+ * @param {string} transferId
+ * @param {{ amountCents?: number, metadata?: object }} [options]
+ */
+export const reverseTransfer = async (transferId, { amountCents, metadata = {} } = {}) => {
+  if (stripeTestDouble?.reverseTransfer) {
+    return stripeTestDouble.reverseTransfer(transferId, { amountCents, metadata });
+  }
+  try {
+    const params = { metadata };
+    if (amountCents != null) params.amount = amountCents;
+    const reversal = await stripe.transfers.createReversal(transferId, params);
+    logger.info('Transfer reversed', { transferId, reversalId: reversal.id, amountCents });
+    return reversal;
+  } catch (error) {
+    logStripeApiError('reverseTransfer', error, { transferId });
+    throw error;
+  }
+};
+
+/**
  * Create a Stripe Connect account for a coach
  * @param {string} email - Coach email
  * @param {Object} metadata - Additional metadata

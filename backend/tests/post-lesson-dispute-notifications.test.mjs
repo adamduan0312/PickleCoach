@@ -14,11 +14,32 @@ import {
   buildBookingRequestExpiredNotificationContent,
   buildReviewReceivedNotificationContent,
   buildRefundSucceededNotificationContent,
+  buildConfirmAttendanceReminderNotificationContent,
+  buildLessonCompletedNotificationContent,
 } from '../notifications/payloadBuilders.js';
 import { resolveDisputeOpenedRecipients } from '../services/notificationService.js';
 import { getEmailSubject } from '../notifications/emailTemplates.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+
+describe('buildConfirmAttendanceReminderNotificationContent', () => {
+  it('coach copy prompts complete or student no-show', () => {
+    const content = buildConfirmAttendanceReminderNotificationContent({ student_name: 'Mira Miami' });
+    assert.equal(content.headline, 'Confirm attendance');
+    assert.match(content.summary, /Mira Miami/);
+    assert.match(content.summary, /Mark the lesson complete or report a student no-show/);
+  });
+});
+
+describe('buildLessonCompletedNotificationContent', () => {
+  it('student copy mentions review and 24-hour review window', () => {
+    const content = buildLessonCompletedNotificationContent({ coach_name: 'Coach Ada' });
+    assert.equal(content.headline, 'Lesson completed');
+    assert.match(content.summary, /Coach Ada/);
+    assert.match(content.summary, /leave a review/);
+    assert.match(content.summary, /24-hour review window/);
+  });
+});
 
 describe('buildStudentNoShowNotificationContent', () => {
   it('coach mark tells the student they can dispute within 24 hours', () => {
@@ -193,8 +214,16 @@ describe('controller wiring', () => {
     assert.match(src, /notifyStudentNoShow\(id, \{ markedBy: 'coach' \}\)/);
     assert.match(src, /notifyStudentNoShow\(id, \{ markedBy: 'admin' \}\)/);
     assert.match(src, /notifyCoachNoShow\(id\)/);
+    assert.match(src, /notifyStudentLessonCompleted\(id\)/);
+    assert.match(src, /lesson_completed_notify_failed/);
     assert.match(src, /student_no_show_notify_failed/);
     assert.match(src, /coach_no_show_notify_failed/);
+  });
+
+  it('autoConfirmWorker notifies coach confirm-attendance reminder', () => {
+    const src = readFileSync(join(__dirname, '../workers/autoConfirmWorker.js'), 'utf8');
+    assert.match(src, /notifyCoachConfirmAttendanceReminder/);
+    assert.match(src, /confirm_attendance_reminder_notify_failed/);
   });
 
   it('disputeController notifies open and resolve', () => {

@@ -56,4 +56,13 @@ describe('declineBookingSchema', () => {
     assert.ok(error);
     assert.match(error.message, /decline_reason_code/);
   });
+
+  it('requires message_to_student at least 3 characters after trim', () => {
+    const { error: empty } = declineBookingSchema.validate({ message_to_student: '  ' });
+    assert.ok(empty);
+    const { error: short } = declineBookingSchema.validate({ message_to_student: 'No' });
+    assert.ok(short);
+    const { error: ok } = declineBookingSchema.validate({ message_to_student: 'Not available.' });
+    assert.equal(ok, undefined);
+  });
 });

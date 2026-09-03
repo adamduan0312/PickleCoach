@@ -1,9 +1,10 @@
 /**
  * POST /api/courts — create-or-reuse shared court + coach link.
+ * Also covers POST /api/courts/duplicate-check private-court privacy.
  */
 import assert from 'node:assert/strict';
 import { describe, it, beforeEach, afterEach } from 'node:test';
-import { createCourt } from '../controllers/courtController.js';
+import { createCourt, checkCourtDuplicates } from '../controllers/courtController.js';
 import { CourtLocation, CoachCourtLocation } from '../models/index.js';
 
 const baseBody = {
@@ -54,6 +55,7 @@ describe('createCourt create-or-reuse', () => {
     origLinkFindAll = CoachCourtLocation.findAll;
     // Default: no nearby candidates (tests that need duplicates override findAll).
     CourtLocation.findAll = async () => [];
+    CoachCourtLocation.findAll = async () => [];
   });
 
   afterEach(() => {
@@ -376,8 +378,10 @@ describe('createCourt create-or-reuse', () => {
       latitude: 26.1367,
       longitude: -80.141,
       is_private: false,
+      created_by_user_id: 99,
       deleted_at: null,
-      get() {
+      get(opts) {
+        if (opts && opts.plain) return { ...this, get: undefined };
         return this;
       },
     };
@@ -386,6 +390,7 @@ describe('createCourt create-or-reuse', () => {
     CourtLocation.create = async () => {
       throw new Error('should not create duplicate nearby court');
     };
+    CoachCourtLocation.findAll = async () => [];
 
     const req = {
       validated: {
@@ -418,6 +423,142 @@ describe('createCourt create-or-reuse', () => {
     assert.equal(res.statusCode, 409);
     assert.equal(res.payload.error, 'COURT_DUPLICATE_HIGH');
     assert.ok(res.payload.data?.high_confidence?.some((c) => c.id === 7));
+  });
+
+  it('409 does not leak another coach private court street/GPS to a non-owner', async () => {
+    const privateOther = {
+      id: 77,
+      name: 'Backyard Court',
+      address_line1: '999 Secret Lane',
+      city: 'Coral Springs',
+      state: 'FL',
+      postal_code: '33065',
+      country: 'US',
+      latitude: 26.271,
+      longitude: -80.27,
+      is_private: true,
+      created_by_user_id: 50,
+      deleted_at: null,
+      get(opts) {
+        if (opts && opts.plain) {
+          const { get: _g, ...rest } = this;
+          return rest;
+        }
+        return this;
+      },
+    };
+    CourtLocation.findOne = async () => null;
+    CourtLocation.findAll = async () => [privateOther];
+    CourtLocation.create = async (attrs) => ({ id: 12, ...attrs });
+    CourtLocation.findByPk = async () => ({
+      id: 12,
+      name: 'Backyard Court',
+      address_line1: '999 Secret Lane',
+      city: 'Coral Springs',
+      state: 'FL',
+      postal_code: '33065',
+      country: 'US',
+      latitude: 26.271,
+      longitude: -80.27,
+      is_private: true,
+    });
+    CoachCourtLocation.findAll = async () => []; // viewer owns none
+    CoachCourtLocation.findOne = async () => null;
+    CoachCourtLocation.create = async () => ({ id: 100, coach_id: 3, court_id: 12 });
+    CoachCourtLocation.findByPk = async () => ({
+      id: 100,
+      coach_id: 3,
+      court_id: 12,
+      created_at: new Date(),
+      updated_at: new Date(),
+    });
+
+    const req = {
+      validated: {
+        name: 'Backyard Court',
+        address_line1: '999 Secret Lane',
+        city: 'Coral Springs',
+        state: 'FL',
+        postal_code: '33065',
+        country: 'US',
+        latitude: 26.2711,
+        longitude: -80.2701,
+        is_private: true,
+      },
+      body: {},
+      user: { id: 3, roles: ['coach'] },
+    };
+    const res = mockRes();
+    await createCourt(req, res);
+
+    // Private other-coach court filtered out → create proceeds (or exact identity path).
+    // Must not return 409 with the private street/GPS.
+    if (res.statusCode === 409) {
+      const candidates = [
+        ...(res.payload?.data?.high_confidence || []),
+        ...(res.payload?.data?.possible || []),
+      ];
+      for (const c of candidates) {
+        assert.notEqual(c.address_line1, '999 Secret Lane');
+        assert.notEqual(Number(c.latitude), 26.271);
+      }
+    } else {
+      assert.ok([200, 201].includes(res.statusCode), res.payload);
+    }
+  });
+
+  it('owner still sees own private court in 409 duplicate candidates', async () => {
+    const privateOwn = {
+      id: 88,
+      name: 'My Backyard',
+      address_line1: '111 Owner Way',
+      city: 'Davie',
+      state: 'FL',
+      postal_code: '33314',
+      country: 'US',
+      latitude: 26.08,
+      longitude: -80.23,
+      is_private: true,
+      created_by_user_id: 3,
+      deleted_at: null,
+      get(opts) {
+        if (opts && opts.plain) {
+          const { get: _g, ...rest } = this;
+          return rest;
+        }
+        return this;
+      },
+    };
+    CourtLocation.findOne = async () => null;
+    CourtLocation.findAll = async () => [privateOwn];
+    CourtLocation.create = async () => {
+      throw new Error('should not create when owner duplicate is visible');
+    };
+    CoachCourtLocation.findAll = async () => [{ court_id: 88 }];
+
+    const req = {
+      validated: {
+        name: 'My Backyard',
+        address_line1: '111 Owner Way',
+        city: 'Davie',
+        state: 'FL',
+        postal_code: '33314',
+        country: 'US',
+        latitude: 26.0801,
+        longitude: -80.2301,
+        is_private: true,
+      },
+      body: {},
+      user: { id: 3, roles: ['coach'] },
+    };
+    const res = mockRes();
+    await createCourt(req, res);
+
+    assert.equal(res.statusCode, 409, JSON.stringify(res.payload));
+    const hit = (res.payload?.data?.high_confidence || []).find((c) => c.id === 88);
+    assert.ok(hit, 'owner must see their private court candidate');
+    assert.equal(hit.address_line1, '111 Owner Way');
+    assert.ok(hit.latitude != null);
   });
 
   it('allows different name at the same address (venue with multiple courts)', async () => {
@@ -571,5 +712,124 @@ describe('createCourt create-or-reuse', () => {
     assert.equal(res.statusCode, 201);
     assert.equal(res.payload.message, 'Court created successfully');
     assert.equal(res.payload.data.court.id, 88);
+  });
+});
+
+describe('POST /api/courts/duplicate-check privacy', () => {
+  let origFindAll;
+  let origLinkFindAll;
+
+  beforeEach(() => {
+    origFindAll = CourtLocation.findAll;
+    origLinkFindAll = CoachCourtLocation.findAll;
+    CoachCourtLocation.findAll = async () => [];
+  });
+
+  afterEach(() => {
+    CourtLocation.findAll = origFindAll;
+    CoachCourtLocation.findAll = origLinkFindAll;
+  });
+
+  it('does not return another coach private court street/GPS', async () => {
+    const privateOther = {
+      id: 77,
+      name: 'Backyard Court',
+      address_line1: '999 Secret Lane',
+      city: 'Coral Springs',
+      state: 'FL',
+      postal_code: '33065',
+      country: 'US',
+      latitude: 26.271,
+      longitude: -80.27,
+      is_private: true,
+      created_by_user_id: 50,
+      deleted_at: null,
+      get(opts) {
+        if (opts && opts.plain) {
+          const { get: _g, ...rest } = this;
+          return rest;
+        }
+        return this;
+      },
+    };
+    CourtLocation.findAll = async () => [privateOther];
+
+    const req = {
+      validated: {
+        name: 'Backyard Court',
+        address_line1: '999 Secret Lane',
+        city: 'Coral Springs',
+        state: 'FL',
+        postal_code: '33065',
+        country: 'US',
+        latitude: 26.2711,
+        longitude: -80.2701,
+      },
+      user: { id: 3, roles: ['coach'] },
+    };
+    const res = mockRes();
+    await checkCourtDuplicates(req, res);
+
+    assert.equal(res.statusCode, 200);
+    const candidates = [
+      ...(res.payload?.data?.high_confidence || []),
+      ...(res.payload?.data?.possible || []),
+    ];
+    assert.equal(candidates.length, 0);
+    for (const c of candidates) {
+      assert.notEqual(c.address_line1, '999 Secret Lane');
+      assert.notEqual(Number(c.latitude), 26.271);
+    }
+  });
+
+  it('returns owner private court candidates with address', async () => {
+    const privateOwn = {
+      id: 88,
+      name: 'My Backyard',
+      address_line1: '111 Owner Way',
+      city: 'Davie',
+      state: 'FL',
+      postal_code: '33314',
+      country: 'US',
+      latitude: 26.08,
+      longitude: -80.23,
+      is_private: true,
+      created_by_user_id: 3,
+      deleted_at: null,
+      get(opts) {
+        if (opts && opts.plain) {
+          const { get: _g, ...rest } = this;
+          return rest;
+        }
+        return this;
+      },
+    };
+    CourtLocation.findAll = async () => [privateOwn];
+
+    const req = {
+      validated: {
+        name: 'My Backyard',
+        address_line1: '111 Owner Way',
+        city: 'Davie',
+        state: 'FL',
+        postal_code: '33314',
+        country: 'US',
+        latitude: 26.0801,
+        longitude: -80.2301,
+      },
+      user: { id: 3, roles: ['coach'] },
+    };
+    const res = mockRes();
+    await checkCourtDuplicates(req, res);
+
+    assert.equal(res.statusCode, 200);
+    const candidates = [
+      ...(res.payload?.data?.high_confidence || []),
+      ...(res.payload?.data?.possible || []),
+    ];
+    const hit = candidates.find((c) => c.id === 88);
+    assert.ok(hit, 'owner must see their private court');
+    assert.equal(hit.address_line1, '111 Owner Way');
+    assert.equal(Number(hit.latitude), 26.08);
   });
 });

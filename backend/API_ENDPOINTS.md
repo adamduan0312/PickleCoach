@@ -1701,6 +1701,7 @@ The sections below document the **authorize-first write flow** first, then **bey
 ### `POST /api/booking-intents` (MVP — student)
 - **Auth**: Required (email must be verified); **student** role.
 - **Description**: Validate lesson, **coach court**, schedule, and availability (no slot reservation). Create a manual-capture Stripe PaymentIntent. **No booking row is created.** After the client authorizes the card, call `POST /api/bookings/confirm`.
+- **Schedule conflicts**: Rejects if the **coach** already has an overlapping `pending` / `confirmed` / `awaiting_verification` booking (`slot_no_longer_available`), or if the **student** already has an overlapping booking in those statuses with **any** coach (`student_schedule_conflict`). Non-overlapping times with different coaches are allowed.
 - **MVP product model**: Student buys a **fixed lesson package** (`lessons.price` + `lessons.duration_minutes`). No hourly billing. No student duration override. JWT user becomes `primary_student_id` (do not send user ids).
 - **Request Body**:
   ```json
@@ -1742,7 +1743,7 @@ The sections below document the **authorize-first write flow** first, then **bey
 - **Intended client flow**: view coach → pick lesson → pick time → pick one of coach’s courts → intent → Stripe authorize → confirm.
 ### `POST /api/bookings/confirm` (MVP — student)
 - **Auth**: Required (email must be verified)
-- **Description**: After Stripe authorization (`requires_capture`), creates the booking and payment in one transaction. Re-checks slot availability; on conflict cancels the PaymentIntent and returns **409** `slot_no_longer_available`. Idempotent per `payment_intent_id`.
+- **Description**: After Stripe authorization (`requires_capture`), creates the booking and payment in one transaction. Re-checks slot availability; on coach conflict cancels the PaymentIntent and returns **409** `slot_no_longer_available`. On student calendar conflict (overlapping active booking with any coach) returns **409** `student_schedule_conflict` and cancels the PaymentIntent. Idempotent per `payment_intent_id`.
 - **Request Body**:
   ```json
   {
@@ -1768,7 +1769,7 @@ The sections below document the **authorize-first write flow** first, then **bey
     }
   }
   ```
-- **Errors**: `400` `payment_intent_not_authorized`, `403` `payment_intent_not_owned`, `409` `slot_no_longer_available`
+- **Errors**: `400` `payment_intent_not_authorized`, `403` `payment_intent_not_owned`, `409` `slot_no_longer_available`, `409` `student_schedule_conflict`
 
 ### `POST /api/bookings` (deprecated)
 - **Status**: **410 Gone** — `booking_create_deprecated_use_intent_flow`

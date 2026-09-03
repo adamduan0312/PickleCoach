@@ -1,8 +1,34 @@
 import { Booking, Lesson, CoachAvailability, User, sequelize } from '../models/index.js';
 import { Op } from 'sequelize';
 import { calendarDateInTimezone, toYmdApi } from '../utils/dateOnly.js';
+import { STUDENT_SCHEDULE_CONFLICT_CODE } from '../utils/bookingIntentContract.js';
 
 const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+/** Statuses that still occupy a student's calendar for overlap checks. */
+export const STUDENT_ACTIVE_SCHEDULE_STATUSES = Object.freeze([
+  'pending',
+  'confirmed',
+  'awaiting_verification',
+]);
+
+/**
+ * True when two lesson windows overlap (touching endpoints do not overlap).
+ * @param {string|Date|number} aStart
+ * @param {number} aDurationMinutes
+ * @param {string|Date|number} bStart
+ * @param {number} bDurationMinutes
+ */
+export function bookingIntervalsOverlap(aStart, aDurationMinutes, bStart, bDurationMinutes) {
+  const a0 = new Date(aStart).getTime();
+  const b0 = new Date(bStart).getTime();
+  if (!Number.isFinite(a0) || !Number.isFinite(b0)) return false;
+  const aDur = Number(aDurationMinutes) || 0;
+  const bDur = Number(bDurationMinutes) || 0;
+  const a1 = a0 + aDur * 60000;
+  const b1 = b0 + bDur * 60000;
+  return a0 < b1 && b0 < a1;
+}
 
 /**
  * Get weekday (0-6) for a date in a given IANA timezone (e.g. 'America/Los_Angeles').
@@ -95,15 +121,60 @@ export const checkCoachAvailability = async (coachId, scheduledAt, durationMinut
 };
 
 /**
+ * Student cannot hold two active bookings that overlap in time (any coach).
+ * Cancelled / completed / disputed / no-show do not block.
+ *
+ * @param {number} studentId
+ * @param {string|Date} scheduledAt
+ * @param {number} durationMinutes
+ * @param {{ transaction?: import('sequelize').Transaction }} [options]
+ */
+export const checkStudentScheduleConflict = async (studentId, scheduledAt, durationMinutes, options = {}) => {
+  const { transaction = null } = options;
+  if (studentId == null) return { available: true };
+
+  const scheduledDate = new Date(scheduledAt);
+  const endTime = new Date(scheduledDate.getTime() + durationMinutes * 60000);
+  const findOpts = transaction ? { transaction } : {};
+
+  const overlappingBookings = await Booking.findAll({
+    where: {
+      primary_student_id: studentId,
+      status: { [Op.in]: STUDENT_ACTIVE_SCHEDULE_STATUSES },
+      scheduled_at: {
+        [Op.lt]: endTime,
+      },
+      [Op.and]: [
+        sequelize.literal(`DATE_ADD(scheduled_at, INTERVAL duration_minutes MINUTE) > '${scheduledDate.toISOString()}'`),
+      ],
+    },
+    ...findOpts,
+  });
+
+  if (overlappingBookings.length > 0) {
+    return {
+      available: false,
+      reason:
+        'You already have a lesson that overlaps this time. Cancel the other request or choose a different time.',
+      code: STUDENT_SCHEDULE_CONFLICT_CODE,
+    };
+  }
+
+  return { available: true };
+};
+
+/**
  * @param {number} lessonId
  * @param {string|Date} scheduledAt
  * @param {number} durationMinutes
- * @param {{ transaction?: import('sequelize').Transaction, coachId?: number }} [options]
+ * @param {{ transaction?: import('sequelize').Transaction, coachId?: number, studentId?: number }} [options]
  *   When `transaction` is set (e.g. confirm under coach-profile lock), overlap queries
  *   participate in that transaction so concurrent confirms serialize correctly.
+ *   When `studentId` is set, also rejects overlapping active bookings for that student
+ *   across any coach.
  */
 export const checkBookingAvailability = async (lessonId, scheduledAt, durationMinutes, options = {}) => {
-  const { transaction = null, coachId: coachIdOpt = null } = options;
+  const { transaction = null, coachId: coachIdOpt = null, studentId = null } = options;
   const findOpts = transaction ? { transaction } : {};
 
   const lesson = await Lesson.findByPk(lessonId, findOpts);
@@ -139,6 +210,18 @@ export const checkBookingAvailability = async (lessonId, scheduledAt, durationMi
 
   if (overlappingBookings.length > 0) {
     return { available: false, reason: 'This time slot is no longer available.' };
+  }
+
+  if (studentId != null) {
+    const studentConflict = await checkStudentScheduleConflict(
+      studentId,
+      scheduledAt,
+      durationMinutes,
+      { transaction },
+    );
+    if (!studentConflict.available) {
+      return studentConflict;
+    }
   }
 
   return { available: true };
