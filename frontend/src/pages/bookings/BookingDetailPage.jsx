@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
 import { bookingsApi, messagesApi, reviewsApi, adminApi, disputesApi, asList } from '../../api/index.js';
 import { useAsync } from '../../hooks/useAsync.js';
 import { Alert, EmptyState, ErrorState, LoadingState, StatusBadge } from '../../components/ui/States.jsx';
@@ -7,6 +7,7 @@ import { FormField } from '../../components/ui/FormField.jsx';
 import { CharacterCounter, CharacterMaxHint } from '../../components/ui/CharacterLimit.jsx';
 import { AdminStatusStack } from '../../components/admin/AdminStatusStack.jsx';
 import { CHAR_LIMITS } from '../../utils/charLimits.js';
+import { hasAdminRole } from '../../domain/userReadiness.js';
 import {
   bookingStatusLabel,
   bookingDisplayLabel,
@@ -23,12 +24,16 @@ import {
   coachAcceptanceDeadlineAt,
   paymentStatusLabel,
   paymentAmountCaption,
+  isStudentPaymentRefunded,
+  isCoachPayoutReleased,
+  isCoachPayoutNotDue,
   cancelMoneyConsequenceCopy,
   cancelledOutcomeCopy,
   bookingOutcomeCopy,
   messagingLockedCopy,
   hasLessonEnded,
   isPostLessonReviewEligible,
+  isFinancialReviewWindowOpen,
   studentReviewWindowBannerCopy,
   confirmedStudentNoShowReminder,
   studentNoShowConfirmTitle,
@@ -60,28 +65,32 @@ function lessonAmountLabel(payment, booking) {
 }
 
 function bookingDetailHeadline(booking, { audience }) {
-  if (hasOpenIssueReport(booking) && booking.status !== 'disputed') {
-    return 'Issue reported';
+  if (hasOpenIssueReport(booking) || booking.status === 'disputed') {
+    return booking.status === 'disputed' && !hasOpenIssueReport(booking)
+      ? 'Issue under review'
+      : 'Issue reported';
   }
   if (booking.status === 'pending') {
     return audience === 'coach' ? 'Response needed' : 'Booking requested';
   }
   if (booking.status === 'confirmed') return 'Booking confirmed';
-  if (booking.status === 'completed') return 'Lesson completed';
+  if (booking.status === 'awaiting_verification') {
+    return audience === 'coach' ? 'Confirm lesson attendance' : 'Awaiting confirmation';
+  }
+  if (booking.status === 'completed') return 'Lesson complete';
+  if (booking.status === 'cancelled') return 'Booking cancelled';
   return bookingStatusLabel(booking.status, { audience });
 }
 
-function bookingDetailLead(booking, { audience, tz }) {
+function bookingDetailLead(booking, { audience, tz, now = Date.now() }) {
   const coachName = booking.coach?.full_name || 'the coach';
   const studentName = booking.primaryStudent?.full_name || 'the student';
   const deadlineLabel = formatAcceptanceDeadline(coachAcceptanceDeadlineAt(booking), tz);
+  const reviewOpen = isFinancialReviewWindowOpen(booking, now);
 
-  // Coach: issue messaging lives in IssueReportedPanel (avoids triple repeat).
-  if (audience === 'coach' && (hasOpenIssueReport(booking) || booking.status === 'disputed')) {
+  // Issue messaging lives in IssueReportedPanel (avoids triple repeat).
+  if (hasOpenIssueReport(booking) || booking.status === 'disputed') {
     return null;
-  }
-  if (hasOpenIssueReport(booking) && booking.status !== 'disputed') {
-    return 'Your report is under review. Payout is protected while this issue is being reviewed.';
   }
 
   switch (booking.status) {
@@ -98,16 +107,19 @@ function bookingDetailLead(booking, { audience, tz }) {
         : 'Your lesson is confirmed and your payment has been captured.';
     case 'awaiting_verification':
       return audience === 'coach'
-        ? 'The lesson time has passed. Confirm attendance below.'
-        : 'The lesson time has passed. Waiting for your coach to confirm attendance.';
+        ? 'The lesson time has passed. Please confirm whether the lesson took place.'
+        : 'The lesson time has passed. Your coach is confirming whether the lesson took place.';
     case 'completed':
-      return audience === 'coach'
-        ? 'This lesson is complete.'
-        : 'This lesson is complete.';
+      if (audience === 'coach') {
+        return reviewOpen
+          ? 'The lesson has been marked complete. The 24-hour financial review period is still open.'
+          : 'The lesson has been marked complete. The financial review period has ended.';
+      }
+      return reviewOpen
+        ? 'Your coach marked the lesson complete. You have 24 hours to report an issue.'
+        : 'Your coach marked the lesson complete. The issue-reporting period has ended.';
     case 'cancelled':
-      return 'This booking was cancelled.';
-    case 'disputed':
-      return 'Your report is under review. Payout is protected while this issue is being reviewed.';
+      return cancelledOutcomeCopy(booking, { audience });
     case 'student_no_show':
     case 'coach_no_show':
       return null;
@@ -116,12 +128,21 @@ function bookingDetailLead(booking, { audience, tz }) {
   }
 }
 
-function bookingDetailNextSteps(booking, { audience, tz }) {
+function bookingDetailNextSteps(booking, { audience, tz, now = Date.now(), payment = null }) {
   const deadlineLabel = formatAcceptanceDeadline(coachAcceptanceDeadlineAt(booking), tz);
   const whenLabel = `${formatDateInZone(booking.scheduled_at, tz)} · ${formatTimeInZone(booking.scheduled_at, tz)}`;
+  const reviewOpen = isFinancialReviewWindowOpen(booking, now);
 
   if (hasOpenIssueReport(booking) || booking.status === 'disputed') {
-    // Coach banner already explains the state; student lead covers theirs.
+    if (audience === 'student') {
+      return [
+        {
+          title: 'Issue under review',
+          body: 'We\'ll review the report and notify you when there\'s an outcome.',
+        },
+      ];
+    }
+    // Coach banner already explains the state.
     return [];
   }
 
@@ -168,7 +189,7 @@ function bookingDetailNextSteps(booking, { audience, tz }) {
           },
           {
             title: 'Payout timing',
-            body: 'Payment is held for 24 hours after the lesson so either side can report a problem.',
+            body: 'Payment is held for 24 hours after the lesson so either side can report an issue.',
           },
         ];
       }
@@ -179,7 +200,7 @@ function bookingDetailNextSteps(booking, { audience, tz }) {
         },
         {
           title: 'After the lesson',
-          body: 'The review and dispute window opens for 24 hours. Payment is not finalized until it closes.',
+          body: 'The review and issue-reporting window opens for 24 hours. Payment is not finalized until it closes.',
         },
       ];
     case 'awaiting_verification':
@@ -191,7 +212,7 @@ function bookingDetailNextSteps(booking, { audience, tz }) {
           },
           {
             title: 'Payment is still protected',
-            body: 'Complete and no-show do not release payment. Either side can report a problem for 24 hours after the lesson.',
+            body: 'Confirming attendance does not release payment. Either side can report an issue during the 24-hour review window.',
           },
         ];
       }
@@ -206,31 +227,111 @@ function bookingDetailNextSteps(booking, { audience, tz }) {
         },
       ];
     case 'completed':
-    case 'student_no_show':
-    case 'coach_no_show':
       if (audience === 'student') {
-        return [
+        const steps = [
           {
             title: 'Leave a review',
-            body: 'Share feedback about your coach if you haven\'t already.',
+            body: 'Tell other students about your experience with this coach if you haven\'t already.',
           },
+        ];
+        if (reviewOpen) {
+          steps.push({
+            title: 'Report a problem if needed',
+            body: 'If something went wrong, report an issue before the issue-reporting period closes.',
+          });
+        } else if (isStudentPaymentRefunded(payment) || isCoachPayoutNotDue(booking, payment)) {
+          steps.push({
+            title: 'Financial outcome',
+            body: isStudentPaymentRefunded(payment)
+              ? 'This booking was refunded and no payment is due to the coach. Nothing else is required from you.'
+              : 'This booking is financially final. Nothing else is required from you.',
+          });
+        } else {
+          steps.push({
+            title: 'Financial outcome',
+            body: 'This booking is financially final. You can still view the lesson details.',
+          });
+        }
+        return steps;
+      }
+      if (reviewOpen) {
+        return [
           {
-            title: 'Review or dispute window',
-            body: 'If something went wrong, report an issue before the review period closes.',
+            title: 'Payout timing',
+            body: 'Your payout will be released after the 24-hour review period if no issue is reported.',
+          },
+        ];
+      }
+      if (isCoachPayoutReleased(booking)) {
+        return [
+          {
+            title: 'Payout',
+            body: 'Your payout for this lesson has been sent (or is processing).',
+          },
+        ];
+      }
+      if (isCoachPayoutNotDue(booking, payment)) {
+        return [
+          {
+            title: 'Settlement',
+            body: 'This booking was refunded and no coach payout is due.',
           },
         ];
       }
       return [
         {
           title: 'Payout timing',
-          body: 'Payment is held for 24 hours after the lesson so either side can report a problem.',
+          body: 'The review period has ended. Payout follows the normal settlement process if no issue was reported.',
         },
       ];
-    case 'disputed':
+    case 'student_no_show':
+    case 'coach_no_show':
+      if (audience === 'student') {
+        if (reviewOpen) {
+          return [
+            {
+              title: 'Report a problem if needed',
+              body: 'If this outcome is incorrect, report an issue before the issue-reporting period closes.',
+            },
+          ];
+        }
+        return [
+          {
+            title: 'Issue-reporting period closed',
+            body: booking.status === 'student_no_show'
+              ? 'The issue-reporting window for this no-show has ended. No further issues can be reported for this booking.'
+              : 'The issue-reporting window for this lesson has ended. No further issues can be reported for this booking.',
+          },
+        ];
+      }
+      if (reviewOpen) {
+        return [
+          {
+            title: 'Payout timing',
+            body: 'Your payout will be released after the 24-hour review period if no issue is reported.',
+          },
+        ];
+      }
+      if (isCoachPayoutReleased(booking)) {
+        return [
+          {
+            title: 'Payout',
+            body: 'Your payout for this lesson has been sent (or is processing).',
+          },
+        ];
+      }
+      if (isCoachPayoutNotDue(booking, payment)) {
+        return [
+          {
+            title: 'Settlement',
+            body: 'This booking was refunded and no coach payout is due.',
+          },
+        ];
+      }
       return [
         {
-          title: 'Issue under review',
-          body: 'Payout stays protected while the report is open.',
+          title: 'Payout timing',
+          body: 'The review period has ended. Payout follows the normal settlement process if no issue was reported.',
         },
       ];
     default:
@@ -344,16 +445,27 @@ function useNow(intervalMs = 30000) {
 
 export function BookingDetailPage({ admin = false }) {
   const { id } = useParams();
-  const { user } = useAuth();
+  const { user, mode } = useAuth();
   const navigate = useNavigate();
   const [message, setMessage] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
+  // Keep report-issue / review-window UI in sync with the countdown (banner ticks alone would not re-render actions).
+  const now = useNow(15000);
+
+  const adminSharedRedirect = !admin && mode === 'admin' && hasAdminRole(user?.roles) && id
+    ? `/admin/bookings/${id}`
+    : null;
 
   const { data, error: loadError, loading, setData } = useAsync(async () => {
+    if (adminSharedRedirect) return null;
     const res = admin ? await adminApi.booking(id) : await bookingsApi.getById(id);
     return res.data;
-  }, [id, admin]);
+  }, [id, admin, adminSharedRedirect]);
+
+  if (adminSharedRedirect) {
+    return <Navigate to={adminSharedRedirect} replace />;
+  }
 
   const booking = data;
   const tz = user?.timezone || detectLocalTimezone();
@@ -363,14 +475,15 @@ export function BookingDetailPage({ admin = false }) {
   const payment = payments[0];
   const audience = isCoach ? 'coach' : isStudent ? 'student' : undefined;
 
-  async function run(action, successMsg) {
+  async function run(action, successMsg = null) {
     setBusy(true);
     setError(null);
+    setMessage(null);
     try {
       await action();
       const res = admin ? await adminApi.booking(id) : await bookingsApi.getById(id);
       setData(res.data);
-      setMessage(successMsg);
+      if (successMsg) setMessage(successMsg);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -421,7 +534,7 @@ export function BookingDetailPage({ admin = false }) {
         </button>
       ) : null}
       {isCoach && canCoachDecline(booking) ? (
-        <DeclineForm busy={busy} onSubmit={(body) => run(() => bookingsApi.decline(id, body), 'Booking declined. Authorization released.')} />
+        <DeclineForm busy={busy} onSubmit={(body) => run(() => bookingsApi.decline(id, body))} />
       ) : null}
       {isCoach && ['confirmed', 'awaiting_verification'].includes(booking.status) && !hasLessonEnded(booking) && !coachAttendanceBlockedByIssue(booking) ? (
         <p className="small muted">
@@ -435,23 +548,23 @@ export function BookingDetailPage({ admin = false }) {
       ) : null}
       {isCoach && (canCoachComplete(booking) || canCoachMarkNoShow(booking)) ? (
         <p className="small muted">
-          Complete and no-show confirm attendance only. They do not release payment. Both sides have 24 hours after the lesson to report a problem.
+          Complete and no-show confirm attendance only. They do not release payment. Both sides have 24 hours after the lesson to report an issue.
         </p>
       ) : null}
       {isCoach && canCoachComplete(booking) ? (
         <button
-          className="btn secondary"
+          className="btn"
           type="button"
           disabled={busy}
           onClick={() => {
             const ok = window.confirm(
-              'Mark this lesson complete? This confirms attendance only. It does not release payment. Both sides have 24 hours after the lesson to report a problem before payment is normally finalized.',
+              'Mark this lesson complete? This confirms attendance only. It does not release payment. Both sides have 24 hours after the lesson to report an issue before payment is normally finalized.',
             );
             if (!ok) return;
-            run(() => bookingsApi.complete(id, {}), 'Lesson marked complete. Payment is still held for 24 hours after the lesson ends.');
+            run(() => bookingsApi.complete(id, {}));
           }}
         >
-          Mark complete (does not release payment)
+          Mark lesson complete
         </button>
       ) : null}
       {isCoach && canCoachMarkNoShow(booking) ? (
@@ -462,32 +575,47 @@ export function BookingDetailPage({ admin = false }) {
           onClick={() => {
             const ok = window.confirm(`${studentNoShowConfirmTitle()}\n\n${studentNoShowConfirmBody()}`);
             if (!ok) return;
-            run(() => bookingsApi.studentNoShow(id, {}), 'Recorded student no-show. Payout still waits until 24 hours after the lesson ends if no issue is reported.');
+            run(() => bookingsApi.studentNoShow(id, {}));
           }}
         >
-          Student no-show (no refund)
+          Student no-show
         </button>
       ) : null}
       {(isStudent && canStudentCancel(booking)) || (isCoach && canCoachCancel(booking)) ? (
         <CancelForm
           busy={busy}
           consequence={cancelMoneyConsequenceCopy(booking, payment, { audience: isCoach ? 'coach' : 'student' })}
-          onSubmit={(body) => run(() => bookingsApi.cancel(id, body), 'Booking cancelled.')}
+          onSubmit={(body) => run(() => bookingsApi.cancel(id, body))}
         />
       ) : null}
-      {isStudent && ['completed', 'student_no_show', 'coach_no_show'].includes(booking.status) ? (
-        <ReviewForm bookingId={booking.id} busy={busy} onSubmit={(body) => run(() => reviewsApi.create(body), 'Review submitted.')} />
+      {isStudent && booking.status === 'completed' ? (
+        booking.student_review ? (
+          <div className="card stack" style={{ marginTop: 8 }}>
+            <h3 style={{ margin: 0 }}>Your review</h3>
+            <p className="small muted" style={{ margin: 0 }}>
+              {booking.student_review.rating}★
+              {booking.student_review.comment ? ` · ${booking.student_review.comment}` : ''}
+            </p>
+          </div>
+        ) : (
+          <ReviewForm
+            bookingId={booking.id}
+            busy={busy}
+            onSubmit={(body) => run(() => reviewsApi.create(body), 'Review submitted.')}
+          />
+        )
       ) : null}
       {admin ? <AdminBookingActions id={id} busy={busy} run={run} /> : null}
-      {(isStudent || isCoach) && canReportLessonIssue(booking) ? (
+      {(isStudent || isCoach) && canReportLessonIssue(booking, now) ? (
         <ReportIssueForm
           booking={booking}
           isCoach={isCoach}
           busy={busy}
-          onSubmit={(body) => run(() => disputesApi.create(body), 'Issue reported. Your report is under review. Payout is protected while this issue is being reviewed.')}
+          now={now}
+          onSubmit={(body) => run(() => disputesApi.create(body))}
         />
       ) : null}
-      {booking.status !== 'pending' ? (
+      {['pending', 'confirmed'].includes(booking.status) ? (
         <p className="small muted">
           There is no reschedule option yet. To change the time, cancel this booking and book a new slot.
         </p>
@@ -500,15 +628,19 @@ export function BookingDetailPage({ admin = false }) {
     : bookingDetailHeadline(booking, { audience: audience || 'student' });
   const lead = admin
     ? `${booking.primaryStudent?.full_name || 'Student'} → ${booking.coach?.full_name || 'Coach'}`
-    : bookingDetailLead(booking, { audience: audience || 'student', tz });
-  const nextSteps = admin ? [] : bookingDetailNextSteps(booking, { audience: audience || 'student', tz });
+    : bookingDetailLead(booking, { audience: audience || 'student', tz, now });
+  const nextSteps = admin ? [] : bookingDetailNextSteps(booking, {
+    audience: audience || 'student',
+    tz,
+    now,
+    payment,
+  });
   const adminStatusItems = admin
     ? [...adminBookingMoneyStatusItems({ booking, payment }), adminRefundStatusView(payment)]
     : null;
 
   return (
     <div className="page booking-detail-page">
-      <Alert tone="success">{message}</Alert>
       <Alert tone="error">{error}</Alert>
 
       <div className="page-header">
@@ -520,29 +652,35 @@ export function BookingDetailPage({ admin = false }) {
           <AdminStatusStack items={adminStatusItems} />
         ) : (
           <StatusBadge
-            status={hasOpenIssueReport(booking) && booking.status !== 'disputed' ? 'issue' : booking.status}
+            status={hasOpenIssueReport(booking) || booking.status === 'disputed' ? 'issue' : booking.status}
             label={bookingDisplayLabel(booking, { audience })}
             tone={bookingDisplayTone(booking)}
           />
         )}
       </div>
 
-      {booking.status === 'cancelled' && cancelledOutcomeCopy(booking) ? (
-        <Alert tone="info">{cancelledOutcomeCopy(booking)}</Alert>
+      {/* Flash only for actions that don't rewrite the page headline (e.g. accept, review). */}
+      <Alert tone="success">{message}</Alert>
+
+      {!admin && (hasOpenIssueReport(booking) || booking.status === 'disputed') ? (
+        <IssueReportedPanel booking={booking} tz={tz} audience={audience || 'student'} now={now} />
       ) : null}
-      {/* Open issue: student lead covers messaging; coach uses IssueReportedPanel below. */}
       {!admin && !hasOpenIssueReport(booking)
-        && ['student_no_show', 'coach_no_show', 'disputed'].includes(booking.status)
-        && bookingOutcomeCopy(booking, { audience }) ? (
-        <Alert tone={booking.status === 'disputed' ? 'warning' : 'info'}>
-          {bookingOutcomeCopy(booking, { audience })}
+        && ['student_no_show', 'coach_no_show'].includes(booking.status)
+        && bookingOutcomeCopy(booking, { audience, now }) ? (
+        <Alert tone="info">
+          {bookingOutcomeCopy(booking, { audience, now })}
         </Alert>
       ) : null}
-      {!admin && isCoach && (hasOpenIssueReport(booking) || booking.status === 'disputed') ? (
-        <CoachIssueReportedPanel booking={booking} tz={tz} />
-      ) : null}
       {!admin ? (
-        <FinancialReviewBanner booking={booking} isCoach={isCoach} isStudent={isStudent} tz={tz} />
+        <FinancialReviewBanner
+          booking={booking}
+          payment={payment}
+          isCoach={isCoach}
+          isStudent={isStudent}
+          tz={tz}
+          now={now}
+        />
       ) : null}
 
       <div className={`booking-detail-content-grid${nextSteps.length ? '' : ' booking-detail-content-grid--single'}`}>
@@ -596,8 +734,8 @@ export function BookingDetailPage({ admin = false }) {
   );
 }
 
-function CoachIssueReportedPanel({ booking, tz }) {
-  const now = useNow(15000);
+function IssueReportedPanel({ booking, tz, audience, now: nowProp }) {
+  const now = nowProp ?? Date.now();
   const review = booking?.financial_review;
   const remaining = review?.review_until
     ? formatRemainingUntil(review.review_until, new Date(now))
@@ -605,15 +743,28 @@ function CoachIssueReportedPanel({ booking, tz }) {
   const untilLabel = review?.review_until ? formatInZone(review.review_until, tz) : null;
   const stillOpen = remaining && remaining !== 'ended';
   const openedBy = booking?.active_issue?.opened_by;
-  const body = booking.status === 'disputed' && !hasOpenIssueReport(booking)
-    ? 'A payment dispute is open on this booking. Payout is blocked while it is under review.'
-    : openedBy === 'coach'
+  const isChargeback = booking.status === 'disputed' && !hasOpenIssueReport(booking);
+
+  let body;
+  if (isChargeback) {
+    body = 'A payment issue is open on this booking. Payout is blocked while it is under review.';
+  } else if (audience === 'coach') {
+    body = openedBy === 'coach'
       ? 'You reported an issue with this lesson. Payout is blocked while the issue is under review.'
       : 'The student reported an issue with this lesson. Payout is blocked while the issue is under review.';
+  } else {
+    body = openedBy === 'student' || !openedBy
+      ? 'Your report has been submitted and is under review. Payout is protected while this issue is being reviewed.'
+      : 'An issue was reported on this lesson. Payout is protected while it is under review.';
+  }
+
+  const title = isChargeback || (booking.status === 'disputed' && !hasOpenIssueReport(booking))
+    ? 'Issue under review'
+    : 'Issue reported';
 
   return (
     <Alert tone="warning">
-      <strong>Issue reported</strong>
+      <strong>{title}</strong>
       <div style={{ marginTop: 6 }}>{body}</div>
       {stillOpen && untilLabel ? (
         <div className="small" style={{ marginTop: 10 }}>
@@ -629,29 +780,42 @@ function CoachIssueReportedPanel({ booking, tz }) {
   );
 }
 
-function FinancialReviewBanner({ booking, isCoach, isStudent, tz }) {
-  const now = useNow(15000);
+function FinancialReviewBanner({ booking, payment, isCoach, isStudent, tz, now: nowProp }) {
+  const now = nowProp ?? Date.now();
   const review = booking?.financial_review;
   if (!review?.review_until) return null;
   if (!isPostLessonReviewEligible(booking, now)) return null;
-  const lessonEnded = review.lesson_ended_at && new Date(review.lesson_ended_at).getTime() <= now;
-  if (!lessonEnded && !review.window_open) return null;
+
+  const lessonEnded = review.lesson_ended_at
+    ? new Date(review.lesson_ended_at).getTime() <= now
+    : hasLessonEnded(booking, now);
+  const windowOpen = isFinancialReviewWindowOpen(booking, now);
+  // Before lesson end with no open window: hide. After lesson end, show open or closed copy.
+  if (!lessonEnded && !windowOpen) return null;
+
   const deadline = formatInZone(review.review_until, tz);
   const remaining = formatRemainingUntil(review.review_until, new Date(now));
-  const stillOpen = remaining !== 'ended';
-  const payoutPaid = ['processing', 'paid'].includes(String(booking.payout_status || ''));
+  const stillOpen = windowOpen && remaining !== 'ended';
+  const payoutPaid = isCoachPayoutReleased(booking);
+  const refundedNoPayout = isCoachPayoutNotDue(booking, payment);
 
-  if (payoutPaid) {
+  // Coach payout sent — only after the review opportunity is over.
+  if (payoutPaid && !stillOpen) {
     return (
       <Alert tone="success">
-        <strong>Payment released.</strong> The 24-hour review period ended and the coach's payout was sent. Exceptional corrections after this point require support.
+        <strong>Payment released.</strong>
+        {' '}
+        {isStudent
+          ? 'The issue-reporting period ended and your payment was finalized with the coach.'
+          : 'The 24-hour review period ended and the coach\'s payout was sent.'}
+        {' '}Exceptional corrections after this point require support.
       </Alert>
     );
   }
 
-  if (stillOpen && (review.window_open || lessonEnded)) {
-    // Students with an open issue: no financial-window countdown (dispute blocks payout anyway).
-    if (isStudent && (hasOpenIssueReport(booking) || booking.status === 'disputed')) {
+  if (stillOpen) {
+    // Open issue: IssueReportedPanel owns messaging (including countdown).
+    if (hasOpenIssueReport(booking) || booking.status === 'disputed') {
       return null;
     }
     if (isStudent) {
@@ -666,8 +830,10 @@ function FinancialReviewBanner({ booking, isCoach, isStudent, tz }) {
     if (isCoach) {
       return (
         <Alert tone="info">
-          <strong>Payout is protected for 24 hours after the lesson.</strong> Complete / no-show do not release payment.
-          {' '}Time left to report a problem: <strong>{remaining}</strong> (until {deadline}).
+          <strong>Payout is protected for 24 hours after the lesson.</strong>
+          {' '}Your payout will be released after the review period if no issue is reported.
+          {' '}<strong>Time remaining: {remaining}</strong>
+          <div className="small muted" style={{ marginTop: 6 }}>Until {deadline}</div>
         </Alert>
       );
     }
@@ -679,12 +845,27 @@ function FinancialReviewBanner({ booking, isCoach, isStudent, tz }) {
   }
 
   if (lessonEnded) {
-    if (isStudent && (hasOpenIssueReport(booking) || booking.status === 'disputed')) {
+    if (hasOpenIssueReport(booking) || booking.status === 'disputed') {
       return null;
+    }
+    if (refundedNoPayout) {
+      return (
+        <Alert tone="info">
+          <strong>{isStudent ? 'The issue-reporting period has closed.' : 'The review period has closed.'}</strong>
+          {' '}
+          {isCoach
+            ? 'This booking was refunded and no coach payout is due.'
+            : isStudentPaymentRefunded(payment)
+              ? 'This booking was refunded and no payment is due to the coach.'
+              : 'No coach payout is due for this booking.'}
+          {' '}Ended {deadline}.
+        </Alert>
+      );
     }
     return (
       <Alert tone="info">
-        <strong>The review period has closed.</strong> This booking is normally financially final.
+        <strong>{isStudent ? 'The issue-reporting period has closed.' : 'The review period has closed.'}</strong>
+        {' '}This booking is normally financially final.
         {' '}Ended {deadline}. Exceptional corrections may require support.
       </Alert>
     );
@@ -692,7 +873,7 @@ function FinancialReviewBanner({ booking, isCoach, isStudent, tz }) {
   return null;
 }
 
-function ReportIssueForm({ booking, isCoach, busy, onSubmit }) {
+function ReportIssueForm({ booking, isCoach, busy, onSubmit, now = Date.now() }) {
   const { data: types } = useAsync(async () => asList((await disputesApi.types()).data), []);
   const allowedCodes = isCoach
     ? ['student_no_show_claim', 'misconduct', 'lesson_not_completed', 'other']
@@ -700,6 +881,7 @@ function ReportIssueForm({ booking, isCoach, busy, onSubmit }) {
   const options = (types || []).filter((t) => allowedCodes.includes(t.code));
   const [disputeTypeId, setDisputeTypeId] = useState('');
   const [notes, setNotes] = useState('');
+  const remaining = formatRemainingUntil(booking.financial_review?.review_until, new Date(now));
 
   useEffect(() => {
     if (!disputeTypeId && options[0]) {
@@ -722,7 +904,7 @@ function ReportIssueForm({ booking, isCoach, busy, onSubmit }) {
     >
       <h3>Report an issue</h3>
       <p className="small muted">
-        You have until {formatInZone(booking.financial_review?.review_until)} ({formatRemainingUntil(booking.financial_review?.review_until)} left) to report a payment or lesson problem before this booking is normally finalized.
+        You have until {formatInZone(booking.financial_review?.review_until)} ({remaining} left) to report a payment or lesson problem before this booking is normally finalized.
       </p>
       <FormField label="Issue type" name="dispute_type_id">
         <select id="dispute_type_id" value={disputeTypeId} onChange={(e) => setDisputeTypeId(e.target.value)} required>

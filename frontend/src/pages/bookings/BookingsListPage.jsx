@@ -8,9 +8,12 @@ import {
   bookingStatusLabel,
   bookingDisplayLabel,
   bookingDisplayTone,
+  hasOpenIssueReport,
   coachAcceptanceDeadlineAt,
   isPostLessonReviewEligible,
   sortBookingsForList,
+  BOOKING_LIST_STATUS_FILTERS,
+  isFinancialReviewWindowOpen,
 } from '../../domain/bookingStatus.js';
 import { formatListWhenInZone, formatRemainingUntil } from '../../utils/datetime.js';
 
@@ -43,7 +46,7 @@ export function BookingsListPage({ audience = 'student' }) {
         <h1>{title}</h1>
       </div>
       <div className="row" style={{ marginBottom: 16 }}>
-        {['', 'pending', 'confirmed', 'completed', 'cancelled'].map((s) => (
+        {BOOKING_LIST_STATUS_FILTERS.map((s) => (
           <button key={s || 'all'} type="button" className={`btn ${status === s ? '' : 'secondary'}`} onClick={() => setStatus(s)}>
             {s ? bookingStatusLabel(s, { audience }) : 'All'}
           </button>
@@ -54,11 +57,9 @@ export function BookingsListPage({ audience = 'student' }) {
       {!loading && !error && (!data || data.length === 0) ? (
         <EmptyState
           title={
-            status === 'pending'
-              ? 'No pending bookings'
-              : status
-                ? `No ${bookingStatusLabel(status, { audience }).toLowerCase()} bookings`
-                : (audience === 'coach' ? 'No lesson requests yet' : 'No bookings yet')
+            status
+              ? `No ${bookingStatusLabel(status, { audience }).toLowerCase()} bookings`
+              : (audience === 'coach' ? 'No lesson requests yet' : 'No bookings yet')
           }
           detail={
             status === 'pending' && audience === 'coach'
@@ -94,14 +95,14 @@ export function BookingsListPage({ audience = 'student' }) {
                   deadlineWhen={deadlineIso ? formatListWhenInZone(deadlineIso, tz) : null}
                   audience={audience}
                 >
-                  {audience === 'coach' && b.financial_review?.window_open && isPostLessonReviewEligible(b) ? (
+                  {audience === 'coach' && isFinancialReviewWindowOpen(b) && isPostLessonReviewEligible(b) ? (
                     <div className="small" style={{ marginTop: 8 }}>
                       <StatusBadge status="review" label={`${formatRemainingUntil(b.financial_review.review_until)} left to report`} tone="info" />
                     </div>
                   ) : null}
                 </BookingListCardBody>
                 <StatusBadge
-                  status={b.status}
+                  status={hasOpenIssueReport(b) || b.status === 'disputed' ? 'issue' : b.status}
                   label={bookingDisplayLabel(b, { audience })}
                   tone={bookingDisplayTone(b)}
                 />

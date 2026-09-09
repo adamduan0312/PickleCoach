@@ -87,7 +87,7 @@ export function AdminPaymentsPage() {
                 <div className="spread" style={{ alignItems: 'flex-start' }}>
                   <div>
                     <strong>
-                      Payment #{p.id}
+                      <Link to={`/admin/payments/${p.id}`}>Payment #{p.id}</Link>
                       {p.booking_id ? (
                         <>
                           {' · '}

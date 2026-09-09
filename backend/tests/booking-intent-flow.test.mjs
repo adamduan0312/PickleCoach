@@ -12,7 +12,9 @@ import {
   buildBookingIntentStripeMetadata,
   isAuthorizeThenBookIntent,
   isPaymentIntentAuthorizedForBookingConfirm,
+  isPaymentIntentUsableForCheckout,
   parseBookingIntentMetadata,
+  resolveBookingIntentIdempotencyKey,
 } from '../utils/bookingIntentContract.js';
 import { affectsReliability } from '../services/reliabilityPenaltyService.js';
 
@@ -148,6 +150,53 @@ describe('authorization gate for confirm', () => {
   });
 });
 
+describe('checkout-usable PaymentIntent gate', () => {
+  it('accepts statuses that can mount Payment Element / authorize', () => {
+    for (const status of [
+      'requires_payment_method',
+      'requires_confirmation',
+      'requires_action',
+      'requires_capture',
+      'processing',
+    ]) {
+      assert.equal(isPaymentIntentUsableForCheckout({ id: 'pi_1', status }), true, status);
+    }
+  });
+
+  it('rejects canceled and succeeded intents', () => {
+    assert.equal(isPaymentIntentUsableForCheckout({ id: 'pi_1', status: 'canceled' }), false);
+    assert.equal(isPaymentIntentUsableForCheckout({ id: 'pi_1', status: 'succeeded' }), false);
+    assert.equal(isPaymentIntentUsableForCheckout(null), false);
+  });
+});
+
+describe('booking attempt idempotency key resolution', () => {
+  it('prefers booking_attempt_id over legacy param-only keys', () => {
+    const key = resolveBookingIntentIdempotencyKey({
+      studentId: 7,
+      bookingAttemptId: 'attempt-aaa-bbbb',
+      idempotencyKey: 'pc_7_1_2026-01-01T00:00:00.000Z_9',
+    });
+    assert.equal(key, 'booking_intent_7_attempt-aaa-bbbb');
+  });
+
+  it('falls back to legacy idempotency_key when no attempt id', () => {
+    const key = resolveBookingIntentIdempotencyKey({
+      studentId: 7,
+      idempotencyKey: 'legacy_key_abcdefgh',
+    });
+    assert.equal(key, 'legacy_key_abcdefgh');
+  });
+
+  it('mints a unique key when neither attempt nor legacy key is provided', () => {
+    const a = resolveBookingIntentIdempotencyKey({ studentId: 7 });
+    const b = resolveBookingIntentIdempotencyKey({ studentId: 7 });
+    assert.match(a, /^booking_intent_7_/);
+    assert.match(b, /^booking_intent_7_/);
+    assert.notEqual(a, b);
+  });
+});
+
 describe('confirm service wiring', () => {
   it('requires student role by presence (dual-role coach+student may book)', () => {
     // Gate on having student — not on lacking coach — so dual-role users can book.
@@ -166,6 +215,17 @@ describe('confirm service wiring', () => {
     assert.match(createIntentSection, /amount: totalCharge/);
     assert.match(createIntentSection, /amount_cents: dollarsToCents\(totalCharge\)/);
     assert.match(createIntentSection, /currency: 'usd'/);
+  });
+
+  it('retrieves live PaymentIntent and remints when Stripe replays an unusable PI', () => {
+    const createIntentSection = bookingIntentServiceSrc.slice(
+      bookingIntentServiceSrc.indexOf('export async function createBookingIntent'),
+      bookingIntentServiceSrc.indexOf('export async function confirmBookingFromPaymentIntent'),
+    );
+    assert.match(createIntentSection, /getPaymentIntent/);
+    assert.match(createIntentSection, /isPaymentIntentUsableForCheckout/);
+    assert.match(createIntentSection, /reminted after unusable PaymentIntent/);
+    assert.match(createIntentSection, /generateBookingAttemptId/);
   });
 
   it('creates payment as authorized immediately', () => {

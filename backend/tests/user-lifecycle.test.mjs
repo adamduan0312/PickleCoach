@@ -419,7 +419,8 @@ describe('login lifecycle messages', () => {
 });
 
 describe('authenticate middleware lifecycle', () => {
-  const secret = process.env.JWT_SECRET || 'your-secret-key';
+  const secret = process.env.JWT_SECRET;
+  if (!secret) throw new Error('JWT_SECRET required for test');
 
   it('blocks suspended users from authenticated endpoints', async () => {
     const { user } = makeUser({ is_active: false, deleted_at: null });

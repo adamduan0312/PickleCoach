@@ -98,6 +98,7 @@ export const notificationsApi = {
 export const messagesApi = {
   conversations: (params) => apiRequest(`/messages/conversations${qs(params)}`),
   conversation: (id, params) => apiRequest(`/messages/conversations/${id}${qs(params)}`),
+  unreadCount: () => apiRequest('/messages/unread-count'),
   createConversation: (booking_id) =>
     apiRequest('/messages/conversations', { method: 'POST', body: { booking_id } }),
   send: (body) => apiRequest('/messages/send', { method: 'POST', body }),

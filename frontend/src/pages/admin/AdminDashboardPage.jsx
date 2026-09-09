@@ -179,7 +179,7 @@ export function AdminDashboardPage() {
               data.paymentIssues.map((p) => (
                 <Link
                   key={p.id}
-                  to={p.booking_id ? `/admin/bookings/${p.booking_id}` : '/admin/payments'}
+                  to={`/admin/payments/${p.id}`}
                   className="spread"
                   style={{ color: 'inherit', textDecoration: 'none', alignItems: 'flex-start' }}
                 >

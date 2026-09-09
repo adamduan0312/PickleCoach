@@ -1,10 +1,7 @@
-// Sequelize CLI configuration
-// Note: Sequelize CLI uses CommonJS, but your app uses ES modules
-// This file tells Sequelize CLI where to find config, models, migrations, seeders
-
+// Sequelize CLI configuration (CommonJS). App runtime uses models/sequelize.js.
 module.exports = {
-  'config': 'config/config.json',
+  config: 'config/database.cjs',
   'models-path': 'models',
   'seeders-path': 'seeders',
-  'migrations-path': 'migrations'
+  'migrations-path': 'migrations',
 };

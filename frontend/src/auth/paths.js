@@ -82,8 +82,26 @@ export function pathMatchesMode(pathname, mode) {
 }
 
 /**
+ * Shared `/bookings/:id` is participant UI + participant API. Admins in admin
+ * mode must use `/admin/bookings/:id` (and `/api/admin/bookings/:id`).
+ * @param {string | null | undefined} pathname
+ * @returns {string | null}
+ */
+export function adminBookingPathFromShared(pathname) {
+  if (!pathname || typeof pathname !== 'string') return null;
+  const path = pathname.split('?')[0];
+  const match = path.match(/^\/bookings\/([^/]+)$/);
+  return match ? `/admin/bookings/${match[1]}` : null;
+}
+
+/**
  * After login, resume `from` only when this account may access it AND it matches
  * the restored experience mode. Otherwise go to that mode's home.
+ * Admin mode remaps shared booking detail URLs to the admin booking route.
+ *
+ * Callers should pass `from` only for auth-guard interruptions (see
+ * {@link resumePathFromLoginState}). Normal logout → login must omit `from`
+ * so the next user lands on role home, not the previous user's page.
  */
 export function postLoginPath(user, mode, from) {
   const effectiveMode = mode
@@ -91,12 +109,35 @@ export function postLoginPath(user, mode, from) {
     || (hasCoachRole(user?.roles) ? 'coach' : null)
     || (hasAdminRole(user?.roles) ? 'admin' : 'student');
 
+  let destination = from;
+  if (effectiveMode === 'admin' && hasAdminRole(user?.roles)) {
+    const adminBooking = adminBookingPathFromShared(from);
+    if (adminBooking) destination = adminBooking;
+  }
+
   if (
-    from
-    && userCanAccessPath(user, from)
-    && pathMatchesMode(from, effectiveMode)
+    destination
+    && userCanAccessPath(user, destination)
+    && pathMatchesMode(destination, effectiveMode)
   ) {
-    return from;
+    return destination;
   }
   return homePathFor(user, effectiveMode);
+}
+
+/**
+ * Login location.state from RequireAuth / RequireRole sets `authRedirect: true`.
+ * Plain visits to /login (including after logout) must not resume a path — that
+ * would carry one user's page into the next account on a shared browser.
+ *
+ * @param {{ from?: string, authRedirect?: boolean } | null | undefined} state
+ * @returns {string | null}
+ */
+export function resumePathFromLoginState(state) {
+  if (!state || state.authRedirect !== true) return null;
+  const from = state.from;
+  if (!from || typeof from !== 'string') return null;
+  const path = from.split('?')[0];
+  if (!path.startsWith('/') || path.startsWith('//')) return null;
+  return path;
 }

@@ -3,6 +3,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import { authApi, coachesApi, onUnauthorized, setStoredToken, getStoredToken, clearStoredToken } from '../api/index.js';
 import { computeCoachReadiness, hasCoachRole } from '../domain/userReadiness.js';
 import { inferMode } from './paths.js';
+import { markIntentionalLogout } from './logoutIntent.js';
 import { detectLocalTimezone } from '../utils/datetime.js';
 
 const AuthContext = createContext(null);
@@ -231,6 +232,9 @@ export function AuthProvider({ children }) {
   }, [applySession]);
 
   const logout = useCallback(async () => {
+    // Before clearSession: RequireAuth still sits on the current route and would
+    // otherwise bounce to login with authRedirect+from (resume last page).
+    markIntentionalLogout();
     try {
       if (getStoredToken()) await authApi.logout();
     } catch {

@@ -5,22 +5,26 @@ dotenv.config({ path: `.env.${env}` });
 import { Sequelize } from 'sequelize';
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
-const config = require('../config/config.json');
+/** Env-backed config (no committed credentials). Legacy config.json is placeholders only. */
+const config = require('../config/database.cjs');
 
-// Create Sequelize instance (Sequelize CLI standard approach)
-// This is the professional/industry-standard way
 const dbConfig = config[env];
+if (!dbConfig) {
+  throw new Error(`No database config for NODE_ENV=${env}`);
+}
+if (env === 'production' && (process.env.DB_PASSWORD == null || process.env.DB_PASSWORD === '')) {
+  throw new Error('DB_PASSWORD is required in production');
+}
 
-// Allow environment variables to override config.json values
 export const sequelize = new Sequelize(
   process.env.DB_NAME || dbConfig.database,
   process.env.DB_USER || dbConfig.username,
-  process.env.DB_PASSWORD || dbConfig.password,
+  process.env.DB_PASSWORD != null ? process.env.DB_PASSWORD : dbConfig.password,
   {
     host: process.env.DB_HOST || dbConfig.host,
     port: process.env.DB_PORT || dbConfig.port,
     dialect: dbConfig.dialect,
-    logging: dbConfig.logging !== undefined 
+    logging: dbConfig.logging !== undefined
       ? (typeof dbConfig.logging === 'function' ? dbConfig.logging : (dbConfig.logging ? console.log : false))
       : (env === 'development' ? console.log : false),
     pool: dbConfig.pool || {
@@ -29,6 +33,7 @@ export const sequelize = new Sequelize(
       acquire: 30000,
       idle: 10000,
     },
+    dialectOptions: dbConfig.dialectOptions,
     define: {
       timestamps: true,
       underscored: false,

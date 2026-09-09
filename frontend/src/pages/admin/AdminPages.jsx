@@ -8,4 +8,5 @@ export {
   AdminDisputesPage,
   AdminDisputeDetailPage,
   AdminPaymentsPage,
+  AdminPaymentDetailPage,
 } from './index.js';

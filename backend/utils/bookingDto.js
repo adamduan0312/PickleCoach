@@ -309,6 +309,21 @@ export function serializeBookingDetailPayload(
       : cancellationHistory;
   }
 
+  // One review per booking (MVP). Present so the student detail page can drop the form.
+  if (plain.reviews !== undefined) {
+    const first = Array.isArray(plain.reviews) ? plain.reviews[0] : null;
+    dto.student_review = first
+      ? {
+          id: first.id,
+          rating: first.rating ?? null,
+          comment: first.comment ?? null,
+          created_at: first.created_at ?? null,
+        }
+      : null;
+  } else {
+    dto.student_review = null;
+  }
+
   return dto;
 }
 

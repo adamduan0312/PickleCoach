@@ -6,6 +6,7 @@ import { describe, it, afterEach } from 'node:test';
 import { CoachProfile } from '../models/index.js';
 import {
   getStripeConnectStatus,
+  isDevSeedStripeConnectAccountId,
   isStripeConnectAccountMissingError,
   isPlausibleStripeConnectAccountId,
   stripeConnectStatusDeps,
@@ -113,6 +114,19 @@ describe('isPlausibleStripeConnectAccountId', () => {
   });
 });
 
+describe('isDevSeedStripeConnectAccountId', () => {
+  it('matches local seed Connect id prefixes (including Davie/Pinecrest near-me)', () => {
+    assert.equal(isDevSeedStripeConnectAccountId('acct_testflow_seed'), true);
+    assert.equal(isDevSeedStripeConnectAccountId('acct_seed_demo'), true);
+    assert.equal(isDevSeedStripeConnectAccountId('acct_davie_coach_davie_ftlaud'), true);
+    assert.equal(isDevSeedStripeConnectAccountId('acct_pinecrest_coach_pine_a'), true);
+    assert.equal(isDevSeedStripeConnectAccountId('acct_rating_demo'), true);
+    assert.equal(isDevSeedStripeConnectAccountId('acct_diverse_12'), true);
+    assert.equal(isDevSeedStripeConnectAccountId('acct_1Tz1Iz9auWv0U6YZ'), false);
+    assert.equal(isDevSeedStripeConnectAccountId('acct_restored_70'), false);
+  });
+});
+
 describe('GET /api/coaches/me/stripe-connect/status', () => {
   it('returns onboarded:false without calling Stripe when no account id', async () => {
     const profile = coachProfileRow({ stripe_account_id: null, stripe_ready: false });
@@ -131,9 +145,58 @@ describe('GET /api/coaches/me/stripe-connect/status', () => {
     assert.equal(retrieved, false);
   });
 
-  it('clears implausible seed account ids without calling Stripe', async () => {
+  it('preserves dev seed Connect accounts without calling Stripe', async () => {
     const profile = coachProfileRow({
       stripe_account_id: 'acct_testflow_seed',
+      stripe_ready: true,
+    });
+    CoachProfile.findOne = async () => profile;
+    let retrieved = false;
+    stripeConnectStatusDeps.loadStripeService = async () => {
+      retrieved = true;
+      return { default: { accounts: { retrieve: async () => ({}) } } };
+    };
+
+    const res = mockRes();
+    await getStripeConnectStatus({ user: { id: 6, roles: ['coach'] }, query: {} }, res);
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.payload.data.seed_connect_account, true);
+    assert.equal(res.payload.data.onboarded, true);
+    assert.equal(res.payload.data.stripe_ready, true);
+    assert.equal(res.payload.data.account_id, 'acct_testflow_seed');
+    assert.equal(retrieved, false);
+    assert.equal(profile.stripe_account_id, 'acct_testflow_seed');
+    assert.equal(profile.updates.length, 0);
+  });
+
+  it('preserves Davie near-me seed Connect accounts (underscored ids) without clearing', async () => {
+    const profile = coachProfileRow({
+      stripe_account_id: 'acct_davie_coach_davie_ftlaud',
+      stripe_ready: true,
+    });
+    CoachProfile.findOne = async () => profile;
+    let retrieved = false;
+    stripeConnectStatusDeps.loadStripeService = async () => {
+      retrieved = true;
+      return { default: { accounts: { retrieve: async () => ({}) } } };
+    };
+
+    const res = mockRes();
+    await getStripeConnectStatus({ user: { id: 173, roles: ['coach'] }, query: {} }, res);
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.payload.data.seed_connect_account, true);
+    assert.equal(res.payload.data.stripe_ready, true);
+    assert.equal(res.payload.data.account_id, 'acct_davie_coach_davie_ftlaud');
+    assert.equal(retrieved, false);
+    assert.equal(profile.stripe_account_id, 'acct_davie_coach_davie_ftlaud');
+    assert.equal(profile.updates.length, 0);
+  });
+
+  it('clears other implausible account ids without calling Stripe', async () => {
+    const profile = coachProfileRow({
+      stripe_account_id: 'acct_restored_70',
       stripe_ready: true,
     });
     CoachProfile.findOne = async () => profile;

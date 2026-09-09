@@ -34,6 +34,7 @@ import {
   AdminDisputesPage,
   AdminHomePage,
   AdminPaymentsPage,
+  AdminPaymentDetailPage,
   AdminUserDetailPage,
   AdminUsersPage,
 } from './pages/admin/index.js';
@@ -101,6 +102,7 @@ export default function App() {
             <Route path="/admin/disputes" element={<RequireRole roles={['admin']}><AdminDisputesPage /></RequireRole>} />
             <Route path="/admin/disputes/:id" element={<RequireRole roles={['admin']}><AdminDisputeDetailPage /></RequireRole>} />
             <Route path="/admin/payments" element={<RequireRole roles={['admin']}><AdminPaymentsPage /></RequireRole>} />
+            <Route path="/admin/payments/:id" element={<RequireRole roles={['admin']}><AdminPaymentDetailPage /></RequireRole>} />
           </Route>
 
           <Route path="*" element={<NotFoundPage />} />

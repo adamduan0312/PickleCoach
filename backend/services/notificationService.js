@@ -18,7 +18,10 @@ import {
   getMinBookingLeadHours,
   getCoachAcceptanceDeadlineAt,
 } from '../utils/coachAcceptanceTimeout.js';
-import { buildLessonReminderDetailFields } from '../utils/lessonReminderCopy.js';
+import {
+  buildLessonReminderDetailFields,
+  formatDeadlineLabelForEmail,
+} from '../utils/lessonReminderCopy.js';
 import {
   buildBookingConfirmedNotificationContent,
   buildBookingRequestCoachNotificationContent,
@@ -37,7 +40,31 @@ import {
   buildBookingRequestExpiredNotificationContent,
   buildReviewReceivedNotificationContent,
   buildRefundSucceededNotificationContent,
+  buildPasswordChangedNotificationContent,
 } from '../notifications/payloadBuilders.js';
+
+/** Recipient timezone for email/in-app schedule labels (never server-local). */
+function recipientTimezone(booking, audience = 'student') {
+  if (audience === 'coach') {
+    return booking?.coach?.timezone || booking?.primaryStudent?.timezone || 'UTC';
+  }
+  return booking?.primaryStudent?.timezone || booking?.coach?.timezone || 'UTC';
+}
+
+/**
+ * Shared booking fields for notifications, including timezone-aware lesson_date/time/when
+ * and court location lines for email templates.
+ * @param {'student'|'coach'} audience
+ */
+function bookingNotifyBase(booking, audience = 'student') {
+  return {
+    booking_id: booking.id,
+    scheduled_at: booking.scheduled_at,
+    coach_name: booking.coach?.full_name,
+    student_name: booking.primaryStudent?.full_name,
+    ...buildLessonReminderDetailFields(booking, recipientTimezone(booking, audience), { audience }),
+  };
+}
 
 /**
  * Send email via SendGrid (if configured)
@@ -440,13 +467,14 @@ export const sendReminderNotification = async (booking, reminderType) => {
  * Notify coach when a student creates a pending booking (log + in-app + email when SendGrid is configured).
  */
 export const notifyCoachNewBookingRequest = async (bookingId) => {
-  const { Booking, User, Lesson } = await import('../models/index.js');
+  const { Booking, User, Lesson, CourtLocation } = await import('../models/index.js');
 
   const booking = await Booking.findByPk(bookingId, {
     include: [
       { model: User, as: 'coach', attributes: ['id', 'full_name', 'email', 'timezone'] },
-      { model: User, as: 'primaryStudent', attributes: ['id', 'full_name', 'email'] },
+      { model: User, as: 'primaryStudent', attributes: ['id', 'full_name', 'email', 'timezone'] },
       { model: Lesson, as: 'lesson', attributes: ['id', 'title'] },
+      { model: CourtLocation, as: 'courtLocation' },
     ],
   });
 
@@ -459,27 +487,12 @@ export const notifyCoachNewBookingRequest = async (bookingId) => {
     requestAt: booking.created_at,
     scheduledAt: booking.scheduled_at,
   });
-  const coachTz = booking.coach?.timezone || 'UTC';
-  let deadlineLabel;
-  try {
-    deadlineLabel = new Intl.DateTimeFormat('en-US', {
-      timeZone: coachTz,
-      weekday: 'long',
-      month: 'short',
-      day: 'numeric',
-      hour: 'numeric',
-      minute: '2-digit',
-    }).format(deadlineAt);
-  } catch {
-    deadlineLabel = deadlineAt.toLocaleString();
-  }
+  const coachTz = recipientTimezone(booking, 'coach');
+  const deadlineLabel = formatDeadlineLabelForEmail(deadlineAt, coachTz);
 
   const basePayload = {
-    booking_id: booking.id,
-    scheduled_at: booking.scheduled_at,
+    ...bookingNotifyBase(booking, 'coach'),
     student_name: booking.primaryStudent?.full_name || 'A student',
-    lesson_title: booking.lesson?.title || 'Lesson',
-    coach_name: booking.coach?.full_name,
     coach_acceptance_timeout_hours: getCoachAcceptanceTimeoutHours(),
     min_booking_lead_hours: getMinBookingLeadHours(),
     coach_acceptance_deadline_at: deadlineAt.toISOString(),
@@ -508,12 +521,13 @@ export const notifyCoachNewBookingRequest = async (bookingId) => {
 };
 
 const loadBookingNotificationContext = async (bookingId) => {
-  const { Booking, User, Lesson } = await import('../models/index.js');
+  const { Booking, User, Lesson, CourtLocation } = await import('../models/index.js');
   return Booking.findByPk(bookingId, {
     include: [
-      { model: User, as: 'coach', attributes: ['id', 'full_name', 'email'] },
-      { model: User, as: 'primaryStudent', attributes: ['id', 'full_name', 'email'] },
+      { model: User, as: 'coach', attributes: ['id', 'full_name', 'email', 'timezone'] },
+      { model: User, as: 'primaryStudent', attributes: ['id', 'full_name', 'email', 'timezone'] },
       { model: Lesson, as: 'lesson', attributes: ['id', 'title'] },
+      { model: CourtLocation, as: 'courtLocation' },
     ],
   });
 };
@@ -523,11 +537,19 @@ export const notifyBookingAccepted = async (bookingId) => {
   const booking = await loadBookingNotificationContext(bookingId);
   if (!booking?.primary_student_id) return;
 
+  // Soft UX: clear actionable "respond to request" cards so coaches don't reopen stale work.
+  await markCoachBookingRequestNotificationsRead(booking).catch((err) => {
+    logger.warn({
+      component: 'notification',
+      event: 'mark_booking_request_read_failed',
+      bookingId: booking.id,
+      message: err?.message,
+    });
+  });
+
   const basePayload = {
-    booking_id: booking.id,
-    scheduled_at: booking.scheduled_at,
+    ...bookingNotifyBase(booking, 'student'),
     coach_name: booking.coach?.full_name || 'Your coach',
-    lesson_title: booking.lesson?.title || 'Lesson',
   };
   const payload = {
     ...basePayload,
@@ -542,15 +564,44 @@ export const notifyBookingAccepted = async (bookingId) => {
   );
 };
 
+/**
+ * Mark coach in-app booking_request_coach rows for this booking as read.
+ * Does not delete rows or change email/SMS delivery history (idempotency unchanged).
+ */
+async function markCoachBookingRequestNotificationsRead(booking) {
+  if (!booking?.id || !booking?.coach_id) return;
+  const { Notification } = await import('../models/index.js');
+  const [count] = await Notification.update(
+    { read_at: new Date() },
+    {
+      where: {
+        user_id: booking.coach_id,
+        type: 'booking_request_coach',
+        channel: 'in_app',
+        entity_type: 'booking',
+        entity_id: booking.id,
+        read_at: null,
+      },
+    },
+  );
+  if (count > 0) {
+    logger.info({
+      component: 'notification',
+      event: 'booking_request_coach_marked_read',
+      booking_id: booking.id,
+      coach_id: booking.coach_id,
+      updated: count,
+    });
+  }
+}
+
 export const notifyBookingDeclined = async (bookingId) => {
   const booking = await loadBookingNotificationContext(bookingId);
   if (!booking?.primary_student_id) return;
 
   const basePayload = {
-    booking_id: booking.id,
-    scheduled_at: booking.scheduled_at,
+    ...bookingNotifyBase(booking, 'student'),
     coach_name: booking.coach?.full_name || 'Your coach',
-    lesson_title: booking.lesson?.title || 'Lesson',
     decline_reason_code: booking.decline_reason_code || null,
     message_to_student: booking.decline_message_to_student || null,
   };
@@ -579,30 +630,27 @@ export const notifyBookingCancelled = async (bookingId, {
   const booking = await loadBookingNotificationContext(bookingId);
   if (!booking) return;
 
-  const payload = {
-    booking_id: booking.id,
-    scheduled_at: booking.scheduled_at,
-    lesson_title: booking.lesson?.title || 'Lesson',
-    coach_name: booking.coach?.full_name,
-    student_name: booking.primaryStudent?.full_name,
-    cancelled_by: cancelledBy || booking.cancelled_by,
-    reason: reason || null,
-    reason_notes: reason_notes || null,
-    refund_amount: refund_amount ?? null,
-    penalty_amount: penalty_amount ?? null,
-    refund_status: refund_status ?? null,
-    ...buildBookingCancelledNotificationContent({
-      cancelled_by: cancelledBy || booking.cancelled_by,
-      reason,
-      reason_notes,
-      refund_amount,
-      refund_status,
-    }),
-  };
-
   const by = cancelledBy || booking.cancelled_by;
+  const content = buildBookingCancelledNotificationContent({
+    cancelled_by: by,
+    reason,
+    reason_notes,
+    refund_amount,
+    refund_status,
+  });
+
   if (by === 'coach' || by === 'admin' || by === 'system') {
     if (booking.primary_student_id) {
+      const payload = {
+        ...bookingNotifyBase(booking, 'student'),
+        cancelled_by: by,
+        reason: reason || null,
+        reason_notes: reason_notes || null,
+        refund_amount: refund_amount ?? null,
+        penalty_amount: penalty_amount ?? null,
+        refund_status: refund_status ?? null,
+        ...content,
+      };
       await deliverDualChannel(
         booking.primary_student_id,
         'booking_cancelled',
@@ -614,6 +662,16 @@ export const notifyBookingCancelled = async (bookingId, {
   }
 
   if (by === 'student' && booking.coach_id) {
+    const payload = {
+      ...bookingNotifyBase(booking, 'coach'),
+      cancelled_by: by,
+      reason: reason || null,
+      reason_notes: reason_notes || null,
+      refund_amount: refund_amount ?? null,
+      penalty_amount: penalty_amount ?? null,
+      refund_status: refund_status ?? null,
+      ...content,
+    };
     await deliverDualChannel(
       booking.coach_id,
       'booking_cancelled',
@@ -724,14 +782,6 @@ export const resolveDisputeOpenedRecipients = ({ openedBy, coachId, studentId } 
   return [];
 };
 
-const bookingNotifyBase = (booking) => ({
-  booking_id: booking.id,
-  scheduled_at: booking.scheduled_at,
-  lesson_title: booking.lesson?.title || 'Lesson',
-  coach_name: booking.coach?.full_name,
-  student_name: booking.primaryStudent?.full_name,
-});
-
 /** Coach: in-app only when the lesson ends and attendance is still unconfirmed. */
 export const notifyCoachConfirmAttendanceReminder = async (bookingId) => {
   const booking = await loadBookingNotificationContext(bookingId);
@@ -749,8 +799,8 @@ export const notifyCoachConfirmAttendanceReminder = async (bookingId) => {
   }
 
   const payload = {
-    ...bookingNotifyBase(booking),
-    ...buildConfirmAttendanceReminderNotificationContent(bookingNotifyBase(booking)),
+    ...bookingNotifyBase(booking, 'coach'),
+    ...buildConfirmAttendanceReminderNotificationContent(bookingNotifyBase(booking, 'coach')),
   };
 
   const inApp = await createNotification(booking.coach_id, type, 'in_app', payload, {
@@ -777,8 +827,8 @@ export const notifyStudentLessonCompleted = async (bookingId) => {
   if (!booking?.primary_student_id) return null;
 
   const payload = {
-    ...bookingNotifyBase(booking),
-    ...buildLessonCompletedNotificationContent(bookingNotifyBase(booking)),
+    ...bookingNotifyBase(booking, 'student'),
+    ...buildLessonCompletedNotificationContent(bookingNotifyBase(booking, 'student')),
   };
 
   const inApp = await createNotification(booking.primary_student_id, 'lesson_completed', 'in_app', payload, {
@@ -805,7 +855,7 @@ export const notifyStudentNoShow = async (bookingId, { markedBy } = {}) => {
   if (!booking?.primary_student_id) return;
 
   const payload = {
-    ...bookingNotifyBase(booking),
+    ...bookingNotifyBase(booking, 'student'),
     marked_by: markedBy === 'admin' ? 'admin' : 'coach',
     ...buildStudentNoShowNotificationContent({ markedBy }),
   };
@@ -823,15 +873,12 @@ export const notifyCoachNoShow = async (bookingId) => {
   const booking = await loadBookingNotificationContext(bookingId);
   if (!booking) return;
 
-  const base = bookingNotifyBase(booking);
-  const recipients = uniqueUserIds(booking.primary_student_id, booking.coach_id);
-
   for (const userId of recipients) {
     const audience = Number(booking.primary_student_id) === userId ? 'student' : 'coach';
     const email =
       audience === 'coach' ? booking.coach?.email : booking.primaryStudent?.email;
     const payload = {
-      ...base,
+      ...bookingNotifyBase(booking, audience),
       audience,
       ...buildCoachNoShowNotificationContent({ audience }),
     };
@@ -842,7 +889,7 @@ export const notifyCoachNoShow = async (bookingId) => {
   }
 };
 
-/** In-app only: other party (or both when admin opens). */
+/** In-app + email: other party (or both when admin opens). */
 export const notifyDisputeOpened = async ({
   bookingId,
   disputeId,
@@ -860,30 +907,24 @@ export const notifyDisputeOpened = async ({
   if (recipientIds.length === 0) return;
 
   const content = buildDisputeOpenedNotificationContent({ openedBy, disputeTypeCode });
-  const payload = {
-    ...bookingNotifyBase(booking),
-    dispute_id: disputeId ?? null,
-    opened_by: openedBy || null,
-    dispute_type_code: disputeTypeCode || null,
-    ...content,
-  };
 
   for (const userId of recipientIds) {
-    const inApp = await createNotification(userId, 'dispute_opened', 'in_app', payload, {
-      entity_type: 'dispute',
-      entity_id: disputeId ?? null,
+    const audience = Number(booking.primary_student_id) === userId ? 'student' : 'coach';
+    const email =
+      audience === 'coach' ? booking.coach?.email : booking.primaryStudent?.email;
+    const payload = {
+      ...bookingNotifyBase(booking, audience),
+      dispute_id: disputeId ?? null,
+      opened_by: openedBy || null,
+      dispute_type_code: disputeTypeCode || null,
+      audience,
+      ...content,
+    };
+    await deliverDualChannel(userId, 'dispute_opened', payload, {
+      email,
+      entity_type: disputeId != null ? 'dispute' : 'booking',
+      entity_id: disputeId ?? booking.id,
     });
-    try {
-      await sendNotification(inApp.id);
-    } catch (error) {
-      logger.warn({
-        component: 'notification',
-        event: 'dispute_opened_in_app_send_failed',
-        userId,
-        disputeId,
-        message: error?.message,
-      });
-    }
   }
 };
 
@@ -900,8 +941,7 @@ export const notifyDisputeResolved = async ({
   if (!booking) return;
 
   const recipients = uniqueUserIds(booking.primary_student_id, booking.coach_id);
-  const base = {
-    ...bookingNotifyBase(booking),
+  const shared = {
     dispute_id: disputeId ?? null,
     outcome: outcome ?? null,
     financial_action: financialAction ?? null,
@@ -914,7 +954,8 @@ export const notifyDisputeResolved = async ({
     const email =
       audience === 'coach' ? booking.coach?.email : booking.primaryStudent?.email;
     const payload = {
-      ...base,
+      ...bookingNotifyBase(booking, audience),
+      ...shared,
       audience,
       ...buildDisputeResolvedNotificationContent({
         audience,
@@ -941,7 +982,7 @@ export const notifyBookingRequestExpired = async (bookingId) => {
   if (!booking?.primary_student_id) return;
 
   const payload = {
-    ...bookingNotifyBase(booking),
+    ...bookingNotifyBase(booking, 'student'),
     cancelled_by: 'system',
     ...buildBookingRequestExpiredNotificationContent(),
   };
@@ -954,41 +995,59 @@ export const notifyBookingRequestExpired = async (bookingId) => {
   );
 };
 
-/** Coach: in-app only when a student leaves a review. */
+/** Coach: in-app + email when a student leaves a review. */
 export const notifyReviewReceived = async ({
   reviewId,
   bookingId,
   coachId,
   rating,
   studentName,
+  comment,
 } = {}) => {
   if (coachId == null) return;
 
+  const coach = await User.findByPk(coachId, { attributes: ['id', 'email', 'timezone'] });
+  if (!coach) return;
+
+  let scheduleFields = {};
+  if (bookingId != null) {
+    const booking = await loadBookingNotificationContext(bookingId);
+    if (booking) {
+      scheduleFields = bookingNotifyBase(booking, 'coach');
+    }
+  }
+
   const content = buildReviewReceivedNotificationContent({ rating, studentName });
   const payload = {
+    ...scheduleFields,
     review_id: reviewId ?? null,
-    booking_id: bookingId ?? null,
+    booking_id: bookingId ?? scheduleFields.booking_id ?? null,
     rating: rating ?? null,
-    student_name: studentName || null,
-    route: reviewId != null ? `/reviews/${reviewId}` : undefined,
+    student_name: studentName || scheduleFields.student_name || null,
+    comment: comment && String(comment).trim() ? String(comment).trim() : null,
+    route: bookingId != null ? `/bookings/${bookingId}` : undefined,
     ...content,
   };
 
-  const inApp = await createNotification(coachId, 'review_received', 'in_app', payload, {
+  await deliverDualChannel(coachId, 'review_received', payload, {
+    email: coach.email,
     entity_type: 'review',
     entity_id: reviewId ?? null,
   });
-  try {
-    await sendNotification(inApp.id);
-  } catch (error) {
-    logger.warn({
-      component: 'notification',
-      event: 'review_received_in_app_send_failed',
-      coachId,
-      reviewId,
-      message: error?.message,
-    });
-  }
+};
+
+/**
+ * Account security: password changed on this user (in-app + email).
+ */
+export const notifyPasswordChanged = async (userId) => {
+  if (userId == null) return;
+  const user = await User.findByPk(userId, { attributes: ['id', 'email'] });
+  if (!user) return;
+
+  const payload = buildPasswordChangedNotificationContent();
+  await deliverDualChannel(userId, 'password_changed', payload, {
+    email: user.email,
+  });
 };
 
 /**
@@ -1005,7 +1064,7 @@ export const notifyRefundSucceeded = async ({
   if (!booking?.primary_student_id) return;
 
   const payload = {
-    ...bookingNotifyBase(booking),
+    ...bookingNotifyBase(booking, 'student'),
     payment_id: paymentId ?? null,
     refund_amount: refundAmount ?? null,
     ...buildRefundSucceededNotificationContent({ refundAmount }),

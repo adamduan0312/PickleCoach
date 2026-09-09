@@ -206,6 +206,7 @@ export const createReview = async (req, res) => {
       coachId: booking.coach_id,
       rating: review.rating,
       studentName: req.user.full_name,
+      comment: review.comment,
     }).catch((err) => {
       logger.warn({
         component: 'reviews',

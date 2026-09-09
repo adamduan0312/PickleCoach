@@ -82,7 +82,7 @@ test('serializeBookingForDisputes trims internal booking fields', () => {
   assert.equal(dto.messaging_locked, true);
   assert.equal(dto.payout_status, undefined);
   assert.equal(dto.idempotency_key, undefined);
-  assert.equal(dto.created_at, undefined);
+  assert.equal(dto.created_at, '2026-05-28T08:00:00.000Z');
 });
 
 test('serializeDisputeTypeSummary exposes id, code, name, description only', () => {

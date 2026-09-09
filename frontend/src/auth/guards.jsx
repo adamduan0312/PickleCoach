@@ -2,6 +2,7 @@ import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from './AuthContext.jsx';
 import { LoadingState } from '../components/ui/States.jsx';
 import { homePathFor } from './paths.js';
+import { isIntentionalLogout } from './logoutIntent.js';
 
 export function GuestOnly({ children }) {
   const { isAuthenticated, bootstrapping, user, mode } = useAuth();
@@ -18,7 +19,17 @@ export function RequireAuth({ children }) {
   const location = useLocation();
   if (bootstrapping) return <LoadingState label="Loading session…" />;
   if (!isAuthenticated) {
-    return <Navigate to="/login" replace state={{ from: location.pathname }} />;
+    // Intentional logout: clean login, do not resume the page we just left.
+    if (isIntentionalLogout()) {
+      return <Navigate to="/login" replace />;
+    }
+    return (
+      <Navigate
+        to="/login"
+        replace
+        state={{ from: location.pathname, authRedirect: true }}
+      />
+    );
   }
   return children;
 }
@@ -28,7 +39,16 @@ export function RequireRole({ roles, children }) {
   const location = useLocation();
   if (bootstrapping) return <LoadingState label="Loading session…" />;
   if (!isAuthenticated) {
-    return <Navigate to="/login" replace state={{ from: location.pathname }} />;
+    if (isIntentionalLogout()) {
+      return <Navigate to="/login" replace />;
+    }
+    return (
+      <Navigate
+        to="/login"
+        replace
+        state={{ from: location.pathname, authRedirect: true }}
+      />
+    );
   }
   const userRoles = user?.roles || [];
   const ok = roles.some((role) => userRoles.includes(role));

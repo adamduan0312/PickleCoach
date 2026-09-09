@@ -11,7 +11,14 @@ function parseBearerToken(authorizationHeader) {
 
 /** Load user + effective roles from JWT; throws on invalid/revoked token or inactive user. */
 async function loadUserForRequest(token) {
-  const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
+  const secret = process.env.JWT_SECRET;
+  if (!secret) {
+    const err = new Error('Server misconfiguration');
+    err.authStatus = 500;
+    err.authBody = { error: 'Authentication is not configured' };
+    throw err;
+  }
+  const decoded = jwt.verify(token, secret);
   const user = await User.findByPk(decoded.userId, {
     include: [{ model: UserRole, as: 'userRoles', attributes: ['role'] }],
   });

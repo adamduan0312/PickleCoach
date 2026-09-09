@@ -1,7 +1,7 @@
 {
   "development": {
     "username": "root",
-    "password": "03122003Ad!",
+    "password": "USE_ENV_DB_PASSWORD",
     "database": "picklecoach_development",
     "host": "127.0.0.1",
     "port": 3306,
@@ -10,7 +10,7 @@
   },
   "test": {
     "username": "root",
-    "password": "03122003Ad!",
+    "password": "USE_ENV_DB_PASSWORD",
     "database": "picklecoach_test",
     "host": "127.0.0.1",
     "port": 3306,
@@ -19,7 +19,7 @@
   },
   "production": {
     "username": "root",
-    "password": "03122003Ad!",
+    "password": "USE_ENV_DB_PASSWORD",
     "database": "picklecoach",
     "host": "127.0.0.1",
     "port": 3306,

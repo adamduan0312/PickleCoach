@@ -40,6 +40,8 @@ export function createInMemoryPaymentIntentDouble() {
     /** When set, next createRefund throws this Error (then clears). */
     failNextCreateRefund: null,
     /** @type {Map<string, string>} */ refundIdByIdempotencyKey: new Map(),
+    /** @type {Map<string, string>} Stripe-style create idempotency → payment intent id */
+    piIdByIdempotencyKey: new Map(),
     refundSeq: 1,
 
     async createCustomer({ email, name, metadata = {} } = {}) {
@@ -53,9 +55,18 @@ export function createInMemoryPaymentIntentDouble() {
 
     /**
      * Mirrors stripeService.createPaymentIntent signature.
+     * Replays the same PaymentIntent for a repeated idempotency key (Stripe 24h cache).
      * @param {number} amountDollars
      */
     async createPaymentIntent(amountDollars, currency = 'usd', customerId = null, metadata = {}, options = {}) {
+      const idempotencyKey = options.idempotencyKey ? String(options.idempotencyKey) : null;
+      if (idempotencyKey && api.piIdByIdempotencyKey.has(idempotencyKey)) {
+        const existingId = api.piIdByIdempotencyKey.get(idempotencyKey);
+        const existing = intents.get(existingId);
+        if (!existing) throw new Error(`missing payment intent for idempotency replay ${existingId}`);
+        return buildPi(existing);
+      }
+
       const id = `pi_test_${runId}_${piSeq++}`;
       const amountCents = Math.round(Number(amountDollars) * 100);
       const captureMethod = options.captureMethod || 'automatic';
@@ -76,6 +87,7 @@ export function createInMemoryPaymentIntentDouble() {
         refunds: [],
       };
       intents.set(id, row);
+      if (idempotencyKey) api.piIdByIdempotencyKey.set(idempotencyKey, id);
       return buildPi(row);
     },
 

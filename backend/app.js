@@ -45,10 +45,10 @@ export function createApp(options = {}) {
     if (env === 'development' || env === 'test') {
       return true;
     }
-    logger.warn(
-      'CORS: FRONTEND_URL is unset in production — falling back to permissive origin. Set FRONTEND_URL (comma-separated allowlist) for a strict deployment.',
+    // Production without FRONTEND_URL must not start (envSchema); refuse permissive CORS here too.
+    throw new Error(
+      'FRONTEND_URL must be set in production to a comma-separated allowlist of frontend origins',
     );
-    return true;
   }
 
   app.use(

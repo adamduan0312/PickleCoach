@@ -31,6 +31,7 @@
     "seed:pinecrest-near-me": "node scripts/seed-pinecrest-near-me.js",
     "seed:coach-reviews": "node scripts/seed-coach-reviews.js",
     "seed:booking-list-qa": "node scripts/seed-booking-list-qa-matrix.js",
+    "seed:booking-status-ux": "node scripts/seed-booking-status-presentation-qa.js",
     "verify:booking-list-qa": "node scripts/verify-booking-list-qa-matrix.mjs",
     "seed:admin-resolve-charged": "node scripts/seed-admin-resolve-charged-dispute.js",
     "seed:c2-money-path": "node scripts/seed-c2-money-path.js",

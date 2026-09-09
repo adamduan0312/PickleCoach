@@ -36,22 +36,30 @@ export function NotificationsPage() {
           detail="Updates about bookings, payments, and messages will show up here."
         />
       ) : null}
-      <div className="stack">
+      <div className="stack notification-list">
         {(data || []).map((n) => {
           const payload = n.payload || {};
+          const isRead = Boolean(n.read_at);
           return (
             <button
               type="button"
               key={n.id}
-              className="card clickable"
-              style={{ textAlign: 'left', opacity: n.read_at ? 0.7 : 1 }}
+              className={`card clickable notification-item${isRead ? ' is-read' : ' is-unread'}`}
               onClick={() => open(n)}
             >
-              <div className="spread">
-                <strong>{payload.headline || n.type}</strong>
+              <div className="spread notification-item-top">
+                <div className="notification-item-title-row">
+                  {!isRead ? <span className="notification-unread-dot" aria-hidden="true" /> : null}
+                  <strong>{payload.headline || n.type}</strong>
+                  <span className={`badge ${isRead ? 'neutral' : 'info'}`}>
+                    {isRead ? 'Read' : 'New'}
+                  </span>
+                </div>
                 <span className="small muted">{relativeFromNow(n.created_at)}</span>
               </div>
-              <div>{payload.summary || payload.preview || ''}</div>
+              {payload.summary || payload.preview ? (
+                <div className="notification-item-body">{payload.summary || payload.preview}</div>
+              ) : null}
             </button>
           );
         })}

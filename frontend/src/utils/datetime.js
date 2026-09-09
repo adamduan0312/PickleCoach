@@ -17,17 +17,7 @@ function partNumber(parts, type) {
   return found ? Number(found.value) : 0;
 }
 
-/**
- * Interpret a wall-clock date+time in `timeZone` as a UTC Date.
- * ymd = '2026-08-20', hms = '09:00' or '09:00:00'
- */
-export function zonedWallTimeToUtc(ymd, hms, timeZone) {
-  const [y, m, d] = String(ymd).split('-').map(Number);
-  const timeParts = String(hms).split(':').map(Number);
-  const hh = timeParts[0] || 0;
-  const mm = timeParts[1] || 0;
-  const ss = timeParts[2] || 0;
-  const utcGuess = Date.UTC(y, m - 1, d, hh, mm, ss);
+function wallPartsInZone(date, timeZone) {
   const formatter = new Intl.DateTimeFormat('en-US', {
     timeZone: timeZone || 'UTC',
     year: 'numeric',
@@ -38,18 +28,68 @@ export function zonedWallTimeToUtc(ymd, hms, timeZone) {
     second: '2-digit',
     hourCycle: 'h23',
   });
-  const parts = formatter.formatToParts(new Date(utcGuess));
+  const parts = formatter.formatToParts(date);
   let hour = partNumber(parts, 'hour');
   if (hour === 24) hour = 0;
+  return {
+    y: partNumber(parts, 'year'),
+    m: partNumber(parts, 'month'),
+    d: partNumber(parts, 'day'),
+    hh: hour,
+    mm: partNumber(parts, 'minute'),
+    ss: partNumber(parts, 'second'),
+  };
+}
+
+function wallsMatch(parts, y, m, d, hh, mm, ss) {
+  return parts.y === y && parts.m === m && parts.d === d
+    && parts.hh === hh && parts.mm === mm && parts.ss === ss;
+}
+
+/**
+ * Interpret a wall-clock date+time in `timeZone` as a UTC Date.
+ * ymd = '2026-08-20', hms = '09:00' or '09:00:00'
+ *
+ * Spring-forward gaps (e.g. 2:30 AM on the US DST-start Sunday) return `null`.
+ * Fall-back overlaps pick the earlier UTC instant so 1:00 AM is unique and 2:00 AM
+ * still means 2:00 AM.
+ */
+export function zonedWallTimeToUtc(ymd, hms, timeZone) {
+  const [y, m, d] = String(ymd).split('-').map(Number);
+  const timeParts = String(hms).split(':').map(Number);
+  const hh = timeParts[0] || 0;
+  const mm = timeParts[1] || 0;
+  const ss = timeParts[2] || 0;
+  const zone = timeZone || 'UTC';
+  const utcGuess = Date.UTC(y, m - 1, d, hh, mm, ss);
+
+  const partsAtGuess = wallPartsInZone(new Date(utcGuess), zone);
   const asIfUtc = Date.UTC(
-    partNumber(parts, 'year'),
-    partNumber(parts, 'month') - 1,
-    partNumber(parts, 'day'),
-    hour,
-    partNumber(parts, 'minute'),
-    partNumber(parts, 'second'),
+    partsAtGuess.y,
+    partsAtGuess.m - 1,
+    partsAtGuess.d,
+    partsAtGuess.hh,
+    partsAtGuess.mm,
+    partsAtGuess.ss,
   );
-  return new Date(utcGuess - (asIfUtc - utcGuess));
+  const corrected = utcGuess - (asIfUtc - utcGuess);
+
+  const matches = [];
+  const consider = (ms) => {
+    const date = new Date(ms);
+    if (Number.isNaN(date.getTime())) return;
+    if (wallsMatch(wallPartsInZone(date, zone), y, m, d, hh, mm, ss)) {
+      matches.push(date);
+    }
+  };
+  consider(corrected);
+  for (const delta of [-7200000, -3600000, 3600000, 7200000]) {
+    consider(corrected + delta);
+  }
+
+  if (matches.length === 0) return null;
+  matches.sort((a, b) => a.getTime() - b.getTime());
+  return matches[0];
 }
 
 export function formatInZone(iso, timeZone, options = {}) {
@@ -232,6 +272,7 @@ export function buildAvailabilitySlots({
       const endMin = parseHmsToMinutes(row.end_time);
       for (let t = startMin; t + duration <= endMin + 0.01; t += duration) {
         const utc = zonedWallTimeToUtc(ymd, minutesToHms(t), zone);
+        if (!utc || Number.isNaN(utc.getTime())) continue;
         if (utc.getTime() < earliest) continue;
         const iso = utc.toISOString();
         if (seen.has(iso)) continue;

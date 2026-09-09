@@ -12,6 +12,7 @@ import {
   Dispute,
   DisputeResolutionAction,
   PaymentAction,
+  Review,
 } from '../models/index.js';
 import { successResponse, errorResponse, paginatedResponse } from '../utils/response.js';
 import { getPagination, getPagingData } from '../utils/pagination.js';
@@ -232,6 +233,13 @@ export const getBookingById = async (req, res) => {
         primaryStudentInclude(),
         { model: CourtLocation, as: 'courtLocation' },
         { model: Payment, as: 'payments' },
+        {
+          model: Review,
+          as: 'reviews',
+          separate: true,
+          order: [['id', 'ASC']],
+          limit: 1,
+        },
         {
           model: CancellationHistory,
           as: 'cancellationHistory',

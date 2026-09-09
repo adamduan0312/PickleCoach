@@ -1,11 +1,12 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { AuthLayout } from '../../components/layout/AuthLayout.jsx';
 import { FormField } from '../../components/ui/FormField.jsx';
 import { PasswordField } from '../../components/ui/PasswordField.jsx';
 import { Alert } from '../../components/ui/States.jsx';
 import { useAuth } from '../../auth/AuthContext.jsx';
-import { postLoginPath } from '../../auth/paths.js';
+import { clearIntentionalLogout } from '../../auth/logoutIntent.js';
+import { postLoginPath, resumePathFromLoginState } from '../../auth/paths.js';
 
 export function LoginPage() {
   const { login } = useAuth();
@@ -16,13 +17,19 @@ export function LoginPage() {
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
 
+  useEffect(() => {
+    // End the logout session boundary so a later real auth bounce can resume.
+    clearIntentionalLogout();
+  }, []);
+
   async function onSubmit(e) {
     e.preventDefault();
     setBusy(true);
     setError(null);
     try {
       const { user, mode } = await login({ email, password });
-      const from = location.state?.from;
+      // Only resume URL after an auth-guard bounce — not after logout / plain /login.
+      const from = resumePathFromLoginState(location.state);
       navigate(postLoginPath(user, mode, from), { replace: true });
     } catch (err) {
       setError(err.message);

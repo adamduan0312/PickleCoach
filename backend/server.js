@@ -3,7 +3,7 @@ import { createApp } from './app.js';
 import { sequelize } from './models/index.js';
 import { logger } from './config/logger.js';
 import { envSchema } from './config/validation.js';
-import { startWorkers } from './workers/index.js';
+import { startWorkers, stopWorkers } from './workers/index.js';
 
 const env = process.env.NODE_ENV || 'development';
 dotenv.config({ path: `.env.${env}` });
@@ -68,6 +68,7 @@ const gracefulShutdown = async (signal) => {
   logger.info(`${signal} signal received: starting graceful shutdown`);
 
   try {
+    stopWorkers();
     if (serverInstance) {
       await new Promise((resolve) => {
         serverInstance.close(() => {

@@ -50,10 +50,11 @@ describe('reminderWorker MVP tiers', () => {
 });
 
 describe('reminder email audience copy', () => {
-  it('uses counterpart label (Coach vs Student) from audience', () => {
-    assert.match(emailTemplatesSrc, /counterpartLabel/);
+  it('uses audience-based person labels and court fields', () => {
+    assert.match(emailTemplatesSrc, /personLabel/);
     assert.match(emailTemplatesSrc, /court_name/);
     assert.match(emailTemplatesSrc, /court_address/);
+    assert.match(emailTemplatesSrc, /Tomorrow's lesson/);
   });
 });
 
@@ -84,7 +85,7 @@ describe('lessonReminderCopy', () => {
     // 2026-08-26T22:00:00Z = 6:00 PM Eastern
     const iso = '2026-08-26T22:00:00.000Z';
     assert.equal(formatLessonDateForEmail(iso, 'America/New_York'), 'Wednesday, August 26');
-    assert.equal(formatLessonTimeForEmail(iso, 'America/New_York'), '6:00 PM');
+    assert.equal(formatLessonTimeForEmail(iso, 'America/New_York'), '6:00 PM EDT');
   });
 
   it('builds detail fields from booking.courtLocation for a public court', () => {
@@ -103,7 +104,8 @@ describe('lessonReminderCopy', () => {
     assert.equal(fields.court_address, '123 Main St, Fort Lauderdale, FL 33301');
     assert.equal(fields.court_address_revealed, true);
     assert.equal(fields.lesson_date, 'Wednesday, August 26');
-    assert.equal(fields.lesson_time, '6:00 PM');
+    assert.equal(fields.lesson_time, '6:00 PM EDT');
+    assert.equal(fields.lesson_when, 'Wednesday, August 26 · 6:00 PM EDT');
   });
 
   it('confirmed private court: student reminder reveals street address', () => {
@@ -208,8 +210,8 @@ describe('pre_lesson_24h email + private court redaction', () => {
       coach_name: 'John Smith',
       ...fields,
     });
-    assert.match(fragment, /Address:<\/strong> 1234 Oak Lane, Coral Springs, FL 33065/);
-    assert.match(fragment, /Location:<\/strong> John's Private Court/);
+    assert.match(fragment, /1234 Oak Lane, Coral Springs, FL 33065/);
+    assert.match(fragment, /John&#39;s Private Court/);
   });
 
   it('student email for pending private court shows area only (no street)', () => {
@@ -228,7 +230,7 @@ describe('pre_lesson_24h email + private court redaction', () => {
       coach_name: 'John Smith',
       ...fields,
     });
-    assert.match(fragment, /Address:<\/strong> Coral Springs, FL 33065/);
+    assert.match(fragment, /Coral Springs, FL 33065/);
     assert.doesNotMatch(fragment, /Oak Lane/);
   });
 });

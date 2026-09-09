@@ -8,6 +8,7 @@ import {
   getUnreadCountsByConversationIds,
   markConversationAsRead,
   resolveConversationReadCursor,
+  countUnreadMessagesForUser,
 } from '../utils/conversationUnread.js';
 
 const origQuery = sequelize.query;
@@ -106,5 +107,20 @@ describe('markConversationAsRead', () => {
     ];
     await markConversationAsRead(20, 7, new Date('2026-07-23T15:00:00.000Z'));
     assert.equal(updateCalled, false);
+  });
+});
+
+describe('countUnreadMessagesForUser', () => {
+  it('returns 0 for invalid user ids without querying', async () => {
+    sequelize.query = async () => {
+      throw new Error('should not query');
+    };
+    assert.equal(await countUnreadMessagesForUser(null), 0);
+    assert.equal(await countUnreadMessagesForUser(0), 0);
+  });
+
+  it('returns SQL unread total for the caller', async () => {
+    sequelize.query = async () => [{ unread_count: '4' }];
+    assert.equal(await countUnreadMessagesForUser(20), 4);
   });
 });

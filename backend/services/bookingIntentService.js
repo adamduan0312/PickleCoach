@@ -25,8 +25,11 @@ import * as notificationService from './notificationService.js';
 import { getEffectiveRolesForUserRecord } from '../utils/roleGovernance.js';
 import {
   buildBookingIntentStripeMetadata,
+  generateBookingAttemptId,
   isPaymentIntentAuthorizedForBookingConfirm,
+  isPaymentIntentUsableForCheckout,
   parseBookingIntentMetadata,
+  resolveBookingIntentIdempotencyKey,
   SLOT_NO_LONGER_AVAILABLE_CODE,
   STUDENT_SCHEDULE_CONFLICT_CODE,
 } from '../utils/bookingIntentContract.js';
@@ -159,6 +162,10 @@ export async function validateBookingRequestContext({
 
 /**
  * Create Stripe PaymentIntent for authorize-first flow (no booking row).
+ *
+ * Idempotency is attempt-scoped. If Stripe replays a prior create whose live
+ * PaymentIntent is no longer usable for checkout (e.g. canceled after coach
+ * decline), mint a fresh attempt instead of returning a dead client_secret.
  */
 export async function createBookingIntent({
   studentId,
@@ -169,6 +176,7 @@ export async function createBookingIntent({
   paymentMethod = 'stripe',
   paymentMethodId = null,
   idempotencyKey,
+  bookingAttemptId = null,
 }) {
   const ctx = await validateBookingRequestContext({
     studentId,
@@ -197,32 +205,65 @@ export async function createBookingIntent({
   if (!student) throw new Error(`Student not found: ${studentId}`);
   const stripeCustomerId = await ensureStripeCustomer(student);
 
-  const metadata = buildBookingIntentStripeMetadata({
-    studentId,
-    lessonId: lesson.id,
-    coachId: lesson.coach_id,
-    scheduledAt: scheduledDate,
-    durationMinutes: finalDuration,
-    courtLocationId: validatedCourtId,
-    idempotencyKey,
-    paymentMethod,
-  });
+  let effectiveIdempotencyKey = idempotencyKey
+    || resolveBookingIntentIdempotencyKey({ studentId, bookingAttemptId });
+  let effectiveAttemptId = bookingAttemptId || null;
 
-  const paymentIntent = await stripeService.createPaymentIntent(
-    totalCharge,
-    'usd',
-    stripeCustomerId,
-    metadata,
-    {
-      captureMethod: 'manual',
-      paymentMethodId,
-      idempotencyKey: idempotencyKey ? `intent_${idempotencyKey}` : undefined,
-    },
-  );
+  const createWithKey = async (key) => {
+    const metadata = buildBookingIntentStripeMetadata({
+      studentId,
+      lessonId: lesson.id,
+      coachId: lesson.coach_id,
+      scheduledAt: scheduledDate,
+      durationMinutes: finalDuration,
+      courtLocationId: validatedCourtId,
+      idempotencyKey: key,
+      paymentMethod,
+    });
+    const created = await stripeService.createPaymentIntent(
+      totalCharge,
+      'usd',
+      stripeCustomerId,
+      metadata,
+      {
+        captureMethod: 'manual',
+        paymentMethodId,
+        idempotencyKey: `intent_${key}`,
+      },
+    );
+    // Stripe idempotency returns the original create payload; live status may differ.
+    const live = await stripeService.getPaymentIntent(created.id);
+    return { created, live };
+  };
+
+  let { created: paymentIntent, live: livePaymentIntent } = await createWithKey(effectiveIdempotencyKey);
+
+  if (!isPaymentIntentUsableForCheckout(livePaymentIntent)) {
+    effectiveAttemptId = generateBookingAttemptId();
+    effectiveIdempotencyKey = resolveBookingIntentIdempotencyKey({
+      studentId,
+      bookingAttemptId: effectiveAttemptId,
+    });
+    logger.info('Booking intent reminted after unusable PaymentIntent replay', {
+      studentId,
+      priorPaymentIntentId: livePaymentIntent?.id,
+      priorStatus: livePaymentIntent?.status,
+      remintedAttemptId: effectiveAttemptId,
+    });
+    ({ created: paymentIntent, live: livePaymentIntent } = await createWithKey(effectiveIdempotencyKey));
+    if (!isPaymentIntentUsableForCheckout(livePaymentIntent)) {
+      const err = new Error('Unable to create a usable payment authorization. Please try again.');
+      err.statusCode = 502;
+      err.code = 'payment_intent_unusable';
+      throw err;
+    }
+  }
 
   return {
     client_secret: paymentIntent.client_secret,
     payment_intent_id: paymentIntent.id,
+    booking_attempt_id: effectiveAttemptId,
+    idempotency_key: effectiveIdempotencyKey,
     lesson_id: lesson.id,
     scheduled_at: scheduledDate.toISOString(),
     duration_minutes: finalDuration,

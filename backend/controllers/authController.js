@@ -12,10 +12,17 @@ import { canSelfServiceAddRole, canSelfServiceRemoveRole } from '../utils/roleGo
 import { countOtherLiveAdmins } from '../utils/userRoleChangeGuards.js';
 import { softDeleteUserAccount } from '../utils/userLifecycle.js';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
 /** Minimum interval between verification emails for the same user (spam / cost control). */
 const EMAIL_VERIFICATION_RESEND_COOLDOWN_MS = 60 * 1000;
+
+function requireJwtSecret() {
+  const secret = process.env.JWT_SECRET;
+  if (!secret || String(secret).length < 32) {
+    throw new Error('JWT_SECRET must be configured (min 32 characters)');
+  }
+  return secret;
+}
 
 /** Same row graph as GET/PUT profile — single source for `serializeAuthProfileUser`. */
 async function loadUserForAuthProfile(userId) {
@@ -33,7 +40,7 @@ async function loadUserForAuthProfile(userId) {
 function buildAuthSessionPayload(user) {
   const token = jwt.sign(
     { userId: user.id, tokenVersion: user.token_version ?? 0 },
-    JWT_SECRET,
+    requireJwtSecret(),
     { expiresIn: JWT_EXPIRES_IN }
   );
   return {
@@ -70,7 +77,7 @@ export const register = async (req, res) => {
       include: [{ model: UserRole, as: 'userRoles', attributes: ['role'] }],
     });
 
-    const token = jwt.sign({ userId: user.id, tokenVersion: user.token_version ?? 0 }, JWT_SECRET, {
+    const token = jwt.sign({ userId: user.id, tokenVersion: user.token_version ?? 0 }, requireJwtSecret(), {
       expiresIn: JWT_EXPIRES_IN,
     });
 
@@ -117,7 +124,7 @@ export const login = async (req, res) => {
 
     await user.update({ last_login: new Date() });
 
-    const token = jwt.sign({ userId: user.id, tokenVersion: user.token_version ?? 0 }, JWT_SECRET, {
+    const token = jwt.sign({ userId: user.id, tokenVersion: user.token_version ?? 0 }, requireJwtSecret(), {
       expiresIn: JWT_EXPIRES_IN,
     });
 
@@ -202,12 +209,12 @@ export const refreshToken = async (req, res) => {
     const trimmed = token.trim();
     let decoded;
     try {
-      decoded = jwt.verify(trimmed, JWT_SECRET);
+      decoded = jwt.verify(trimmed, requireJwtSecret());
     } catch (error) {
       if (error.name === 'TokenExpiredError') {
         try {
           // Signature must still verify — never use jwt.decode alone for refresh.
-          decoded = jwt.verify(trimmed, JWT_SECRET, { ignoreExpiration: true });
+          decoded = jwt.verify(trimmed, requireJwtSecret(), { ignoreExpiration: true });
         } catch (inner) {
           await logAudit(null, 'token_refresh_invalid', null, null, null, { reason: 'expired_bad_signature' }, req);
           return errorResponse(res, 'Authentication failed', 401);
@@ -242,7 +249,7 @@ export const refreshToken = async (req, res) => {
       return errorResponse(res, 'Authentication failed', 401);
     }
 
-    const newToken = jwt.sign({ userId: user.id, tokenVersion: user.token_version ?? 0 }, JWT_SECRET, {
+    const newToken = jwt.sign({ userId: user.id, tokenVersion: user.token_version ?? 0 }, requireJwtSecret(), {
       expiresIn: JWT_EXPIRES_IN,
     });
 
@@ -486,7 +493,7 @@ export const addUserRole = async (req, res) => {
         include: [{ model: UserRole, as: 'userRoles', attributes: ['role'] }],
       });
 
-      const newToken = jwt.sign({ userId: user.id, tokenVersion: user.token_version ?? 0 }, JWT_SECRET, {
+      const newToken = jwt.sign({ userId: user.id, tokenVersion: user.token_version ?? 0 }, requireJwtSecret(), {
         expiresIn: JWT_EXPIRES_IN,
       });
 
@@ -520,7 +527,7 @@ export const addUserRole = async (req, res) => {
       include: [{ model: UserRole, as: 'userRoles', attributes: ['role'] }],
     });
 
-    const newToken = jwt.sign({ userId: user.id, tokenVersion: user.token_version ?? 0 }, JWT_SECRET, {
+    const newToken = jwt.sign({ userId: user.id, tokenVersion: user.token_version ?? 0 }, requireJwtSecret(), {
       expiresIn: JWT_EXPIRES_IN,
     });
 
@@ -564,6 +571,15 @@ export const changePassword = async (req, res) => {
     });
 
     await logAudit(req.user.id, 'password_changed', 'users', user.id, beforeState, { password_changed: true, token_version: newTokenVersion }, req);
+
+    void notificationService.notifyPasswordChanged(user.id).catch((err) => {
+      logger.warn({
+        component: 'auth',
+        event: 'password_changed_notify_failed',
+        userId: user.id,
+        message: err?.message,
+      });
+    });
 
     await user.reload({
       include: [{ model: UserRole, as: 'userRoles', attributes: ['role'] }],

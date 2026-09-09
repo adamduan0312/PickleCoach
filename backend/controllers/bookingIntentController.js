@@ -1,10 +1,7 @@
 import * as bookingIntentService from '../services/bookingIntentService.js';
 import { successResponse, errorResponse } from '../utils/response.js';
 import { logger } from '../config/logger.js';
-import crypto from 'crypto';
-
-const generateIntentIdempotencyKey = (studentId) =>
-  `booking_intent_${studentId}_${Date.now()}_${crypto.randomUUID()}`;
+import { resolveBookingIntentIdempotencyKey } from '../utils/bookingIntentContract.js';
 
 function getCreateBookingErrorDetail(error, isDev) {
   if (!isDev) return null;
@@ -27,13 +24,16 @@ export const createBookingIntent = async (req, res) => {
       court_location_id,
       payment_method = 'stripe',
       payment_method_id,
+      booking_attempt_id,
       idempotency_key,
     } = req.validated;
 
-    const requestIdempotencyKey =
-      idempotency_key ||
-      req.headers['idempotency-key'] ||
-      generateIntentIdempotencyKey(req.user.id);
+    const headerIdempotencyKey = req.headers['idempotency-key'];
+    const requestIdempotencyKey = resolveBookingIntentIdempotencyKey({
+      studentId: req.user.id,
+      bookingAttemptId: booking_attempt_id,
+      idempotencyKey: idempotency_key || headerIdempotencyKey || null,
+    });
 
     const result = await bookingIntentService.createBookingIntent({
       studentId: req.user.id,
@@ -44,6 +44,7 @@ export const createBookingIntent = async (req, res) => {
       paymentMethod: payment_method,
       paymentMethodId: payment_method_id || null,
       idempotencyKey: requestIdempotencyKey,
+      bookingAttemptId: booking_attempt_id || null,
     });
 
     return successResponse(res, result, 'Booking authorization created.', 201);

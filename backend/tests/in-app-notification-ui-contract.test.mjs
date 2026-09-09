@@ -161,6 +161,7 @@ describe('in-app notification UI contract', () => {
     });
     assertInAppUiContract(opened, { type: 'dispute_opened', expectPreview: true });
     assert.equal(opened.route, '/bookings/81');
+    assert.match(opened.headline, /issue was reported/i);
 
     const resolved = withNotificationRoute('dispute_resolved', {
       booking_id: 81,
@@ -218,11 +219,12 @@ describe('in-app notification UI contract', () => {
 
     const review = withNotificationRoute('review_received', {
       booking_id: 81,
-      route: '/reviews/15',
+      route: '/bookings/81',
       ...buildReviewReceivedNotificationContent({ rating: 5, studentName: 'Ada' }),
     });
     assertInAppUiContract(review, { type: 'review_received', expectPreview: true });
-    assert.equal(review.route, '/reviews/15');
+    assert.equal(review.route, '/bookings/81');
+    assert.match(review.headline, /new review/i);
 
     const refund = withNotificationRoute('refund_succeeded', {
       booking_id: 81,

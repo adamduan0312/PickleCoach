@@ -75,7 +75,7 @@ describe('buildDisputeOpenedNotificationContent', () => {
       openedBy: 'student',
       disputeTypeCode: 'coach_no_show_claim',
     });
-    assert.equal(content.headline, 'A dispute was opened');
+    assert.equal(content.headline, 'An issue was reported for your lesson');
     assert.match(content.summary, /The student opened/);
     assert.match(content.summary, /coach no-show/);
     assert.equal(content.preview, 'coach no-show');
@@ -151,7 +151,7 @@ describe('buildReviewReceivedNotificationContent', () => {
       rating: 5,
       studentName: 'Ada',
     });
-    assert.equal(content.headline, 'New review received');
+    assert.equal(content.headline, 'You received a new review');
     assert.match(content.summary, /Ada left a 5-star review/);
     assert.equal(content.preview, '5★');
   });
@@ -258,6 +258,9 @@ describe('email subjects for dual-channel types', () => {
       'Your coach was marked as a no-show',
     );
     assert.equal(getEmailSubject('dispute_resolved'), 'Dispute resolved');
+    assert.equal(getEmailSubject('dispute_opened'), 'An issue was reported');
+    assert.equal(getEmailSubject('review_received'), 'You received a new review');
+    assert.equal(getEmailSubject('password_changed'), 'Your PickleCoach password was changed');
     assert.equal(getEmailSubject('booking_request_expired'), 'Booking request expired');
     assert.equal(getEmailSubject('refund_succeeded'), 'Refund completed');
   });

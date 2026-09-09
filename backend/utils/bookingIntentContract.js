@@ -1,3 +1,5 @@
+import crypto from 'crypto';
+
 /**
  * Authorize-first booking flow: PaymentIntent before any booking row exists.
  *
@@ -5,6 +7,10 @@
  * - One coach + one student (JWT → primary_student_id); no `player_ids`
  * - Lesson owns `price` and `duration_minutes` (students do not override duration)
  * - `court_location_id` required — one of the coach's linked courts
+ *
+ * Idempotency: Stripe keys must be scoped to a **booking attempt**, not just
+ * student+lesson+time+court. After decline/cancel the prior PaymentIntent is
+ * canceled; reusing that attempt's Stripe idempotency key would replay a dead PI.
  */
 export const BOOKING_INTENT_FLOW_METADATA = 'authorize_then_book';
 
@@ -13,6 +19,15 @@ export const SLOT_NO_LONGER_AVAILABLE_CODE = 'slot_no_longer_available';
 /** Student already has a pending/confirmed lesson overlapping this time (any coach). */
 export const STUDENT_SCHEDULE_CONFLICT_CODE = 'student_schedule_conflict';
 
+/** Statuses that can still drive Stripe Payment Element / authorization. */
+const CHECKOUT_USABLE_PI_STATUSES = new Set([
+  'requires_payment_method',
+  'requires_confirmation',
+  'requires_action',
+  'requires_capture',
+  'processing',
+]);
+
 /**
  * @param {import('stripe').Stripe.PaymentIntent} paymentIntent
  */
@@ -20,6 +35,42 @@ export function isPaymentIntentAuthorizedForBookingConfirm(paymentIntent) {
   if (!paymentIntent?.id) return false;
   if (paymentIntent.status !== 'requires_capture') return false;
   return Number(paymentIntent.amount_capturable ?? 0) > 0;
+}
+
+/**
+ * Live PaymentIntent usable for a new / resumed checkout (Payment Element mount).
+ * Canceled or succeeded intents must never be returned for a fresh authorization.
+ * @param {Pick<import('stripe').Stripe.PaymentIntent, 'id' | 'status'> | null | undefined} paymentIntent
+ */
+export function isPaymentIntentUsableForCheckout(paymentIntent) {
+  if (!paymentIntent?.id) return false;
+  return CHECKOUT_USABLE_PI_STATUSES.has(String(paymentIntent.status || ''));
+}
+
+/** Client-facing booking attempt id (stable within one checkout session). */
+export function generateBookingAttemptId() {
+  return crypto.randomUUID();
+}
+
+/**
+ * Resolve the idempotency key used for Stripe PaymentIntent.create.
+ * Prefer explicit attempt id so param-only keys cannot pin a canceled PI.
+ * @param {{ studentId: number, bookingAttemptId?: string|null, idempotencyKey?: string|null }} params
+ */
+export function resolveBookingIntentIdempotencyKey({
+  studentId,
+  bookingAttemptId = null,
+  idempotencyKey = null,
+}) {
+  const attempt = bookingAttemptId != null ? String(bookingAttemptId).trim() : '';
+  if (attempt) {
+    return `booking_intent_${studentId}_${attempt}`.slice(0, 255);
+  }
+  const legacy = idempotencyKey != null ? String(idempotencyKey).trim() : '';
+  if (legacy) {
+    return legacy.slice(0, 255);
+  }
+  return `booking_intent_${studentId}_${generateBookingAttemptId()}`.slice(0, 255);
 }
 
 /**

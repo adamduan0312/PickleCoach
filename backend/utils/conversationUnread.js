@@ -102,3 +102,36 @@ export async function countUnreadForConversation(userId, conversationId) {
   const map = await getUnreadCountsByConversationIds(userId, [conversationId]);
   return map.get(Number(conversationId)) || 0;
 }
+
+/**
+ * Total unread messages across conversations for bookings where the user is
+ * coach or primary student (same access set as the inbox).
+ * Used by the Messages nav attention indicator.
+ *
+ * @param {number} userId
+ * @returns {Promise<number>}
+ */
+export async function countUnreadMessagesForUser(userId) {
+  const uid = Number(userId);
+  if (!Number.isFinite(uid) || uid < 1) return 0;
+
+  const rows = await sequelize.query(
+    `
+    SELECT COUNT(*) AS unread_count
+    FROM messages m
+    INNER JOIN conversations c ON c.id = m.conversation_id
+    INNER JOIN bookings b ON b.id = c.booking_id
+    LEFT JOIN conversation_reads cr
+      ON cr.conversation_id = m.conversation_id
+     AND cr.user_id = :userId
+    WHERE (b.coach_id = :userId OR b.primary_student_id = :userId)
+      AND m.sender_id != :userId
+      AND (cr.last_read_at IS NULL OR m.created_at > cr.last_read_at)
+    `,
+    {
+      replacements: { userId: uid },
+      type: QueryTypes.SELECT,
+    },
+  );
+  return Number(rows?.[0]?.unread_count) || 0;
+}

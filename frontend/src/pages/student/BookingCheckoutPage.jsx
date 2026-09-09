@@ -10,6 +10,7 @@ import { formatDateInZone, formatTimeInZone, detectLocalTimezone } from '../../u
 import { useAuth } from '../../auth/AuthContext.jsx';
 import { CheckoutPolicyExplainer } from '../../components/bookings/CheckoutPolicyExplainer.jsx';
 import { bookingApiErrorCopy, bookingApiErrorMessage, stripePaymentFormErrorCopy } from '../../domain/bookingErrors.js';
+import { ensureCheckoutAttemptParams, getCheckoutAttemptId } from '../../utils/checkoutAttempt.js';
 
 const STRIPE_PUBLISHABLE_KEY = import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY || '';
 const stripePromise = STRIPE_PUBLISHABLE_KEY ? loadStripe(STRIPE_PUBLISHABLE_KEY) : null;
@@ -29,10 +30,11 @@ function checkoutWhereLabel(court) {
 
 export function BookingCheckoutPage() {
   const { coachId } = useParams();
-  const [params] = useSearchParams();
+  const [params, setSearchParams] = useSearchParams();
   const lessonId = params.get('lesson');
   const courtId = params.get('court');
   const scheduledAt = params.get('at');
+  const attemptId = getCheckoutAttemptId(params);
   const { user } = useAuth();
   const tz = user?.timezone || detectLocalTimezone();
   const missingParams = !lessonId || !courtId || !scheduledAt;
@@ -40,8 +42,16 @@ export function BookingCheckoutPage() {
   const [error, setError] = useState(null);
   const [meta, setMeta] = useState(null);
 
+  // Mint a stable attempt id once per checkout session (survives refresh; new on re-nav).
   useEffect(() => {
-    if (missingParams) return undefined;
+    if (missingParams || attemptId) return undefined;
+    const { params: next } = ensureCheckoutAttemptParams(params);
+    setSearchParams(next, { replace: true });
+    return undefined;
+  }, [missingParams, attemptId, params, setSearchParams]);
+
+  useEffect(() => {
+    if (missingParams || !attemptId) return undefined;
     let cancelled = false;
     async function start() {
       try {
@@ -63,14 +73,14 @@ export function BookingCheckoutPage() {
           coach: coachRes.data,
           court,
         });
-        const idem = `pc_${user.id}_${lessonId}_${scheduledAt}_${courtId}`.slice(0, 255);
+        // Attempt-scoped key: same checkout refresh/retry reuses PI; new nav after decline gets a fresh one.
         const created = await bookingsApi.createIntent({
           lesson_id: Number(lessonId),
           scheduled_at: scheduledAt,
           court_location_id: Number(courtId),
           payment_method: 'stripe',
-          idempotency_key: idem,
-        }, idem);
+          booking_attempt_id: attemptId,
+        }, attemptId);
         if (cancelled) return;
         setIntent(created.data);
       } catch (err) {
@@ -79,7 +89,7 @@ export function BookingCheckoutPage() {
     }
     start();
     return () => { cancelled = true; };
-  }, [missingParams, coachId, lessonId, courtId, scheduledAt, user?.id]);
+  }, [missingParams, coachId, lessonId, courtId, scheduledAt, attemptId, user?.id]);
 
   const stripeElementsOptions = useMemo(
     () => (intent?.client_secret ? { clientSecret: intent.client_secret } : null),

@@ -153,7 +153,7 @@ describe('GET /api/students/me/bookings authorize (student)', () => {
 });
 
 describe('booking list controllers', () => {
-  it('coach GET inbox only uses coach_id and always includes student reliability', async () => {
+  it('coach GET inbox only uses coach_id and omits student reliability (MVP)', async () => {
     const getOpts = stubListQuery([bookingRow({ id: 1, coach_id: 5, primary_student_id: 20 })]);
     const req = {
       validated: {},
@@ -166,7 +166,7 @@ describe('booking list controllers', () => {
     assert.equal(res.statusCode, 200);
     assert.equal(getOpts().where.coach_id, 5);
     assert.equal(getOpts().where.primary_student_id, undefined);
-    assert.equal(res.payload.data[0].primaryStudent?.reliability_score, 88);
+    assert.equal(res.payload.data[0].primaryStudent?.reliability_score, undefined);
   });
 
   it('student GET dashboard only uses primary_student_id and omits student reliability', async () => {

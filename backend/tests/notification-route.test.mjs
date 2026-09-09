@@ -32,12 +32,17 @@ describe('notificationRouteFor', () => {
 
   it('returns null when no deep-link ids', () => {
     assert.equal(notificationRouteFor('password_reset', { headline: 'Reset' }), null);
+    assert.equal(notificationRouteFor('password_changed', { headline: 'Changed' }), null);
   });
 
   it('prefers explicit payload.route over derived paths', () => {
     assert.equal(
-      notificationRouteFor('review_received', { booking_id: 81, route: '/reviews/15' }),
-      '/reviews/15',
+      notificationRouteFor('review_received', { booking_id: 81, route: '/bookings/81' }),
+      '/bookings/81',
+    );
+    assert.equal(
+      notificationRouteFor('password_changed', { route: '/settings' }),
+      '/settings',
     );
     assert.equal(
       notificationRouteFor('dispute_resolved', { booking_id: 81, route: '/disputes/21' }),

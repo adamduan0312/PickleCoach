@@ -8,18 +8,44 @@ import { validateDisputeResolutionPayload } from '../utils/disputeResolutionAlig
 export const envSchema = Joi.object({
   NODE_ENV: Joi.string().valid('development', 'test', 'production').default('development'),
   PORT: Joi.number().default(4000),
-  // Make DB vars optional since config.json is used
+  // Make DB vars optional since config.json / database.cjs defaults exist in non-prod
   DB_HOST: Joi.string().optional(),
   DB_PORT: Joi.number().optional(),
   DB_USER: Joi.string().optional(),
-  DB_PASSWORD: Joi.string().optional(),
+  DB_PASSWORD: Joi.string().optional().allow(''),
   DB_NAME: Joi.string().optional(),
   // JWT_SECRET still required for auth
   JWT_SECRET: Joi.string().min(32).required(),
   JWT_EXPIRES_IN: Joi.string().default('7d'),
-  // Stripe vars optional (only needed when processing payments)
-  STRIPE_SECRET_KEY: Joi.string().optional(),
-  STRIPE_WEBHOOK_SECRET: Joi.string().optional(),
+  /**
+   * Comma-separated browser origins allowed by CORS.
+   * Required in production — never fall back to a permissive allow-all there.
+   */
+  FRONTEND_URL: Joi.when('NODE_ENV', {
+    is: 'production',
+    then: Joi.string().min(1).required(),
+    otherwise: Joi.string().optional().allow(''),
+  }),
+  APP_URL: Joi.string().optional().allow(''),
+  // Stripe: optional in development/test; required live keys in production
+  STRIPE_SECRET_KEY: Joi.when('NODE_ENV', {
+    is: 'production',
+    then: Joi.string()
+      .pattern(/^sk_live_/)
+      .required()
+      .messages({
+        'string.pattern.base': 'STRIPE_SECRET_KEY must be a live secret key (sk_live_…) in production',
+        'any.required': 'STRIPE_SECRET_KEY is required in production',
+      }),
+    otherwise: Joi.string().optional().allow(''),
+  }),
+  STRIPE_WEBHOOK_SECRET: Joi.when('NODE_ENV', {
+    is: 'production',
+    then: Joi.string().min(10).required(),
+    otherwise: Joi.string().optional().allow(''),
+  }),
+  /** When false/0, cron workers do not start (API-only process). Default: enabled outside test. */
+  WORKERS_ENABLED: Joi.string().valid('true', 'false', '1', '0').optional(),
 }).unknown();
 
 /** MVP password policy: min 10 chars, one lowercase, one uppercase, one digit (no symbol requirement). */
@@ -108,6 +134,8 @@ export const createBookingIntentSchema = Joi.object({
     .messages({ 'any.required': 'court_location_id is required — choose one of the coach\'s courts.' }),
   payment_method: Joi.string().valid('stripe', 'apple_pay', 'google_pay', 'card').default('stripe'),
   payment_method_id: Joi.string().max(255).optional(),
+  /** Stable id for one checkout attempt (refresh/double-submit safe; new on each intentional rebook). */
+  booking_attempt_id: Joi.string().trim().min(8).max(64).optional(),
   idempotency_key: Joi.string().trim().min(8).max(255).optional(),
 });
 

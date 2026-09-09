@@ -5,3 +5,4 @@ export { AdminBookingsPage } from './AdminBookingsPage.jsx';
 export { AdminDisputesPage } from './AdminDisputesPage.jsx';
 export { AdminDisputeDetailPage } from './AdminDisputeDetailPage.jsx';
 export { AdminPaymentsPage } from './AdminPaymentsPage.jsx';
+export { AdminPaymentDetailPage } from './AdminPaymentDetailPage.jsx';

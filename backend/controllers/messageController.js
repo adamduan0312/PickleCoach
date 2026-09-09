@@ -13,11 +13,30 @@ import { serializeMessage, serializeConversationDetail } from '../utils/messageD
 import {
   getUnreadCountsByConversationIds,
   markConversationAsRead,
+  countUnreadMessagesForUser,
 } from '../utils/conversationUnread.js';
 import * as notificationService from '../services/notificationService.js';
 
 const MAX_LIST_ALL_CONVERSATIONS = 10000;
 const MAX_LIST_ALL_MESSAGES = 10000;
+
+/**
+ * Lightweight Messages nav badge: total unread chat messages for the caller.
+ * Prefer this over fetching the full inbox just to render a dot.
+ */
+export const getUnreadMessageCount = async (req, res) => {
+  try {
+    const count = await countUnreadMessagesForUser(req.user.id);
+    return successResponse(
+      res,
+      { count },
+      'Unread message count retrieved successfully',
+    );
+  } catch (error) {
+    logger.error('Get unread message count error:', error);
+    return errorResponse(res, 'Failed to retrieve unread message count', 500);
+  }
+};
 
 export const getConversations = async (req, res) => {
   try {

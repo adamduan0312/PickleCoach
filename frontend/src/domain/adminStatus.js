@@ -61,15 +61,27 @@ const DISPUTE_SHORT = {
   rejected: 'Rejected',
 };
 
+const ADMIN_BOOKING_STATUS_LABELS = {
+  pending: 'Pending',
+  confirmed: 'Confirmed',
+  awaiting_verification: 'Awaiting verification',
+  completed: 'Completed',
+  cancelled: 'Cancelled',
+  disputed: 'Disputed',
+  student_no_show: 'Student no-show',
+  coach_no_show: 'Coach no-show',
+};
+
 /**
  * Admin booking status — always the raw booking lifecycle, never “Issue reported”.
+ * Keeps internal “Disputed” language (customer UI uses “Issue under review”).
  */
 export function adminBookingStatusView(booking) {
   const status = booking?.status;
   return {
     key: 'booking',
     label: 'Booking',
-    value: bookingStatusLabel(status),
+    value: ADMIN_BOOKING_STATUS_LABELS[status] || bookingStatusLabel(status),
     tone: bookingStatusTone(status),
   };
 }

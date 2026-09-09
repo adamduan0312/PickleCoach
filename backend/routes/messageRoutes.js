@@ -12,6 +12,11 @@ import {
 const router = express.Router();
 
 router.get(
+  '/unread-count',
+  authenticate,
+  messageController.getUnreadMessageCount,
+);
+router.get(
   '/conversations',
   authenticate,
   validateQuery(getConversationsQuerySchema),

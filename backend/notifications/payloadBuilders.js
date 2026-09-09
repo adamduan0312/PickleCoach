@@ -173,11 +173,19 @@ export const buildBookingRequestExpiredNotificationContent = () => ({
     'Your coach did not respond in time, so this booking request expired. Your payment authorization was released — you were not charged.',
 });
 
+/** Account security: password was changed on this account. */
+export const buildPasswordChangedNotificationContent = () => ({
+  headline: 'Your password was changed',
+  summary:
+    'The password on your PickleCoach account was changed. If you did not make this change, reset your password immediately and contact support.',
+  route: '/settings',
+});
+
 /** Coach: student left a review on a completed lesson. */
 export const buildReviewReceivedNotificationContent = ({ rating, studentName } = {}) => {
   const stars = rating != null && Number.isFinite(Number(rating)) ? Number(rating) : null;
   const from = studentName || 'A student';
-  const headline = 'New review received';
+  const headline = 'You received a new review';
   const summary =
     stars != null
       ? `${from} left a ${stars}-star review on your lesson.`
@@ -256,11 +264,23 @@ export const buildCoachNoShowNotificationContent = ({ audience } = {}) => {
 
 export const buildDisputeOpenedNotificationContent = ({ openedBy, disputeTypeCode } = {}) => {
   const typeLabel = DISPUTE_TYPE_LABELS[disputeTypeCode] || 'an issue';
-  const who =
-    openedBy === 'student' ? 'The student' : openedBy === 'coach' ? 'Your coach' : 'Support';
+  if (openedBy === 'student') {
+    return {
+      headline: 'An issue was reported for your lesson',
+      summary: `The student opened a dispute on this booking (${typeLabel}). Payment is on hold until it is reviewed.`,
+      preview: typeLabel,
+    };
+  }
+  if (openedBy === 'coach') {
+    return {
+      headline: 'An issue was reported for your lesson',
+      summary: `Your coach opened a dispute on this booking (${typeLabel}). Payment is on hold until it is reviewed.`,
+      preview: typeLabel,
+    };
+  }
   return {
-    headline: 'A dispute was opened',
-    summary: `${who} opened a dispute on this booking (${typeLabel}). Payment is on hold until it is reviewed.`,
+    headline: 'An issue was reported for your lesson',
+    summary: `Support opened a dispute on this booking (${typeLabel}). Payment is on hold until it is reviewed.`,
     preview: typeLabel,
   };
 };

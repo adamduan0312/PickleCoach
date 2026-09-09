@@ -650,6 +650,10 @@ export const deleteAvailability = async (req, res) => {
  * GET /api/coaches/me/marketplace-status
  * Checklist for whether this coach appears in student discovery.
  * Optionally refreshes local stripe_ready from Stripe (single coach — OK to call Stripe).
+ *
+ * Dev/seed Connect ids (`acct_davie_*`, `acct_testflow_*`, … — see
+ * {@link isDevSeedStripeConnectAccountId}) skip live Stripe sync so Discover
+ * (DB `stripe_ready`) and this checklist stay aligned for QA fixtures.
  */
 export const getMyMarketplaceStatus = async (req, res) => {
   try {
@@ -665,7 +669,7 @@ export const getMyMarketplaceStatus = async (req, res) => {
     }
 
     const coachProfile = await CoachProfile.findOne({ where: { user_id: coachId } });
-    if (coachProfile?.stripe_account_id) {
+    if (coachProfile?.stripe_account_id && !isDevSeedStripeConnectAccountId(coachProfile.stripe_account_id)) {
       try {
         const stripe = (await import('../services/stripeService.js')).default;
         const account = await stripe.accounts.retrieve(coachProfile.stripe_account_id);
@@ -676,7 +680,7 @@ export const getMyMarketplaceStatus = async (req, res) => {
           message: syncErr.message,
         });
       }
-    } else if (coachProfile?.stripe_ready) {
+    } else if (coachProfile?.stripe_ready && !coachProfile.stripe_account_id) {
       await coachProfile.update({ stripe_ready: false, stripe_onboarding_completed_at: null });
     }
 
@@ -693,6 +697,26 @@ export const stripeConnectOnboardDeps = {
   loadStripeService: () => import('../services/stripeService.js'),
   loadAudit: () => import('../utils/audit.js'),
 };
+
+/**
+ * Fake Connect account ids used by local seed scripts. Live Stripe sync would
+ * mark them not-ready and unlist coaches that Discover still shows via DB stripe_ready.
+ *
+ * Keep in sync with seed scripts (`acct_davie_*`, `acct_pinecrest_*`, `acct_rating_*`,
+ * `acct_diverse_*`, `acct_testflow_*`, `acct_seed_*`). Do **not** treat `acct_restored_*`
+ * as seed — those are intentionally cleared as invalid.
+ */
+export function isDevSeedStripeConnectAccountId(accountId) {
+  const id = String(accountId || '');
+  return (
+    id.startsWith('acct_testflow_')
+    || id.startsWith('acct_seed_')
+    || id.startsWith('acct_davie_')
+    || id.startsWith('acct_pinecrest_')
+    || id.startsWith('acct_rating_')
+    || id.startsWith('acct_diverse_')
+  );
+}
 
 /** Mutable deps for GET stripe-connect/status unit tests. */
 export const stripeConnectStatusDeps = {
@@ -879,6 +903,22 @@ export const getStripeConnectStatus = async (req, res) => {
     }
 
     const storedAccountId = coachProfile.stripe_account_id;
+
+    // Dev seed Connect ids are intentional QA fixtures (Discover uses DB stripe_ready).
+    // Do not clear them or call Stripe — that was unlisting seed coaches while Discover
+    // still showed them until the next list query after AuthContext refreshed status.
+    if (isDevSeedStripeConnectAccountId(storedAccountId)) {
+      return successResponse(
+        res,
+        {
+          onboarded: Boolean(coachProfile.stripe_ready),
+          account_id: storedAccountId,
+          stripe_ready: Boolean(coachProfile.stripe_ready),
+          seed_connect_account: true,
+        },
+        'Dev seed Stripe Connect account — local stripe_ready used (no live Stripe sync)',
+      );
+    }
 
     if (!isPlausibleStripeConnectAccountId(storedAccountId)) {
       logger.warn('Stripe Connect status: stored account id is not a valid Stripe Connect id; clearing', {
