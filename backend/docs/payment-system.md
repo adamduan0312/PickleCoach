@@ -119,7 +119,7 @@ Timeline is aligned with a **24-hour financial review window after lesson end** 
 
 Coach **`POST .../complete`** does **not** skip the 24h wait. **`awaiting_verification` is not a payable status**. **`student_no_show` is not an immediate payout** — it uses the same 24h clock.
 
-**`coach_no_show`:** marking attendance does **not** refund immediately. After the same 24h window with no open dispute, `payoutWorker` enqueues `booking_coach_no_show_refund`. Dispute resolve can still refund sooner via admin `financial_action`.
+**`coach_no_show`:** marking attendance does **not** refund immediately. After the same 24h window with no open dispute, `payoutWorker` enqueues `booking_coach_no_show_refund` for the **remaining** charge — **unless** an admin dispute resolve already chose `refund_student_partial`. In that case the remainder is **retained for coach payout** (92/8 of net retained) and must **not** be auto-refunded again. Dispute resolve can still refund sooner via admin `financial_action` (`refund_student` = full; `refund_student_partial` = selected amount only).
 
 ### What the 24h clock gates (and what it does not)
 

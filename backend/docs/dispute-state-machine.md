@@ -52,7 +52,7 @@ If `from === to`:
 | Field | Role |
 |-------|------|
 | `disputes.status` | Workflow state (`open` / `under_review` / `resolved` / `rejected`) |
-| `disputes.decision` | Adjudication: `upheld` / `rejected` / `partial` |
+| `disputes.decision` | Adjudication: `upheld` / `rejected` |
 | `disputes.outcome` | Attendance fact: `coach_no_show` / `student_no_show` (attendance types only) |
 | `disputes.escalated` / `escalated_to` | **Schema only today** — no writer in services/controllers |
 

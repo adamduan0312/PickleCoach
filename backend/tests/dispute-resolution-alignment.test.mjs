@@ -23,7 +23,7 @@ test('unknown or empty dispute type is blocked', () => {
   );
 });
 
-test('attendance rejected: outcome required and must contradict claim; financial rules match outcome', () => {
+test('attendance rejected: outcome required; contradicting no-show or lesson_occurred; financial rules match outcome', () => {
   bad(
     {
       disputeTypeCode: 'coach_no_show_claim',
@@ -42,6 +42,40 @@ test('attendance rejected: outcome required and must contradict claim; financial
     financialAction: 'no_change',
     openedBy: 'student',
   });
+  ok({
+    disputeTypeCode: 'coach_no_show_claim',
+    decision: 'rejected',
+    outcome: 'lesson_occurred',
+    financialAction: 'no_change',
+    openedBy: 'student',
+  });
+  ok({
+    disputeTypeCode: 'student_no_show_claim',
+    decision: 'rejected',
+    outcome: 'lesson_occurred',
+    financialAction: 'no_change',
+    openedBy: 'coach',
+  });
+  bad(
+    {
+      disputeTypeCode: 'coach_no_show_claim',
+      decision: 'rejected',
+      outcome: 'lesson_occurred',
+      financialAction: 'refund_student',
+      openedBy: 'student',
+    },
+    'attendance_financial_mismatch',
+  );
+  bad(
+    {
+      disputeTypeCode: 'coach_no_show_claim',
+      decision: 'upheld',
+      outcome: 'lesson_occurred',
+      financialAction: 'no_change',
+      openedBy: 'student',
+    },
+    'attendance_neutral_requires_rejected',
+  );
   bad(
     {
       disputeTypeCode: 'coach_no_show_claim',
@@ -127,7 +161,7 @@ test('coach_no_show_claim: outcome vs financial_action', () => {
   );
   ok({
     disputeTypeCode: 'coach_no_show_claim',
-    decision: 'partial',
+    decision: 'upheld',
     outcome: 'coach_no_show',
     financialAction: 'refund_student',
     openedBy: 'admin',
@@ -172,7 +206,7 @@ test('student_no_show_claim: outcome vs financial_action', () => {
   bad(
     {
       disputeTypeCode: 'student_no_show_claim',
-      decision: 'partial',
+      decision: 'upheld',
       outcome: 'coach_no_show',
       financialAction: 'no_change',
       openedBy: 'admin',
@@ -233,7 +267,7 @@ test('behavior sustained: penalize and refunds', () => {
   bad(
     {
       disputeTypeCode: 'misconduct',
-      decision: 'partial',
+      decision: 'upheld',
       financialAction: 'refund_student',
       penalizeRole: 'student',
       openedBy: 'admin',
@@ -259,7 +293,7 @@ test('behavior sustained: claimant can be penalized (reversible model, advisory 
   });
   ok({
     disputeTypeCode: 'misconduct',
-    decision: 'partial',
+    decision: 'upheld',
     financialAction: 'no_change',
     penalizeRole: 'coach',
     openedBy: 'coach',

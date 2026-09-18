@@ -291,6 +291,47 @@ export function buildAvailabilitySlots({
 }
 
 /**
+ * True when two lesson windows overlap (touching endpoints do not overlap).
+ * Mirrors backend `bookingIntervalsOverlap` for client-side occupied-slot UX only.
+ */
+export function bookingIntervalsOverlap(aStart, aDurationMinutes, bStart, bDurationMinutes) {
+  const a0 = new Date(aStart).getTime();
+  const b0 = new Date(bStart).getTime();
+  if (!Number.isFinite(a0) || !Number.isFinite(b0)) return false;
+  const aDur = Number(aDurationMinutes) || 0;
+  const bDur = Number(bDurationMinutes) || 0;
+  const a1 = a0 + aDur * 60000;
+  const b1 = b0 + bDur * 60000;
+  return a0 < b1 && b0 < a1;
+}
+
+/**
+ * Annotate generated slots with coach occupancy from active bookings.
+ * UX convenience only — intent/confirm remain authoritative.
+ *
+ * @param {Array<{ scheduled_at: string }>} slots
+ * @param {Array<{ scheduled_at?: string, duration_minutes?: number }>} occupiedBookings
+ * @param {{ durationMinutes?: number }} [options]
+ */
+export function annotateSlotsWithOccupancy(slots, occupiedBookings = [], { durationMinutes = 60 } = {}) {
+  const lessonDuration = Number(durationMinutes) || 60;
+  const occupied = Array.isArray(occupiedBookings) ? occupiedBookings : [];
+  return (slots || []).map((slot) => {
+    const hit = occupied.some((booking) => bookingIntervalsOverlap(
+      slot.scheduled_at,
+      lessonDuration,
+      booking.scheduled_at,
+      booking.duration_minutes ?? lessonDuration,
+    ));
+    return {
+      ...slot,
+      occupied: hit,
+      available: !hit,
+    };
+  });
+}
+
+/**
  * Group slots by calendar day in the viewer timezone for compact date → times UI.
  * @param {Array<{ scheduled_at: string }>} slots
  * @param {string} timeZone

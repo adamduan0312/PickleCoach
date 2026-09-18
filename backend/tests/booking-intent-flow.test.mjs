@@ -11,6 +11,7 @@ import {
   SLOT_NO_LONGER_AVAILABLE_CODE,
   buildBookingIntentStripeMetadata,
   isAuthorizeThenBookIntent,
+  isCardOnlyPaymentIntent,
   isPaymentIntentAuthorizedForBookingConfirm,
   isPaymentIntentUsableForCheckout,
   parseBookingIntentMetadata,
@@ -168,6 +169,15 @@ describe('checkout-usable PaymentIntent gate', () => {
     assert.equal(isPaymentIntentUsableForCheckout({ id: 'pi_1', status: 'succeeded' }), false);
     assert.equal(isPaymentIntentUsableForCheckout(null), false);
   });
+
+  it('accepts only card-only payment method types for MVP checkout', () => {
+    assert.equal(isCardOnlyPaymentIntent({ payment_method_types: ['card'] }), true);
+    assert.equal(isCardOnlyPaymentIntent({ payment_method_types: ['card', 'klarna'] }), false);
+    assert.equal(isCardOnlyPaymentIntent({ payment_method_types: ['klarna'] }), false);
+    // Missing/empty: do not false-positive remint (test doubles / unknown).
+    assert.equal(isCardOnlyPaymentIntent({ payment_method_types: [] }), true);
+    assert.equal(isCardOnlyPaymentIntent(null), true);
+  });
 });
 
 describe('booking attempt idempotency key resolution', () => {
@@ -217,14 +227,15 @@ describe('confirm service wiring', () => {
     assert.match(createIntentSection, /currency: 'usd'/);
   });
 
-  it('retrieves live PaymentIntent and remints when Stripe replays an unusable PI', () => {
+  it('retrieves live PaymentIntent and remints when Stripe replays an unusable or non-card PI', () => {
     const createIntentSection = bookingIntentServiceSrc.slice(
       bookingIntentServiceSrc.indexOf('export async function createBookingIntent'),
       bookingIntentServiceSrc.indexOf('export async function confirmBookingFromPaymentIntent'),
     );
     assert.match(createIntentSection, /getPaymentIntent/);
     assert.match(createIntentSection, /isPaymentIntentUsableForCheckout/);
-    assert.match(createIntentSection, /reminted after unusable PaymentIntent/);
+    assert.match(createIntentSection, /isCardOnlyPaymentIntent/);
+    assert.match(createIntentSection, /reminted after unusable or non-card PaymentIntent/);
     assert.match(createIntentSection, /generateBookingAttemptId/);
   });
 

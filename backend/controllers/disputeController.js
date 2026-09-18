@@ -21,6 +21,7 @@ import {
 } from '../utils/bookingAttendanceStatus.js';
 import {
   applyBookingStatusTransition,
+  canTransitionBookingStatus,
 } from '../services/bookingStateMachine.js';
 import {
   applyDisputeStatusTransition,
@@ -37,10 +38,11 @@ import {
   isActiveDisputeTypeCode,
 } from '../utils/disputeTypeCatalog.js';
 import { validateDisputeResolutionPayload } from '../utils/disputeResolutionAlignment.js';
-import { checkDisputeCreateBookingEligibility } from '../utils/disputeCreateEligibility.js';
+import { checkDisputeCreateBookingEligibility, checkCoachStudentNoShowClaimEligibility } from '../utils/disputeCreateEligibility.js';
 import {
   deriveDisputeResolveBookingTransitionVia,
   deriveResolvedBookingStatusFromDisputeResolve,
+  ATTENDANCE_OUTCOME_LESSON_OCCURRED,
 } from '../utils/disputeResolveBookingStatus.js';
 import { formatDisputeResponse } from '../utils/disputeDto.js';
 import * as notificationService from '../services/notificationService.js';
@@ -170,6 +172,7 @@ export const getDisputeById = async (req, res) => {
         { model: DisputeType, as: 'disputeType' },
         { model: DisputeResolutionAction, as: 'resolutionAction' },
         { model: User, as: 'admin', attributes: ['id', 'full_name'] },
+        // Optional Stripe/in-app link via payments.dispute_id — may be null after resolve.
         { model: Payment, as: 'payment' },
       ],
     });
@@ -186,6 +189,16 @@ export const getDisputeById = async (req, res) => {
     }
 
     const isAdmin = (req.user.roles || []).includes('admin');
+    // Settlement UI must match booking detail: use the booking's payment snapshot,
+    // not only the optional payments.dispute_id association (often unset for in-app resolves).
+    const bookingPayment = await Payment.findOne({
+      where: { booking_id: dispute.booking_id },
+      order: [['id', 'DESC']],
+    });
+    if (bookingPayment) {
+      dispute.setDataValue('payment', bookingPayment);
+    }
+
     return successResponse(
       res,
       formatDisputeResponse(dispute, { isAdmin }),
@@ -269,6 +282,13 @@ export const createDispute = async (req, res) => {
           400,
         );
       }
+      const claimEligibility = checkCoachStudentNoShowClaimEligibility(booking, new Date(), { isAdmin });
+      if (!claimEligibility.ok) {
+        return errorResponse(res, claimEligibility.message, 400, null, {
+          code: claimEligibility.code,
+          booking_status: booking.status,
+        });
+      }
     }
 
     const existingDispute = await Dispute.findOne({
@@ -311,6 +331,16 @@ export const createDispute = async (req, res) => {
         err.booking_status = locked.status;
         err.review_until = lockedEligibility.review_until;
         throw err;
+      }
+      if (disputeType.code === 'student_no_show_claim') {
+        const lockedClaim = checkCoachStudentNoShowClaimEligibility(locked, new Date(), { isAdmin });
+        if (!lockedClaim.ok) {
+          const err = new Error(lockedClaim.message);
+          err.statusCode = 400;
+          err.code = lockedClaim.code;
+          err.booking_status = locked.status;
+          throw err;
+        }
       }
       const existingLocked = await Dispute.findOne({
         where: { booking_id, status: { [Op.in]: ['open', 'under_review'] } },
@@ -499,22 +529,43 @@ export const resolveDispute = async (req, res) => {
     });
 
     if (shouldApplyAttendanceOutcome) {
-      const transition = validateAttendanceOutcomeTransition(
-        booking.status,
-        resolvedBookingStatus,
-        new Set(DISPUTE_RESOLVE_ATTENDANCE_SOURCE_STATUSES),
-      );
-      if (!transition.ok) {
-        logger.warn({
-          component: 'disputes',
-          event: 'resolve_attendance_transition_rejected',
-          disputeId: dispute.id,
-          bookingId: dispute.booking_id,
-          from_status: booking.status,
-          to_status: resolvedBookingStatus,
-          code: transition.code,
+      if (outcome === 'coach_no_show' || outcome === 'student_no_show') {
+        const transition = validateAttendanceOutcomeTransition(
+          booking.status,
+          resolvedBookingStatus,
+          new Set(DISPUTE_RESOLVE_ATTENDANCE_SOURCE_STATUSES),
+        );
+        if (!transition.ok) {
+          logger.warn({
+            component: 'disputes',
+            event: 'resolve_attendance_transition_rejected',
+            disputeId: dispute.id,
+            bookingId: dispute.booking_id,
+            from_status: booking.status,
+            to_status: resolvedBookingStatus,
+            code: transition.code,
+          });
+          return errorResponse(res, transition.message, 400, null, { code: transition.code });
+        }
+      } else if (outcome === ATTENDANCE_OUTCOME_LESSON_OCCURRED) {
+        const via = deriveDisputeResolveBookingTransitionVia({
+          disputeTypeCode: typeCode,
+          fromStatus: booking.status,
+          toStatus: resolvedBookingStatus,
         });
-        return errorResponse(res, transition.message, 400, null, { code: transition.code });
+        const transition = canTransitionBookingStatus(booking.status, resolvedBookingStatus, via);
+        if (!transition.ok) {
+          logger.warn({
+            component: 'disputes',
+            event: 'resolve_attendance_neutral_transition_rejected',
+            disputeId: dispute.id,
+            bookingId: dispute.booking_id,
+            from_status: booking.status,
+            to_status: resolvedBookingStatus,
+            code: transition.code,
+          });
+          return errorResponse(res, transition.message, 400, null, { code: transition.code });
+        }
       }
     }
 
@@ -624,6 +675,17 @@ export const resolveDispute = async (req, res) => {
       if (queuedRefundAttrs) {
         createdPaymentAction = await PaymentAction.create(queuedRefundAttrs, { transaction });
       }
+
+      // Keep payments.dispute_id in sync so dispute detail settlement matches booking payment.
+      const latestPayment = await Payment.findOne({
+        where: { booking_id: dispute.booking_id },
+        order: [['id', 'DESC']],
+        transaction,
+        lock: transaction.LOCK.UPDATE,
+      });
+      if (latestPayment && latestPayment.dispute_id !== dispute.id) {
+        await latestPayment.update({ dispute_id: dispute.id }, { transaction });
+      }
     });
 
     if (createdPaymentAction) {
@@ -710,7 +772,7 @@ export const resolveDispute = async (req, res) => {
     } else if (
       Boolean(disputeType?.affects_reliability_score) &&
       BEHAVIOR_DISPUTE_TYPE_CODES.includes(disputeType.code) &&
-      ['upheld', 'partial'].includes(decision)
+      ['upheld'].includes(decision)
     ) {
       if (penalizeRole === 'coach' && booking.coach_id != null) {
         await updateUserReliability(booking.coach_id, 'coach').catch((err) =>
@@ -748,6 +810,10 @@ export const resolveDispute = async (req, res) => {
       financialAction,
       bookingStatus: resolvedBookingStatus,
       decision,
+      refundAmount:
+        financialAction === 'refund_student_partial' && refund_amount != null
+          ? refund_amount
+          : null,
     }).catch((err) => {
       logger.warn({
         component: 'disputes',

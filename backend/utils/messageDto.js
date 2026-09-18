@@ -13,6 +13,36 @@ function toPlain(row) {
 }
 
 /**
+ * The other booking party for the current viewer (coach ↔ student).
+ * Safe display fields only; null when the viewer is not a booking party
+ * (e.g. admin) or party associations are missing.
+ *
+ * @param {object|null|undefined} booking — Booking with optional coach / primaryStudent
+ * @param {number|string|null|undefined} viewerUserId
+ * @returns {{ id: number, full_name: string, avatar_url: string|null }|null}
+ */
+export function resolveConversationCounterpart(booking, viewerUserId) {
+  if (!booking || viewerUserId == null) return null;
+  const plain = toPlain(booking);
+  const viewerId = Number(viewerUserId);
+  if (!Number.isFinite(viewerId)) return null;
+
+  const coachId = plain.coach_id != null ? Number(plain.coach_id) : null;
+  const studentId = plain.primary_student_id != null ? Number(plain.primary_student_id) : null;
+
+  let other = null;
+  if (coachId != null && viewerId === coachId) {
+    other = plain.primaryStudent;
+  } else if (studentId != null && viewerId === studentId) {
+    other = plain.coach;
+  } else {
+    return null;
+  }
+
+  return serializeUserPartySummary(other);
+}
+
+/**
  * Single message — id, sender, text, timestamps.
  */
 export function serializeMessage(message) {
@@ -40,8 +70,10 @@ export function serializeLatestMessage(messages) {
 
 /**
  * Conversation thread shell (detail) — no raw Sequelize extras.
+ * @param {object} conversation
+ * @param {{ booking?: object, messages?: object[], viewerUserId?: number|string }} [opts]
  */
-export function serializeConversationDetail(conversation, { booking, messages } = {}) {
+export function serializeConversationDetail(conversation, { booking, messages, viewerUserId } = {}) {
   if (!conversation) return null;
   const plain = toPlain(conversation);
   const dto = {
@@ -53,6 +85,9 @@ export function serializeConversationDetail(conversation, { booking, messages } 
   const bookingSrc = booking !== undefined ? booking : plain.booking;
   if (bookingSrc !== undefined) {
     dto.booking = serializeBookingForMessaging(bookingSrc);
+  }
+  if (viewerUserId !== undefined) {
+    dto.counterpart = resolveConversationCounterpart(bookingSrc, viewerUserId);
   }
   if (messages !== undefined) {
     dto.messages = Array.isArray(messages) ? messages.map(serializeMessage) : messages;

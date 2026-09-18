@@ -45,9 +45,9 @@ const splitRecencyWeight = (eventDate, now, windowStart, decayLambda) => {
 const hasReliabilitySignal = (raw) =>
   (Number(raw?.booking_baseline_recent) || 0) + (Number(raw?.booking_baseline_decayed) || 0) > 0;
 
-/** Sustained behavior claims only: upheld/partial decisions count; rejected does not. */
+/** Sustained behavior claims only: upheld decisions count; rejected does not. */
 const sustainedBehaviorDecisionLiteral = () =>
-  sequelize.literal(`disputes.decision IN ('upheld', 'partial')`);
+  sequelize.literal(`disputes.decision = 'upheld'`);
 
 /**
  * Calculate coach-specific raw split metrics (only bookings where user is the coach).

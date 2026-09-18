@@ -27,9 +27,33 @@ describe('booking payout_status machine', () => {
     assert.equal(
       nextBookingPayoutStatusAfterReleaseEscrow({
         currentPayoutStatus: 'none',
-        escrowStatus: 'manual_payout_required',
+        escrowStatus: 'held',
       }),
       'processing',
+    );
+  });
+
+  it('releaseEscrow: manual_payout_required does not claim processing', () => {
+    assert.equal(
+      nextBookingPayoutStatusAfterReleaseEscrow({
+        currentPayoutStatus: 'none',
+        escrowStatus: 'manual_payout_required',
+      }),
+      'none',
+    );
+    assert.equal(
+      nextBookingPayoutStatusAfterReleaseEscrow({
+        currentPayoutStatus: 'pending',
+        escrowStatus: 'manual_payout_required',
+      }),
+      'pending',
+    );
+    assert.equal(
+      nextBookingPayoutStatusAfterReleaseEscrow({
+        currentPayoutStatus: 'processing',
+        escrowStatus: 'manual_payout_required',
+      }),
+      'pending',
     );
   });
 

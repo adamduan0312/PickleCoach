@@ -45,7 +45,9 @@ import {
 import {
   attachActiveIssue,
   attachActiveIssuesToBookingDtos,
+  attachResolvedIssue,
   loadActiveIssuesByBookingId,
+  loadResolvedIssuesByBookingId,
 } from '../utils/bookingActiveIssue.js';
 import { serializePaymentSummary } from '../utils/paymentDto.js';
 import {
@@ -285,6 +287,8 @@ export const getBookingById = async (req, res) => {
     });
     const issueMap = await loadActiveIssuesByBookingId([booking.id]);
     attachActiveIssue(dto, issueMap);
+    const resolvedMap = await loadResolvedIssuesByBookingId([booking.id]);
+    attachResolvedIssue(dto, resolvedMap);
 
     return successResponse(
       res,

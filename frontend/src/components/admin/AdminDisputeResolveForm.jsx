@@ -1,26 +1,30 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { FormField } from '../ui/FormField.jsx';
 import { Alert } from '../ui/States.jsx';
 import { CharacterCounter } from '../ui/CharacterLimit.jsx';
 import { disputesApi } from '../../api/index.js';
 import {
   RESOLVE_DECISIONS,
-  RESOLVE_FINANCIAL_ACTIONS,
-  RESOLVE_OUTCOMES,
-  RESOLVE_PENALIZE_ROLES,
+  attendanceOutcomeOptions,
   buildResolveRequestBody,
   disputeTypeCode,
+  financialActionOptions,
   formatResolveApiError,
+  penalizeRoleOptions,
   resolveConfirmationLines,
   resolveFieldVisibility,
+  resolveFormHint,
 } from '../../domain/adminDisputeResolve.js';
+import { previewFinancialAllocation } from '../../domain/bookingSettlementDisplay.js';
+import { formatMoney } from '../../utils/format.js';
 
 const NOTES_MAX = 1000;
 
-function ChoiceGroup({ name, legend, options, value, onChange, disabled }) {
+function ChoiceGroup({ name, legend, options, value, onChange, disabled, hint }) {
   return (
     <fieldset className="admin-resolve-fieldset" disabled={disabled}>
       <legend>{legend}</legend>
+      {hint ? <p className="small muted" style={{ margin: '0 0 0.45rem' }}>{hint}</p> : null}
       <div className="stack" style={{ gap: '0.45rem' }}>
         {options.map((opt) => (
           <label key={opt.value} className="admin-resolve-choice">
@@ -37,6 +41,11 @@ function ChoiceGroup({ name, legend, options, value, onChange, disabled }) {
       </div>
     </fieldset>
   );
+}
+
+function keepIfAllowed(current, options) {
+  if (!current) return current;
+  return options.some((o) => o.value === current) ? current : '';
 }
 
 /**
@@ -60,6 +69,31 @@ export function AdminDisputeResolveForm({ dispute, onResolved }) {
   const [apiError, setApiError] = useState(null);
   const [warnings, setWarnings] = useState(null);
 
+  const outcomeOptions = attendanceOutcomeOptions(typeCode, decision);
+  const penalizeOptions = penalizeRoleOptions(decision);
+  const moneyOptions = financialActionOptions({
+    disputeTypeCode: typeCode,
+    decision,
+    outcome,
+  });
+
+  // Drop selections that became invalid when decision / outcome filters change.
+  useEffect(() => {
+    setOutcome((prev) => keepIfAllowed(prev, attendanceOutcomeOptions(typeCode, decision)));
+  }, [decision, typeCode]);
+
+  useEffect(() => {
+    setPenalizeRole((prev) => keepIfAllowed(prev, penalizeRoleOptions(decision)));
+  }, [decision]);
+
+  useEffect(() => {
+    setFinancialAction((prev) => keepIfAllowed(prev, financialActionOptions({
+      disputeTypeCode: typeCode,
+      decision,
+      outcome,
+    })));
+  }, [decision, outcome, typeCode]);
+
   const form = {
     decision,
     outcome,
@@ -68,6 +102,17 @@ export function AdminDisputeResolveForm({ dispute, onResolved }) {
     refund_amount: refundAmount,
     resolution_notes: notes,
   };
+
+  const capturedAmount =
+    dispute?.booking?.price
+    ?? dispute?.payment?.total_charge_to_student
+    ?? dispute?.booking?.payment?.total_charge_to_student
+    ?? null;
+  const moneyPreview = previewFinancialAllocation({
+    capturedAmount,
+    financialAction,
+    refundAmount,
+  });
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -81,7 +126,7 @@ export function AdminDisputeResolveForm({ dispute, onResolved }) {
       return;
     }
 
-    const summary = resolveConfirmationLines(form, typeCode).join('\n');
+    const summary = resolveConfirmationLines(form, typeCode, { capturedAmount }).join('\n');
     const ok = window.confirm(
       `You're about to resolve this dispute.\n\n${summary}\n\nThis action may affect payment, payout, and attendance finalization.`,
     );
@@ -105,9 +150,7 @@ export function AdminDisputeResolveForm({ dispute, onResolved }) {
   return (
     <form className="stack admin-resolve-form" onSubmit={handleSubmit}>
       <p className="small muted" style={{ margin: 0 }}>
-        Choose decision, {visibility.showOutcome ? 'attendance outcome, ' : ''}
-        {visibility.showPenalizeRole ? 'reliability penalty, ' : ''}
-        and financial action separately. The backend validates that the combination is allowed.
+        {resolveFormHint(typeCode)}
       </p>
 
       <ChoiceGroup
@@ -123,10 +166,15 @@ export function AdminDisputeResolveForm({ dispute, onResolved }) {
         <ChoiceGroup
           name="outcome"
           legend="Attendance outcome"
-          options={RESOLVE_OUTCOMES}
+          options={outcomeOptions}
           value={outcome}
           onChange={setOutcome}
           disabled={busy}
+          hint={
+            decision === 'rejected'
+              ? 'Use Neither / lesson occurred when the lesson happened and neither party should be marked as a no-show. Or pick the contradicting no-show if the other party was actually absent.'
+              : 'Sets booking status and reliability for the at-fault party.'
+          }
         />
       ) : null}
 
@@ -134,20 +182,38 @@ export function AdminDisputeResolveForm({ dispute, onResolved }) {
         <ChoiceGroup
           name="penalize_role"
           legend="Penalize (reliability)"
-          options={RESOLVE_PENALIZE_ROLES}
+          options={penalizeOptions}
           value={penalizeRole}
           onChange={setPenalizeRole}
           disabled={busy}
+          hint={
+            decision === 'upheld'
+              ? 'Uphold must target coach or student — Neither is not allowed.'
+              : decision === 'rejected'
+                ? 'Rejected behavior claims use Neither.'
+                : null
+          }
         />
       ) : null}
 
       <ChoiceGroup
         name="financial_action"
         legend="Financial action"
-        options={RESOLVE_FINANCIAL_ACTIONS}
+        options={moneyOptions}
         value={financialAction}
         onChange={setFinancialAction}
         disabled={busy}
+        hint={
+          outcome === 'coach_no_show'
+            ? 'Coach no-show requires a full or partial refund.'
+            : outcome === 'student_no_show'
+              ? 'Student no-show requires no financial action.'
+              : outcome === 'lesson_occurred'
+                ? 'Lesson occurred: no refund; booking stays Completed.'
+                : decision === 'rejected' && (visibility.showPenalizeRole || typeCode === 'other')
+                  ? 'Rejected decisions require no financial action.'
+                  : null
+        }
       />
 
       {financialAction === 'refund_student_partial' ? (
@@ -163,6 +229,37 @@ export function AdminDisputeResolveForm({ dispute, onResolved }) {
           min="0.01"
           step="0.01"
         />
+      ) : null}
+
+      {moneyPreview ? (
+        <Alert tone="info">
+          <strong>Financial allocation preview</strong>
+          <dl className="booking-detail-facts" style={{ marginTop: 8, marginBottom: 0 }}>
+            <div>
+              <dt>Student refund</dt>
+              <dd>{formatMoney(moneyPreview.studentRefund)}</dd>
+            </div>
+            <div>
+              <dt>Amount remaining</dt>
+              <dd>{formatMoney(moneyPreview.remaining)}</dd>
+            </div>
+            <div>
+              <dt>Platform fee</dt>
+              <dd>{formatMoney(moneyPreview.platformFee)}</dd>
+            </div>
+            <div>
+              <dt>Coach payout</dt>
+              <dd>{formatMoney(moneyPreview.coachPayout)}</dd>
+            </div>
+          </dl>
+          {financialAction === 'refund_student_partial' ? (
+            <p className="small muted" style={{ margin: '8px 0 0' }}>
+              A partial refund returns only the specified amount to the student. The remaining
+              captured amount is split between the platform fee and coach payout. It is not
+              automatically refunded to the student again.
+            </p>
+          ) : null}
+        </Alert>
       ) : null}
 
       <FormField label="Resolution notes" name="resolution_notes" required>

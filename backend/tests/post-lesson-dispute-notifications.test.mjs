@@ -109,7 +109,31 @@ describe('buildDisputeResolvedNotificationContent', () => {
     });
     assert.equal(content.headline, 'Dispute resolved');
     assert.match(content.summary, /coach no-show/);
-    assert.match(content.summary, /Your payment will be refunded/);
+    assert.match(content.summary, /Your payment will be refunded in full/);
+  });
+
+  it('student: coach no-show + partial refund names the amount and does not imply full refund', () => {
+    const content = buildDisputeResolvedNotificationContent({
+      audience: 'student',
+      outcome: 'coach_no_show',
+      financialAction: 'refund_student_partial',
+      bookingStatus: 'coach_no_show',
+      refundAmount: 40,
+    });
+    assert.match(content.summary, /\$40\.00 refund/);
+    assert.doesNotMatch(content.summary, /refunded in full/);
+  });
+
+  it('coach: partial refund explains retained payout', () => {
+    const content = buildDisputeResolvedNotificationContent({
+      audience: 'coach',
+      outcome: 'coach_no_show',
+      financialAction: 'refund_student_partial',
+      bookingStatus: 'coach_no_show',
+      refundAmount: 40,
+    });
+    assert.match(content.summary, /remaining retained amount/);
+    assert.doesNotMatch(content.summary, /will not receive a payout/);
   });
 
   it('student: completed → coach payout proceeds', () => {
@@ -205,6 +229,32 @@ describe('resolveDisputeOpenedRecipients', () => {
       resolveDisputeOpenedRecipients({ openedBy: 'student', coachId: 10, studentId: 10 }),
       [],
     );
+  });
+});
+
+describe('notifyCoachNoShow recipients (admin mark path)', () => {
+  const notifSrc = readFileSync(join(__dirname, '../services/notificationService.js'), 'utf8');
+
+  it('builds student + coach recipients before iterating (regression: undefined recipients)', () => {
+    const start = notifSrc.indexOf('export const notifyCoachNoShow');
+    const end = notifSrc.indexOf('export const notifyDisputeOpened');
+    assert.ok(start > 0 && end > start, 'notifyCoachNoShow block bounds');
+    const block = notifSrc.slice(start, end);
+
+    assert.match(
+      block,
+      /const recipients = uniqueUserIds\(\s*booking\.primary_student_id,\s*booking\.coach_id\s*\)/,
+    );
+    assert.match(block, /for \(const userId of recipients\)/);
+    assert.match(block, /deliverDualChannel\(userId, 'coach_no_show'/);
+    assert.match(block, /buildCoachNoShowNotificationContent\(\{ audience \}\)/);
+
+    // Role-specific copy still present for both audiences.
+    const studentCopy = buildCoachNoShowNotificationContent({ audience: 'student' });
+    const coachCopy = buildCoachNoShowNotificationContent({ audience: 'coach' });
+    assert.match(studentCopy.headline, /coach was marked as a no-show/i);
+    assert.match(coachCopy.headline, /you were marked as a no-show/i);
+    assert.match(coachCopy.summary, /will not receive a payout/i);
   });
 });
 

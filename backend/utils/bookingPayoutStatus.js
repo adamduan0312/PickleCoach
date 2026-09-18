@@ -16,7 +16,8 @@ export const TERMINAL_BOOKING_PAYOUT_STATUSES = Object.freeze(['paid', 'forfeite
 /**
  * After a successful `releaseEscrow` call.
  * If escrow is already released (zero-amount, or webhook won the race), skip
- * to `paid`. Otherwise the transfer is in flight → `processing`.
+ * to `paid`. If escrow was parked for manual review, do not imply an in-flight
+ * Connect transfer (`processing`). Otherwise the transfer is in flight → `processing`.
  * Never overwrite `paid` or `forfeited`.
  *
  * @param {{ currentPayoutStatus?: string | null, escrowStatus?: string | null }} [args]
@@ -28,7 +29,13 @@ export function nextBookingPayoutStatusAfterReleaseEscrow({
 } = {}) {
   const current = String(currentPayoutStatus || '');
   if (TERMINAL_BOOKING_PAYOUT_STATUSES.includes(current)) return current;
-  if (String(escrowStatus || '') === 'released') return 'paid';
+  const escrow = String(escrowStatus || '');
+  if (escrow === 'released') return 'paid';
+  // Parked for ops — leave eligibility labels alone; never claim "processing".
+  if (escrow === 'manual_payout_required') {
+    if (current === 'processing') return 'pending';
+    return current || 'pending';
+  }
   return 'processing';
 }
 

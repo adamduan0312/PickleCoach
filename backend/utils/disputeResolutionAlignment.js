@@ -52,7 +52,7 @@ import {
   RESOLVABLE_DISPUTE_TYPE_CODES,
 } from './disputeTypeCatalog.js';
 
-const SUSTAINED = new Set(['upheld', 'partial']);
+const SUSTAINED = new Set(['upheld']);
 
 const isRefund = (financialAction) =>
   financialAction === 'refund_student' || financialAction === 'refund_student_partial';
@@ -99,8 +99,31 @@ export function validateDisputeResolutionPayload({
         ok: false,
         code: 'attendance_outcome_required',
         message:
-          'outcome is required for all attendance dispute resolutions (upheld, partial, or rejected).',
+          'outcome is required for all attendance dispute resolutions (upheld or rejected).',
       };
+    }
+
+    const refund = isRefund(financialAction);
+    const noChange = financialAction === 'no_change';
+
+    if (outcome === 'lesson_occurred') {
+      if (decision !== 'rejected') {
+        return {
+          ok: false,
+          code: 'attendance_neutral_requires_rejected',
+          message:
+            'outcome lesson_occurred (neither party was a no-show / lesson occurred) is only allowed when decision is rejected.',
+        };
+      }
+      if (!noChange) {
+        return {
+          ok: false,
+          code: 'attendance_financial_mismatch',
+          message:
+            'When outcome is lesson_occurred, financial_action must be no_change (no refund; booking stays Completed).',
+        };
+      }
+      return { ok: true };
     }
 
     if (decision === 'rejected') {
@@ -109,7 +132,7 @@ export function validateDisputeResolutionPayload({
           ok: false,
           code: 'attendance_rejected_outcome_aligns_with_claim',
           message:
-            'When rejecting a coach_no_show_claim, outcome must be student_no_show (rejecting the student\'s allegation records that the student did not attend). outcome cannot be coach_no_show — that would confirm the claim.',
+            'When rejecting a coach_no_show_claim without lesson_occurred, outcome must be student_no_show (rejecting the student\'s allegation records that the student did not attend). outcome cannot be coach_no_show — that would confirm the claim. Use lesson_occurred when the lesson happened and neither party was a no-show.',
         };
       }
       if (disputeTypeCode === 'student_no_show_claim' && outcome !== 'coach_no_show') {
@@ -117,13 +140,10 @@ export function validateDisputeResolutionPayload({
           ok: false,
           code: 'attendance_rejected_outcome_aligns_with_claim',
           message:
-            'When rejecting a student_no_show_claim, outcome must be coach_no_show (rejecting the coach\'s allegation records that the coach did not attend). outcome cannot be student_no_show — that would confirm the claim.',
+            'When rejecting a student_no_show_claim without lesson_occurred, outcome must be coach_no_show (rejecting the coach\'s allegation records that the coach did not attend). outcome cannot be student_no_show — that would confirm the claim. Use lesson_occurred when the lesson happened and neither party was a no-show.',
         };
       }
     }
-
-    const refund = isRefund(financialAction);
-    const noChange = financialAction === 'no_change';
 
     if (outcome === 'coach_no_show' && noChange) {
       return {
@@ -169,7 +189,7 @@ export function validateDisputeResolutionPayload({
         return {
           ok: false,
           code: 'behavior_penalize_required',
-          message: 'penalize_role must be coach or student when decision is upheld or partial for behavior disputes',
+          message: 'penalize_role must be coach or student when decision is upheld for behavior disputes',
         };
       }
 

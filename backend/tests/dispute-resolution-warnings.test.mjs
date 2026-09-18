@@ -61,7 +61,7 @@ test('behavior claim reversal advisory (student opener penalized as student)', (
 test('behavior claim reversal advisory (coach opener penalized as coach)', () => {
   const w = getBehaviorClaimReversalWarning({
     disputeTypeCode: 'lesson_not_completed',
-    decision: 'partial',
+    decision: 'upheld',
     penalizeRole: 'coach',
     openedBy: 'coach',
   });
@@ -143,7 +143,7 @@ test('attendance claim reversal advisory (student + student_no_show on coach_no_
 test('attendance claim reversal advisory (coach + coach_no_show on student_no_show_claim)', () => {
   const w = getAttendanceClaimReversalWarning({
     disputeTypeCode: 'student_no_show_claim',
-    decision: 'partial',
+    decision: 'upheld',
     outcome: 'coach_no_show',
     openedBy: 'coach',
   });

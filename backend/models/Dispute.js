@@ -36,7 +36,7 @@ const Dispute = sequelize.define('disputes', {
     allowNull: true,
   },
   decision: {
-    type: DataTypes.ENUM('upheld', 'rejected', 'partial'),
+    type: DataTypes.ENUM('upheld', 'rejected'),
     allowNull: true,
   },
   /**
@@ -44,9 +44,12 @@ const Dispute = sequelize.define('disputes', {
    * types (`coach_no_show_claim`, `student_no_show_claim`). Persisted on the
    * dispute so the determination survives subsequent admin overrides of
    * `bookings.status`. NULL for behavior disputes and unresolved disputes.
+   *
+   * `lesson_occurred` = neutral reject: lesson happened; neither party is a
+   * no-show (booking → completed; no refund / no-show reliability hit).
    */
   outcome: {
-    type: DataTypes.ENUM('coach_no_show', 'student_no_show'),
+    type: DataTypes.ENUM('coach_no_show', 'student_no_show', 'lesson_occurred'),
     allowNull: true,
   },
   /**

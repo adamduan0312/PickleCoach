@@ -74,7 +74,7 @@ const ADMIN_BOOKING_STATUS_LABELS = {
 
 /**
  * Admin booking status — always the raw booking lifecycle, never “Issue reported”.
- * Keeps internal “Disputed” language (customer UI uses “Issue under review”).
+ * Keeps internal “Disputed” language (customer UI uses “Payment dispute under review”).
  */
 export function adminBookingStatusView(booking) {
   const status = booking?.status;

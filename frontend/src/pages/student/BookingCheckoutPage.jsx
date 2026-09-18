@@ -339,6 +339,11 @@ function CheckoutForm({ intent, coachId }) {
   return (
     <form className="stack checkout-payment-form" onSubmit={onSubmit}>
       <PaymentElement
+        options={{
+          // Defense in depth: PI is card-only; keep Element from advertising wallets/link.
+          wallets: { applePay: 'never', googlePay: 'never', link: 'never' },
+          paymentMethodOrder: ['card'],
+        }}
         onReady={() => {
           setPaymentElementReady(true);
           setPaymentElementLoadError(null);

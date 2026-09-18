@@ -20,6 +20,20 @@ import * as notificationService from '../services/notificationService.js';
 const MAX_LIST_ALL_CONVERSATIONS = 10000;
 const MAX_LIST_ALL_MESSAGES = 10000;
 
+const BOOKING_PARTY_USER_ATTRIBUTES = ['id', 'full_name', 'avatar_url'];
+
+/** Booking embed with coach/student parties for counterpart resolution. */
+function bookingIncludeWithParties() {
+  return {
+    model: Booking,
+    as: 'booking',
+    include: [
+      { model: User, as: 'coach', attributes: BOOKING_PARTY_USER_ATTRIBUTES },
+      { model: User, as: 'primaryStudent', attributes: BOOKING_PARTY_USER_ATTRIBUTES },
+    ],
+  };
+}
+
 /**
  * Lightweight Messages nav badge: total unread chat messages for the caller.
  * Prefer this over fetching the full inbox just to render a dot.
@@ -74,14 +88,14 @@ export const getConversations = async (req, res) => {
     const conversations = await Conversation.findAndCountAll({
       where,
       include: [
-        { model: Booking, as: 'booking' },
+        bookingIncludeWithParties(),
         {
           model: Message,
           as: 'messages',
           limit: 1,
           order: [['created_at', 'DESC']],
           include: [
-            { model: User, as: 'sender', attributes: ['id', 'full_name', 'avatar_url'] },
+            { model: User, as: 'sender', attributes: BOOKING_PARTY_USER_ATTRIBUTES },
           ],
         },
       ],
@@ -98,6 +112,7 @@ export const getConversations = async (req, res) => {
     const rows = conversations.rows.map((row) =>
       serializeConversationInboxItem(row, {
         unreadCount: unreadMap.get(Number(row.id)) || 0,
+        viewerUserId: req.user.id,
       }),
     );
 
@@ -123,7 +138,7 @@ export const getConversationById = async (req, res) => {
       : { limit: MAX_LIST_ALL_MESSAGES, offset: 0 };
 
     const conversation = await Conversation.findByPk(id, {
-      include: [{ model: Booking, as: 'booking' }],
+      include: [bookingIncludeWithParties()],
     });
 
     if (!conversation) {
@@ -141,7 +156,7 @@ export const getConversationById = async (req, res) => {
 
     const messages = await Message.findAndCountAll({
       where: { conversation_id: id },
-      include: [{ model: User, as: 'sender', attributes: ['id', 'full_name', 'avatar_url'] }],
+      include: [{ model: User, as: 'sender', attributes: BOOKING_PARTY_USER_ATTRIBUTES }],
       limit: queryLimit,
       offset,
       order: [['created_at', 'ASC']],
@@ -150,6 +165,7 @@ export const getConversationById = async (req, res) => {
     const payload = serializeConversationDetail(conversation, {
       booking,
       messages: messages.rows,
+      viewerUserId: req.user.id,
     });
     if (isPaginated) {
       const paging = getPagingData(messages, page, queryLimit);
@@ -167,7 +183,12 @@ export const createConversation = async (req, res) => {
   try {
     const { booking_id } = req.body;
 
-    const booking = await Booking.findByPk(booking_id);
+    const booking = await Booking.findByPk(booking_id, {
+      include: [
+        { model: User, as: 'coach', attributes: BOOKING_PARTY_USER_ATTRIBUTES },
+        { model: User, as: 'primaryStudent', attributes: BOOKING_PARTY_USER_ATTRIBUTES },
+      ],
+    });
     if (!booking) {
       return errorResponse(res, 'Booking not found', 404);
     }
@@ -181,7 +202,10 @@ export const createConversation = async (req, res) => {
     if (existingConversation) {
       return successResponse(
         res,
-        serializeConversationDetail(existingConversation, { booking }),
+        serializeConversationDetail(existingConversation, {
+          booking,
+          viewerUserId: req.user.id,
+        }),
         'Conversation already exists',
       );
     }
@@ -189,7 +213,10 @@ export const createConversation = async (req, res) => {
     const conversation = await ensureBookingConversation(booking_id);
     return successResponse(
       res,
-      serializeConversationDetail(conversation, { booking }),
+      serializeConversationDetail(conversation, {
+        booking,
+        viewerUserId: req.user.id,
+      }),
       'Conversation created successfully',
       201,
     );

@@ -26,6 +26,128 @@ export function isDevSeedPaymentIntentId(paymentIntentId) {
   return String(paymentIntentId || '').startsWith(DEV_SEED_PI_PREFIX);
 }
 
+/** Dev-only seeded charges (`ch_seed_dev_*`) — presentation seeds; stub refunds without live Stripe. */
+const DEV_SEED_CHARGE_PREFIX = 'ch_seed_dev_';
+/** @type {Map<string, { amountCents: number, amountRefundedCents: number, refunds: Array<object> }>} */
+const devSeedChargeRegistry = new Map();
+
+export function isDevSeedChargeId(chargeId) {
+  if (process.env.NODE_ENV === 'production') return false;
+  return String(chargeId || '').startsWith(DEV_SEED_CHARGE_PREFIX);
+}
+
+async function ensureDevSeedChargeLoaded(chargeId) {
+  const id = String(chargeId || '');
+  if (!isDevSeedChargeId(id)) return false;
+  if (devSeedChargeRegistry.has(id)) return true;
+
+  // Lazy hydrate amount from the payment row that owns this charge_id.
+  let amountCents = 0;
+  try {
+    const { Payment } = await import('../models/index.js');
+    const payment = await Payment.findOne({
+      where: { charge_id: id },
+      order: [['id', 'DESC']],
+      attributes: ['total_charge_to_student', 'refunded_amount'],
+    });
+    if (payment) {
+      amountCents = Math.round(Number(payment.total_charge_to_student) * 100) || 0;
+      const alreadyRefunded = Math.round(Number(payment.refunded_amount || 0) * 100) || 0;
+      devSeedChargeRegistry.set(id, {
+        amountCents,
+        amountRefundedCents: Math.min(alreadyRefunded, amountCents),
+        refunds: [],
+      });
+      logger.info({
+        component: 'stripe',
+        event: 'dev_seed_charge_hydrated_from_db',
+        chargeId: id,
+        amountCents,
+      });
+      return true;
+    }
+  } catch (err) {
+    logger.warn({
+      component: 'stripe',
+      event: 'dev_seed_charge_hydrate_failed',
+      chargeId: id,
+      message: err?.message || String(err),
+    });
+  }
+
+  // Fallback so resolve can still proceed in local QA.
+  amountCents = 8000;
+  devSeedChargeRegistry.set(id, {
+    amountCents,
+    amountRefundedCents: 0,
+    refunds: [],
+  });
+  logger.warn({
+    component: 'stripe',
+    event: 'dev_seed_charge_hydrated_default',
+    chargeId: id,
+    amountCents,
+  });
+  return true;
+}
+
+function buildDevSeedChargeResponse(chargeId) {
+  const row = devSeedChargeRegistry.get(String(chargeId));
+  if (!row) {
+    throw new Error(`Dev seed charge ${chargeId} is not loaded.`);
+  }
+  return {
+    id: String(chargeId),
+    amount: row.amountCents,
+    amount_refunded: row.amountRefundedCents,
+    currency: 'usd',
+    status: 'succeeded',
+    paid: true,
+    refunded: row.amountRefundedCents >= row.amountCents && row.amountCents > 0,
+    refunds: { data: [...row.refunds], has_more: false },
+  };
+}
+
+function createDevSeedRefund(chargeId, { amountCents = null, reason = 'requested_by_customer', idempotencyKey = null } = {}) {
+  const id = String(chargeId);
+  const row = devSeedChargeRegistry.get(id);
+  if (!row) {
+    throw new Error(`Dev seed charge ${chargeId} is not loaded.`);
+  }
+  if (idempotencyKey) {
+    const existing = row.refunds.find((r) => r.idempotency_key === String(idempotencyKey));
+    if (existing) return existing;
+  }
+  const remaining = Math.max(0, row.amountCents - row.amountRefundedCents);
+  const refundAmount = amountCents == null ? remaining : Math.round(Number(amountCents));
+  if (!Number.isFinite(refundAmount) || refundAmount <= 0) {
+    throw new Error(`Invalid refund amount for dev seed charge ${chargeId}`);
+  }
+  if (refundAmount > remaining) {
+    throw new Error(`Refund amount exceeds remaining balance on ${chargeId}`);
+  }
+  const refund = {
+    id: `re_seed_dev_${Date.now().toString(36)}_${row.refunds.length + 1}`,
+    object: 'refund',
+    amount: refundAmount,
+    charge: id,
+    currency: 'usd',
+    status: 'succeeded',
+    reason: reason || 'requested_by_customer',
+    idempotency_key: idempotencyKey ? String(idempotencyKey) : null,
+  };
+  row.amountRefundedCents += refundAmount;
+  row.refunds.push(refund);
+  logger.info({
+    component: 'stripe',
+    event: 'dev_seed_refund_created',
+    refundId: refund.id,
+    chargeId: id,
+    amountCents: refundAmount,
+  });
+  return refund;
+}
+
 /** Optional eager registration (seed scripts); API server hydrates from DB on first use. */
 export function registerDevSeedPaymentIntent(paymentIntentId, { amountCapturableCents }) {
   if (process.env.NODE_ENV === 'production') return;
@@ -171,13 +293,14 @@ export const createPaymentIntent = async (amount, currency = 'usd', customerId =
     if (stripeTestDouble?.createPaymentIntent) {
       return stripeTestDouble.createPaymentIntent(amount, currency, customerId, metadata, options);
     }
+    // MVP: cards only. Do not combine with automatic_payment_methods — Stripe rejects that mix.
+    // Manual capture (authorize on book, capture on coach accept) is proven for cards; BNPL/bank/wallets
+    // are not validated against cancel/refund/dispute lifecycle yet.
     const params = {
       amount: Math.round(amount * 100), // Convert to cents
       currency: currency.toLowerCase(),
       metadata,
-      automatic_payment_methods: {
-        enabled: true,
-      },
+      payment_method_types: ['card'],
       capture_method: options.captureMethod || 'automatic',
     };
 
@@ -269,6 +392,10 @@ export const createRefund = async (
       metadata,
     });
   }
+  if (isDevSeedChargeId(chargeId)) {
+    await ensureDevSeedChargeLoaded(chargeId);
+    return createDevSeedRefund(chargeId, { amountCents, reason, idempotencyKey });
+  }
   try {
     const stripeReason = STRIPE_REFUND_REASONS.has(reason) ? reason : 'requested_by_customer';
     const params = {
@@ -324,6 +451,11 @@ export const retrieveRefund = async (refundId) => {
 export const listRefundsForCharge = async (chargeId, { limitPerPage = 100, maxPages = 5 } = {}) => {
   if (stripeTestDouble?.listRefundsForCharge) {
     return stripeTestDouble.listRefundsForCharge(chargeId, { limitPerPage, maxPages });
+  }
+  if (isDevSeedChargeId(chargeId)) {
+    await ensureDevSeedChargeLoaded(chargeId);
+    const row = devSeedChargeRegistry.get(String(chargeId));
+    return row ? [...row.refunds] : [];
   }
   const all = [];
   let startingAfter = null;
@@ -571,6 +703,10 @@ export const detachPaymentMethod = async (paymentMethodId) => {
 export const retrieveCharge = async (chargeId) => {
   if (stripeTestDouble?.retrieveCharge) {
     return stripeTestDouble.retrieveCharge(chargeId);
+  }
+  if (isDevSeedChargeId(chargeId)) {
+    await ensureDevSeedChargeLoaded(chargeId);
+    return buildDevSeedChargeResponse(chargeId);
   }
   try {
     return await stripe.charges.retrieve(chargeId, { expand: ['refunds'] });

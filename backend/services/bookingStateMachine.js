@@ -66,6 +66,8 @@ export const BookingTransitionVia = Object.freeze({
   STRIPE_DISPUTE_TERMINAL: 'stripe_dispute_terminal',
   /** `PUT /api/disputes/:id/resolve` attendance outcome */
   DISPUTE_RESOLVE_ATTENDANCE: 'dispute_resolve_attendance',
+  /** Attendance claim rejected as lesson occurred (neither no-show) → completed */
+  DISPUTE_RESOLVE_ATTENDANCE_NEUTRAL: 'dispute_resolve_attendance_neutral',
   /** Behavior dispute resolve when booking was `disputed` → release to completed */
   DISPUTE_RESOLVE_BEHAVIOR_ON_DISPUTED_BOOKING: 'dispute_resolve_behavior_on_disputed_booking',
   /** `other` dispute resolve when booking was `disputed` → release to completed */
@@ -148,8 +150,15 @@ function buildEdges() {
   addEdge('disputed', 'completed', [
     BookingTransitionVia.DISPUTE_RESOLVE_BEHAVIOR_ON_DISPUTED_BOOKING,
     BookingTransitionVia.DISPUTE_RESOLVE_CATCHALL_ON_DISPUTED_BOOKING,
+    BookingTransitionVia.DISPUTE_RESOLVE_ATTENDANCE_NEUTRAL,
     BookingTransitionVia.STRIPE_DISPUTE_TERMINAL,
   ]);
+
+  // Neutral attendance reject: lesson occurred → completed (clears provisional no-shows too).
+  for (const from of DISPUTE_RESOLVE_ATTENDANCE_SOURCE_STATUSES) {
+    if (from === 'completed') continue;
+    addEdge(from, 'completed', [BookingTransitionVia.DISPUTE_RESOLVE_ATTENDANCE_NEUTRAL]);
+  }
 }
 
 buildEdges();

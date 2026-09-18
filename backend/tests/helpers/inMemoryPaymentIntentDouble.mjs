@@ -24,6 +24,8 @@ export function createInMemoryPaymentIntentDouble() {
     latest_charge: row.chargeId,
     charges: row.chargeId ? { data: [{ id: row.chargeId }] } : { data: [] },
     capture_method: row.captureMethod,
+    // Match MVP stripeService.createPaymentIntent (card-only).
+    payment_method_types: row.paymentMethodTypes || ['card'],
   });
 
   const api = {

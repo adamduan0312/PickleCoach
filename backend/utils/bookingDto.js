@@ -193,9 +193,15 @@ export function serializeBookingForMessaging(booking) {
   return dto;
 }
 
-/** Alias — dispute endpoints use the summary shape. */
+/** Alias — dispute endpoints use the summary shape plus payout for settlement UI. */
 export function serializeBookingForDisputes(booking) {
-  return serializeBookingSummary(booking);
+  const summary = serializeBookingSummary(booking);
+  if (!summary) return null;
+  const plain = toPlain(booking);
+  if (plain.payout_status !== undefined) {
+    summary.payout_status = plain.payout_status;
+  }
+  return summary;
 }
 
 /**

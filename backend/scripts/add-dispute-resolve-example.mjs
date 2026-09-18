@@ -4,7 +4,7 @@
  * "Resolve Dispute (Admin)" item in PickleCoach_API_ByType.postman_collection.json
  * so Postman users can preview the shape of `data.dispute` (including the new
  * `decision` / `outcome` / `refund_amount` fields) and the `resolution` +
- * `refund` blocks for a partial-refund attendance resolution.
+ * `refund` blocks for an upheld claim with a partial refund.
  *
  * Run from the repo root or backend/ folder. Idempotent: re-running replaces
  * the existing example with the canonical one rather than appending duplicates.
@@ -22,11 +22,11 @@ const byTypePath = path.join(__dirname, '../../PickleCoach_API_ByType.postman_co
 
 const collection = JSON.parse(fs.readFileSync(byTypePath, 'utf8'));
 
-const EXAMPLE_NAME = '200 OK \u2014 Attendance partial refund';
+const EXAMPLE_NAME = '200 OK \u2014 Attendance upheld + partial refund';
 
 const RESOLVE_REQUEST_BODY = JSON.stringify(
   {
-    decision: 'partial',
+    decision: 'upheld',
     outcome: 'coach_no_show',
     financial_action: 'refund_student_partial',
     refund_amount: 20.0,
@@ -49,7 +49,7 @@ const RESOLVE_RESPONSE_BODY = {
       status: 'resolved',
       resolution_action_id: 3,
       resolution_notes: 'Coach was 35 minutes late; partial refund issued.',
-      decision: 'partial',
+      decision: 'upheld',
       outcome: 'coach_no_show',
       refund_amount: '20.00',
       penalize_role: 'none',
@@ -63,7 +63,7 @@ const RESOLVE_RESPONSE_BODY = {
       resolved_by_admin: { id: 10, full_name: 'Admin User' },
     },
     resolution: {
-      decision: 'partial',
+      decision: 'upheld',
       financial_action: 'refund_student_partial',
       outcome: 'coach_no_show',
       derived_booking_status: 'coach_no_show',

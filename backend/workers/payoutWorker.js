@@ -13,6 +13,10 @@ import {
   bookingStatusUsesPostLessonPayoutClock,
   isPostLessonFinancialReviewElapsed,
 } from '../utils/financialReviewWindow.js';
+import {
+  hasCoachNoShowRetainedPayoutIntent,
+  isDisputePartialRefundSettledForPayout,
+} from '../utils/coachNoShowSettlement.js';
 
 /**
  * One held-escrow payment through the same gates as `processPayouts`.
@@ -25,6 +29,14 @@ export async function processHeldEscrowPayment(payment) {
       `Skipping payout for payment ${payment.id} - escrow_status "${payment.escrow_status}" not payable`,
     );
     return { skipped: true, reason: 'escrow_not_payable' };
+  }
+
+  // Dev/QA fixtures may insert held escrow without a transferable Stripe charge.
+  // Never let the worker park those at manual_payout_required.
+  const meta = payment.metadata && typeof payment.metadata === 'object' ? payment.metadata : {};
+  if (meta.seed_skip_payout_worker === true || meta.qa_fixture === true) {
+    logger.info(`Skipping payout for payment ${payment.id} - seed/QA fixture`);
+    return { skipped: true, reason: 'seed_fixture' };
   }
 
   if (bookingStatusUsesPostLessonPayoutClock(payment.booking.status)
@@ -61,6 +73,32 @@ export async function processHeldEscrowPayment(payment) {
     if (!isLateCancelRefundSettledForPayout(payment)) {
       logger.info(`Skipping late-cancel payout for payment ${payment.id} - partial refund not settled yet`);
       return { skipped: true, reason: 'late_cancel_refund_unsettled' };
+    }
+  }
+
+  if (payment.booking.status === 'coach_no_show') {
+    if (!(await hasCoachNoShowRetainedPayoutIntent(payment.booking_id))) {
+      // Plain coach_no_show is refunded via settleCoachNoShowRefunds, not paid out.
+      return { skipped: true, reason: 'coach_no_show_auto_refund_path' };
+    }
+    const pendingPartial = await PaymentAction.findOne({
+      where: {
+        booking_id: payment.booking_id,
+        action_type: 'dispute_refund_partial',
+        status: 'pending',
+      },
+    });
+    if (pendingPartial) {
+      logger.info(`Skipping coach_no_show retained payout for payment ${payment.id} - dispute partial pending`);
+      return { skipped: true, reason: 'dispute_partial_pending' };
+    }
+    if (payment.refund_status === 'pending') {
+      logger.info(`Skipping coach_no_show retained payout for payment ${payment.id} - refund pending`);
+      return { skipped: true, reason: 'refund_pending' };
+    }
+    if (!isDisputePartialRefundSettledForPayout(payment)) {
+      logger.info(`Skipping coach_no_show retained payout for payment ${payment.id} - partial refund not settled`);
+      return { skipped: true, reason: 'dispute_partial_unsettled' };
     }
   }
 
@@ -151,9 +189,11 @@ export async function processHeldEscrowPayment(payment) {
  * Process payouts for completed bookings and student late-cancels with retained revenue.
  * Runs every 10 minutes
  *
- * Post-lesson payouts (`completed`, `student_no_show`) wait until lesson end + 24h
- * regardless of Complete / no-show clicks. Open disputes block payout. Late-cancel
- * `cancelled` payouts are pre-lesson and do not use this clock.
+ * Post-lesson payouts (`completed`, `student_no_show`, and `coach_no_show` after a
+ * dispute partial retained remainder) wait until lesson end + 24h regardless of
+ * Complete / no-show clicks. Open disputes block payout. Late-cancel `cancelled`
+ * payouts are pre-lesson and do not use this clock. Plain `coach_no_show` without
+ * a dispute partial is refunded via settleCoachNoShowRefunds instead.
  */
 export const processPayouts = async () => {
   try {
@@ -170,7 +210,7 @@ export const processPayouts = async () => {
           as: 'booking',
           where: {
             status: {
-              [Op.in]: ['completed', 'student_no_show', 'cancelled'],
+              [Op.in]: ['completed', 'student_no_show', 'cancelled', 'coach_no_show'],
             },
             payout_status: { [Op.in]: ['none', 'pending', 'awaiting_verification'] },
           },

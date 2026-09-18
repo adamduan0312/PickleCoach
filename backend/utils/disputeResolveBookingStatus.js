@@ -2,6 +2,8 @@
  * Booking status derivation for `PUT /api/disputes/:id/resolve`.
  * Pure helpers — attendance/behavior rules unchanged; `other` mirrors behavior
  * for releasing Stripe-parked `disputed` bookings back to `completed`.
+ *
+ * Attendance `lesson_occurred` (neutral reject) maps booking → `completed`.
  */
 
 import {
@@ -9,6 +11,9 @@ import {
   CATCHALL_DISPUTE_TYPE_CODE,
 } from './disputeTypeCatalog.js';
 import { BookingTransitionVia } from '../services/bookingStateMachine.js';
+
+/** Neutral attendance outcome: lesson happened; neither party is a no-show. */
+export const ATTENDANCE_OUTCOME_LESSON_OCCURRED = 'lesson_occurred';
 
 /**
  * @param {{ disputeTypeCode: string | null | undefined, bookingStatus: string, outcome?: string | null }}
@@ -26,7 +31,9 @@ export function deriveResolvedBookingStatusFromDisputeResolve({
 
   let resolvedBookingStatus = bookingStatus;
   if (isAttendanceClaim) {
-    if (outcome === 'student_no_show' || outcome === 'coach_no_show') {
+    if (outcome === ATTENDANCE_OUTCOME_LESSON_OCCURRED) {
+      resolvedBookingStatus = 'completed';
+    } else if (outcome === 'student_no_show' || outcome === 'coach_no_show') {
       resolvedBookingStatus = outcome;
     }
   } else if ((isBehaviorDispute || isCatchallDispute) && bookingStatus === 'disputed') {
@@ -40,6 +47,13 @@ export function deriveResolvedBookingStatusFromDisputeResolve({
  * @returns {string}
  */
 export function deriveDisputeResolveBookingTransitionVia({ disputeTypeCode, fromStatus, toStatus }) {
+  const isAttendanceClaim =
+    disputeTypeCode === 'coach_no_show_claim' || disputeTypeCode === 'student_no_show_claim';
+
+  if (isAttendanceClaim && toStatus === 'completed') {
+    return BookingTransitionVia.DISPUTE_RESOLVE_ATTENDANCE_NEUTRAL;
+  }
+
   if (fromStatus === 'disputed' && toStatus === 'completed') {
     if (BEHAVIOR_DISPUTE_TYPE_CODES.includes(disputeTypeCode)) {
       return BookingTransitionVia.DISPUTE_RESOLVE_BEHAVIOR_ON_DISPUTED_BOOKING;

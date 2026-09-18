@@ -211,8 +211,11 @@ describe('message / availability / audit / cancellation contracts', () => {
           price: '50.00',
           court_location_id: 1,
           idempotency_key: 'x',
+          coach: { id: 2, full_name: 'Coach', avatar_url: null, email: 'c@x.com' },
+          primaryStudent: { id: 3, full_name: 'Student', avatar_url: null, email: 's@x.com' },
         },
         messages: [{ id: 1, conversation_id: 1, sender_id: 2, message_text: 'yo', created_at: 't' }],
+        viewerUserId: 3,
       },
     );
     assert.equal(dto.booking.idempotency_key, undefined);
@@ -223,6 +226,8 @@ describe('message / availability / audit / cancellation contracts', () => {
     assert.equal(dto.booking.lesson_id, 1);
     assert.equal(dto.booking.messaging_locked, false);
     assert.equal(dto.messages[0].message_text, 'yo');
+    assert.deepEqual(dto.counterpart, { id: 2, full_name: 'Coach', avatar_url: null });
+    assert.equal(dto.counterpart.email, undefined);
   });
 
   it('availability DTO does not spread unknown columns', () => {

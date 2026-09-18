@@ -124,4 +124,64 @@ describe('deriveResolvedBookingStatusFromDisputeResolve — attendance unchanged
       'coach_no_show',
     );
   });
+
+  it('completed + coach_no_show_claim + lesson_occurred → completed', () => {
+    assert.equal(
+      deriveResolvedBookingStatusFromDisputeResolve({
+        disputeTypeCode: 'coach_no_show_claim',
+        bookingStatus: 'completed',
+        outcome: 'lesson_occurred',
+      }),
+      'completed',
+    );
+  });
+
+  it('student_no_show + student_no_show_claim + lesson_occurred → completed', () => {
+    assert.equal(
+      deriveResolvedBookingStatusFromDisputeResolve({
+        disputeTypeCode: 'student_no_show_claim',
+        bookingStatus: 'student_no_show',
+        outcome: 'lesson_occurred',
+      }),
+      'completed',
+    );
+  });
+
+  it('awaiting_verification + coach_no_show_claim + lesson_occurred → completed', () => {
+    assert.equal(
+      deriveResolvedBookingStatusFromDisputeResolve({
+        disputeTypeCode: 'coach_no_show_claim',
+        bookingStatus: 'awaiting_verification',
+        outcome: 'lesson_occurred',
+      }),
+      'completed',
+    );
+  });
+});
+
+describe('deriveDisputeResolveBookingTransitionVia — attendance neutral', () => {
+  it('attendance → completed uses neutral via', () => {
+    assert.equal(
+      deriveDisputeResolveBookingTransitionVia({
+        disputeTypeCode: 'coach_no_show_claim',
+        fromStatus: 'completed',
+        toStatus: 'completed',
+      }),
+      BookingTransitionVia.DISPUTE_RESOLVE_ATTENDANCE_NEUTRAL,
+    );
+    assert.equal(
+      deriveDisputeResolveBookingTransitionVia({
+        disputeTypeCode: 'student_no_show_claim',
+        fromStatus: 'coach_no_show',
+        toStatus: 'completed',
+      }),
+      BookingTransitionVia.DISPUTE_RESOLVE_ATTENDANCE_NEUTRAL,
+    );
+    const r = canTransitionBookingStatus(
+      'coach_no_show',
+      'completed',
+      BookingTransitionVia.DISPUTE_RESOLVE_ATTENDANCE_NEUTRAL,
+    );
+    assert.equal(r.ok, true);
+  });
 });

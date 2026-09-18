@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../auth/AuthContext.jsx';
 import { authApi } from '../../api/index.js';
 import { FormField } from '../../components/ui/FormField.jsx';
@@ -6,10 +7,11 @@ import { Alert } from '../../components/ui/States.jsx';
 import { passwordHint, validatePassword } from '../../utils/format.js';
 import { detectLocalTimezone } from '../../utils/datetime.js';
 import { hasCoachRole, hasStudentRole } from '../../domain/userReadiness.js';
-import { Link } from 'react-router-dom';
+import { reopenHowBookingsWork } from '../../utils/howBookingsWorkStorage.js';
 
 export function SettingsPage() {
   const { user, mode, refreshProfile, applySession, readiness } = useAuth();
+  const navigate = useNavigate();
   const [profile, setProfile] = useState({
     full_name: user?.full_name || '',
     phone: user?.phone || '',
@@ -21,6 +23,12 @@ export function SettingsPage() {
   const [message, setMessage] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
+
+  function openHowBookingsGuide(role) {
+    if (!user?.id) return;
+    reopenHowBookingsWork(user.id, role);
+    navigate(role === 'coach' ? '/coach?guide=1' : '/dashboard?guide=1');
+  }
 
   async function saveProfile(e) {
     e.preventDefault();
@@ -166,6 +174,24 @@ export function SettingsPage() {
             <Link to="/coach/profile">Edit coach marketplace profile</Link>
           ) : null}
         </div>
+        {(isStudent || isCoach) ? (
+          <div className="card stack" id="how-bookings-work">
+            <h2>How bookings work</h2>
+            <p className="small muted">
+              A short reminder of what to do before and after a lesson. Booking detail pages also show “What happens next” for each status.
+            </p>
+            {isStudent ? (
+              <button className="btn secondary" type="button" onClick={() => openHowBookingsGuide('student')}>
+                Show student guide
+              </button>
+            ) : null}
+            {isCoach ? (
+              <button className="btn secondary" type="button" onClick={() => openHowBookingsGuide('coach')}>
+                Show coach guide
+              </button>
+            ) : null}
+          </div>
+        ) : null}
       </div>
     </div>
   );

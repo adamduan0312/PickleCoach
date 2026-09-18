@@ -1,9 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../auth/AuthContext.jsx';
 import { studentsApi, asList } from '../../api/index.js';
 import { useAsync } from '../../hooks/useAsync.js';
 import { EmptyState, ErrorState, LoadingState, StatusBadge } from '../../components/ui/States.jsx';
+import { HowBookingsWorkGuide } from '../../components/guides/HowBookingsWorkGuide.jsx';
+import { DashboardReminders } from '../../components/dashboard/DashboardReminders.jsx';
 import {
   bookingDisplayLabel,
   bookingDisplayTone,
@@ -11,6 +13,7 @@ import {
   studentRecentLesson,
   hasLessonEnded,
 } from '../../domain/bookingStatus.js';
+import { studentDashboardReminders } from '../../domain/dashboardReminders.js';
 import { formatDateInZone, formatTimeInZone, detectLocalTimezone } from '../../utils/datetime.js';
 import {
   LOCATION_ACCESS_OFF_DETAIL,
@@ -97,6 +100,7 @@ export function StudentDashboardPage() {
   }, []);
 
   const bookings = data || [];
+  const reminders = useMemo(() => studentDashboardReminders(bookings), [bookings]);
   const upcoming = bookings
     .filter((b) => {
       if (b.status === 'pending') return true;
@@ -154,6 +158,9 @@ export function StudentDashboardPage() {
           <p className="muted">Find a coach and book your next lesson.</p>
         </div>
       </div>
+
+      <HowBookingsWorkGuide userId={user?.id} role="student" />
+      {!loading && !error ? <DashboardReminders items={reminders} /> : null}
 
       <section className="card dashboard-search" aria-labelledby="dashboard-find-coach">
         <h2 id="dashboard-find-coach">Find a coach</h2>

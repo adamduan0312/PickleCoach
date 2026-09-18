@@ -26,6 +26,7 @@ import { getEffectiveRolesForUserRecord } from '../utils/roleGovernance.js';
 import {
   buildBookingIntentStripeMetadata,
   generateBookingAttemptId,
+  isCardOnlyPaymentIntent,
   isPaymentIntentAuthorizedForBookingConfirm,
   isPaymentIntentUsableForCheckout,
   parseBookingIntentMetadata,
@@ -238,20 +239,25 @@ export async function createBookingIntent({
 
   let { created: paymentIntent, live: livePaymentIntent } = await createWithKey(effectiveIdempotencyKey);
 
-  if (!isPaymentIntentUsableForCheckout(livePaymentIntent)) {
+  const needsRemint = (live) => (
+    !isPaymentIntentUsableForCheckout(live) || !isCardOnlyPaymentIntent(live)
+  );
+
+  if (needsRemint(livePaymentIntent)) {
     effectiveAttemptId = generateBookingAttemptId();
     effectiveIdempotencyKey = resolveBookingIntentIdempotencyKey({
       studentId,
       bookingAttemptId: effectiveAttemptId,
     });
-    logger.info('Booking intent reminted after unusable PaymentIntent replay', {
+    logger.info('Booking intent reminted after unusable or non-card PaymentIntent replay', {
       studentId,
       priorPaymentIntentId: livePaymentIntent?.id,
       priorStatus: livePaymentIntent?.status,
+      priorPaymentMethodTypes: livePaymentIntent?.payment_method_types,
       remintedAttemptId: effectiveAttemptId,
     });
     ({ created: paymentIntent, live: livePaymentIntent } = await createWithKey(effectiveIdempotencyKey));
-    if (!isPaymentIntentUsableForCheckout(livePaymentIntent)) {
+    if (needsRemint(livePaymentIntent)) {
       const err = new Error('Unable to create a usable payment authorization. Please try again.');
       err.statusCode = 502;
       err.code = 'payment_intent_unusable';

@@ -103,3 +103,27 @@ export function checkDisputeCreateBookingEligibility(booking, now = new Date(), 
     message: `Booking status "${status}" is not eligible for dispute creation.`,
   };
 }
+
+/**
+ * Coach participants do not open `student_no_show_claim`.
+ *
+ * Student no-show is recorded via Mark Student no-show during the 24h post-lesson
+ * attendance window (then auto-complete). Allowing a later claim would duplicate
+ * that attendance outcome after the window. Admins may still open exceptional claims.
+ *
+ * @param {{ status?: string } | null | undefined} _booking
+ * @param {Date} [_now]
+ * @param {{ isAdmin?: boolean }} [options]
+ * @returns {{ ok: true } | { ok: false, code: string, message: string }}
+ */
+export function checkCoachStudentNoShowClaimEligibility(_booking, _now = new Date(), options = {}) {
+  const { isAdmin = false } = options;
+  if (isAdmin) return { ok: true };
+
+  return {
+    ok: false,
+    code: 'dispute_create_student_no_show_claim_use_attendance',
+    message:
+      'Student no-show is recorded with Mark Student no-show during the 24-hour post-lesson window. Coaches cannot open a student no-show claim.',
+  };
+}

@@ -56,6 +56,18 @@ export function serializeResolutionAction(resolutionAction) {
   return dto;
 }
 
+/**
+ * Map persisted `dispute_resolution_actions.code` → resolve `financial_action`.
+ * Resolve writes financial intent via the action FK (no separate column).
+ */
+export function financialActionFromResolutionActionCode(code) {
+  const c = String(code || '').toLowerCase();
+  if (c === 'approved_refund') return 'refund_student';
+  if (c === 'partial_refund') return 'refund_student_partial';
+  if (c === 'no_action') return 'no_change';
+  return null;
+}
+
 /** Admin who resolved the dispute — id and display name only. */
 export function serializeResolvedByAdmin(admin) {
   if (!admin) return null;
@@ -111,9 +123,16 @@ export function formatDisputeResponse(dispute, { isAdmin = false } = {}) {
   if (disputeType !== undefined) {
     dto.disputeType = serializeDisputeTypeSummary(disputeType);
   }
-  if (resolutionAction !== undefined) {
-    dto.resolutionAction = serializeResolutionAction(resolutionAction);
+  const serializedAction =
+    resolutionAction !== undefined ? serializeResolutionAction(resolutionAction) : undefined;
+  if (serializedAction !== undefined) {
+    dto.resolutionAction = serializedAction;
   }
+  // Customer + admin contract: structured financial intent (not legacy action name).
+  dto.financial_action = financialActionFromResolutionActionCode(
+    serializedAction?.code ?? resolutionAction?.code,
+  );
+
   if (payment !== undefined) {
     dto.payment = serializePaymentSummary(payment, { isAdmin });
   }

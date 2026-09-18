@@ -76,7 +76,7 @@ describe('sortBookingsForList', () => {
 });
 
 describe('bookingIncludedInListFilter', () => {
-  it('All includes every status; explicit filters match status exactly', () => {
+  it('All includes every status for student', () => {
     const awaiting = b(1, 'awaiting_verification', '2026-09-01T10:00:00.000Z');
     const disputed = b(2, 'disputed', '2026-08-31T10:00:00.000Z');
     const noShow = b(3, 'student_no_show', '2026-08-30T10:00:00.000Z');
@@ -84,13 +84,85 @@ describe('bookingIncludedInListFilter', () => {
     assert.equal(bookingIncludedInListFilter(awaiting, ''), true);
     assert.equal(bookingIncludedInListFilter(disputed, ''), true);
     assert.equal(bookingIncludedInListFilter(noShow, ''), true);
+  });
 
-    assert.equal(bookingIncludedInListFilter(awaiting, 'completed'), false);
-    assert.equal(bookingIncludedInListFilter(awaiting, 'confirmed'), false);
-    assert.equal(bookingIncludedInListFilter(disputed, 'completed'), false);
-    assert.equal(bookingIncludedInListFilter(noShow, 'cancelled'), false);
+  it('student Awaiting confirmation includes pending and awaiting_verification', () => {
+    const opts = { audience: 'student', now };
+    assert.equal(bookingIncludedInListFilter(b(1, 'pending', '2026-09-02T10:00:00.000Z'), 'awaiting_confirmation', opts), true);
+    assert.equal(bookingIncludedInListFilter(b(2, 'confirmed', '2026-09-03T10:00:00.000Z'), 'awaiting_confirmation', opts), false);
+    assert.equal(bookingIncludedInListFilter(b(3, 'awaiting_verification', '2026-09-01T10:00:00.000Z'), 'awaiting_confirmation', opts), true);
+  });
 
-    assert.equal(bookingIncludedInListFilter(b(4, 'completed', '2026-08-31T10:00:00.000Z'), 'completed'), true);
-    assert.equal(bookingIncludedInListFilter(b(5, 'pending', '2026-09-02T10:00:00.000Z'), 'pending'), true);
+  it('student Upcoming is confirmed lessons that have not ended', () => {
+    const opts = { audience: 'student', now };
+    assert.equal(bookingIncludedInListFilter(b(1, 'confirmed', '2026-09-08T10:00:00.000Z'), 'upcoming', opts), true);
+    assert.equal(bookingIncludedInListFilter({
+      id: 2,
+      status: 'confirmed',
+      scheduled_at: '2026-09-01T10:00:00.000Z',
+      duration_minutes: 60,
+    }, 'upcoming', opts), false);
+    assert.equal(bookingIncludedInListFilter(b(3, 'pending', '2026-09-08T10:00:00.000Z'), 'upcoming', opts), false);
+  });
+
+  it('student Completed includes completed only (open issues stay under Completed by status)', () => {
+    const opts = { audience: 'student', now };
+    assert.equal(bookingIncludedInListFilter(b(1, 'completed', '2026-08-31T10:00:00.000Z'), 'completed', opts), true);
+    assert.equal(bookingIncludedInListFilter({
+      id: 2,
+      status: 'completed',
+      active_issue: { id: 9 },
+      scheduled_at: '2026-08-31T10:00:00.000Z',
+    }, 'completed', opts), true);
+    assert.equal(bookingIncludedInListFilter(b(3, 'awaiting_verification', '2026-09-01T10:00:00.000Z'), 'completed', opts), false);
+    assert.equal(bookingIncludedInListFilter(b(4, 'student_no_show', '2026-08-30T10:00:00.000Z'), 'completed', opts), false);
+  });
+
+  it('student Cancelled includes cancelled / declined / expired', () => {
+    const opts = { audience: 'student', now };
+    assert.equal(bookingIncludedInListFilter({ id: 1, status: 'cancelled' }, 'cancelled', opts), true);
+    assert.equal(bookingIncludedInListFilter({ id: 2, status: 'cancelled', cancelled_by: 'system' }, 'cancelled', opts), true);
+    assert.equal(bookingIncludedInListFilter({ id: 3, status: 'cancelled', declined_at: '2026-09-01T09:00:00.000Z' }, 'cancelled', opts), true);
+    assert.equal(bookingIncludedInListFilter(b(4, 'completed', '2026-08-31T10:00:00.000Z'), 'cancelled', opts), false);
+  });
+
+  it('coach Action needed matches nav attention (pending, actionable verify, open issue)', () => {
+    const opts = { audience: 'coach', now };
+    assert.equal(bookingIncludedInListFilter(b(1, 'pending', '2026-09-02T10:00:00.000Z'), 'action_needed', opts), true);
+    assert.equal(bookingIncludedInListFilter({
+      id: 2,
+      status: 'awaiting_verification',
+      scheduled_at: '2026-09-01T10:00:00.000Z',
+      duration_minutes: 60,
+    }, 'action_needed', opts), true);
+    assert.equal(bookingIncludedInListFilter({
+      id: 3,
+      status: 'completed',
+      active_issue: { id: 9 },
+      scheduled_at: '2026-08-31T10:00:00.000Z',
+    }, 'action_needed', opts), true);
+    assert.equal(bookingIncludedInListFilter(b(4, 'disputed', '2026-08-31T10:00:00.000Z'), 'action_needed', opts), true);
+    assert.equal(bookingIncludedInListFilter(b(5, 'confirmed', '2026-09-08T10:00:00.000Z'), 'action_needed', opts), false);
+    assert.equal(bookingIncludedInListFilter(b(6, 'completed', '2026-08-31T10:00:00.000Z'), 'action_needed', opts), false);
+    // Legacy URL alias
+    assert.equal(bookingIncludedInListFilter(b(7, 'pending', '2026-09-02T10:00:00.000Z'), 'needs_attention', opts), true);
+  });
+
+  it('coach Upcoming is confirmed lessons that have not ended', () => {
+    const opts = { audience: 'coach', now };
+    assert.equal(bookingIncludedInListFilter(b(1, 'confirmed', '2026-09-08T10:00:00.000Z'), 'upcoming', opts), true);
+    assert.equal(bookingIncludedInListFilter({
+      id: 2,
+      status: 'confirmed',
+      scheduled_at: '2026-09-01T10:00:00.000Z',
+      duration_minutes: 60,
+    }, 'upcoming', opts), false);
+    assert.equal(bookingIncludedInListFilter(b(3, 'pending', '2026-09-08T10:00:00.000Z'), 'upcoming', opts), false);
+  });
+
+  it('coach Completed includes completed only', () => {
+    const opts = { audience: 'coach', now };
+    assert.equal(bookingIncludedInListFilter(b(1, 'completed', '2026-08-31T10:00:00.000Z'), 'completed', opts), true);
+    assert.equal(bookingIncludedInListFilter(b(2, 'coach_no_show', '2026-08-30T10:00:00.000Z'), 'completed', opts), false);
   });
 });

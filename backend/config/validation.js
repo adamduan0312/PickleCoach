@@ -157,7 +157,8 @@ export const declineBookingSchema = Joi.object({
 export const reviewSchema = Joi.object({
   booking_id: Joi.number().integer().positive().required(),
   rating: Joi.number().integer().min(1).max(5).required(),
-  comment: Joi.string().max(1000).optional(),
+  // Empty string is common from optional textareas; treat as omitted.
+  comment: Joi.string().max(1000).allow('').empty('').optional(),
 });
 
 export const createConversationSchema = Joi.object({
@@ -409,20 +410,22 @@ export const resolveDisputeSchema = Joi.object({
   /** Derived server-side from dispute id and stripped from validated payload. */
   dispute_type_code: Joi.string().required().strip(),
   /** Canonical admin ruling for all dispute types. */
-  decision: Joi.string().valid('upheld', 'rejected', 'partial').required(),
+  decision: Joi.string().valid('upheld', 'rejected').required(),
   /**
    * Payload validation only. Successful resolve also sets `bookings.attendance_finalized`
    * for **all** dispute types (attendance + behavior) — see `disputeController.resolveDispute`
    * and `backend/docs/dispute-finalization.md`. That DB flag is not inferred from this schema.
    *
    * Factual attendance determination for attendance dispute types only (required whenever
-   * `dispute_type_code` is an attendance claim). Booking status follows `outcome`. For
-   * `rejected`, alignment requires the contradicting outcome per claim type. For all attendance
-   * decisions, `financial_action` must match `outcome` (`coach_no_show` → refund path;
-   * `student_no_show` → `no_change`) — see `disputeResolutionAlignment.js`.
+   * `dispute_type_code` is an attendance claim). Booking status follows `outcome`:
+   * `coach_no_show` / `student_no_show` → that booking status; `lesson_occurred` (reject only)
+   * → `completed` with `no_change`. Rejected claims may still use the contradicting no-show
+   * when the other party was actually a no-show. Financial action must match outcome
+   * (`coach_no_show` → refund path; `student_no_show` / `lesson_occurred` → `no_change`) —
+   * see `disputeResolutionAlignment.js`.
    */
   outcome: Joi.string()
-    .valid('student_no_show', 'coach_no_show')
+    .valid('student_no_show', 'coach_no_show', 'lesson_occurred')
     .when('dispute_type_code', {
       is: Joi.valid('coach_no_show_claim', 'student_no_show_claim'),
       then: Joi.required(),

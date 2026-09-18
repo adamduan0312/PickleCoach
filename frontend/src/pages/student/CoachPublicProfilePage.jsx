@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { coachesApi, asList } from '../../api/index.js';
 import { useAsync } from '../../hooks/useAsync.js';
@@ -17,6 +17,7 @@ import {
 } from '../../utils/format.js';
 import {
   buildAvailabilitySlots,
+  annotateSlotsWithOccupancy,
   groupSlotsByDate,
   formatDateInZone,
   formatTimeInZone,
@@ -65,6 +66,7 @@ export function CoachPublicProfilePage() {
       lessons: asList(lessonsRes.data).length ? asList(lessonsRes.data) : asList(coachRes.data?.lessons),
       courts: asList(courtsRes.data),
       availability: asList(availabilityRes.data).length ? asList(availabilityRes.data) : asList(coachRes.data?.availabilities),
+      occupiedSlots: asList(availabilityRes.raw?.occupied_slots),
       reviews: asList(reviewsRes.data).length ? asList(reviewsRes.data) : asList(coachRes.data?.reviewsReceived),
     };
   }, [id]);
@@ -75,13 +77,22 @@ export function CoachPublicProfilePage() {
 
   const slots = useMemo(() => {
     if (!data || !selectedLesson) return [];
-    return buildAvailabilitySlots({
+    const generated = buildAvailabilitySlots({
       availabilities: data.availability,
       durationMinutes: selectedLesson.duration_minutes,
       coachTimezone: data.coach?.timezone || 'UTC',
       daysAhead: AVAILABILITY_LOOKAHEAD_DAYS,
     });
+    return annotateSlotsWithOccupancy(generated, data.occupiedSlots, {
+      durationMinutes: selectedLesson.duration_minutes,
+    });
   }, [data, selectedLesson]);
+
+  useEffect(() => {
+    if (!slotIso) return;
+    const selected = slots.find((s) => s.scheduled_at === slotIso);
+    if (selected?.occupied) setSlotIso('');
+  }, [slots, slotIso]);
 
   const visibleSlots = useMemo(
     () => slots.slice(0, visibleSlotCount),
@@ -306,17 +317,26 @@ export function CoachPublicProfilePage() {
                         <div key={group.dateKey} className="slot-day-group">
                           <h4 className="slot-day-heading">{group.dateLabel}</h4>
                           <div className="slot-grid slot-grid-times">
-                            {group.slots.map((s) => (
-                              <button
-                                type="button"
-                                key={s.scheduled_at}
-                                className={`slot${slotIso === s.scheduled_at ? ' selected' : ''}`}
-                                onClick={() => setSlotIso(s.scheduled_at)}
-                                disabled={isOwnProfile}
-                              >
-                                <strong>{formatTimeInZone(s.scheduled_at, viewerTz)}</strong>
-                              </button>
-                            ))}
+                            {group.slots.map((s) => {
+                              const occupied = Boolean(s.occupied);
+                              return (
+                                <button
+                                  type="button"
+                                  key={s.scheduled_at}
+                                  className={`slot${slotIso === s.scheduled_at ? ' selected' : ''}${occupied ? ' occupied' : ''}`}
+                                  onClick={() => {
+                                    if (occupied || isOwnProfile) return;
+                                    setSlotIso(s.scheduled_at);
+                                  }}
+                                  disabled={isOwnProfile || occupied}
+                                  aria-disabled={occupied || isOwnProfile}
+                                  title={occupied ? 'Booked' : undefined}
+                                >
+                                  <strong>{formatTimeInZone(s.scheduled_at, viewerTz)}</strong>
+                                  {occupied ? <span className="slot-occupied-label">Booked</span> : null}
+                                </button>
+                              );
+                            })}
                           </div>
                         </div>
                       ))}

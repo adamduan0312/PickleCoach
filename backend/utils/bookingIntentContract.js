@@ -47,6 +47,20 @@ export function isPaymentIntentUsableForCheckout(paymentIntent) {
   return CHECKOUT_USABLE_PI_STATUSES.has(String(paymentIntent.status || ''));
 }
 
+/**
+ * MVP checkout is card-only (manual capture). Idempotent Stripe replays can return an older
+ * PaymentIntent that still lists Klarna/bank/etc. from automatic_payment_methods.
+ *
+ * Only remint when Stripe explicitly lists non-card method types. Missing/empty types
+ * (e.g. test doubles) are treated as acceptable so we do not false-positive remint loops.
+ * @param {Pick<import('stripe').Stripe.PaymentIntent, 'payment_method_types'> | null | undefined} paymentIntent
+ */
+export function isCardOnlyPaymentIntent(paymentIntent) {
+  const types = paymentIntent?.payment_method_types;
+  if (!Array.isArray(types) || types.length === 0) return true;
+  return types.length === 1 && types[0] === 'card';
+}
+
 /** Client-facing booking attempt id (stable within one checkout session). */
 export function generateBookingAttemptId() {
   return crypto.randomUUID();

@@ -117,6 +117,15 @@ describe('reviewSchema (POST body)', () => {
     assert.equal(value.comment, undefined);
   });
 
+  test('treats empty comment as omitted', () => {
+    const { error, value } = reviewSchema.validate(
+      { booking_id: 162, rating: 5, comment: '' },
+      { stripUnknown: true, convert: true },
+    );
+    assert.equal(error, undefined);
+    assert.equal(value.comment, undefined);
+  });
+
   test('strips coach_id / student_id from validated payload (client cannot choose parties)', () => {
     const { error, value } = reviewSchema.validate(
       {

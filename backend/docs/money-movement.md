@@ -155,10 +155,10 @@ Refunds: `dispute_refund_full` / `dispute_refund_partial` — issued **against t
 | Resolve | Student | Coach | Platform | Notes |
 |---------|---------|-------|----------|-------|
 | Attendance **`student_no_show` + `no_change`** | No refund | **92%** of charge after window | 8% | Same as completed. **Not** 100% to coach |
-| Attendance **`coach_no_show` + `refund_student`** | Full refund **now** | $0 | $0 of lesson (Stripe fee still platform) | |
-| Attendance **`coach_no_show` + `refund_student_partial`** | Partial refund **now** | 92% of **net retained** when payable | 8% of remainder | |
+| Attendance **`coach_no_show` + `refund_student`** | Full refund **now** | $0 | $0 of lesson (Stripe fee still platform) | No later auto remaining refund |
+| Attendance **`coach_no_show` + `refund_student_partial`** | Partial refund **now** | **92% of net retained** after window | 8% of remainder | **Does not** auto-refund the remainder. Remainder is coach/platform split. |
 | Behavior / `other` + **`no_change`** | No refund | Follows booking status (usually completed path after window) | Commission if payout | |
-| Behavior + **`refund_student` / partial** | Refund **now** | $0 or 92% of remainder | 8% of remainder | |
+| Behavior + **`refund_student` / partial** | Refund **now** | $0 (full) or **92% of remainder** (partial) after window | 8% of remainder when partial | |
 
 ---
 
@@ -169,12 +169,13 @@ Normally **financially final** in the product sense: participant disputes close;
 | # | Situation | Movement | Against / from |
 |---|-----------|----------|----------------|
 | C1 | `completed` or `student_no_show`, escrow still `held` | Connect payout 92% when worker runs | Captured charge on platform balance → coach; 8% platform |
-| C2 | `coach_no_show`, refundable captured charge | Full refund when worker runs | Original captured charge → student. Coach is **not** paid. |
+| C2a | `coach_no_show` **without** a dispute partial-refund decision (e.g. admin mark only, or full dispute refund already drained the charge) | Auto `booking_coach_no_show_refund` of **remaining** balance when worker runs | Original charge → student. Coach is **not** paid. |
+| C2b | `coach_no_show` **after** dispute `refund_student_partial` | **No** second student refund. Payout worker pays **92% of net retained** (same split as completed) | Remaining on charge → coach + platform |
 | C3 | Admin **`POST …/refund`** | Exceptional override: full or remaining partial | Original captured charge → student. **Does not** change attendance status. |
 | C4 | Student/coach **create dispute** | **400** `dispute_create_financial_review_closed` | — |
 | C5 | **Admin** opens/resolves a dispute | Same as B resolve table | Charge for refunds; payout only if still `held` and status is payable |
 
-**C3 while still `held`:** student refund reduces (or zeros) what a later payout can send. That is the short post-window race above.
+**Rule:** `refund_student_partial` never means “refund everything eventually.” The selected financial action controls final allocation.
 
 `payout_status = paid` means the **Connect transfer succeeded**. It does **not** necessarily mean the funds have reached the coach’s bank.
 

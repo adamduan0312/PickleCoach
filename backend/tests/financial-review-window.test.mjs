@@ -114,7 +114,7 @@ describe('financialReviewWindow', () => {
     assert.equal(bookingStatusUsesPostLessonPayoutClock('completed'), true);
     assert.equal(bookingStatusUsesPostLessonPayoutClock('student_no_show'), true);
     assert.equal(bookingStatusUsesPostLessonPayoutClock('cancelled'), false);
-    assert.equal(bookingStatusUsesPostLessonPayoutClock('coach_no_show'), false);
+    assert.equal(bookingStatusUsesPostLessonPayoutClock('coach_no_show'), true);
     assert.equal(bookingStatusUsesPostLessonPayoutClock('awaiting_verification'), false);
   });
 

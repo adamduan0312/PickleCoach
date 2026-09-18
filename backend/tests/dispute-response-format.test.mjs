@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   formatDisputeResponse,
   serializeBookingForDisputes,
@@ -74,13 +75,13 @@ const fullResolutionAction = {
   created_at: '2025-01-01T00:00:00.000Z',
 };
 
-test('serializeBookingForDisputes trims internal booking fields', () => {
+test('serializeBookingForDisputes trims internal booking fields but keeps payout_status for settlement UI', () => {
   const dto = serializeBookingForDisputes(fullBooking);
   assert.equal(dto.id, 352);
   assert.equal(dto.lesson_id, 61);
   assert.equal(dto.status, 'disputed');
   assert.equal(dto.messaging_locked, true);
-  assert.equal(dto.payout_status, undefined);
+  assert.equal(dto.payout_status, 'none');
   assert.equal(dto.idempotency_key, undefined);
   assert.equal(dto.created_at, '2026-05-28T08:00:00.000Z');
 });
@@ -131,6 +132,45 @@ test('formatDisputeResponse: partial refund cents are surfaced as decimal dollar
   assert.equal(out.refund_amount, '12.34');
   assert.equal(out.outcome, 'coach_no_show');
   assert.ok(!('refund_cents' in out), 'refund_cents should be stripped from public JSON');
+});
+
+test('formatDisputeResponse: exposes financial_action from resolution action code', () => {
+  assert.equal(
+    formatDisputeResponse(
+      baseDispute({ resolutionAction: fullResolutionAction }),
+    ).financial_action,
+    'refund_student',
+  );
+  assert.equal(
+    formatDisputeResponse(
+      baseDispute({
+        resolutionAction: {
+          id: 3,
+          code: 'partial_refund',
+          name: 'Partial refund',
+          description: 'Partial',
+        },
+      }),
+    ).financial_action,
+    'refund_student_partial',
+  );
+  assert.equal(
+    formatDisputeResponse(
+      baseDispute({
+        resolutionAction: {
+          id: 1,
+          code: 'no_action',
+          name: 'No action',
+          description: 'None',
+        },
+      }),
+    ).financial_action,
+    'no_change',
+  );
+  assert.equal(
+    formatDisputeResponse(baseDispute()).financial_action,
+    null,
+  );
 });
 
 test('formatDisputeResponse: zero or sub-dollar cents pad correctly', () => {
@@ -285,4 +325,14 @@ test('formatDisputeResponse: works with sequelize-like instance via toJSON()', (
 
   assert.equal(out.refund_amount, '99.00');
   assert.equal(out.outcome, 'student_no_show');
+});
+
+test('getDisputeById loads booking payment when payments.dispute_id association is missing', () => {
+  const src = readFileSync(new URL('../controllers/disputeController.js', import.meta.url), 'utf8');
+  const start = src.indexOf('export const getDisputeById');
+  assert.ok(start >= 0);
+  const section = src.slice(start, start + 2200);
+  assert.match(section, /Payment\.findOne/);
+  assert.match(section, /booking_id: dispute\.booking_id/);
+  assert.match(section, /setDataValue\('payment'/);
 });

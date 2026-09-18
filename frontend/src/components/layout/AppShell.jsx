@@ -239,6 +239,12 @@ export function AppShell({ children }) {
                   <div>{user?.email}</div>
                 </div>
                 <Link to="/settings" onClick={closeOverlays}>Settings</Link>
+                {mode === 'student' && student ? (
+                  <Link to="/dashboard?guide=1" onClick={closeOverlays}>How bookings work</Link>
+                ) : null}
+                {mode === 'coach' && coach ? (
+                  <Link to="/coach?guide=1" onClick={closeOverlays}>How bookings work</Link>
+                ) : null}
                 {showCoachProfileLink ? (
                   <Link to="/coach/profile" onClick={closeOverlays}>Coach profile</Link>
                 ) : null}
@@ -280,6 +286,12 @@ export function AppShell({ children }) {
             ) : null}
             {links.map((l) => renderNavLink(l, { onClick: () => setDrawer(false) }))}
             <Link to="/settings" onClick={() => setDrawer(false)}>Settings</Link>
+            {mode === 'student' && student ? (
+              <Link to="/dashboard?guide=1" onClick={() => setDrawer(false)}>How bookings work</Link>
+            ) : null}
+            {mode === 'coach' && coach ? (
+              <Link to="/coach?guide=1" onClick={() => setDrawer(false)}>How bookings work</Link>
+            ) : null}
             {showCoachProfileLink ? (
               <Link to="/coach/profile" onClick={() => setDrawer(false)}>Coach profile</Link>
             ) : null}

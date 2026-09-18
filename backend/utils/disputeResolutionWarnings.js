@@ -1,7 +1,7 @@
 import { BEHAVIOR_DISPUTE_TYPE_CODES } from './disputeTypeCatalog.js';
 
 const BEHAVIOR_DISPUTE_CODES = new Set(BEHAVIOR_DISPUTE_TYPE_CODES);
-const SUSTAINED_DECISIONS = new Set(['upheld', 'partial']);
+const SUSTAINED_DECISIONS = new Set(['upheld']);
 
 /**
  * Attendance outcomes where the factual outcome contradicts the party who opened the claim

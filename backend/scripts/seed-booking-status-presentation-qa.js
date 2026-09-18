@@ -1,8 +1,8 @@
 /**
  * Seed bookings for manual booking-status presentation QA (list ↔ detail ↔ nav dot).
  *
- * Covers: pending, confirmed, awaiting_verification, completed (24h open),
- * issue reported (open dispute), disputed (status only — Issue under review),
+ * Covers: pending, confirmed, awaiting_verification (×4), completed (open / paid / refunded),
+ * issue reported (open dispute), disputed (status only — Payment dispute under review),
  * cancelled, student_no_show.
  *
  * Idempotent — destroys prior rows with idempotency_key prefix `qa_status_ux_`.
@@ -28,6 +28,7 @@ import {
   CourtLocation,
   Dispute,
   DisputeType,
+  DisputeResolutionAction,
   Payment,
   Conversation,
   ConversationRead,
@@ -104,6 +105,62 @@ async function ensureCapturedPayment(booking, { label, transaction }) {
   }, { transaction });
 }
 
+/** Normal completed settlement: captured charge released to coach. */
+async function ensureReleasedPayment(booking, { label, transaction }) {
+  const amounts = calculatePaymentAmounts(booking.price);
+  const totalCharge = Number(amounts.total_charge_to_student) || 0;
+  const amountCapturableCents = Math.round(totalCharge * 100);
+  const paymentIntentId = `pi_seed_dev_${IDEM_PREFIX}${label}_${booking.id}`;
+  registerDevSeedPaymentIntent(paymentIntentId, { amountCapturableCents });
+  return Payment.create({
+    booking_id: booking.id,
+    coach_id: booking.coach_id,
+    student_id: booking.primary_student_id,
+    lesson_price: amounts.lesson_price,
+    platform_fee_percent: amounts.platform_fee_percent,
+    platform_fee_amount: amounts.platform_fee_amount,
+    total_charge_to_student: amounts.total_charge_to_student,
+    coach_payout_expected: amounts.coach_payout_expected,
+    escrow_status: 'released',
+    payment_status: 'captured',
+    refund_status: 'none',
+    payment_method: 'stripe',
+    payment_intent_id: paymentIntentId,
+    charge_id: `ch_seed_dev_${booking.id}`,
+    transfer_id: `tr_seed_dev_${booking.id}`,
+  }, { transaction });
+}
+
+/**
+ * Completed lesson + later full refund (e.g. admin resolved student complaint).
+ * Attendance stays completed; money outcome is separate.
+ */
+async function ensureRefundedPayment(booking, { label, transaction }) {
+  const amounts = calculatePaymentAmounts(booking.price);
+  const totalCharge = Number(amounts.total_charge_to_student) || 0;
+  const amountCapturableCents = Math.round(totalCharge * 100);
+  const paymentIntentId = `pi_seed_dev_${IDEM_PREFIX}${label}_${booking.id}`;
+  registerDevSeedPaymentIntent(paymentIntentId, { amountCapturableCents });
+  return Payment.create({
+    booking_id: booking.id,
+    coach_id: booking.coach_id,
+    student_id: booking.primary_student_id,
+    lesson_price: amounts.lesson_price,
+    platform_fee_percent: amounts.platform_fee_percent,
+    platform_fee_amount: amounts.platform_fee_amount,
+    total_charge_to_student: amounts.total_charge_to_student,
+    coach_payout_expected: 0,
+    escrow_status: 'refunded',
+    payment_status: 'refunded',
+    refund_status: 'succeeded',
+    refunded_amount: amounts.total_charge_to_student,
+    payment_method: 'stripe',
+    payment_intent_id: paymentIntentId,
+    charge_id: `ch_seed_dev_${booking.id}`,
+    stripe_refund_id: `re_seed_dev_${booking.id}`,
+  }, { transaction });
+}
+
 async function ensureAuthorizedPayment(booking, { label, transaction }) {
   const amounts = calculatePaymentAmounts(booking.price);
   const totalCharge = Number(amounts.total_charge_to_student) || 0;
@@ -159,7 +216,7 @@ function buildSpecs(anchor, durationMinutes) {
     },
     {
       key: 'awaiting_verification',
-      expect: { student: 'Awaiting confirmation', coach: 'Action needed', detailHeadline: 'Confirm lesson attendance / Awaiting confirmation' },
+      expect: { student: 'Awaiting confirmation', coach: 'Confirmation needed', detailHeadline: 'Confirm lesson attendance / Awaiting confirmation' },
       navDot: { student: false, coach: true },
       fields: {
         status: 'awaiting_verification',
@@ -172,8 +229,48 @@ function buildSpecs(anchor, durationMinutes) {
       payment: 'captured',
     },
     {
+      key: 'awaiting_verification_2',
+      expect: { student: 'Awaiting confirmation', coach: 'Confirmation needed', detailHeadline: 'Confirm lesson attendance / Awaiting confirmation' },
+      navDot: { student: false, coach: true },
+      fields: {
+        status: 'awaiting_verification',
+        // Second copy — lesson ended ~3.5h ago (distinct slot from awaiting_verification).
+        scheduled_at: new Date(anchor.getTime() - 3.5 * hourMs - durMs),
+        created_at: new Date(anchor.getTime() - 5.5 * dayMs),
+        payout_status: 'awaiting_verification',
+        messaging_locked: false,
+      },
+      payment: 'captured',
+    },
+    {
+      key: 'awaiting_verification_3',
+      expect: { student: 'Awaiting confirmation', coach: 'Confirmation needed', detailHeadline: 'Confirm lesson attendance / Awaiting confirmation' },
+      navDot: { student: false, coach: true },
+      fields: {
+        status: 'awaiting_verification',
+        scheduled_at: new Date(anchor.getTime() - 5 * hourMs - durMs),
+        created_at: new Date(anchor.getTime() - 6 * dayMs),
+        payout_status: 'awaiting_verification',
+        messaging_locked: false,
+      },
+      payment: 'captured',
+    },
+    {
+      key: 'awaiting_verification_4',
+      expect: { student: 'Awaiting confirmation', coach: 'Confirmation needed', detailHeadline: 'Confirm lesson attendance / Awaiting confirmation' },
+      navDot: { student: false, coach: true },
+      fields: {
+        status: 'awaiting_verification',
+        scheduled_at: new Date(anchor.getTime() - 7 * hourMs - durMs),
+        created_at: new Date(anchor.getTime() - 6.5 * dayMs),
+        payout_status: 'awaiting_verification',
+        messaging_locked: false,
+      },
+      payment: 'captured',
+    },
+    {
       key: 'completed_review_open',
-      expect: { student: 'Completed', coach: 'Completed', detailHeadline: 'Lesson complete (+ 24h review copy)' },
+      expect: { student: 'Completed', coach: 'Completed', detailHeadline: 'Lesson complete (+ 24h issue-reporting copy)' },
       navDot: { student: false, coach: false },
       fields: {
         status: 'completed',
@@ -183,6 +280,42 @@ function buildSpecs(anchor, durationMinutes) {
         messaging_locked: false,
       },
       payment: 'captured',
+    },
+    {
+      key: 'completed_paid',
+      expect: {
+        student: 'Completed',
+        coach: 'Completed',
+        detailHeadline: 'Lesson complete + Payment released (normal settlement)',
+      },
+      navDot: { student: false, coach: false },
+      fields: {
+        status: 'completed',
+        // >24h past lesson end so issue-reporting window is closed.
+        scheduled_at: new Date(anchor.getTime() - 30 * hourMs - durMs),
+        created_at: new Date(anchor.getTime() - 8 * dayMs),
+        payout_status: 'paid',
+        messaging_locked: false,
+      },
+      payment: 'released',
+    },
+    {
+      key: 'completed_refunded',
+      expect: {
+        student: 'Completed',
+        coach: 'Completed',
+        detailHeadline: 'Lesson complete + later full refund ($0 coach payout) + View issue resolution',
+      },
+      navDot: { student: false, coach: false },
+      fields: {
+        status: 'completed',
+        scheduled_at: new Date(anchor.getTime() - 32 * hourMs - durMs),
+        created_at: new Date(anchor.getTime() - 9 * dayMs),
+        payout_status: 'none',
+        messaging_locked: false,
+      },
+      payment: 'refunded',
+      resolvedIssue: true,
     },
     {
       key: 'issue_reported',
@@ -200,7 +333,7 @@ function buildSpecs(anchor, durationMinutes) {
     },
     {
       key: 'disputed',
-      expect: { student: 'Issue under review', coach: 'Issue under review', admin: 'Disputed' },
+      expect: { student: 'Payment dispute under review', coach: 'Payment dispute under review', admin: 'Disputed' },
       navDot: { student: true, coach: true },
       fields: {
         status: 'disputed',
@@ -210,7 +343,7 @@ function buildSpecs(anchor, durationMinutes) {
         messaging_locked: false,
       },
       payment: 'captured',
-      // No open dispute row — customer label is "Issue under review", admin "Disputed".
+      // No open dispute row — customer label is "Payment dispute under review", admin "Disputed".
     },
     {
       key: 'cancelled',
@@ -280,6 +413,14 @@ async function main() {
       process.exit(1);
     }
 
+    const refundAction = await DisputeResolutionAction.findOne({
+      where: { code: 'approved_refund' },
+    });
+    if (!refundAction) {
+      console.error('Missing dispute_resolution_actions code approved_refund. Run migrations/seeds.');
+      process.exit(1);
+    }
+
     const courtId = await pickCourtId(coach.id);
     const anchor = new Date();
     const specs = buildSpecs(anchor, lesson.duration_minutes || 60);
@@ -324,7 +465,7 @@ async function main() {
 
       const rows = [];
       for (const spec of specs) {
-        const { key, fields, payment, openIssue, expect, navDot } = spec;
+        const { key, fields, payment, openIssue, resolvedIssue, expect, navDot } = spec;
         const booking = await Booking.create(
           {
             lesson_id: lesson.id,
@@ -339,10 +480,15 @@ async function main() {
           { transaction: t },
         );
 
+        let paymentRow = null;
         if (payment === 'authorized') {
-          await ensureAuthorizedPayment(booking, { label: key, transaction: t });
+          paymentRow = await ensureAuthorizedPayment(booking, { label: key, transaction: t });
         } else if (payment === 'captured') {
-          await ensureCapturedPayment(booking, { label: key, transaction: t });
+          paymentRow = await ensureCapturedPayment(booking, { label: key, transaction: t });
+        } else if (payment === 'released') {
+          paymentRow = await ensureReleasedPayment(booking, { label: key, transaction: t });
+        } else if (payment === 'refunded') {
+          paymentRow = await ensureRefundedPayment(booking, { label: key, transaction: t });
         }
 
         let disputeId = null;
@@ -358,6 +504,31 @@ async function main() {
             { transaction: t },
           );
           disputeId = dispute.id;
+        } else if (resolvedIssue) {
+          const amounts = calculatePaymentAmounts(booking.price);
+          const refundCents = Math.round(Number(amounts.total_charge_to_student) * 100);
+          const openedAt = new Date(booking.scheduled_at.getTime() + (booking.duration_minutes || 60) * 60 * 1000 + hourMs);
+          const resolvedAt = new Date(openedAt.getTime() + 2 * hourMs);
+          const dispute = await Dispute.create(
+            {
+              booking_id: booking.id,
+              dispute_type_id: disputeType.id,
+              opened_by: 'student',
+              status: 'resolved',
+              notes: 'QA seed: student reported a problem after the lesson was marked complete.',
+              decision: 'upheld',
+              resolution_action_id: refundAction.id,
+              resolution_notes: 'Your issue was reviewed and a full refund was approved.',
+              refund_cents: refundCents,
+              opened_at: openedAt,
+              resolved_at: resolvedAt,
+            },
+            { transaction: t },
+          );
+          disputeId = dispute.id;
+          if (paymentRow) {
+            await paymentRow.update({ dispute_id: dispute.id }, { transaction: t });
+          }
         }
 
         rows.push({
@@ -369,6 +540,7 @@ async function main() {
           expect,
           navDot,
           detail_url: `/bookings/${booking.id}`,
+          issue_url: disputeId ? `/issues/${disputeId}` : null,
         });
       }
       return rows;
@@ -381,10 +553,12 @@ async function main() {
       lesson: { id: lesson.id, title: lesson.title },
       checklist: [
         'Student My bookings → badge matches expect.student; open row → detail headline/badge coherent',
-        'Coach Bookings → badge matches expect.coach; awaiting_verification → Action needed → Confirm lesson attendance',
+        'Coach Bookings → badge matches expect.coach; awaiting_verification → Confirmation needed → Confirm lesson attendance',
         'issue_reported → Issue reported both sides + persistent warning panel (no green flash)',
-        'disputed → customer Issue under review; admin /admin/bookings/:id still Disputed',
-        'completed_review_open → Completed + 24h review banner; Bookings ● OFF',
+        'disputed → customer Payment dispute under review; admin /admin/bookings/:id still Disputed',
+        'completed_review_open → Completed + open issue-reporting banner; Bookings ● OFF',
+        'completed_paid → Completed + Payment released (normal settlement)',
+        'completed_refunded → Completed + later refund / $0 payout (attendance vs money are separate)',
         'Nav ● ON for coach: pending + awaiting_verification + issue_reported + disputed',
         'Nav ● ON for student: issue_reported + disputed + (contestable) student_no_show',
       ],

@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { visualStarRatingParts } from '../../utils/format.js';
 
 /**
@@ -38,5 +39,48 @@ export function StarRating({ rating, variant = 'visual', className = '', label }
         <span key={`empty-${i}`} className="star-rating-empty" aria-hidden="true">☆</span>
       ))}
     </span>
+  );
+}
+
+/**
+ * Clickable 1–5 star picker for leaving a review.
+ * @param {{ value: number, onChange: (n: number) => void, max?: number, id?: string, disabled?: boolean, className?: string }} props
+ */
+export function StarRatingInput({ value, onChange, max = 5, id, disabled = false, className = '' }) {
+  const [hover, setHover] = useState(null);
+  const selected = Number(value) || 0;
+  const display = hover ?? selected;
+
+  return (
+    <div
+      id={id}
+      className={`star-rating-input ${className}`.trim()}
+      role="radiogroup"
+      aria-label="Rating"
+      aria-required="true"
+      onMouseLeave={() => setHover(null)}
+    >
+      {Array.from({ length: max }, (_, i) => {
+        const n = i + 1;
+        const filled = n <= display;
+        return (
+          <button
+            key={n}
+            type="button"
+            role="radio"
+            aria-checked={selected === n}
+            aria-label={`${n} star${n === 1 ? '' : 's'}`}
+            className={`star-rating-input-star ${filled ? 'star-rating-gold' : 'star-rating-empty'}`}
+            disabled={disabled}
+            onMouseEnter={() => setHover(n)}
+            onFocus={() => setHover(n)}
+            onBlur={() => setHover(null)}
+            onClick={() => onChange(n)}
+          >
+            {filled ? '★' : '☆'}
+          </button>
+        );
+      })}
+    </div>
   );
 }

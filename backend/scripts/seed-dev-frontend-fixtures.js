@@ -47,6 +47,7 @@ import {
 } from '../notifications/payloadBuilders.js';
 import { withNotificationRoute } from '../notifications/notificationRoutes.js';
 import { ACTIVE_DISPUTE_TYPE_CODES } from '../utils/disputeTypeCatalog.js';
+import { buildSettlementQaPaymentAttrs } from '../utils/settlementQaFixtures.js';
 
 const env = process.env.NODE_ENV || 'development';
 dotenv.config({ path: `.env.${env}` });
@@ -70,7 +71,28 @@ async function findTestUser(emailLocal) {
   });
 }
 
-async function createNoStripePayment(booking, { paymentStatus = 'captured', escrowStatus = 'held' } = {}) {
+async function createNoStripePayment(booking, {
+  paymentStatus = 'captured',
+  escrowStatus = 'held',
+  money = null,
+  refundCents = null,
+} = {}) {
+  if (money) {
+    const attrs = buildSettlementQaPaymentAttrs(booking, money, {
+      paymentIntentId: null,
+      chargeId: null,
+      stripeRefundId: null,
+      refundCents,
+    });
+    return Payment.create({
+      ...attrs,
+      payment_intent_id: null,
+      charge_id: null,
+      stripe_refund_id: null,
+      payment_status: attrs.payment_status || paymentStatus,
+      escrow_status: attrs.escrow_status || escrowStatus,
+    });
+  }
   const price = Number(booking.price);
   const platformFee = (price * 8) / 100;
   const coachPayout = (price * 92) / 100;
@@ -298,6 +320,18 @@ async function resolveActionId(financialAction) {
   return row.id;
 }
 
+function humanResolutionNotes(spec) {
+  const decision = spec.decision === 'rejected' ? 'Claim not upheld' : 'Claim upheld';
+  if (spec.financial === 'refund_student_partial') {
+    const dollars = spec.refund_cents != null ? (spec.refund_cents / 100).toFixed(2) : null;
+    return dollars
+      ? `${decision}. Partial student refund of $${dollars}.`
+      : `${decision}. Partial student refund.`;
+  }
+  if (spec.financial === 'refund_student') return `${decision}. Full student refund.`;
+  return `${decision}. No refund.`;
+}
+
 async function seedResolvedDisputeExamples({ student, coach, lesson, courtId, admin }) {
   const types = Object.fromEntries(
     (
@@ -323,6 +357,7 @@ async function seedResolvedDisputeExamples({ student, coach, lesson, courtId, ad
       financial: 'refund_student',
       penalize_role: 'none',
       status: 'resolved',
+      money: 'full_refund',
     },
     {
       key: 'resolved_student_no_show_upheld',
@@ -334,6 +369,7 @@ async function seedResolvedDisputeExamples({ student, coach, lesson, courtId, ad
       financial: 'no_change',
       penalize_role: 'none',
       status: 'resolved',
+      money: 'none',
     },
     {
       key: 'resolved_misconduct_upheld_coach',
@@ -345,18 +381,20 @@ async function seedResolvedDisputeExamples({ student, coach, lesson, courtId, ad
       financial: 'no_change',
       penalize_role: 'coach',
       status: 'resolved',
+      money: 'none',
     },
     {
       key: 'resolved_lesson_not_completed_partial',
       type: 'lesson_not_completed',
       bookingStatus: 'completed',
       opened_by: 'student',
-      decision: 'partial',
+      decision: 'upheld',
       outcome: null,
       financial: 'refund_student_partial',
       penalize_role: 'coach',
       status: 'resolved',
       refund_cents: 2500,
+      money: 'partial_refund',
     },
     {
       key: 'resolved_other_rejected',
@@ -368,6 +406,7 @@ async function seedResolvedDisputeExamples({ student, coach, lesson, courtId, ad
       financial: 'no_change',
       penalize_role: 'none',
       status: 'rejected',
+      money: 'none',
     },
   ];
 
@@ -390,7 +429,10 @@ async function seedResolvedDisputeExamples({ student, coach, lesson, courtId, ad
       messaging_locked: true,
       idempotency_key: idemKey(spec.key),
     });
-    await createNoStripePayment(booking, { paymentStatus: 'captured', escrowStatus: 'held' });
+    const payment = await createNoStripePayment(booking, {
+      money: spec.money,
+      refundCents: spec.refund_cents ?? null,
+    });
 
     const actionId = await resolveActionId(spec.financial);
     const dispute = await Dispute.create({
@@ -403,11 +445,12 @@ async function seedResolvedDisputeExamples({ student, coach, lesson, courtId, ad
       outcome: spec.outcome,
       penalize_role: spec.penalize_role,
       resolution_action_id: actionId,
-      resolution_notes: `Seeded ${spec.decision} / ${spec.financial}`,
-      refund_cents: spec.refund_cents ?? null,
+      resolution_notes: humanResolutionNotes(spec),
+      refund_cents: spec.financial === 'refund_student_partial' ? (spec.refund_cents ?? null) : null,
       admin_id: admin.id,
       resolved_at: new Date(),
     });
+    await payment.update({ dispute_id: dispute.id });
     out.push({
       key: spec.key,
       booking_id: booking.id,

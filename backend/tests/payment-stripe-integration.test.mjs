@@ -166,6 +166,15 @@ describeIntegration('payment stripe integration (DB + mocked Stripe)', () => {
     assert.equal(pay.refund_status, 'succeeded');
     assert.equal(dollarsToCents(pay.refunded_amount), partialCents);
 
+    const retainedCents = ctx.totalChargeCents - partialCents;
+    const expectedCoach = Math.round(retainedCents * 0.92);
+    const expectedPlatform = retainedCents - expectedCoach;
+    assert.equal(dollarsToCents(pay.coach_payout_expected), expectedCoach);
+    assert.equal(dollarsToCents(pay.platform_fee_amount), expectedPlatform);
+    // Must not leave capture-time fee or treat full remainder as coach payout.
+    assert.notEqual(dollarsToCents(pay.platform_fee_amount), dollarsToCents(calculatePaymentAmounts(100).platform_fee_amount));
+    assert.notEqual(dollarsToCents(pay.coach_payout_expected), retainedCents);
+
     let c = await assertStripePaymentConsistency(pay, { autoHeal: false, context: 'after_partial' });
     assert.equal(c.ok, true);
 
@@ -180,6 +189,8 @@ describeIntegration('payment stripe integration (DB + mocked Stripe)', () => {
     pay = await Payment.findByPk(payment.id);
     assert.equal(pay.payment_status, 'refunded');
     assert.equal(dollarsToCents(pay.refunded_amount), ctx.totalChargeCents);
+    assert.equal(dollarsToCents(pay.coach_payout_expected), 0);
+    assert.equal(dollarsToCents(pay.platform_fee_amount), 0);
 
     c = await assertStripePaymentConsistency(pay, { autoHeal: false, context: 'after_full' });
     assert.equal(c.ok, true);

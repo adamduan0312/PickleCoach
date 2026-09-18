@@ -2460,8 +2460,10 @@ Use this section as the admin decision guide for incidents, payouts/refunds, dis
   ```
 
   **Resolution fields surfaced on every dispute row** (populated on resolve, null otherwise):
-  - **`decision`**: `upheld` | `rejected` | `partial` | `null`. Admin ruling.
-  - **`outcome`**: `coach_no_show` | `student_no_show` | `null`. Factual attendance result for attendance dispute types (`coach_no_show_claim`, `student_no_show_claim`). Persisted on the dispute so the historical determination survives subsequent admin overrides of `bookings.status`. Always `null` for behavior disputes and unresolved disputes.
+  - **`decision`**: `upheld` | `rejected` | `null`. Admin ruling.
+  - **`outcome`**: `coach_no_show` | `student_no_show` | `lesson_occurred` | `null`. Factual attendance result for attendance dispute types (`coach_no_show_claim`, `student_no_show_claim`). Persisted on the dispute so the historical determination survives subsequent admin overrides of `bookings.status`. Always `null` for behavior disputes and unresolved disputes.
+  - **`financial_action`**: `no_change` | `refund_student` | `refund_student_partial` | `null`. Derived from the linked `resolutionAction.code` (`no_action` / `approved_refund` / `partial_refund`). Prefer this over `resolutionAction.name` for customer-facing money labels.
+  - **`penalize_role`**: `coach` | `student` | `none`. Reliability target for behavior disputes (typically `none` for attendance / other).
   - **`refund_amount`**: US dollars decimal string (e.g. `"12.34"`) or `null`. Approved partial-refund amount recorded at resolve time for `financial_action = refund_student_partial`. **Always `null` for full refunds (`refund_student`) and for `no_change`.** For full refunds the executed cents are determined later by the payment-action worker from the remaining Stripe charge balance; read the linked `payment_actions` row (by `dispute_id`) for that value.
 
 ### `GET /api/disputes/:id`
@@ -2480,7 +2482,7 @@ Use this section as the admin decision guide for incidents, payouts/refunds, dis
       "notes": "Optional context from the reporter",
       "opened_by": "student",
       "status": "resolved",
-      "decision": "partial",
+      "decision": "upheld",
       "outcome": "coach_no_show",
       "refund_amount": "20.00",
       "booking": {
@@ -2586,13 +2588,13 @@ Dispute resolution is the **authoritative adjudication boundary** for whether th
 **`lesson_not_completed`**: this dispute type describes a quality/completion claim on a lesson that **occurred** in the product sense — it does **not** mean the booking is deleted or that attendance stays editable via admin no-show routes after a resolve. The booking remains a normal row with a finalized adjudication boundary.
 
   Canonical resolve contract:
-  - **`decision`** (**required**, all dispute types): **`upheld`** | **`rejected`** | **`partial`**. This is the admin ruling and does not need to be inferred from attendance outcome.
+  - **`decision`** (**required**, all dispute types): **`upheld`** | **`rejected`**. Admin ruling. Use **`financial_action`** for refund size (full vs partial refund), not decision.
   - **`financial_action`** (money on resolve): **`no_change`** (no Stripe refund enqueued by this request), **`refund_student`** (full remaining on the booking’s latest captured charge), **`refund_student_partial`** (**`refund_amount`** required, US dollars). For **attendance** disputes, which values are valid is determined jointly with **`outcome`** (see alignment): e.g. **`coach_no_show`** requires a refund path; **`student_no_show`** requires **`no_change`**. For **behavior** disputes, **`rejected`** still requires **`no_change`**.
-  - **`outcome`** (attendance claims only — dispute types **`coach_no_show_claim`**, **`student_no_show_claim`**): **`student_no_show`** | **`coach_no_show`**. **Always required** for attendance disputes (factual determination on every resolve). Non-attendance disputes must omit **`outcome`**.
-    - **`decision`** **`upheld`** or **`partial`**: **`outcome`** may be either value; it is validated against **`financial_action`** per the alignment matrix below, then mapped **one-to-one** onto **`bookings.status`**.
-    - **`decision`** **`rejected`**: **`outcome`** must be the **contradicting** factual result — **`coach_no_show_claim`** → **`student_no_show`** only; **`student_no_show_claim`** → **`coach_no_show`** only. Any other **`outcome`** for **`rejected`** is **`400`** with **`attendance_rejected_outcome_aligns_with_claim`**. **`financial_action`** follows the same **outcome ↔ money** rules as **`upheld`**/**`partial`** (see **Attendance outcome ↔ financial_action** below): **`coach_no_show`** requires a student refund; **`student_no_show`** requires **`no_change`** (no refund on resolve).
+  - **`outcome`** (attendance claims only — dispute types **`coach_no_show_claim`**, **`student_no_show_claim`**): **`student_no_show`** | **`coach_no_show`** | **`lesson_occurred`**. **Always required** for attendance disputes (factual determination on every resolve). Non-attendance disputes must omit **`outcome`**.
+    - **`decision`** **`upheld`**: **`outcome`** must be **`student_no_show`** or **`coach_no_show`** (not **`lesson_occurred`**); validated against **`financial_action`**, then mapped **one-to-one** onto **`bookings.status`**.
+    - **`decision`** **`rejected`**: **`outcome`** may be **`lesson_occurred`** (neither party was a no-show — booking → **`completed`**, **`financial_action`** must be **`no_change`**) **or** the **contradicting** no-show when the other party was actually absent — **`coach_no_show_claim`** → **`student_no_show`**; **`student_no_show_claim`** → **`coach_no_show`**. Confirming the original claim on reject (e.g. reject coach claim with **`coach_no_show`**) is **`400`** **`attendance_rejected_outcome_aligns_with_claim`**. Using **`lesson_occurred`** on uphold is **`400`** **`attendance_neutral_requires_rejected`**.
   - **`penalize_role`** (behavior disputes only): **`coach`** | **`student`** | **`none`** for `misconduct`, `lesson_not_completed`. Must be **`none`** for `other`.
-    - `decision = upheld|partial` -> must be `coach` or `student`
+    - `decision = upheld` -> must be `coach` or `student`
     - `decision = rejected` -> must be `none`
     - attendance claims must omit `penalize_role`
     - **Reversible philosophy**: a behavior dispute claimant may end up being the penalized party (e.g. a student-opened misconduct claim is concluded against the student because the student was actually at fault). This is **allowed**, not blocked, and produces an advisory entry in `data.warnings[]`:
@@ -2603,14 +2605,15 @@ Dispute resolution is the **authoritative adjudication boundary** for whether th
   - **Unsupported / unknown `dispute_type_code`** → `unsupported_dispute_alignment_type`. Alignment is only defined for `coach_no_show_claim`, `student_no_show_claim`, `misconduct`, `lesson_not_completed`, `other`.
   - **Attendance claims (`coach_no_show_claim`, `student_no_show_claim`):**
     - Missing **`outcome`** (any **`decision`**) → **`attendance_outcome_required`**.
-    - `decision = rejected` + **`outcome`** that is not the required contradicting fact (`coach_no_show_claim` requires `student_no_show`; `student_no_show_claim` requires `coach_no_show`) → **`attendance_rejected_outcome_aligns_with_claim`**.
-    - **Attendance outcome ↔ financial_action** (all of **`upheld`**, **`partial`**, **`rejected`** after the rejected-outcome check above): **`outcome = coach_no_show`** requires **`financial_action`** of **`refund_student`** or **`refund_student_partial`** (student must be compensated). **`outcome = student_no_show`** requires **`financial_action = no_change`** (no refund on resolve; coach payout follows normal booking rules). Any other pairing → **`attendance_financial_mismatch`**.
+    - `decision = rejected` + **`outcome`** that confirms the claim (not the contradicting no-show and not **`lesson_occurred`**) → **`attendance_rejected_outcome_aligns_with_claim`**.
+    - `decision = upheld` + **`outcome = lesson_occurred`** → **`attendance_neutral_requires_rejected`**.
+    - **Attendance outcome ↔ financial_action**: **`outcome = coach_no_show`** requires **`refund_student`** or **`refund_student_partial`**. **`outcome = student_no_show`** or **`lesson_occurred`** requires **`no_change`**. Any other pairing → **`attendance_financial_mismatch`**.
     - When **`outcome`** contradicts the opener's claim (student-opened `coach_no_show_claim` resolved as `student_no_show`, or coach-opened `student_no_show_claim` resolved as `coach_no_show`), including **`decision = rejected`** with that **`outcome`**: allowed, but adds advisory **`attendance_claim_reversal`** to `data.warnings[]` when the opener is student/coach (not admin).
   - **Behavior disputes (`misconduct`, `lesson_not_completed`):**
     - `decision = rejected` + any refund → `behavior_rejected_financial`.
     - `decision = rejected` + `penalize_role` not `none` → `behavior_rejected_penalize`.
-    - `decision = upheld|partial` + `penalize_role` not `coach`/`student` → `behavior_penalize_required`.
-    - `decision = upheld|partial` + `penalize_role = student` + any refund → `behavior_financial_penalize_mismatch` (do not refund the at-fault student through this endpoint).
+    - `decision = upheld` + `penalize_role` not `coach`/`student` → `behavior_penalize_required`.
+    - `decision = upheld` + `penalize_role = student` + any refund → `behavior_financial_penalize_mismatch` (do not refund the at-fault student through this endpoint).
   - **Joi structural rules** (also `400`): `outcome` is forbidden on behavior types; `penalize_role` is forbidden on attendance types; `refund_amount` is required when `financial_action = refund_student_partial`; legacy `resolution_action_id` field is rejected.
 
   The API still stores internal `resolution_action_id` mappings on the dispute row for audit/FKs.
@@ -2629,9 +2632,9 @@ Dispute resolution is the **authoritative adjudication boundary** for whether th
   **Reliability:**  
   - **Attendance claims** (`coach_no_show_claim`, `student_no_show_claim`): scoring uses **`bookings.status`** after resolve — **not** dispute **`notes`**, **not** who opened the dispute, and **not** **`penalize_role`**. Every attendance resolve supplies **`outcome`**; **`bookings.status`** is updated to match **`outcome`** (subject to transition rules), so reliability and payouts stay tied to a single factual attendance row.
   - Behavior disputes (`misconduct`, `lesson_not_completed`): two fields work together; **`financial_action` does not** decide whether reliability is penalized.
-    - **`decision`** — **eligibility:** only **`upheld`** and **`partial`** apply behavior penalty metrics (**`misconduct_penalties`**, **`lesson_not_completed_penalties`**). **`rejected`** applies **no** behavior penalty (`penalize_role` must be `none`).
-    - **`penalize_role`** — **who is penalized:** when `decision` is `upheld` or `partial`, set to **`coach`** or **`student`** to select **which user’s** reliability score is updated and which party’s metrics include the incident. The API **does not** infer this from who opened the dispute or the narrative of the claim—admins must set `penalize_role` deliberately. Hybrid validation warnings are **advisory only** and preserve moderator override flexibility; they do not auto-correct or block submission.
-  - **`other`** (catch-all support cases): admin reads create-time **`notes`** and optional resolve **`resolution_notes`**. Does **not** redefine attendance (**`outcome`** forbidden), does **not** affect reliability (**`penalize_role`** must be **`none`** / omitted). Any **`financial_action`** is allowed when **`decision`** is **`upheld`** or **`partial`**; **`rejected`** requires **`no_change`**. Use **`notes`** for refund rationale.
+    - **`decision`** — **eligibility:** only **`upheld`** applies behavior penalty metrics (**`misconduct_penalties`**, **`lesson_not_completed_penalties`**). **`rejected`** applies **no** behavior penalty (`penalize_role` must be `none`).
+    - **`penalize_role`** — **who is penalized:** when `decision` is `upheld`, set to **`coach`** or **`student`** to select **which user’s** reliability score is updated and which party’s metrics include the incident. The API **does not** infer this from who opened the dispute or the narrative of the claim—admins must set `penalize_role` deliberately. Hybrid validation warnings are **advisory only** and preserve moderator override flexibility; they do not auto-correct or block submission.
+  - **`other`** (catch-all support cases): admin reads create-time **`notes`** and optional resolve **`resolution_notes`**. Does **not** redefine attendance (**`outcome`** forbidden), does **not** affect reliability (**`penalize_role`** must be **`none`** / omitted). Any **`financial_action`** is allowed when **`decision`** is **`upheld`**; **`rejected`** requires **`no_change`**. Use **`notes`** for refund rationale.
     - **Booking status:** **`other`** disputes preserve the lesson outcome — they do not redefine attendance. The only exception is when the booking is temporarily parked in the special **`disputed`** state by the Stripe dispute workflow; resolving an **`other`** dispute releases that temporary parking state and returns the booking to **`completed`**. All other statuses (`completed`, `awaiting_verification`, `student_no_show`, `coach_no_show`, etc.) remain unchanged on resolve.
 
   **Attendance vs behavior:** Attendance penalties use **`bookings.status`** (`coach_no_show`, `student_no_show`, …) only—attendance disputes do **not** add a parallel reliability bucket; resolving **`coach_no_show_claim` / `student_no_show_claim`** with **`outcome`** updates **`bookings.status`** and scoring reads that row.
@@ -2661,7 +2664,7 @@ Dispute resolution is the **authoritative adjudication boundary** for whether th
 - **Request body**:
   ```json
   {
-    "decision": "upheld | rejected | partial",
+    "decision": "upheld | rejected",
     "outcome": "student_no_show | coach_no_show (required for attendance claims; rejected uses contradicting outcome per claim type; financial_action must match outcome — coach_no_show → refund_student|refund_student_partial, student_no_show → no_change)",
     "penalize_role": "coach | student | none (behavior disputes only)",
     "financial_action": "no_change | refund_student | refund_student_partial",
@@ -2685,7 +2688,7 @@ Dispute resolution is the **authoritative adjudication boundary** for whether th
   For behavior disputes, `resolution` also includes `penalize_role`. When the resolution is allowed but worth confirming, `data.warnings` is present — advisory only, does not change HTTP status. Possible warning `code` values:
   - `behavior_claim_reversal` — sustained behavior dispute penalizes the very party who opened it (student↔student or coach↔coach).
   - `behavior_resolution_direction_ambiguous` — sustained behavior dispute opened by `admin`; claimant-vs-accused direction is not inferable from `opened_by`.
-  - `attendance_claim_reversal` — attendance claim resolved with an `outcome` that contradicts the opener's claim (student-opened `coach_no_show_claim` → `student_no_show`, or coach-opened `student_no_show_claim` → `coach_no_show`). Applies to **`upheld`** / **`partial`**, or **`rejected`** (attendance resolves always include **`outcome`**).
+  - `attendance_claim_reversal` — attendance claim resolved with an `outcome` that contradicts the opener's claim (student-opened `coach_no_show_claim` → `student_no_show`, or coach-opened `student_no_show_claim` → `coach_no_show`). Applies to **`upheld`** or **`rejected`** (attendance resolves always include **`outcome`**).
 
   Each warning object has the shape: `{ code, severity: "warning", advisory: true, message, dispute_type_code, decision, ...context }`.
   ```json

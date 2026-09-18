@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   checkDisputeCreateBookingEligibility,
+  checkCoachStudentNoShowClaimEligibility,
   DISPUTE_CREATE_ALLOWED_BOOKING_STATUSES,
   lessonHasEnded,
 } from '../utils/disputeCreateEligibility.js';
@@ -79,5 +80,33 @@ describe('disputeCreateEligibility', () => {
     const booking = { scheduled_at: lessonStart, duration_minutes: 60 };
     assert.equal(lessonHasEnded(booking, duringLesson), false);
     assert.equal(lessonHasEnded(booking, afterLesson), true);
+  });
+});
+
+describe('checkCoachStudentNoShowClaimEligibility', () => {
+  it('rejects coach creates for every post-lesson status (use Mark Student no-show)', () => {
+    for (const status of [
+      'confirmed',
+      'awaiting_verification',
+      'completed',
+      'student_no_show',
+      'coach_no_show',
+    ]) {
+      const r = checkCoachStudentNoShowClaimEligibility(
+        { ...baseBooking, status },
+        afterLesson,
+      );
+      assert.equal(r.ok, false, status);
+      assert.equal(r.code, 'dispute_create_student_no_show_claim_use_attendance', status);
+    }
+  });
+
+  it('allows admin exceptional claims', () => {
+    const r = checkCoachStudentNoShowClaimEligibility(
+      { ...baseBooking, status: 'completed' },
+      afterLesson,
+      { isAdmin: true },
+    );
+    assert.equal(r.ok, true);
   });
 });

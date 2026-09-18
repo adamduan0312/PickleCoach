@@ -292,25 +292,40 @@ function attendanceDeterminationPhrase(status) {
   return null;
 }
 
-function disputeResolvedMoneyLine({ audience, financialAction, bookingStatus }) {
+function disputeResolvedMoneyLine({ audience, financialAction, bookingStatus, refundAmount }) {
   const refunding =
     financialAction === 'refund_student' || financialAction === 'refund_student_partial';
   const partial = financialAction === 'refund_student_partial';
+  const amountLabel =
+    partial && refundAmount != null && Number.isFinite(Number(refundAmount))
+      ? `$${Number(refundAmount).toFixed(2)}`
+      : null;
 
   if (audience === 'student') {
     if (refunding) {
-      return partial ? 'A partial refund will be issued.' : 'Your payment will be refunded.';
+      if (partial) {
+        return amountLabel
+          ? `Your dispute resulted in a ${amountLabel} refund. Any remaining lesson amount is settled separately.`
+          : 'Your dispute resulted in a partial refund. Any remaining lesson amount is settled separately.';
+      }
+      return 'Your payment will be refunded in full.';
     }
     if (bookingStatus === 'student_no_show' || bookingStatus === 'completed') {
       return "Your coach's payout will proceed.";
+    }
+    if (bookingStatus === 'coach_no_show') {
+      return 'No additional refund will be issued from this resolution beyond what was selected.';
     }
     return 'No refund will be issued.';
   }
 
   if (refunding) {
-    return partial
-      ? 'A partial refund will be issued to the student. You will not receive a full payout for this booking.'
-      : 'The student will be refunded. You will not receive a payout for this booking.';
+    if (partial) {
+      return amountLabel
+        ? `A ${amountLabel} refund will be issued to the student. Your payout will be based on the remaining retained amount after the platform fee.`
+        : 'A partial refund will be issued to the student. Your payout will be based on the remaining retained amount after the platform fee.';
+    }
+    return 'The student will be refunded in full. You will not receive a payout for this booking.';
   }
   return 'Your payout will proceed.';
 }
@@ -322,10 +337,16 @@ export const buildDisputeResolvedNotificationContent = ({
   financialAction,
   bookingStatus,
   decision,
+  refundAmount,
 } = {}) => {
   const headline = 'Dispute resolved';
   const status = bookingStatus || outcome || null;
-  const money = disputeResolvedMoneyLine({ audience, financialAction, bookingStatus: status });
+  const money = disputeResolvedMoneyLine({
+    audience,
+    financialAction,
+    bookingStatus: status,
+    refundAmount,
+  });
   const determination = attendanceDeterminationPhrase(status);
 
   let summary;

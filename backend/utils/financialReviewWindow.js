@@ -19,7 +19,12 @@
 export const FINANCIAL_REVIEW_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 /** Booking statuses whose coach payout uses the post-lesson review clock. Late-cancel `cancelled` does not. */
-export const POST_LESSON_PAYOUT_CLOCK_STATUSES = Object.freeze(['completed', 'student_no_show']);
+export const POST_LESSON_PAYOUT_CLOCK_STATUSES = Object.freeze([
+  'completed',
+  'student_no_show',
+  // Retained after dispute partial refund only (see coachNoShowSettlement.js).
+  'coach_no_show',
+]);
 
 /**
  * Automatic / admin-override refunds that must not execute until the post-lesson

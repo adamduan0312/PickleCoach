@@ -1,4 +1,7 @@
-import { serializeLatestMessage } from './messageDto.js';
+import {
+  resolveConversationCounterpart,
+  serializeLatestMessage,
+} from './messageDto.js';
 import {
   serializeBookingForMessaging,
   serializeBookingSummary,
@@ -6,14 +9,14 @@ import {
 
 export { serializeBookingForMessaging, serializeBookingSummary };
 
-export { serializeLatestMessage } from './messageDto.js';
+export { resolveConversationCounterpart, serializeLatestMessage } from './messageDto.js';
 
 /**
  * Inbox row for GET /api/messages/conversations — preview only, not full thread history.
  * @param {object} row
- * @param {{ unreadCount?: number }} [opts]
+ * @param {{ unreadCount?: number, viewerUserId?: number|string }} [opts]
  */
-export function serializeConversationInboxItem(row, { unreadCount = 0 } = {}) {
+export function serializeConversationInboxItem(row, { unreadCount = 0, viewerUserId } = {}) {
   const json = row?.toJSON ? row.toJSON() : { ...row };
   const { messages, booking, ...conversationCore } = json;
   return {
@@ -23,6 +26,7 @@ export function serializeConversationInboxItem(row, { unreadCount = 0 } = {}) {
     updated_at: conversationCore.updated_at,
     latest_message: serializeLatestMessage(messages),
     booking: serializeBookingForMessaging(booking),
+    counterpart: resolveConversationCounterpart(booking, viewerUserId),
     unread_count: Number(unreadCount) || 0,
   };
 }

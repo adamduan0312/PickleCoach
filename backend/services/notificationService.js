@@ -873,6 +873,7 @@ export const notifyCoachNoShow = async (bookingId) => {
   const booking = await loadBookingNotificationContext(bookingId);
   if (!booking) return;
 
+  const recipients = uniqueUserIds(booking.primary_student_id, booking.coach_id);
   for (const userId of recipients) {
     const audience = Number(booking.primary_student_id) === userId ? 'student' : 'coach';
     const email =
@@ -936,6 +937,7 @@ export const notifyDisputeResolved = async ({
   financialAction,
   bookingStatus,
   decision,
+  refundAmount,
 } = {}) => {
   const booking = await loadBookingNotificationContext(bookingId);
   if (!booking) return;
@@ -947,6 +949,7 @@ export const notifyDisputeResolved = async ({
     financial_action: financialAction ?? null,
     booking_status: bookingStatus ?? null,
     decision: decision ?? null,
+    refund_amount: refundAmount ?? null,
   };
 
   for (const userId of recipients) {
@@ -963,6 +966,7 @@ export const notifyDisputeResolved = async ({
         financialAction,
         bookingStatus,
         decision,
+        refundAmount,
       }),
     };
     await deliverDualChannel(userId, 'dispute_resolved', payload, {

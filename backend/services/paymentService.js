@@ -53,6 +53,10 @@ import {
   shouldHoldPostLessonWindowGatedRefund,
   isPostLessonWindowGatedRefundAction,
 } from '../utils/financialReviewWindow.js';
+import {
+  hasCoachNoShowRetainedPayoutIntent,
+  isDisputePartialRefundSettledForPayout,
+} from '../utils/coachNoShowSettlement.js';
 import { ACTIVE_DISPUTE_STATUSES } from './disputeStateMachine.js';
 import {
   escrowAfterSuccessfulCapture,
@@ -699,8 +703,33 @@ export const releaseEscrow = async (paymentId, coachStripeAccountId = null) => {
     if (!isLateCancelRefundSettledForPayout(payment)) {
       throw new Error('Late-cancel coach payout blocked until partial refund is settled (partially_refunded + refund_status succeeded)');
     }
+  } else if (bookingStatus === 'coach_no_show') {
+    // Retained after dispute partial only — never auto-pay a plain coach_no_show.
+    if (!(await hasCoachNoShowRetainedPayoutIntent(payment.booking_id))) {
+      throw new Error(
+        'Coach no-show is only payable when a dispute partial refund retained funds for payout',
+      );
+    }
+    const pendingPartial = await PaymentAction.findOne({
+      where: {
+        booking_id: payment.booking_id,
+        action_type: 'dispute_refund_partial',
+        status: 'pending',
+      },
+    });
+    if (pendingPartial) {
+      throw new Error('Coach no-show retained payout blocked until dispute partial refund completes');
+    }
+    if (payment.refund_status === 'pending') {
+      throw new Error('Coach no-show retained payout blocked until Stripe refund completes');
+    }
+    if (!isDisputePartialRefundSettledForPayout(payment)) {
+      throw new Error(
+        'Coach no-show retained payout blocked until partial refund is settled (partially_refunded + refund_status succeeded)',
+      );
+    }
   } else if (!standardPayableStatuses.includes(bookingStatus)) {
-    throw new Error('Booking must be completed, student_no_show, or a student late cancel with retained revenue before payout');
+    throw new Error('Booking must be completed, student_no_show, coach_no_show with retained partial, or a student late cancel with retained revenue before payout');
   }
 
   if (
@@ -897,6 +926,13 @@ export const releaseEscrow = async (paymentId, coachStripeAccountId = null) => {
       paymentId: payment.id,
       message: 'Coach has no Stripe Connect account; escrow requires manual payout',
     });
+    const parked = await Payment.findByPk(paymentId);
+    return {
+      payment: parked,
+      payout,
+      skipped: true,
+      reason: 'manual_payout_required',
+    };
   }
 
   const bookingStatusForAudit = payment.booking?.status;
@@ -1287,7 +1323,9 @@ export const applyRefundStateFromStripeCharge = async (payment, charge, { stripe
 
   const refundedDollars = centsToDecimalString(refundedCents);
   const totalChargeCents = dollarsToCents(payment.total_charge_to_student);
-  const originalCoachPayoutCents = dollarsToCents(payment.coach_payout_expected);
+  // Always use capture-time coach share from lesson_price — never the possibly
+  // already-adjusted coach_payout_expected (which would corrupt the ratio).
+  const originalCoachPayoutCents = resolveCaptureCoachPayoutCents(payment.lesson_price);
   const netRetainedCents = Math.max(0, chargeAmountCents - refundedCents);
   const { coachPayoutCents: adjustedCoachPayoutCents, platformFeeCents: adjustedPlatformFeeCents } =
     splitNetRetainedCoachPlatformCents({
@@ -2129,6 +2167,17 @@ export const enqueueCoachNoShowRefundIfEligible = async (bookingId, { now = new 
       ...empty,
       payment_id: pay.id,
       reason: `payment_status_not_refundable:${pay.payment_status}`,
+    };
+  }
+
+  // Dispute partial refund intentionally retains the remainder for coach/platform.
+  // Do not issue a second student refund merely because status is coach_no_show.
+  if (await hasCoachNoShowRetainedPayoutIntent(bookingId)) {
+    return {
+      ...empty,
+      payment_id: pay.id,
+      reason: 'dispute_partial_retains_for_payout',
+      status: 'skipped',
     };
   }
 

@@ -4,7 +4,7 @@ const STATUS_LABELS = {
   awaiting_verification: 'Awaiting confirmation',
   completed: 'Completed',
   cancelled: 'Cancelled',
-  disputed: 'Issue under review',
+  disputed: 'Payment dispute under review',
   student_no_show: 'Student no-show',
   coach_no_show: 'Coach no-show',
 };
@@ -39,21 +39,21 @@ export function hasOpenIssueReport(booking) {
 export function bookingStatusLabel(status, { audience } = {}) {
   if (!status) return 'Unknown';
   if (status === 'pending' && audience === 'coach') return 'Response needed';
-  if (status === 'awaiting_verification' && audience === 'coach') return 'Action needed';
+  if (status === 'awaiting_verification' && audience === 'coach') return 'Confirmation needed';
   if (status === 'awaiting_verification') return 'Awaiting confirmation';
-  if (status === 'disputed') return 'Issue under review';
+  if (status === 'disputed') return 'Payment dispute under review';
   return STATUS_LABELS[status] || String(status).replace(/_/g, ' ');
 }
 
 /**
  * User-facing badge for a booking row.
- * In-app open report / Stripe chargeback → customer "Issue …" language (not "Disputed").
+ * In-app open report → "Issue reported"; Stripe chargeback (`disputed`) → "Payment dispute under review".
  */
 export function bookingDisplayLabel(booking, { audience } = {}) {
   if (!booking) return 'Unknown';
   if (hasOpenIssueReport(booking) || booking.status === 'disputed') {
     return booking.status === 'disputed' && !hasOpenIssueReport(booking)
-      ? 'Issue under review'
+      ? 'Payment dispute under review'
       : 'Issue reported';
   }
   return bookingStatusLabel(booking.status, { audience });
@@ -95,7 +95,258 @@ export function paymentAmountCaption(payment) {
   if (s === 'partially_refunded') return 'Partially refunded';
   if (s === 'captured') return 'Charged';
   if (isPaymentAuthorizedOnly(payment) || s === 'pending_void') return 'Authorized';
+  // failed / unknown: keep the label generic; paymentStatusLabel carries the status text.
+  return null;
+}
+
+/**
+ * Booking-detail amount row label.
+ * Avoids awkward copy like "Amount (amount)" when payment failed / has no charge state.
+ */
+export function lessonAmountLabel(payment, booking) {
+  const caption = payment ? paymentAmountCaption(payment) : null;
+  if (caption === 'Authorized') return 'Amount authorized';
+  if (caption === 'Charged') return 'Amount charged';
+  if (caption === 'Refunded') return 'Amount refunded';
+  if (caption === 'Partially refunded') return 'Amount partially refunded';
+  if (booking?.status === 'pending') return 'Amount authorized';
   return 'Amount';
+}
+
+/**
+ * True when payment fields confirm an uncaptured authorization or void-in-progress/released auth.
+ * Do not treat bare `failed` as authorization release without supporting evidence.
+ */
+export function isUncapturedAuthorizationState(payment) {
+  if (!payment) return false;
+  const ps = String(payment.payment_status || '').toLowerCase();
+  const escrow = String(payment.escrow_status || '').toLowerCase();
+  if (isPaymentAuthorizedOnly(payment)) return true;
+  if (ps === 'pending_void') return true;
+  // After PI cancel webhook, voided authorizations often land as failed + released escrow.
+  if (ps === 'failed' && escrow === 'released') return true;
+  return false;
+}
+
+/** True when there is clearly no successful capture, without asserting an auth existed. */
+export function isNoSuccessfulChargeState(payment) {
+  if (!payment) return true;
+  if (isUncapturedAuthorizationState(payment)) return false;
+  const ps = String(payment.payment_status || '').toLowerCase();
+  const rs = String(payment.refund_status || 'none').toLowerCase();
+  return ps === 'failed' && rs === 'none';
+}
+
+/**
+ * Coach-facing money interpretation after a coach-initiated cancellation.
+ * Does not rewrite payment fields — returns display overrides only.
+ *
+ * Covers:
+ * - authorize-only / voiding (before capture)
+ * - failed with no successful charge (without claiming an auth existed)
+ * - captured with refund still pending
+ * - student refund completed
+ *
+ * @returns {null | {
+ *   amountLabel: string,
+ *   paymentStatusLine: string|null,
+ *   payoutLabel: string,
+ *   payoutKind: 'zero' | 'not_payable',
+ * }}
+ */
+export function coachCancelMoneyPresentation(booking, payment) {
+  if (!booking || booking.status !== 'cancelled') return null;
+  if (booking.cancelled_by !== 'coach') return null;
+  // If payout already moved, don't invent "not payable" over reality.
+  if (isCoachPayoutReleased(booking)) return null;
+
+  const ps = String(payment?.payment_status || '').toLowerCase();
+  const rs = String(payment?.refund_status || 'none').toLowerCase();
+  const refunded = isStudentPaymentRefunded(payment);
+  const authOrVoiding = isUncapturedAuthorizationState(payment);
+  const noSuccessfulCharge = isNoSuccessfulChargeState(payment);
+
+  const historyRows = Array.isArray(booking.cancellationHistory) ? booking.cancellationHistory : [];
+  const coachHistory =
+    historyRows.find((row) => row?.cancelled_by === 'coach') || historyRows[0] || null;
+  const historyRefundDue = Number(coachHistory?.refund_amount) > 0;
+  const refundMarkedPending = rs === 'pending';
+  const capturedAwaitingRefund =
+    !refunded && ['captured', 'pending_capture', 'partially_refunded'].includes(ps);
+
+  if (refunded) {
+    return {
+      amountLabel: 'Amount',
+      paymentStatusLine: 'Student refunded',
+      payoutLabel: 'Coach payout',
+      payoutKind: 'zero',
+    };
+  }
+
+  if (authOrVoiding) {
+    const escrow = String(payment?.escrow_status || '').toLowerCase();
+    let paymentStatusLine = 'Authorization released';
+    if (ps === 'pending_void') {
+      paymentStatusLine = 'Authorization releasing';
+    } else if (isPaymentAuthorizedOnly(payment) && escrow !== 'released') {
+      // Still authorized / void not confirmed yet — don't claim release.
+      paymentStatusLine = paymentStatusLabel(payment) || 'Authorization releasing';
+    }
+    return {
+      amountLabel: lessonAmountLabel(payment, booking),
+      paymentStatusLine,
+      payoutLabel: 'Coach payout',
+      payoutKind: 'not_payable',
+    };
+  }
+
+  if (noSuccessfulCharge) {
+    return {
+      amountLabel: 'Amount',
+      paymentStatusLine: 'No successful charge was made',
+      payoutLabel: 'Coach payout',
+      payoutKind: 'not_payable',
+    };
+  }
+
+  if (capturedAwaitingRefund || refundMarkedPending || historyRefundDue) {
+    return {
+      amountLabel: 'Amount',
+      paymentStatusLine: 'Student refund pending',
+      payoutLabel: 'Coach payout',
+      payoutKind: 'not_payable',
+    };
+  }
+
+  return {
+    amountLabel: lessonAmountLabel(payment, booking),
+    paymentStatusLine: paymentStatusLabel(payment),
+    payoutLabel: 'Coach payout',
+    payoutKind: 'not_payable',
+  };
+}
+
+/**
+ * Student-facing money interpretation after a coach-initiated cancellation.
+ * Uses payment/refund fields + cancellation history — not cancelled status alone.
+ *
+ * @returns {null | {
+ *   amountLabel: string,
+ *   paymentStatusLine: string|null,
+ *   showRefund: boolean,
+ *   refundLabel: string,
+ *   refundValueKind: 'text' | 'amount',
+ *   refundValueText: string|null,
+ *   refundValueAmount: number|null,
+ *   refundStatusLine: string|null,
+ *   lead: string,
+ * }}
+ */
+export function studentCoachCancelMoneyPresentation(booking, payment) {
+  if (!booking || booking.status !== 'cancelled') return null;
+  if (booking.cancelled_by !== 'coach') return null;
+
+  const ps = String(payment?.payment_status || '').toLowerCase();
+  const rs = String(payment?.refund_status || 'none').toLowerCase();
+  const escrow = String(payment?.escrow_status || '').toLowerCase();
+  const refunded = isStudentPaymentRefunded(payment);
+  const chargeAmount = Number(payment?.total_charge_to_student ?? booking.price);
+  const refundedAmount = Number(payment?.refunded_amount);
+  const historyRows = Array.isArray(booking.cancellationHistory) ? booking.cancellationHistory : [];
+  const coachHistory =
+    historyRows.find((row) => row?.cancelled_by === 'coach') || historyRows[0] || null;
+  const historyRefundDue = Number(coachHistory?.refund_amount) > 0;
+  const authOrVoiding = isUncapturedAuthorizationState(payment);
+  const noSuccessfulCharge = isNoSuccessfulChargeState(payment);
+  const capturedAwaitingRefund =
+    !refunded && ['captured', 'pending_capture', 'partially_refunded'].includes(ps);
+  const refundMarkedPending = rs === 'pending';
+  const manualReview = escrow === 'manual_payout_required';
+
+  if (refunded) {
+    const amount = Number.isFinite(refundedAmount) && refundedAmount > 0
+      ? refundedAmount
+      : (Number.isFinite(chargeAmount) ? chargeAmount : null);
+    return {
+      amountLabel: 'Payment',
+      paymentStatusLine: null,
+      showRefund: true,
+      refundLabel: 'Refund',
+      refundValueKind: amount != null ? 'amount' : 'text',
+      refundValueText: amount != null ? null : 'Full refund',
+      refundValueAmount: amount,
+      refundStatusLine: 'Refund completed',
+      lead: 'The coach cancelled this booking. Your refund has been completed.',
+    };
+  }
+
+  if (manualReview && !authOrVoiding && !noSuccessfulCharge) {
+    return {
+      amountLabel: 'Payment',
+      paymentStatusLine: null,
+      showRefund: true,
+      refundLabel: 'Refund',
+      refundValueKind: 'text',
+      refundValueText: 'Full refund',
+      refundValueAmount: null,
+      refundStatusLine: 'Refund requires review. We’ll update you when it is resolved.',
+      lead: 'The coach cancelled this booking. Your refund requires review.',
+    };
+  }
+
+  if (authOrVoiding) {
+    return {
+      amountLabel: 'Payment',
+      paymentStatusLine: null,
+      showRefund: true,
+      refundLabel: 'Refund',
+      refundValueKind: 'text',
+      refundValueText: 'No charge',
+      refundValueAmount: null,
+      refundStatusLine: 'Payment authorization released',
+      lead: 'The coach cancelled this booking. No charge was made — your payment authorization was released.',
+    };
+  }
+
+  if (noSuccessfulCharge) {
+    return {
+      amountLabel: 'Payment',
+      paymentStatusLine: null,
+      showRefund: true,
+      refundLabel: 'Refund',
+      refundValueKind: 'text',
+      refundValueText: 'No charge',
+      refundValueAmount: null,
+      refundStatusLine: 'No successful charge was made',
+      lead: 'The coach cancelled this booking. No successful charge was made.',
+    };
+  }
+
+  if (capturedAwaitingRefund || refundMarkedPending || historyRefundDue) {
+    return {
+      amountLabel: 'Payment',
+      paymentStatusLine: null,
+      showRefund: true,
+      refundLabel: 'Refund',
+      refundValueKind: 'text',
+      refundValueText: 'Full refund',
+      refundValueAmount: null,
+      refundStatusLine: 'Refund processing',
+      lead: 'The coach cancelled this booking. Your refund is being processed.',
+    };
+  }
+
+  return {
+    amountLabel: 'Payment',
+    paymentStatusLine: paymentStatusLabel(payment),
+    showRefund: true,
+    refundLabel: 'Refund',
+    refundValueKind: 'text',
+    refundValueText: 'Full refund',
+    refundValueAmount: null,
+    refundStatusLine: 'Refund processing',
+    lead: 'The coach cancelled this booking. Your refund is being processed.',
+  };
 }
 
 /** True when the student charge was fully or partially refunded. */
@@ -113,12 +364,21 @@ export function isCoachPayoutReleased(booking) {
 }
 
 /**
- * True when no coach payout is due (refunded booking, forfeited payout, or $0 expected).
- * Mutually exclusive with {@link isCoachPayoutReleased} for messaging purposes.
+ * True when no coach payout is due (full refund, forfeited payout, or $0 expected).
+ * Partial refunds with retained balance remain payable — do not treat
+ * `partially_refunded` alone as “none due.”
  */
 export function isCoachPayoutNotDue(booking, payment) {
   if (isCoachPayoutReleased(booking)) return false;
   if (String(booking?.payout_status || '') === 'forfeited') return true;
+  const ps = String(payment?.payment_status || '').toLowerCase();
+  if (ps === 'refunded') return true;
+  if (ps === 'partially_refunded') {
+    if (payment?.coach_payout_expected != null && Number(payment.coach_payout_expected) === 0) {
+      return true;
+    }
+    return false;
+  }
   if (isStudentPaymentRefunded(payment)) return true;
   if (payment?.coach_payout_expected != null && Number(payment.coach_payout_expected) === 0) return true;
   return false;
@@ -194,21 +454,92 @@ function lessonStartMs(booking) {
 const LIST_CANCELLED_GROUP = 4;
 
 /**
- * My Bookings tab filters — `awaiting_verification` and terminal post-lesson statuses stay on All only.
+ * Student My Bookings filters — simple lifecycle groups.
+ * Card badges still show the exact booking-state label (including Issue reported).
+ * No separate "Issues" category — open issues stay under the underlying lifecycle filter.
  */
-export const BOOKING_LIST_STATUS_FILTERS = ['', 'pending', 'confirmed', 'completed', 'cancelled'];
+export const STUDENT_BOOKING_LIST_FILTERS = [
+  { value: '', label: 'All' },
+  { value: 'awaiting_confirmation', label: 'Awaiting confirmation' },
+  { value: 'upcoming', label: 'Upcoming' },
+  { value: 'completed', label: 'Completed' },
+  { value: 'cancelled', label: 'Cancelled' },
+];
+
+/**
+ * Coach Bookings filters — Action needed = coach must respond / confirm / follow a case.
+ * Reuses {@link coachBookingNeedsNavAttention} so the list tab matches the nav dot.
+ */
+export const COACH_BOOKING_LIST_FILTERS = [
+  { value: '', label: 'All' },
+  { value: 'action_needed', label: 'Action needed' },
+  { value: 'upcoming', label: 'Upcoming' },
+  { value: 'completed', label: 'Completed' },
+  { value: 'cancelled', label: 'Cancelled' },
+];
+
+/** Student-side cancelled history (including declined / expired pending requests). */
+function isStudentCancelledHistory(booking) {
+  if (booking?.status !== 'cancelled') return false;
+  if (booking?.cancelled_by === 'system') return true;
+  if (booking?.declined_at || booking?.decline_reason_code) return true;
+  return true;
+}
 
 /** True when a booking should appear under the selected list filter tab. */
-export function bookingIncludedInListFilter(booking, filterStatus) {
+export function bookingIncludedInListFilter(booking, filterStatus, { audience = 'student', now = Date.now() } = {}) {
   if (!filterStatus) return true;
+
+  if (audience === 'coach') {
+    switch (filterStatus) {
+      // Legacy URL alias from the former "Needs attention" tab.
+      case 'needs_attention':
+      case 'action_needed':
+        return coachBookingNeedsNavAttention(booking, now);
+      case 'upcoming':
+        return booking?.status === 'confirmed' && !hasLessonEnded(booking, now);
+      case 'completed':
+        return booking?.status === 'completed';
+      case 'cancelled':
+        return booking?.status === 'cancelled';
+      default:
+        return booking?.status === filterStatus;
+    }
+  }
+
+  if (audience === 'student') {
+    switch (filterStatus) {
+      case 'awaiting_confirmation':
+        return booking?.status === 'pending' || booking?.status === 'awaiting_verification';
+      case 'upcoming':
+        return booking?.status === 'confirmed' && !hasLessonEnded(booking, now);
+      case 'completed':
+        return booking?.status === 'completed';
+      case 'cancelled':
+        return isStudentCancelledHistory(booking);
+      default:
+        return booking?.status === filterStatus;
+    }
+  }
+
   return booking?.status === filterStatus;
+}
+
+/** Label for a list filter value (student or coach group keys). */
+export function bookingListFilterLabel(filterStatus, { audience = 'student' } = {}) {
+  if (!filterStatus) return 'All';
+  const options = audience === 'coach' ? COACH_BOOKING_LIST_FILTERS : STUDENT_BOOKING_LIST_FILTERS;
+  const hit = options.find((f) => f.value === filterStatus);
+  if (hit) return hit.label;
+  if (filterStatus === 'needs_attention') return 'Action needed';
+  return bookingStatusLabel(filterStatus, { audience });
 }
 
 /**
  * Default “All” list order.
  *
  * Student: pending → upcoming → awaiting_verification → other past → cancelled.
- * Coach: pending → awaiting_verification (action) → upcoming → other past → cancelled.
+ * Coach: pending → awaiting_verification (confirmation) → upcoming → other past → cancelled.
  *
  * Within pending/upcoming: soonest lesson first.
  * Within awaiting/past/cancelled: most recent lesson first.
@@ -370,6 +701,15 @@ export function canCoachMarkNoShow(booking, now = Date.now()) {
   return booking
     && ['confirmed', 'awaiting_verification'].includes(booking.status)
     && hasLessonEnded(booking, now);
+}
+
+/**
+ * Coaches never open `student_no_show_claim` in the participant UI.
+ * Use Mark Student no-show during the 24h post-lesson window instead.
+ * Kept as an explicit gate so Report issue stays aligned with the API.
+ */
+export function coachCanReportStudentNoShowClaim(_booking, _now = Date.now()) {
+  return false;
 }
 
 /** True when coach attendance actions must wait for dispute resolution. */
@@ -545,10 +885,13 @@ export function studentReviewWindowBannerCopy(booking, { remaining, deadlineForm
 }
 
 /** Short cancelled-booking outcome for history rows and detail lead. */
-export function cancelledOutcomeCopy(booking, { audience } = {}) {
+export function cancelledOutcomeCopy(booking, { audience, payment } = {}) {
   if (!booking || booking.status !== 'cancelled') return null;
   const by = booking.cancelled_by;
   if (by === 'system') {
+    if (audience === 'coach') {
+      return 'You didn’t respond before the deadline. The student’s payment authorization was released.';
+    }
     return 'The coach didn’t respond before the deadline. The payment authorization was released.';
   }
   if (by === 'coach') {
@@ -560,6 +903,11 @@ export function cancelledOutcomeCopy(booking, { audience } = {}) {
     }
     if (audience === 'coach') {
       return 'You cancelled this lesson. The student’s payment will be refunded according to the cancellation policy.';
+    }
+    if (audience === 'student') {
+      const money = studentCoachCancelMoneyPresentation(booking, payment);
+      if (money?.lead) return money.lead;
+      return 'The coach cancelled this booking.';
     }
     return 'The coach cancelled. If payment had been captured, a full refund applies.';
   }
@@ -576,14 +924,24 @@ export function cancelledOutcomeCopy(booking, { audience } = {}) {
 }
 
 /** Short outcome copy for terminal / no-show / dispute states. */
-export function bookingOutcomeCopy(booking, { audience, now = Date.now() } = {}) {
+export function bookingOutcomeCopy(booking, { audience, now = Date.now(), payment = null } = {}) {
   if (!booking?.status) return null;
-  if (booking.status === 'cancelled') return cancelledOutcomeCopy(booking, { audience });
+  if (booking.status === 'cancelled') return cancelledOutcomeCopy(booking, { audience, payment });
   if (booking.status === 'student_no_show') {
     if (audience === 'coach') {
       return isFinancialReviewWindowOpen(booking, now)
         ? 'Student no-show recorded. There is no student refund. Your payout follows the normal post-lesson review window if no issue is reported.'
         : 'Student no-show recorded. There is no student refund. The review period has ended.';
+    }
+    const resolved = booking?.resolved_issue;
+    if (resolved?.id) {
+      const penalize = String(resolved.penalize_role || 'none').toLowerCase();
+      if (penalize === 'none' || !penalize) {
+        return 'No refund was issued. No reliability penalty was applied.';
+      }
+      if (penalize === 'student') {
+        return 'No refund was issued. A reliability penalty was applied.';
+      }
     }
     return isFinancialReviewWindowOpen(booking, now)
       ? 'The coach reported that you did not attend. Your payment was not automatically refunded, and this may affect your reliability score.'
@@ -592,12 +950,11 @@ export function bookingOutcomeCopy(booking, { audience, now = Date.now() } = {})
   if (booking.status === 'coach_no_show') {
     if (audience === 'student') {
       return isFinancialReviewWindowOpen(booking, now)
-        ? 'Your coach did not attend this lesson. After the review window, you may receive a full refund of the remaining captured amount unless an open dispute is still being resolved.'
-        : 'Your coach did not attend this lesson. The review window has ended; refund settlement follows the normal process unless an open dispute remains.';
+        ? 'Your coach did not attend this lesson. After the issue-reporting period, you may receive a full refund of the remaining captured amount unless an open issue is still being resolved.'
+        : 'Your coach did not attend this lesson. The issue-reporting period has ended; refund settlement follows the normal process unless an open issue remains.';
     }
-    return isFinancialReviewWindowOpen(booking, now)
-      ? 'Coach no-show recorded. After the review window, the student is refunded the remaining captured lesson amount (ordinarily the full charge if nothing was refunded earlier), unless an open dispute routes the outcome through dispute resolution. This affects your reliability score.'
-      : 'Coach no-show recorded. The review window has ended. Settlement follows the normal process unless an open dispute remains. This affects your reliability score.';
+    // Neutral final-state copy — do not imply who marked the no-show (admin / upheld claim / overturn).
+    return 'This booking was resolved as a coach no-show. No payout is due.';
   }
   if (booking.status === 'disputed' || hasOpenIssueReport(booking)) {
     return 'Your report is under review. Payout is protected while this issue is being reviewed.';
@@ -606,12 +963,42 @@ export function bookingOutcomeCopy(booking, { audience, now = Date.now() } = {})
 }
 
 
+/**
+ * Booking-detail note when messaging cannot be started / continued.
+ * Pending is special (not yet open); other locked statuses are closed after the active window.
+ */
 export function messagingLockedCopy(booking) {
   if (!booking?.messaging_locked) return null;
   if (booking.status === 'pending') {
     return 'Messaging opens after the coach accepts this booking.';
   }
+  if (booking.conversation?.id) {
+    return 'This conversation is closed. You can still view previous messages.';
+  }
   return 'Messaging is closed for this booking.';
+}
+
+/**
+ * Conversation-thread notice when send is locked (history remains readable).
+ */
+export function conversationClosedNotice(booking) {
+  if (!booking?.messaging_locked) return null;
+  if (booking.status === 'pending') {
+    return 'Messaging opens after the coach accepts this booking.';
+  }
+  if (booking.status === 'completed') {
+    return 'This conversation is closed. You can view your previous messages, but you can’t send new messages for this completed booking.';
+  }
+  if (booking.status === 'cancelled') {
+    return 'This conversation is closed. You can view your previous messages, but you can’t send new messages for this cancelled booking.';
+  }
+  if (booking.status === 'coach_no_show' || booking.status === 'student_no_show') {
+    return 'This conversation is closed. You can view your previous messages, but you can’t send new messages for this booking.';
+  }
+  if (booking.status === 'disputed') {
+    return 'This conversation is closed. You can view your previous messages, but you can’t send new messages while this payment dispute is open.';
+  }
+  return 'This conversation is closed. You can view your previous messages, but you can’t send new messages for this booking.';
 }
 
 export const CANCEL_REASONS = [
@@ -623,6 +1010,50 @@ export const CANCEL_REASONS = [
   { value: 'forgot', label: 'Forgot' },
   { value: 'other', label: 'Other' },
 ];
+
+/** Human label for a cancellation reason code; null when unknown/empty. */
+export function cancelReasonLabel(reason) {
+  if (!reason) return null;
+  return CANCEL_REASONS.find((r) => r.value === reason)?.label || null;
+}
+
+/**
+ * Audience-aware headline for a cancellation_history row.
+ * Uses “You …” when the viewer initiated the cancel; otherwise third person.
+ */
+export function cancellationHistoryEventLabel(row, { audience } = {}) {
+  const by = row?.cancelled_by;
+  if (by === 'system') return 'This booking was cancelled automatically';
+  if (by === 'admin') return 'An administrator cancelled this booking';
+  if (by === 'coach') {
+    return audience === 'coach' ? 'You cancelled this booking' : 'Coach cancelled this booking';
+  }
+  if (by === 'student') {
+    return audience === 'student' ? 'You cancelled this booking' : 'Student cancelled this booking';
+  }
+  return 'This booking was cancelled';
+}
+
+/**
+ * Customer-facing reason for a cancellation_history row.
+ * Prefer readable enum labels; for `other`/missing codes, use reason_notes when present.
+ * Never returns raw role/reason codes.
+ *
+ * @returns {{ primary: string, detail: string|null }|null}
+ */
+export function cancellationHistoryReasonDisplay(row) {
+  const notes = typeof row?.reason_notes === 'string' ? row.reason_notes.trim() : '';
+  const code = row?.reason || null;
+  const label = cancelReasonLabel(code);
+
+  if (code && code !== 'other' && label) {
+    const detail = notes && notes.toLowerCase() !== label.toLowerCase() ? notes : null;
+    return { primary: label, detail };
+  }
+  if (notes) return { primary: notes, detail: null };
+  if (label) return { primary: label, detail: null };
+  return null;
+}
 
 export const DECLINE_REASON_CODES = [
   { value: 'availability_conflict', label: 'Schedule conflict' },

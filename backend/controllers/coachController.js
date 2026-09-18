@@ -26,6 +26,7 @@ import {
   getCoachMarketplaceEligibility,
   syncCoachStripeReadyFromAccount,
 } from '../services/coachMarketplaceEligibility.js';
+import { listCoachOccupiedBookingIntervals } from '../services/bookingService.js';
 
 const MAX_LIST_ALL_COACHES = 10000;
 const MAX_LIST_ALL_AVAILABILITY = 10000;
@@ -447,7 +448,7 @@ export const createAvailability = async (req, res) => {
   }
 };
 
-async function listCoachAvailabilityForResponse(req, res, coachId) {
+async function listCoachAvailabilityForResponse(req, res, coachId, { includeOccupiedSlots = false } = {}) {
   const { page, limit } = req.validated || {};
   const isPaginated = page != null || limit != null;
   const { limit: queryLimit, offset } = isPaginated
@@ -466,10 +467,32 @@ async function listCoachAvailabilityForResponse(req, res, coachId) {
 
   const shapedRows = availabilities.rows.map((r) => shapeAvailabilityForApi(r));
 
+  let occupiedSlots = null;
+  if (includeOccupiedSlots) {
+    occupiedSlots = await listCoachOccupiedBookingIntervals(coachId);
+  }
+
   if (!isPaginated) {
+    if (occupiedSlots) {
+      return res.status(200).json({
+        success: true,
+        message: 'Availability retrieved successfully',
+        data: shapedRows,
+        occupied_slots: occupiedSlots,
+      });
+    }
     return successResponse(res, shapedRows, 'Availability retrieved successfully');
   }
   const response = getPagingData({ count: availabilities.count, rows: shapedRows }, page, queryLimit);
+  if (occupiedSlots) {
+    return res.status(200).json({
+      success: true,
+      message: 'Availability retrieved successfully',
+      data: response.items,
+      pagination: response.pagination,
+      occupied_slots: occupiedSlots,
+    });
+  }
   return paginatedResponse(res, response.items, response.pagination, 'Availability retrieved successfully');
 }
 
@@ -487,7 +510,7 @@ export const getCoachAvailability = async (req, res) => {
     if (!coach) {
       return errorResponse(res, 'Coach not found', 404);
     }
-    return await listCoachAvailabilityForResponse(req, res, coachId);
+    return await listCoachAvailabilityForResponse(req, res, coachId, { includeOccupiedSlots: true });
   } catch (error) {
     logger.error('Get availability error:', error);
     return errorResponse(res, 'Failed to retrieve availability', 500);

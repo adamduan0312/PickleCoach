@@ -12,6 +12,9 @@ export const STUDENT_ACTIVE_SCHEDULE_STATUSES = Object.freeze([
   'awaiting_verification',
 ]);
 
+/** Same statuses occupy a coach's bookable slot for UX (mirrors coach overlap check). */
+export const COACH_SLOT_OCCUPYING_STATUSES = STUDENT_ACTIVE_SCHEDULE_STATUSES;
+
 /**
  * True when two lesson windows overlap (touching endpoints do not overlap).
  * @param {string|Date|number} aStart
@@ -162,6 +165,43 @@ export const checkStudentScheduleConflict = async (studentId, scheduledAt, durat
 
   return { available: true };
 };
+
+/**
+ * Active coach bookings that block slot picking in the student UI.
+ * Read-only helper — does not change intent/confirm conflict rules.
+ *
+ * @param {number} coachId
+ * @param {{ from?: Date|string|number, until?: Date|string|number }} [range]
+ * @returns {Promise<Array<{ scheduled_at: string, duration_minutes: number }>>}
+ */
+export async function listCoachOccupiedBookingIntervals(coachId, range = {}) {
+  if (coachId == null) return [];
+  const fromDate = range.from != null ? new Date(range.from) : new Date();
+  const untilDate = range.until != null
+    ? new Date(range.until)
+    : new Date(fromDate.getTime() + 60 * 86400000);
+  if (!Number.isFinite(fromDate.getTime()) || !Number.isFinite(untilDate.getTime())) return [];
+
+  const rows = await Booking.findAll({
+    where: {
+      coach_id: coachId,
+      status: { [Op.in]: [...COACH_SLOT_OCCUPYING_STATUSES] },
+      scheduled_at: { [Op.lt]: untilDate },
+      [Op.and]: [
+        sequelize.literal(
+          `DATE_ADD(scheduled_at, INTERVAL duration_minutes MINUTE) > '${fromDate.toISOString()}'`,
+        ),
+      ],
+    },
+    attributes: ['scheduled_at', 'duration_minutes'],
+    order: [['scheduled_at', 'ASC']],
+  });
+
+  return rows.map((row) => ({
+    scheduled_at: new Date(row.scheduled_at).toISOString(),
+    duration_minutes: Number(row.duration_minutes) || 0,
+  }));
+}
 
 /**
  * @param {number} lessonId

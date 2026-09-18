@@ -1,9 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
 import { bookingsApi, messagesApi, reviewsApi, adminApi, disputesApi, asList } from '../../api/index.js';
 import { useAsync } from '../../hooks/useAsync.js';
 import { Alert, EmptyState, ErrorState, LoadingState, StatusBadge } from '../../components/ui/States.jsx';
 import { FormField } from '../../components/ui/FormField.jsx';
+import { StarRating, StarRatingInput } from '../../components/ui/StarRating.jsx';
 import { CharacterCounter, CharacterMaxHint } from '../../components/ui/CharacterLimit.jsx';
 import { AdminStatusStack } from '../../components/admin/AdminStatusStack.jsx';
 import { CHAR_LIMITS } from '../../utils/charLimits.js';
@@ -23,7 +25,9 @@ import {
   coachAttendanceBlockedByIssue,
   coachAcceptanceDeadlineAt,
   paymentStatusLabel,
-  paymentAmountCaption,
+  lessonAmountLabel,
+  coachCancelMoneyPresentation,
+  studentCoachCancelMoneyPresentation,
   isStudentPaymentRefunded,
   isCoachPayoutReleased,
   isCoachPayoutNotDue,
@@ -40,7 +44,17 @@ import {
   studentNoShowConfirmBody,
   CANCEL_REASONS,
   DECLINE_REASON_CODES,
+  cancellationHistoryEventLabel,
+  cancellationHistoryReasonDisplay,
 } from '../../domain/bookingStatus.js';
+import {
+  coachPayoutLabel,
+  issueResolutionFacts,
+} from '../../domain/issueResolutionDisplay.js';
+import {
+  bookingSettlementDisplayRows,
+  bookingSettlementFacts,
+} from '../../domain/bookingSettlementDisplay.js';
 import {
   adminBookingMoneyStatusItems,
   adminRefundStatusView,
@@ -54,20 +68,10 @@ function formatAcceptanceDeadline(iso, tz) {
   return `${formatDateInZone(iso, tz)} · ${formatTimeInZone(iso, tz)}`;
 }
 
-function lessonAmountLabel(payment, booking) {
-  const caption = payment ? paymentAmountCaption(payment) : null;
-  if (caption === 'Authorized') return 'Amount authorized';
-  if (caption === 'Charged') return 'Amount charged';
-  if (caption === 'Refunded') return 'Amount refunded';
-  if (caption === 'Partially refunded') return 'Amount partially refunded';
-  if (booking?.status === 'pending') return 'Amount authorized';
-  return caption ? `Amount (${caption.toLowerCase()})` : 'Amount';
-}
-
 function bookingDetailHeadline(booking, { audience }) {
   if (hasOpenIssueReport(booking) || booking.status === 'disputed') {
     return booking.status === 'disputed' && !hasOpenIssueReport(booking)
-      ? 'Issue under review'
+      ? 'Payment dispute under review'
       : 'Issue reported';
   }
   if (booking.status === 'pending') {
@@ -82,7 +86,7 @@ function bookingDetailHeadline(booking, { audience }) {
   return bookingStatusLabel(booking.status, { audience });
 }
 
-function bookingDetailLead(booking, { audience, tz, now = Date.now() }) {
+function bookingDetailLead(booking, { audience, tz, now = Date.now(), payment = null }) {
   const coachName = booking.coach?.full_name || 'the coach';
   const studentName = booking.primaryStudent?.full_name || 'the student';
   const deadlineLabel = formatAcceptanceDeadline(coachAcceptanceDeadlineAt(booking), tz);
@@ -110,16 +114,19 @@ function bookingDetailLead(booking, { audience, tz, now = Date.now() }) {
         ? 'The lesson time has passed. Please confirm whether the lesson took place.'
         : 'The lesson time has passed. Your coach is confirming whether the lesson took place.';
     case 'completed':
+      if (booking.resolved_issue?.id) {
+        return 'The lesson was completed. An issue was reported and reviewed.';
+      }
       if (audience === 'coach') {
         return reviewOpen
-          ? 'The lesson has been marked complete. The 24-hour financial review period is still open.'
-          : 'The lesson has been marked complete. The financial review period has ended.';
+          ? 'The lesson has been marked complete. The 24-hour issue-reporting period is still open.'
+          : 'The lesson has been marked complete. The issue-reporting period has ended.';
       }
       return reviewOpen
         ? 'Your coach marked the lesson complete. You have 24 hours to report an issue.'
         : 'Your coach marked the lesson complete. The issue-reporting period has ended.';
     case 'cancelled':
-      return cancelledOutcomeCopy(booking, { audience });
+      return cancelledOutcomeCopy(booking, { audience, payment });
     case 'student_no_show':
     case 'coach_no_show':
       return null;
@@ -133,16 +140,8 @@ function bookingDetailNextSteps(booking, { audience, tz, now = Date.now(), payme
   const whenLabel = `${formatDateInZone(booking.scheduled_at, tz)} · ${formatTimeInZone(booking.scheduled_at, tz)}`;
   const reviewOpen = isFinancialReviewWindowOpen(booking, now);
 
+  // Open issue / payment dispute: IssueReportedPanel owns the primary message.
   if (hasOpenIssueReport(booking) || booking.status === 'disputed') {
-    if (audience === 'student') {
-      return [
-        {
-          title: 'Issue under review',
-          body: 'We\'ll review the report and notify you when there\'s an outcome.',
-        },
-      ];
-    }
-    // Coach banner already explains the state.
     return [];
   }
 
@@ -228,12 +227,13 @@ function bookingDetailNextSteps(booking, { audience, tz, now = Date.now(), payme
       ];
     case 'completed':
       if (audience === 'student') {
-        const steps = [
-          {
+        const steps = [];
+        if (!booking.student_review) {
+          steps.push({
             title: 'Leave a review',
-            body: 'Tell other students about your experience with this coach if you haven\'t already.',
-          },
-        ];
+            body: 'Tell other students about your experience with this coach.',
+          });
+        }
         if (reviewOpen) {
           steps.push({
             title: 'Report a problem if needed',
@@ -243,8 +243,13 @@ function bookingDetailNextSteps(booking, { audience, tz, now = Date.now(), payme
           steps.push({
             title: 'Financial outcome',
             body: isStudentPaymentRefunded(payment)
-              ? 'This booking was refunded and no payment is due to the coach. Nothing else is required from you.'
+              ? 'The lesson was marked complete, then this booking was refunded. No payment is due to the coach. Nothing else is required from you.'
               : 'This booking is financially final. Nothing else is required from you.',
+          });
+        } else if (isCoachPayoutReleased(booking)) {
+          steps.push({
+            title: 'Payment released',
+            body: 'The issue-reporting period ended and your payment was finalized with the coach.',
           });
         } else {
           steps.push({
@@ -258,30 +263,32 @@ function bookingDetailNextSteps(booking, { audience, tz, now = Date.now(), payme
         return [
           {
             title: 'Payout timing',
-            body: 'Your payout will be released after the 24-hour review period if no issue is reported.',
+            body: 'Your payout will be released after the 24-hour issue-reporting period if no issue is reported.',
           },
         ];
       }
       if (isCoachPayoutReleased(booking)) {
         return [
           {
-            title: 'Payout',
-            body: 'Your payout for this lesson has been sent (or is processing).',
+            title: 'Payment released',
+            body: 'The issue-reporting period ended and your payout has been released.',
           },
         ];
       }
       if (isCoachPayoutNotDue(booking, payment)) {
         return [
           {
-            title: 'Settlement',
-            body: 'This booking was refunded and no coach payout is due.',
+            title: 'No payout due',
+            body: isStudentPaymentRefunded(payment)
+              ? 'The lesson was completed, but the reported issue was reviewed and resolved with a refund. No payout is due.'
+              : 'No payout is due for this booking.',
           },
         ];
       }
       return [
         {
           title: 'Payout timing',
-          body: 'The review period has ended. Payout follows the normal settlement process if no issue was reported.',
+          body: 'The issue-reporting period has ended. Payout follows the normal settlement process if no issue was reported.',
         },
       ];
     case 'student_no_show':
@@ -304,19 +311,29 @@ function bookingDetailNextSteps(booking, { audience, tz, now = Date.now(), payme
           },
         ];
       }
+      // Coach
+      if (booking.status === 'coach_no_show') {
+        return [
+          {
+            title: 'No payout due',
+            body: 'This booking was resolved as a coach no-show. No payout is due.',
+          },
+        ];
+      }
+      // student_no_show — coach
       if (reviewOpen) {
         return [
           {
             title: 'Payout timing',
-            body: 'Your payout will be released after the 24-hour review period if no issue is reported.',
+            body: 'Your payout will be released after the 24-hour issue-reporting period if no issue is reported.',
           },
         ];
       }
       if (isCoachPayoutReleased(booking)) {
         return [
           {
-            title: 'Payout',
-            body: 'Your payout for this lesson has been sent (or is processing).',
+            title: 'Payment released',
+            body: 'The issue-reporting period ended and your payout has been released.',
           },
         ];
       }
@@ -324,14 +341,16 @@ function bookingDetailNextSteps(booking, { audience, tz, now = Date.now(), payme
         return [
           {
             title: 'Settlement',
-            body: 'This booking was refunded and no coach payout is due.',
+            body: isStudentPaymentRefunded(payment)
+              ? 'This booking was refunded and no coach payout is due.'
+              : 'No coach payout is due for this booking.',
           },
         ];
       }
       return [
         {
           title: 'Payout timing',
-          body: 'The review period has ended. Payout follows the normal settlement process if no issue was reported.',
+          body: 'The issue-reporting period has ended. Payout follows the normal settlement process if no issue was reported.',
         },
       ];
     default:
@@ -347,9 +366,36 @@ function BookingDetailLessonSection({ booking, payment, tz, isCoach, admin }) {
   const lessonTitle = booking.lesson?.title || 'Lesson';
   const duration = booking.duration_minutes != null ? ` · ${booking.duration_minutes} min` : '';
   const amount = payment?.total_charge_to_student ?? booking.price;
-  const amountLabel = lessonAmountLabel(payment, booking);
-  const paymentStatus = paymentStatusLabel(payment);
+  const coachCancelMoney = isCoach && !admin
+    ? coachCancelMoneyPresentation(booking, payment)
+    : null;
+  const studentCancelMoney = !isCoach && !admin
+    ? studentCoachCancelMoneyPresentation(booking, payment)
+    : null;
+  const amountLabel = coachCancelMoney?.amountLabel
+    || studentCancelMoney?.amountLabel
+    || lessonAmountLabel(payment, booking);
+  const paymentStatus = coachCancelMoney
+    ? coachCancelMoney.paymentStatusLine
+    : (studentCancelMoney
+      ? studentCancelMoney.paymentStatusLine
+      : paymentStatusLabel(payment));
   const whereLabel = courtLabel(booking.courtLocation);
+  const showCoachPayout = isCoach && (coachCancelMoney || payment?.coach_payout_expected != null);
+  const payoutLabel = coachCancelMoney?.payoutLabel || 'Expected payout';
+  let payoutDisplay = null;
+  if (coachCancelMoney?.payoutKind === 'not_payable') payoutDisplay = 'Not payable';
+  else if (coachCancelMoney?.payoutKind === 'zero') payoutDisplay = formatMoney(0);
+  else if (payment?.coach_payout_expected != null) payoutDisplay = formatMoney(payment.coach_payout_expected);
+
+  let refundDisplay = null;
+  if (studentCancelMoney?.showRefund) {
+    if (studentCancelMoney.refundValueKind === 'amount' && studentCancelMoney.refundValueAmount != null) {
+      refundDisplay = `${formatMoney(studentCancelMoney.refundValueAmount)} refunded`;
+    } else if (studentCancelMoney.refundValueText) {
+      refundDisplay = studentCancelMoney.refundValueText;
+    }
+  }
 
   return (
     <section className="card stack booking-detail-section booking-detail-lesson">
@@ -400,10 +446,23 @@ function BookingDetailLessonSection({ booking, payment, tz, isCoach, admin }) {
             </dd>
           </div>
         ) : null}
-        {isCoach && payment?.coach_payout_expected != null ? (
+        {refundDisplay ? (
+          <div className="booking-detail-facts-payment">
+            <dt>{studentCancelMoney.refundLabel}</dt>
+            <dd>
+              {refundDisplay}
+              {studentCancelMoney.refundStatusLine ? (
+                <span className="small muted booking-detail-payment-status">
+                  {studentCancelMoney.refundStatusLine}
+                </span>
+              ) : null}
+            </dd>
+          </div>
+        ) : null}
+        {showCoachPayout && payoutDisplay != null ? (
           <div className="booking-detail-facts-full">
-            <dt>Expected payout</dt>
-            <dd>{formatMoney(payment.coach_payout_expected)}</dd>
+            <dt>{payoutLabel}</dt>
+            <dd>{payoutDisplay}</dd>
           </div>
         ) : null}
         {booking.decline_message_to_student ? (
@@ -450,6 +509,7 @@ export function BookingDetailPage({ admin = false }) {
   const [message, setMessage] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
+  const pageTopRef = useRef(null);
   // Keep report-issue / review-window UI in sync with the countdown (banner ticks alone would not re-render actions).
   const now = useNow(15000);
 
@@ -482,10 +542,17 @@ export function BookingDetailPage({ admin = false }) {
     try {
       await action();
       const res = admin ? await adminApi.booking(id) : await bookingsApi.getById(id);
-      setData(res.data);
-      if (successMsg) setMessage(successMsg);
+      // Commit the updated booking UI before scrolling so the user lands on the new status.
+      flushSync(() => {
+        setData(res.data);
+        if (successMsg) setMessage(successMsg);
+      });
+      window.scrollTo({ top: 0, left: 0, behavior: 'smooth' });
+      pageTopRef.current?.focus({ preventScroll: true });
+      return true;
     } catch (err) {
       setError(err.message);
+      return false;
     } finally {
       setBusy(false);
     }
@@ -496,11 +563,15 @@ export function BookingDetailPage({ admin = false }) {
     setError(null);
     try {
       let conversationId = booking.conversation?.id;
-      if (!conversationId) {
+      // Locked bookings: view existing history only — never create a new thread.
+      if (!conversationId && !booking.messaging_locked) {
         const created = await messagesApi.createConversation(booking.id);
         conversationId = created.data?.id;
       }
       if (conversationId) navigate(`/messages/${conversationId}`);
+      else if (booking.messaging_locked) {
+        setError('There are no messages for this booking.');
+      }
     } catch (err) {
       setError(err.message);
     } finally {
@@ -512,10 +583,18 @@ export function BookingDetailPage({ admin = false }) {
   if (loadError) return <div className="page"><ErrorState error={loadError} /></div>;
   if (!booking) return <div className="page"><EmptyState title="Booking not found" /></div>;
 
+  const canOpenConversation = !booking.messaging_locked;
+  const canViewConversation = Boolean(booking.conversation?.id);
   const bookingActions = (
     <>
-      {!booking.messaging_locked ? (
-        <button className="btn secondary" type="button" disabled={busy} onClick={openMessages}>Open conversation</button>
+      {canOpenConversation ? (
+        <button className="btn secondary" type="button" disabled={busy} onClick={openMessages}>
+          Open conversation
+        </button>
+      ) : canViewConversation ? (
+        <button className="btn secondary" type="button" disabled={busy} onClick={openMessages}>
+          View messages
+        </button>
       ) : null}
       {isCoach && canCoachAccept(booking) ? (
         <button
@@ -588,23 +667,6 @@ export function BookingDetailPage({ admin = false }) {
           onSubmit={(body) => run(() => bookingsApi.cancel(id, body))}
         />
       ) : null}
-      {isStudent && booking.status === 'completed' ? (
-        booking.student_review ? (
-          <div className="card stack" style={{ marginTop: 8 }}>
-            <h3 style={{ margin: 0 }}>Your review</h3>
-            <p className="small muted" style={{ margin: 0 }}>
-              {booking.student_review.rating}★
-              {booking.student_review.comment ? ` · ${booking.student_review.comment}` : ''}
-            </p>
-          </div>
-        ) : (
-          <ReviewForm
-            bookingId={booking.id}
-            busy={busy}
-            onSubmit={(body) => run(() => reviewsApi.create(body), 'Review submitted.')}
-          />
-        )
-      ) : null}
       {admin ? <AdminBookingActions id={id} busy={busy} run={run} /> : null}
       {(isStudent || isCoach) && canReportLessonIssue(booking, now) ? (
         <ReportIssueForm
@@ -628,7 +690,7 @@ export function BookingDetailPage({ admin = false }) {
     : bookingDetailHeadline(booking, { audience: audience || 'student' });
   const lead = admin
     ? `${booking.primaryStudent?.full_name || 'Student'} → ${booking.coach?.full_name || 'Coach'}`
-    : bookingDetailLead(booking, { audience: audience || 'student', tz, now });
+    : bookingDetailLead(booking, { audience: audience || 'student', tz, now, payment });
   const nextSteps = admin ? [] : bookingDetailNextSteps(booking, {
     audience: audience || 'student',
     tz,
@@ -640,7 +702,7 @@ export function BookingDetailPage({ admin = false }) {
     : null;
 
   return (
-    <div className="page booking-detail-page">
+    <div className="page booking-detail-page" ref={pageTopRef} tabIndex={-1}>
       <Alert tone="error">{error}</Alert>
 
       <div className="page-header">
@@ -663,7 +725,10 @@ export function BookingDetailPage({ admin = false }) {
       <Alert tone="success">{message}</Alert>
 
       {!admin && (hasOpenIssueReport(booking) || booking.status === 'disputed') ? (
-        <IssueReportedPanel booking={booking} tz={tz} audience={audience || 'student'} now={now} />
+        <IssueReportedPanel
+          booking={booking}
+          audience={audience || 'student'}
+        />
       ) : null}
       {!admin && !hasOpenIssueReport(booking)
         && ['student_no_show', 'coach_no_show'].includes(booking.status)
@@ -681,6 +746,10 @@ export function BookingDetailPage({ admin = false }) {
           tz={tz}
           now={now}
         />
+      ) : null}
+
+      {!admin && (isStudent || isCoach) && booking.resolved_issue?.id && !hasOpenIssueReport(booking) ? (
+        <IssueResolvedPanel booking={booking} payment={payment} />
       ) : null}
 
       <div className={`booking-detail-content-grid${nextSteps.length ? '' : ' booking-detail-content-grid--single'}`}>
@@ -710,6 +779,26 @@ export function BookingDetailPage({ admin = false }) {
         </section>
       ) : null}
 
+      {isStudent && booking.status === 'completed' ? (
+        <section className="card stack booking-detail-section booking-review-section">
+          {booking.student_review ? (
+            <SubmittedStudentReview review={booking.student_review} audience="student" />
+          ) : (
+            <ReviewForm
+              bookingId={booking.id}
+              busy={busy}
+              onSubmit={(body) => run(() => reviewsApi.create(body), 'Review submitted.')}
+            />
+          )}
+        </section>
+      ) : null}
+
+      {isCoach && booking.status === 'completed' && booking.student_review ? (
+        <section className="card stack booking-detail-section booking-review-section">
+          <SubmittedStudentReview review={booking.student_review} audience="coach" />
+        </section>
+      ) : null}
+
       <section className="card stack booking-detail-section booking-detail-actions">
         <h2 className="booking-detail-section-title">{admin ? 'Admin actions' : 'Booking actions'}</h2>
         {messagingLockedCopy(booking) ? (
@@ -718,14 +807,33 @@ export function BookingDetailPage({ admin = false }) {
         {bookingActions}
       </section>
       {Array.isArray(booking.cancellationHistory) && booking.cancellationHistory.length > 0 ? (
-        <div className="card" style={{ marginTop: 16 }}>
-          <h2>Cancellation history</h2>
-          {booking.cancellationHistory.map((row) => (
-            <div key={row.id} className="small">
-              {row.cancelled_by} · {row.reason} {row.reason_notes ? `— ${row.reason_notes}` : ''}
-            </div>
-          ))}
-        </div>
+        <section className="card stack booking-detail-section booking-cancellation-history">
+          <h2 className="booking-detail-section-title">Cancellation history</h2>
+          <ul className="booking-cancellation-history-list">
+            {booking.cancellationHistory.map((row) => {
+              const eventLabel = cancellationHistoryEventLabel(row, { audience });
+              const reason = cancellationHistoryReasonDisplay(row);
+              return (
+                <li key={row.id} className="booking-cancellation-history-item">
+                  <p className="booking-cancellation-history-event">{eventLabel}</p>
+                  {reason ? (
+                    <p className="muted booking-cancellation-history-reason">
+                      Reason: {reason.primary}
+                      {reason.detail ? ` — ${reason.detail}` : ''}
+                    </p>
+                  ) : null}
+                  {row.cancelled_at ? (
+                    <p className="small muted booking-cancellation-history-time">
+                      <time dateTime={row.cancelled_at}>
+                        {formatInZone(row.cancelled_at, tz, { weekday: undefined })}
+                      </time>
+                    </p>
+                  ) : null}
+                </li>
+              );
+            })}
+          </ul>
+        </section>
       ) : null}
       <p className="small" style={{ marginTop: 16 }}>
         <Link to={admin ? '/admin/bookings' : (isCoach ? '/coach/bookings' : '/bookings')}>Back to list</Link>
@@ -734,46 +842,111 @@ export function BookingDetailPage({ admin = false }) {
   );
 }
 
-function IssueReportedPanel({ booking, tz, audience, now: nowProp }) {
-  const now = nowProp ?? Date.now();
-  const review = booking?.financial_review;
-  const remaining = review?.review_until
-    ? formatRemainingUntil(review.review_until, new Date(now))
-    : null;
-  const untilLabel = review?.review_until ? formatInZone(review.review_until, tz) : null;
-  const stillOpen = remaining && remaining !== 'ended';
+function IssueResolvedPanel({ booking, payment }) {
+  const issue = booking?.resolved_issue;
+  if (!issue?.id) return null;
+  const facts = issueResolutionFacts(issue);
+  const settlement = bookingSettlementFacts(booking, payment, issue);
+  const settlementRows = bookingSettlementDisplayRows(settlement);
+
+  return (
+    <Alert tone="info">
+      <strong>Issue resolved</strong>
+      <dl className="booking-detail-facts" style={{ marginTop: 10, marginBottom: 0 }}>
+        {facts.decision ? (
+          <div>
+            <dt>Decision</dt>
+            <dd>{facts.decision}</dd>
+          </div>
+        ) : null}
+        {facts.financial ? (
+          <div>
+            <dt>Dispute financial action</dt>
+            <dd>{facts.financial}</dd>
+          </div>
+        ) : null}
+        {facts.reliability ? (
+          <div>
+            <dt>Reliability</dt>
+            <dd>{facts.reliability}</dd>
+          </div>
+        ) : null}
+        {facts.attendance ? (
+          <div>
+            <dt>Attendance finding</dt>
+            <dd>{facts.attendance}</dd>
+          </div>
+        ) : null}
+      </dl>
+      {settlementRows.length ? (
+        <>
+          <strong style={{ display: 'block', marginTop: 12 }}>{settlement.settlementHeadline}</strong>
+          <dl className="booking-detail-facts" style={{ marginTop: 8, marginBottom: 0 }}>
+            {settlementRows.map((row) => (
+              <div key={row.dt}>
+                <dt>{row.dt}</dt>
+                <dd>{row.dd}</dd>
+              </div>
+            ))}
+          </dl>
+        </>
+      ) : null}
+      <div style={{ marginTop: 10 }}>
+        <Link className="btn secondary" to={`/issues/${issue.id}`}>
+          View resolution details
+        </Link>
+      </div>
+    </Alert>
+  );
+}
+
+function IssueReportedPanel({ booking, audience }) {
   const openedBy = booking?.active_issue?.opened_by;
   const isChargeback = booking.status === 'disputed' && !hasOpenIssueReport(booking);
 
   let body;
   if (isChargeback) {
-    body = 'A payment issue is open on this booking. Payout is blocked while it is under review.';
+    body = audience === 'coach'
+      ? 'This booking has a payment dispute. Payout is on hold until it is resolved.'
+      : 'Your payment is under review as part of a payment dispute. We\'ll update you when there\'s an outcome.';
   } else if (audience === 'coach') {
     body = openedBy === 'coach'
-      ? 'You reported an issue with this lesson. Payout is blocked while the issue is under review.'
-      : 'The student reported an issue with this lesson. Payout is blocked while the issue is under review.';
+      ? 'You reported an issue with this lesson. We\'re reviewing it. Your payout is on hold while the issue is open.'
+      : 'The student reported an issue with this lesson. We\'re reviewing it. Your payout is on hold while the issue is open.';
+  } else if (openedBy === 'coach') {
+    body = 'The coach reported an issue with this lesson. We\'re reviewing it. Settlement is on hold while the issue is open.';
   } else {
-    body = openedBy === 'student' || !openedBy
-      ? 'Your report has been submitted and is under review. Payout is protected while this issue is being reviewed.'
-      : 'An issue was reported on this lesson. Payout is protected while it is under review.';
+    body = 'You reported an issue with this lesson. We\'re reviewing it. Settlement is on hold while the issue is open.';
   }
 
-  const title = isChargeback || (booking.status === 'disputed' && !hasOpenIssueReport(booking))
-    ? 'Issue under review'
+  const title = isChargeback
+    ? 'Payment dispute under review'
     : 'Issue reported';
+
+  const lessonStatusLabel = bookingStatusLabel(booking.status, { audience });
+  const showSeparateStatuses = !isChargeback && hasOpenIssueReport(booking);
 
   return (
     <Alert tone="warning">
       <strong>{title}</strong>
       <div style={{ marginTop: 6 }}>{body}</div>
-      {stillOpen && untilLabel ? (
-        <div className="small" style={{ marginTop: 10 }}>
-          <strong>Financial review window:</strong> {remaining} remaining
-          <div className="muted">Until {untilLabel}</div>
-        </div>
-      ) : untilLabel ? (
-        <div className="small muted" style={{ marginTop: 10 }}>
-          Financial review window ended {untilLabel}. Payout remains blocked while the issue is open.
+      {showSeparateStatuses ? (
+        <dl className="booking-detail-facts" style={{ marginTop: 10, marginBottom: 0 }}>
+          <div>
+            <dt>Lesson status</dt>
+            <dd>{lessonStatusLabel}</dd>
+          </div>
+          <div>
+            <dt>Issue status</dt>
+            <dd>Under review</dd>
+          </div>
+        </dl>
+      ) : null}
+      {!isChargeback && booking?.active_issue?.id ? (
+        <div style={{ marginTop: 10 }}>
+          <Link className="btn secondary" to={`/issues/${booking.active_issue.id}`}>
+            View issue details
+          </Link>
         </div>
       ) : null}
     </Alert>
@@ -797,24 +970,25 @@ function FinancialReviewBanner({ booking, payment, isCoach, isStudent, tz, now: 
   const remaining = formatRemainingUntil(review.review_until, new Date(now));
   const stillOpen = windowOpen && remaining !== 'ended';
   const payoutPaid = isCoachPayoutReleased(booking);
-  const refundedNoPayout = isCoachPayoutNotDue(booking, payment);
+  const escrowManual = String(payment?.escrow_status || '').toLowerCase() === 'manual_payout_required';
 
-  // Coach payout sent — only after the review opportunity is over.
-  if (payoutPaid && !stillOpen) {
+  // Coach payout sent — only after the issue-reporting opportunity is over.
+  // Never claim "released" when escrow is parked for manual review.
+  if (payoutPaid && !stillOpen && !escrowManual) {
     return (
       <Alert tone="success">
         <strong>Payment released.</strong>
         {' '}
         {isStudent
           ? 'The issue-reporting period ended and your payment was finalized with the coach.'
-          : 'The 24-hour review period ended and the coach\'s payout was sent.'}
+          : 'The issue-reporting period ended and your payout has been released.'}
         {' '}Exceptional corrections after this point require support.
       </Alert>
     );
   }
 
   if (stillOpen) {
-    // Open issue: IssueReportedPanel owns messaging (including countdown).
+    // Open issue / chargeback: IssueReportedPanel owns messaging (no review-window countdown).
     if (hasOpenIssueReport(booking) || booking.status === 'disputed') {
       return null;
     }
@@ -831,7 +1005,7 @@ function FinancialReviewBanner({ booking, payment, isCoach, isStudent, tz, now: 
       return (
         <Alert tone="info">
           <strong>Payout is protected for 24 hours after the lesson.</strong>
-          {' '}Your payout will be released after the review period if no issue is reported.
+          {' '}Your payout will be released after the issue-reporting period if no issue is reported.
           {' '}<strong>Time remaining: {remaining}</strong>
           <div className="small muted" style={{ marginTop: 6 }}>Until {deadline}</div>
         </Alert>
@@ -839,7 +1013,7 @@ function FinancialReviewBanner({ booking, payment, isCoach, isStudent, tz, now: 
     }
     return (
       <Alert tone="info">
-        Review period: <strong>{remaining}</strong> left (until {deadline}). Payment is not released until this ends.
+        Issue-reporting period: <strong>{remaining}</strong> left (until {deadline}). Payment is not released until this ends.
       </Alert>
     );
   }
@@ -848,23 +1022,36 @@ function FinancialReviewBanner({ booking, payment, isCoach, isStudent, tz, now: 
     if (hasOpenIssueReport(booking) || booking.status === 'disputed') {
       return null;
     }
-    if (refundedNoPayout) {
+    const payout = coachPayoutLabel(booking, payment);
+    if (payout === 'Failed — manual review') {
+      return (
+        <Alert tone="warning">
+          <strong>Settlement failed — manual review required.</strong>
+          {' '}
+          Coach payout could not be completed automatically
+          {payment?.coach_payout_expected != null
+            ? ` (${formatMoney(payment.coach_payout_expected)} expected)`
+            : ''}
+          .
+          {' '}Ended {deadline}.
+        </Alert>
+      );
+    }
+    if (payout === 'None due' || payout === 'Pending' || payout === 'Paid') {
       return (
         <Alert tone="info">
-          <strong>{isStudent ? 'The issue-reporting period has closed.' : 'The review period has closed.'}</strong>
+          <strong>The issue-reporting period has closed.</strong>
           {' '}
-          {isCoach
-            ? 'This booking was refunded and no coach payout is due.'
-            : isStudentPaymentRefunded(payment)
-              ? 'This booking was refunded and no payment is due to the coach.'
-              : 'No coach payout is due for this booking.'}
+          <span>
+            Coach payout: {payout === 'Paid' ? 'complete' : payout.toLowerCase()}.
+          </span>
           {' '}Ended {deadline}.
         </Alert>
       );
     }
     return (
       <Alert tone="info">
-        <strong>{isStudent ? 'The issue-reporting period has closed.' : 'The review period has closed.'}</strong>
+        <strong>The issue-reporting period has closed.</strong>
         {' '}This booking is normally financially final.
         {' '}Ended {deadline}. Exceptional corrections may require support.
       </Alert>
@@ -876,18 +1063,24 @@ function FinancialReviewBanner({ booking, payment, isCoach, isStudent, tz, now: 
 function ReportIssueForm({ booking, isCoach, busy, onSubmit, now = Date.now() }) {
   const { data: types } = useAsync(async () => asList((await disputesApi.types()).data), []);
   const allowedCodes = isCoach
-    ? ['student_no_show_claim', 'misconduct', 'lesson_not_completed', 'other']
+    ? ['misconduct', 'lesson_not_completed', 'other']
     : ['coach_no_show_claim', 'misconduct', 'lesson_not_completed', 'other'];
   const options = (types || []).filter((t) => allowedCodes.includes(t.code));
+  const optionIdsKey = options.map((t) => t.id).join(',');
   const [disputeTypeId, setDisputeTypeId] = useState('');
   const [notes, setNotes] = useState('');
   const remaining = formatRemainingUntil(booking.financial_review?.review_until, new Date(now));
 
   useEffect(() => {
-    if (!disputeTypeId && options[0]) {
-      setDisputeTypeId(String(options[0].id));
+    if (!options.length) {
+      setDisputeTypeId((prev) => (prev ? '' : prev));
+      return;
     }
-  }, [types, isCoach, disputeTypeId]);
+    setDisputeTypeId((prev) => {
+      if (prev && options.some((t) => String(t.id) === String(prev))) return prev;
+      return String(options[0].id);
+    });
+  }, [optionIdsKey]);
 
   return (
     <form
@@ -1023,30 +1216,70 @@ function DeclineForm({ onSubmit, busy }) {
   );
 }
 
-function ReviewForm({ bookingId, onSubmit, busy }) {
-  const [rating, setRating] = useState(5);
-  const [comment, setComment] = useState('');
+function SubmittedStudentReview({ review, audience = 'student' }) {
+  const rating = Number(review?.rating);
+  const comment = typeof review?.comment === 'string' ? review.comment.trim() : '';
+  const forCoach = audience === 'coach';
   return (
-    <form className="stack" onSubmit={(e) => { e.preventDefault(); onSubmit({ booking_id: Number(bookingId), rating: Number(rating), comment }); }}>
-      <FormField label="Rating" name="rating">
-        <select id="rating" value={rating} onChange={(e) => setRating(e.target.value)}>
-          {[5, 4, 3, 2, 1].map((n) => <option key={n} value={n}>{n}</option>)}
-        </select>
-      </FormField>
-      <FormField label="Comment (optional)" name="comment">
-        <>
-          <textarea
-            id="comment"
-            name="comment"
-            value={comment}
-            onChange={(e) => setComment(e.target.value)}
-            maxLength={CHAR_LIMITS.reviewComment}
-          />
-          <CharacterCounter value={comment} max={CHAR_LIMITS.reviewComment} />
-        </>
-      </FormField>
-      <button className="btn secondary" type="submit" disabled={busy}>Submit review</button>
-    </form>
+    <>
+      <h2 className="booking-detail-section-title">{forCoach ? 'Student review' : 'Your review'}</h2>
+      <StarRating
+        rating={rating}
+        label={forCoach ? `Student rated ${rating} out of 5` : `You rated ${rating} out of 5`}
+      />
+      {comment ? <p className="booking-review-comment">{comment}</p> : null}
+      <p className="small muted booking-review-hint">{forCoach ? 'Submitted by student' : 'Submitted'}</p>
+    </>
+  );
+}
+
+function ReviewForm({ bookingId, onSubmit, busy }) {
+  const [rating, setRating] = useState(0);
+  const [comment, setComment] = useState('');
+  const hasRating = rating >= 1 && rating <= 5;
+
+  return (
+    <>
+      <h2 className="booking-detail-section-title">Leave a review</h2>
+      <form
+        className="stack"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!hasRating) return;
+          const trimmed = comment.trim();
+          onSubmit({
+            booking_id: Number(bookingId),
+            rating: Number(rating),
+            ...(trimmed ? { comment: trimmed } : {}),
+          });
+        }}
+      >
+        <FormField label="How was your lesson?" name="rating" required>
+          <>
+            <StarRatingInput id="rating" value={rating} onChange={setRating} disabled={busy} />
+            <p className="small muted booking-review-hint">
+              {hasRating ? `${rating} out of 5` : 'Select a rating'}
+            </p>
+          </>
+        </FormField>
+        <FormField label="Comment (optional)" name="comment">
+          <>
+            <textarea
+              id="comment"
+              name="comment"
+              value={comment}
+              onChange={(e) => setComment(e.target.value)}
+              maxLength={CHAR_LIMITS.reviewComment}
+              placeholder="Share what stood out about the lesson"
+            />
+            <CharacterCounter value={comment} max={CHAR_LIMITS.reviewComment} />
+          </>
+        </FormField>
+        <button className="btn secondary" type="submit" disabled={busy || !hasRating}>
+          Submit review
+        </button>
+      </form>
+    </>
   );
 }
 

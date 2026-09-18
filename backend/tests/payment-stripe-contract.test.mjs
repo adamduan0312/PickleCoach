@@ -167,3 +167,13 @@ describe('Connect transfer.reversed', () => {
     assert.match(src, /non_canonical_duplicate_reversal/);
   });
 });
+
+describe('MVP PaymentIntent payment methods', () => {
+  it('creates card-only intents (no automatic_payment_methods)', () => {
+    const stripeServicePath = join(__dirname, '../services/stripeService.js');
+    const src = readFileSync(stripeServicePath, 'utf8');
+    assert.match(src, /payment_method_types:\s*\['card'\]/);
+    // Stripe rejects combining these; MVP must not re-enable automatic methods without removing types.
+    assert.doesNotMatch(src, /automatic_payment_methods:\s*\{/);
+  });
+});

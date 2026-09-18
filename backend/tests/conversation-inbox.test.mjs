@@ -34,6 +34,9 @@ function mockRes() {
   return res;
 }
 
+const coachParty = { id: 10, full_name: 'Coach Kim', avatar_url: '/coach.png' };
+const studentParty = { id: 20, full_name: 'Student Sam', avatar_url: null };
+
 const fullBooking = {
   id: 5,
   lesson_id: 12,
@@ -55,6 +58,8 @@ const fullBooking = {
   attendance_finalized: false,
   created_at: '2026-05-28T08:00:00.000Z',
   updated_at: '2026-05-28T08:00:00.000Z',
+  coach: coachParty,
+  primaryStudent: studentParty,
   toJSON() {
     return { ...this };
   },
@@ -126,13 +131,18 @@ describe('conversationInboxDto serialization', () => {
         return { ...this };
       },
     };
-    const item = serializeConversationInboxItem(row, { unreadCount: 2 });
+    const item = serializeConversationInboxItem(row, { unreadCount: 2, viewerUserId: 20 });
     assert.equal(item.messages, undefined);
     assert.equal(item.latest_message.id, 7);
     assert.equal(item.booking.lesson_id, 12);
     assert.equal(item.booking.coach_id, undefined);
     assert.equal(item.booking.messaging_locked, false);
     assert.equal(item.unread_count, 2);
+    assert.deepEqual(item.counterpart, {
+      id: 10,
+      full_name: 'Coach Kim',
+      avatar_url: '/coach.png',
+    });
   });
 
   it('serializeConversationInboxItem defaults unread_count to 0', () => {
@@ -147,7 +157,7 @@ describe('conversationInboxDto serialization', () => {
         return { ...this };
       },
     };
-    const item = serializeConversationInboxItem(row);
+    const item = serializeConversationInboxItem(row, { viewerUserId: 10 });
     assert.equal(item.unread_count, 0);
   });
 
@@ -163,8 +173,29 @@ describe('conversationInboxDto serialization', () => {
         return { ...this };
       },
     };
-    const item = serializeConversationInboxItem(row);
+    const item = serializeConversationInboxItem(row, { viewerUserId: 10 });
     assert.equal(item.latest_message, null);
+    assert.deepEqual(item.counterpart, {
+      id: 20,
+      full_name: 'Student Sam',
+      avatar_url: null,
+    });
+  });
+
+  it('serializeConversationInboxItem returns null counterpart for non-party viewer', () => {
+    const row = {
+      id: 2,
+      booking_id: 6,
+      created_at: '2026-05-29T10:00:00.000Z',
+      updated_at: '2026-05-29T10:00:00.000Z',
+      booking: fullBooking,
+      messages: [],
+      toJSON() {
+        return { ...this };
+      },
+    };
+    const item = serializeConversationInboxItem(row, { viewerUserId: 999 });
+    assert.equal(item.counterpart, null);
   });
 });
 
@@ -218,6 +249,11 @@ describe('getConversations inbox list', () => {
     assert.equal(row.booking.lesson_id, 12);
     assert.equal(row.booking.cancelled_by, undefined);
     assert.equal(row.unread_count, 3);
+    assert.deepEqual(row.counterpart, {
+      id: 20,
+      full_name: 'Student Sam',
+      avatar_url: null,
+    });
   });
 
   it('returns empty array when booking_id filter is not participant booking', async () => {

@@ -259,7 +259,7 @@ async function ensureCoach() {
 async function authorizeIntentWithTestCard(paymentIntentId) {
   const pi = await stripe.paymentIntents.confirm(paymentIntentId, {
     payment_method: 'pm_card_visa',
-    // Required when automatic_payment_methods allows redirect methods; card still settles to requires_capture.
+    // Harmless with card-only PaymentIntents; kept for confirm redirects if Stripe requests one.
     return_url: process.env.FRONTEND_URL
       ? `${String(process.env.FRONTEND_URL).split(',')[0].trim()}/stripe-authorize-test.html`
       : 'http://localhost:5173/stripe-authorize-test.html',

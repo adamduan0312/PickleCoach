@@ -19,6 +19,7 @@ import { BookingCheckoutPage } from './pages/student/BookingCheckoutPage.jsx';
 import { BookingConfirmingPage } from './pages/student/BookingConfirmingPage.jsx';
 import { BookingsListPage } from './pages/bookings/BookingsListPage.jsx';
 import { BookingDetailPage } from './pages/bookings/BookingDetailPage.jsx';
+import { IssueDetailPage } from './pages/issues/IssueDetailPage.jsx';
 import { CoachDashboardPage } from './pages/coach/CoachDashboardPage.jsx';
 import { CoachProfileEditPage } from './pages/coach/CoachProfileEditPage.jsx';
 import { CoachLessonsPage } from './pages/coach/CoachLessonsPage.jsx';
@@ -78,6 +79,7 @@ export default function App() {
             <Route path="/bookings/confirming" element={<RequireRole roles={['student']}><BookingConfirmingPage /></RequireRole>} />
             <Route path="/bookings" element={<RequireRole roles={['student']}><BookingsListPage audience="student" /></RequireRole>} />
             <Route path="/bookings/:id" element={<BookingDetailPage />} />
+            <Route path="/issues/:id" element={<RequireRole roles={['student', 'coach']}><IssueDetailPage /></RequireRole>} />
 
             <Route path="/coach" element={<RequireRole roles={['coach']}><CoachDashboardPage /></RequireRole>} />
             <Route path="/coach/profile" element={<RequireRole roles={['coach']}><CoachProfileEditPage /></RequireRole>} />
