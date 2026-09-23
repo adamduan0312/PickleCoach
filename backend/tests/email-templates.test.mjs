@@ -34,6 +34,7 @@ const BOOKING_EMAIL_TYPES = [
   'booking_declined',
   'booking_cancelled',
   'booking_request_expired',
+  'confirm_attendance_reminder',
   'student_no_show',
   'coach_no_show',
   'dispute_resolved',
@@ -172,6 +173,15 @@ describe('emailTemplates shell (Phase D2)', () => {
         coach_name: 'Coach Seven',
         ...STRUCTURED_WHEN,
       },
+      confirm_attendance_reminder: {
+        booking_id: 244,
+        headline: 'Confirm your lesson attendance',
+        summary:
+          'Your lesson with Ada Student has ended. Please confirm whether the lesson happened or mark the student as a no-show within 24 hours.',
+        student_name: 'Ada Student',
+        lesson_title: 'Intro Lesson',
+        ...STRUCTURED_WHEN,
+      },
       refund_succeeded: {
         booking_id: 244,
         headline: 'Refund completed',
@@ -294,6 +304,8 @@ describe('emailTemplates shell (Phase D2)', () => {
     assert.match(fragment, /Wednesday, August 26 · 6:00 PM EDT/);
     assert.match(fragment, /Central Park Pickleball Courts/);
     assert.match(fragment, /View booking/);
+    assert.match(fragment, /24 hours/);
+    assert.match(fragment, /report an issue/i);
     assert.doesNotMatch(fragment, />Student</);
   });
 
@@ -313,6 +325,7 @@ describe('emailTemplates shell (Phase D2)', () => {
     assert.match(fragment, /Beginner Pickleball/);
     assert.match(fragment, /Central Park Pickleball Courts/);
     assert.doesNotMatch(fragment, />Coach</);
+    assert.doesNotMatch(fragment, /report an issue/i);
   });
 });
 
@@ -333,7 +346,8 @@ describe('booking email presentation polish', () => {
     assert.match(html, /Friday, September 4/);
     assert.match(html, /10:00 AM EDT/);
     assert.match(html, /Tree Tops Park Courts/);
-    assert.match(html, /24-hour post-lesson review window/);
+    assert.match(html, /24 hours/);
+    assert.match(html, /report an issue/i);
     assert.match(html, /View booking/);
     assert.match(html, /\/bookings\/286/);
     assert.match(html, /Booking #286/);

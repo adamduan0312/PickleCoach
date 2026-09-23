@@ -34,10 +34,22 @@ describe('notification idempotency contract', () => {
       'notifyCoachNoShow',
       'notifyBookingRequestExpired',
       'notifyRefundSucceeded',
+      'notifyDisputeResolved',
+      'notifyDisputeOpened',
     ]) {
       assert.match(src, new RegExp(`export const ${name}`), name);
     }
     assert.match(src, /bookingEntity\(booking\)/);
+  });
+
+  it('confirm_attendance_reminder is dual-channel with per-booking dedup', () => {
+    const start = src.indexOf('export const notifyCoachConfirmAttendanceReminder');
+    const end = src.indexOf('export const notifyStudentLessonCompleted');
+    assert.ok(start > 0 && end > start);
+    const block = src.slice(start, end);
+    assert.match(block, /reminderAlreadyDelivered/);
+    assert.match(block, /deliverDualChannel/);
+    assert.match(block, /bookingEntity\(booking\)/);
   });
 
   it('keeps stripe payout transitions unconstrained so disable/enable can fire again', () => {

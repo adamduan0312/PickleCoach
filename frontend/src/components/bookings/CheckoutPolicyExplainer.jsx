@@ -20,7 +20,7 @@ export function CheckoutPolicyExplainer({ amountLabel }) {
           <li>Your card is authorized for {amountLabel} — you are not charged yet.</li>
           <li>{acceptanceCopy}</li>
           <li>If the coach declines or does not respond in time, the authorization is released.</li>
-          <li>After the lesson, you have 24 hours to report a payment or lesson problem before payment is normally finalized.</li>
+          <li>After your lesson: you’ll have 24 hours after the scheduled lesson ends to report an issue with the lesson or payment before payment is normally finalized.</li>
         </ul>
       </div>
       <div className="checkout-auth-explainer">

@@ -61,14 +61,18 @@ async function findDisputeResolutionActionByCode(code) {
 
 export const getDisputes = async (req, res) => {
   try {
-    const { page, limit, status, booking_id } = req.validated;
+    const { page, limit, status, booking_id, user_id } = req.validated;
+    const isAdmin = (req.user.roles || []).includes('admin');
 
     const where = {};
     if (status) where.status = status;
     if (booking_id) where.booking_id = booking_id;
 
-    if (!(req.user.roles || []).includes('admin')) {
-      // Users can only see disputes related to their bookings
+    /** @type {import('sequelize').Includeable} */
+    let bookingInclude = { model: Booking, as: 'booking' };
+
+    if (!isAdmin) {
+      // Users can only see disputes related to their bookings (ignore admin-only user_id).
       const userBookings = await Booking.findAll({
         where: {
           [Op.or]: [
@@ -89,23 +93,34 @@ export const getDisputes = async (req, res) => {
       } else {
         where.booking_id = bookingIds.length ? bookingIds : [-1];
       }
-    } else if (booking_id) {
-      where.booking_id = booking_id;
+    } else if (user_id && !booking_id) {
+      bookingInclude = {
+        model: Booking,
+        as: 'booking',
+        required: true,
+        where: {
+          [Op.or]: [
+            { coach_id: user_id },
+            { primary_student_id: user_id },
+          ],
+        },
+      };
     }
+
+    const include = [
+      bookingInclude,
+      { model: DisputeType, as: 'disputeType' },
+      { model: DisputeResolutionAction, as: 'resolutionAction' },
+      { model: User, as: 'admin', attributes: ['id', 'full_name'] },
+    ];
 
     if (page == null && limit == null) {
       const disputes = await Dispute.findAll({
         where,
-        include: [
-          { model: Booking, as: 'booking' },
-          { model: DisputeType, as: 'disputeType' },
-          { model: DisputeResolutionAction, as: 'resolutionAction' },
-          { model: User, as: 'admin', attributes: ['id', 'full_name'] },
-        ],
+        include,
         limit: MAX_LIST_ALL_DISPUTES,
         order: [['opened_at', 'DESC']],
       });
-      const isAdmin = (req.user.roles || []).includes('admin');
       return successResponse(
         res,
         disputes.map((d) => formatDisputeResponse(d, { isAdmin })),
@@ -117,19 +132,14 @@ export const getDisputes = async (req, res) => {
 
     const disputes = await Dispute.findAndCountAll({
       where,
-      include: [
-        { model: Booking, as: 'booking' },
-        { model: DisputeType, as: 'disputeType' },
-        { model: DisputeResolutionAction, as: 'resolutionAction' },
-        { model: User, as: 'admin', attributes: ['id', 'full_name'] },
-      ],
+      include,
       limit: queryLimit,
       offset,
       order: [['opened_at', 'DESC']],
+      distinct: true,
     });
 
     const response = getPagingData(disputes, page, queryLimit);
-    const isAdmin = (req.user.roles || []).includes('admin');
     return paginatedResponse(
       res,
       response.items.map((d) => formatDisputeResponse(d, { isAdmin })),

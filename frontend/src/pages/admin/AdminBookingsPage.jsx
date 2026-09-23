@@ -7,6 +7,10 @@ import { AdminPageHeader } from '../../components/admin/AdminPageHeader.jsx';
 import { AdminFilterRow } from '../../components/admin/AdminFilterRow.jsx';
 import { AdminStatusStack } from '../../components/admin/AdminStatusStack.jsx';
 import { adminBookingStatusView, adminIssueStatusView } from '../../domain/adminStatus.js';
+import {
+  adminBookingsListHint,
+  sortAdminBookingsForList,
+} from '../../domain/adminBookingList.js';
 import { bookingStatusLabel } from '../../domain/bookingStatus.js';
 import { formatInZone } from '../../utils/datetime.js';
 
@@ -18,6 +22,8 @@ const STATUS_FILTERS = [
   { value: 'completed', label: 'Completed' },
   { value: 'cancelled', label: 'Cancelled' },
   { value: 'disputed', label: 'Disputed' },
+  { value: 'student_no_show', label: 'Student no-show' },
+  { value: 'coach_no_show', label: 'Coach no-show' },
 ];
 
 export function AdminBookingsPage() {
@@ -30,7 +36,15 @@ export function AdminBookingsPage() {
     return asList((await adminApi.bookings(query)).data);
   }, [status]);
 
-  const rows = useMemo(() => data || [], [data]);
+  const rows = useMemo(
+    () => sortAdminBookingsForList(data || [], status),
+    [data, status],
+  );
+
+  const listHint = useMemo(
+    () => adminBookingsListHint(rows, status),
+    [rows, status],
+  );
 
   function setStatus(next) {
     const nextParams = new URLSearchParams(params);
@@ -43,10 +57,14 @@ export function AdminBookingsPage() {
     <div className="page">
       <AdminPageHeader
         title="Bookings"
-        subtitle="Booking status and in-app issues are separate. Payment, escrow, and payout details are on each booking and on Payments."
+        subtitle="Organized by booking status. Issues, payment, and disputes are separate signals — open a booking for the full record and available actions."
       />
 
       <AdminFilterRow options={STATUS_FILTERS} value={status} onChange={setStatus} />
+
+      {listHint && !loading && !error ? (
+        <p className="small muted" style={{ marginTop: 0 }}>{listHint}</p>
+      ) : null}
 
       {loading ? <LoadingState /> : null}
       {error ? <ErrorState error={error} /> : null}

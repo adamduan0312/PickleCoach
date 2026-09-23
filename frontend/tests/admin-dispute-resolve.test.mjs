@@ -52,7 +52,7 @@ describe('admin dispute resolve helpers', () => {
     );
   });
 
-  it('filters financial options by attendance outcome and reject rules', () => {
+  it('filters financial options by attendance outcome, reject rules, and behavior penalize role', () => {
     assert.deepEqual(
       financialActionOptions({
         disputeTypeCode: 'coach_no_show_claim',
@@ -73,6 +73,22 @@ describe('admin dispute resolve helpers', () => {
         decision: 'rejected',
       }).map((o) => o.value),
       ['no_change'],
+    );
+    assert.deepEqual(
+      financialActionOptions({
+        disputeTypeCode: 'misconduct',
+        decision: 'upheld',
+        penalizeRole: 'student',
+      }).map((o) => o.value),
+      ['no_change'],
+    );
+    assert.deepEqual(
+      financialActionOptions({
+        disputeTypeCode: 'misconduct',
+        decision: 'upheld',
+        penalizeRole: 'coach',
+      }).map((o) => o.value),
+      ['no_change', 'refund_student', 'refund_student_partial'],
     );
     assert.deepEqual(
       financialActionOptions({
@@ -313,6 +329,8 @@ describe('admin dispute resolve helpers', () => {
     assert.ok(partialLines.some((l) => /not automatically refunded again/i.test(l)));
 
     assert.match(resolveFormHint('misconduct'), /Uphold must penalize/i);
+    assert.match(resolveFormHint('misconduct'), /Financial action depends on which party is penalized/i);
+    assert.doesNotMatch(resolveFormHint('misconduct'), /No financial action is allowed when a role is penalized/i);
     assert.match(resolveFormHint('other'), /no reliability penalty/i);
     assert.match(resolveFormHint('coach_no_show_claim'), /refund/i);
 
@@ -323,6 +341,22 @@ describe('admin dispute resolve helpers', () => {
     assert.match(
       formatResolveApiError({ status: 400, code: 'behavior_penalize_required', message: 'x' }),
       /Neither/i,
+    );
+    assert.match(
+      formatResolveApiError({ status: 400, code: 'behavior_financial_penalize_mismatch', message: 'x' }),
+      /penalizing the student/i,
+    );
+    assert.match(
+      formatResolveApiError({ status: 400, code: 'attendance_rejected_outcome_aligns_with_claim', message: 'backend said' }),
+      /backend said/,
+    );
+    assert.match(
+      formatResolveApiError({ status: 400, code: 'catchall_rejected_financial', message: 'x' }),
+      /no financial action/i,
+    );
+    assert.match(
+      formatResolveApiError({ status: 400, code: 'unsupported_dispute_alignment_type', message: 'x' }),
+      /cannot be resolved/i,
     );
     assert.equal(
       formatResolveApiError({ status: 400, payload: { current_status: 'resolved' }, message: 'x' }),

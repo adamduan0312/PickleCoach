@@ -98,9 +98,9 @@ export function formatReliabilityLabel(score) {
   return `Reliability: ${display}%`;
 }
 
-/** Short Discover gloss — no formula dump. */
+/** Short Discover / public-profile gloss — marketplace trust signal only. */
 export function formatReliabilityHint() {
-  return 'Based on cancels and no-shows';
+  return 'Based on recent attendance, cancellations, and completed lessons.';
 }
 
 /**

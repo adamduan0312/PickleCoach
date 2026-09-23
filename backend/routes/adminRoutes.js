@@ -18,13 +18,20 @@ import {
   getAdminLessonsQuerySchema,
   getAdminReviewsQuerySchema,
   createDisputeSchema,
+  createAdminSchema,
 } from '../config/validation.js';
 import * as reviewController from '../controllers/reviewController.js';
 
 const router = express.Router();
 
 router.get('/dashboard', authenticate, authorize('admin'), adminController.getDashboardStats);
-router.post('/users', authenticate, authorize('admin'), adminController.createAdmin);
+router.post(
+  '/users',
+  authenticate,
+  authorize('admin'),
+  validateRequest(createAdminSchema),
+  adminController.createAdmin,
+);
 router.put(
   '/users/:id/reliability',
   authenticate,
@@ -45,6 +52,12 @@ router.get('/audit-logs', authenticate, authorize('admin'), validateQuery(getAud
 
 // Admin: manage a coach's courts and availability (support/moderation)
 router.get('/coaches/:coachId/courts', authenticate, authorize('admin'), adminController.getCoachCourtsForAdmin);
+router.get(
+  '/coaches/:coachId/availability',
+  authenticate,
+  authorize('admin'),
+  adminController.getCoachAvailabilityForAdmin,
+);
 router.delete('/coaches/:coachId/courts/:courtId', authenticate, authorize('admin'), adminController.deleteCoachCourtForAdmin);
 router.delete('/coaches/:coachId/availability/:id', authenticate, authorize('admin'), adminController.deleteCoachAvailabilityForAdmin);
 

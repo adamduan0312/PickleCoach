@@ -8,6 +8,7 @@ import { passwordHint, validatePassword } from '../../utils/format.js';
 import { detectLocalTimezone } from '../../utils/datetime.js';
 import { hasCoachRole, hasStudentRole } from '../../domain/userReadiness.js';
 import { reopenHowBookingsWork } from '../../utils/howBookingsWorkStorage.js';
+import { ReliabilitySelfServeCard } from '../../components/settings/ReliabilitySelfServeCard.jsx';
 
 export function SettingsPage() {
   const { user, mode, refreshProfile, applySession, readiness } = useAuth();
@@ -174,23 +175,27 @@ export function SettingsPage() {
             <Link to="/coach/profile">Edit coach marketplace profile</Link>
           ) : null}
         </div>
-        {(isStudent || isCoach) ? (
+        {(mode === 'student' && isStudent) || (mode === 'coach' && isCoach) ? (
           <div className="card stack" id="how-bookings-work">
             <h2>How bookings work</h2>
             <p className="small muted">
               A short reminder of what to do before and after a lesson. Booking detail pages also show “What happens next” for each status.
             </p>
-            {isStudent ? (
+            {mode === 'student' && isStudent ? (
               <button className="btn secondary" type="button" onClick={() => openHowBookingsGuide('student')}>
                 Show student guide
               </button>
             ) : null}
-            {isCoach ? (
+            {mode === 'coach' && isCoach ? (
               <button className="btn secondary" type="button" onClick={() => openHowBookingsGuide('coach')}>
                 Show coach guide
               </button>
             ) : null}
           </div>
+        ) : null}
+
+        {(mode === 'student' && isStudent) || (mode === 'coach' && isCoach) ? (
+          <ReliabilitySelfServeCard role={mode === 'coach' ? 'coach' : 'student'} />
         ) : null}
       </div>
     </div>

@@ -87,6 +87,7 @@ async function main() {
          OR type LIKE '%_no_show'
          OR type IN (
            'confirm_attendance_reminder',
+           'issue_reporting_window_opened',
            'lesson_completed',
            'dispute_opened',
            'dispute_resolved',

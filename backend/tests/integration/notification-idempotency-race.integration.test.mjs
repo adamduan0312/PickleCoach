@@ -14,7 +14,9 @@ import { sequelize, Booking, Notification } from '../../models/index.js';
 import { createBookingJourneyFixture } from '../helpers/integrationFixture.mjs';
 import {
   notifyBookingAccepted,
+  notifyCoachConfirmAttendanceReminder,
   notifyCoachNewBookingRequest,
+  notifyDisputeResolved,
   notifyNewMessage,
   sendNotification,
   sendReminderNotification,
@@ -187,6 +189,62 @@ describeHttp('HTTP integration: notification idempotency and races', () => {
       assert.equal(counts.in_app, 1, `${audience} in-app`);
       assert.equal(counts.email, 1, `${audience} email`);
       assert.equal(rows.find((r) => r.channel === 'in_app').status, 'sent');
+    }
+  });
+
+  it('duplicate notifyCoachConfirmAttendanceReminder is one in-app + one email', async () => {
+    const booking = await seedBooking(fixture, 'awaiting_verification');
+
+    await notifyCoachConfirmAttendanceReminder(booking.id);
+    await notifyCoachConfirmAttendanceReminder(booking.id);
+
+    const rows = await rowsFor({
+      userId: fixture.coach.id,
+      type: 'confirm_attendance_reminder',
+      bookingId: booking.id,
+    });
+    const counts = countByChannel(rows);
+    assert.equal(counts.in_app, 1);
+    assert.equal(counts.email, 1);
+    assert.equal(rows.find((r) => r.channel === 'email').entity_id, booking.id);
+  });
+
+  it('duplicate notifyDisputeResolved is one in-app + one email per recipient', async () => {
+    const booking = await seedBooking(fixture, 'completed');
+    const disputeId = 9_000_000 + booking.id;
+
+    await Promise.all([
+      notifyDisputeResolved({
+        bookingId: booking.id,
+        disputeId,
+        outcome: 'coach_no_show',
+        financialAction: 'refund_student',
+        bookingStatus: 'coach_no_show',
+        decision: 'upheld',
+      }),
+      notifyDisputeResolved({
+        bookingId: booking.id,
+        disputeId,
+        outcome: 'coach_no_show',
+        financialAction: 'refund_student',
+        bookingStatus: 'coach_no_show',
+        decision: 'upheld',
+      }),
+    ]);
+
+    for (const userId of [fixture.student.id, fixture.coach.id]) {
+      const rows = await Notification.findAll({
+        where: {
+          user_id: userId,
+          type: 'dispute_resolved',
+          entity_type: 'dispute',
+          entity_id: disputeId,
+        },
+        order: [['id', 'ASC']],
+      });
+      const counts = countByChannel(rows);
+      assert.equal(counts.in_app, 1, `student/coach ${userId} in-app`);
+      assert.equal(counts.email, 1, `student/coach ${userId} email`);
     }
   });
 

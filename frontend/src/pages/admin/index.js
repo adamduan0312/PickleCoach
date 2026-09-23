@@ -1,8 +1,12 @@
 export { AdminDashboardPage, AdminHomePage } from './AdminDashboardPage.jsx';
 export { AdminUsersPage } from './AdminUsersPage.jsx';
 export { AdminUserDetailPage } from './AdminUserDetailPage.jsx';
+export { AdminCreateAdminPage } from './AdminCreateAdminPage.jsx';
 export { AdminBookingsPage } from './AdminBookingsPage.jsx';
 export { AdminDisputesPage } from './AdminDisputesPage.jsx';
 export { AdminDisputeDetailPage } from './AdminDisputeDetailPage.jsx';
 export { AdminPaymentsPage } from './AdminPaymentsPage.jsx';
 export { AdminPaymentDetailPage } from './AdminPaymentDetailPage.jsx';
+export { AdminLessonsPage } from './AdminLessonsPage.jsx';
+export { AdminReviewsPage } from './AdminReviewsPage.jsx';
+export { AdminCoachSupportPage } from './AdminCoachSupportPage.jsx';

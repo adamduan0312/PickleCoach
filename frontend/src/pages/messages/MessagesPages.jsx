@@ -8,6 +8,7 @@ import { CHAR_LIMITS } from '../../utils/charLimits.js';
 import { useAuth } from '../../auth/AuthContext.jsx';
 import { formatInZone, detectLocalTimezone, relativeFromNow } from '../../utils/datetime.js';
 import { conversationClosedNotice } from '../../domain/bookingStatus.js';
+import { sortConversationsForInbox } from '../../domain/conversationInbox.js';
 
 function bookingContextLabel(bookingId, scheduledAt, timeZone) {
   const parts = [];
@@ -28,7 +29,7 @@ export function ConversationsPage() {
   const tz = user?.timezone || detectLocalTimezone();
   const { data, error, loading } = useAsync(async () => {
     const res = await messagesApi.conversations();
-    return asList(res.data);
+    return sortConversationsForInbox(asList(res.data));
   }, []);
 
   return (
@@ -37,7 +38,7 @@ export function ConversationsPage() {
         <div>
           <h1>Messages</h1>
           <p className="muted messages-page-lead">
-            Keep lesson conversations, questions, and updates in one place.
+            Unread and active conversations first — empty booking threads stay below.
           </p>
         </div>
       </div>

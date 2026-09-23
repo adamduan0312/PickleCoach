@@ -5,6 +5,7 @@ import { useAsync } from '../../hooks/useAsync.js';
 import { Alert, EmptyState, ErrorState, LoadingState, StatusBadge } from '../../components/ui/States.jsx';
 import { AdminPageHeader } from '../../components/admin/AdminPageHeader.jsx';
 import { AdminStatusStack } from '../../components/admin/AdminStatusStack.jsx';
+import { FormField } from '../../components/ui/FormField.jsx';
 import {
   adminAccountStatusView,
   adminBookingStatusView,
@@ -39,6 +40,82 @@ function coachMarketplaceLines(user) {
   ];
 }
 
+function ReliabilityAdjustForm({ userId, roles, studentScore, coachScore, busy, onDone, onError }) {
+  const canStudent = roles.includes('student');
+  const canCoach = roles.includes('coach');
+  const defaultRole = canCoach ? 'coach' : canStudent ? 'student' : null;
+  const [role, setRole] = useState(defaultRole || 'coach');
+  const [score, setScore] = useState('');
+  const [reason, setReason] = useState('');
+
+  if (!canStudent && !canCoach) {
+    return <p className="small muted">Reliability adjustment requires a student or coach role.</p>;
+  }
+
+  async function submit(e) {
+    e.preventDefault();
+    const n = Number(score);
+    if (!Number.isFinite(n) || n < 0 || n > 100) {
+      window.alert('Enter a score between 0 and 100.');
+      return;
+    }
+    const ok = window.confirm(
+      `Set ${role} reliability to ${n} for user #${userId}?\n\nThis writes an admin override; the backend remains authoritative.`,
+    );
+    if (!ok) return;
+    try {
+      await adminApi.adjustUserReliability(userId, {
+        role,
+        new_score: n,
+        reason: reason.trim() || undefined,
+      });
+      onDone?.('Reliability updated.');
+    } catch (err) {
+      onError?.(err);
+    }
+  }
+
+  const current = role === 'coach' ? coachScore : studentScore;
+
+  return (
+    <form className="stack" onSubmit={submit}>
+      <p className="small muted" style={{ margin: 0 }}>
+        Current {role} score: {current || '—'}. Enter a new override score (0–100).
+      </p>
+      <FormField label="Role to adjust" name="reliability_role">
+        <select id="reliability_role" value={role} onChange={(e) => setRole(e.target.value)} disabled={busy}>
+          {canCoach ? <option value="coach">Coach</option> : null}
+          {canStudent ? <option value="student">Student</option> : null}
+        </select>
+      </FormField>
+      <FormField label="New score" name="reliability_score" required>
+        <input
+          id="reliability_score"
+          type="number"
+          min="0"
+          max="100"
+          step="1"
+          value={score}
+          onChange={(e) => setScore(e.target.value)}
+          disabled={busy}
+          required
+        />
+      </FormField>
+      <FormField label="Reason (optional)" name="reliability_reason">
+        <input
+          id="reliability_reason"
+          type="text"
+          maxLength={500}
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          disabled={busy}
+        />
+      </FormField>
+      <button className="btn secondary" type="submit" disabled={busy}>Apply reliability override</button>
+    </form>
+  );
+}
+
 export function AdminUserDetailPage() {
   const { id } = useParams();
   const [busy, setBusy] = useState(false);
@@ -49,19 +126,11 @@ export function AdminUserDetailPage() {
   const { data, error, loading, setData } = useAsync(async () => {
     const user = (await adminApi.user(id)).data;
     const userId = Number(id);
-    const [asStudent, asCoach, disputes] = await Promise.all([
+    const [asStudent, asCoach, relatedDisputes] = await Promise.all([
       adminApi.bookings({ student_id: userId, limit: 5 }).then((r) => asList(r.data)).catch(() => []),
       adminApi.bookings({ coach_id: userId, limit: 5 }).then((r) => asList(r.data)).catch(() => []),
-      disputesApi.list({ limit: 50 }).then((r) => asList(r.data)).catch(() => []),
+      disputesApi.list({ user_id: userId, limit: 20 }).then((r) => asList(r.data)).catch(() => []),
     ]);
-
-    const relatedDisputes = disputes
-      .filter((d) => {
-        const b = d.booking;
-        if (!b) return false;
-        return Number(b.coach_id) === userId || Number(b.primary_student_id) === userId;
-      })
-      .slice(0, 8);
 
     const bookingMap = new Map();
     [...asStudent, ...asCoach].forEach((b) => bookingMap.set(b.id, b));
@@ -117,6 +186,9 @@ export function AdminUserDetailPage() {
   const coachScore = formatReliabilityPercent(user.reliability);
   const marketplace = coachMarketplaceLines(user);
   const suspended = user.is_active === false;
+  const deleted = Boolean(user.deleted_at);
+  const governanceLocked = Boolean(user.role_state?.locked);
+  const isCoach = roles.includes('coach');
 
   function toggleRole(role) {
     const next = roles.includes(role)
@@ -133,6 +205,10 @@ export function AdminUserDetailPage() {
   }
 
   function toggleSuspend() {
+    if (deleted) {
+      window.alert('Restore this deleted account before changing suspend/active state.');
+      return;
+    }
     if (suspended) {
       const ok = window.confirm(`Reactivate ${user.full_name || 'this user'}?`);
       if (!ok) return;
@@ -144,6 +220,22 @@ export function AdminUserDetailPage() {
     );
     if (!ok) return;
     runAction('User suspended.', { is_active: false });
+  }
+
+  function restoreUser() {
+    const ok = window.confirm(
+      `Restore ${user.full_name || 'this user'}?\n\nClears soft-delete (deleted_at) and restores the coach profile when applicable.`,
+    );
+    if (!ok) return;
+    runAction('User restored.', { deleted_at: null, is_active: true });
+  }
+
+  function unlockGovernance() {
+    const ok = window.confirm(
+      'Unlock role governance for this account?\n\nThis re-opens self-service role adds (PUT /auth/me/role). Admin role edits remain available either way.',
+    );
+    if (!ok) return;
+    runAction('Role governance unlocked.', { role_governance_locked: false });
   }
 
   return (
@@ -179,6 +271,12 @@ export function AdminUserDetailPage() {
             <dt>Joined</dt>
             <dd>{formatDateInZone(user.created_at)}</dd>
           </div>
+          {deleted ? (
+            <div>
+              <dt>Deleted at</dt>
+              <dd>{formatInZone(user.deleted_at)}</dd>
+            </div>
+          ) : null}
         </dl>
       </section>
 
@@ -194,10 +292,33 @@ export function AdminUserDetailPage() {
             <dd>{coachScore || (roles.includes('coach') ? '—' : 'N/A')}</dd>
           </div>
         </dl>
+        <ReliabilityAdjustForm
+          userId={id}
+          roles={roles}
+          studentScore={studentScore}
+          coachScore={coachScore}
+          busy={busy}
+          onDone={(label) => {
+            setMessage(label);
+            setActionError(null);
+            setReloadTick((n) => n + 1);
+          }}
+          onError={(err) => {
+            setActionError(err);
+            setMessage(null);
+          }}
+        />
       </section>
 
       <section className="card stack admin-section-card">
-        <h2 className="booking-detail-section-title" style={{ margin: 0 }}>Marketplace</h2>
+        <div className="spread">
+          <h2 className="booking-detail-section-title" style={{ margin: 0 }}>Marketplace</h2>
+          {isCoach ? (
+            <Link className="btn secondary" to={`/admin/users/${id}/coach-support`}>
+              Courts &amp; availability
+            </Link>
+          ) : null}
+        </div>
         <dl className="booking-detail-facts">
           {marketplace.map((row) => (
             <div key={row.label}>
@@ -237,7 +358,7 @@ export function AdminUserDetailPage() {
       <section className="card stack admin-section-card">
         <h2 className="booking-detail-section-title" style={{ margin: 0 }}>Related disputes</h2>
         {!data.relatedDisputes.length ? (
-          <EmptyState title="No related disputes in recent queue" />
+          <EmptyState title="No related disputes" />
         ) : (
           <div className="stack">
             {data.relatedDisputes.map((d) => {
@@ -270,11 +391,19 @@ export function AdminUserDetailPage() {
         <p className="small muted" style={{ margin: 0 }}>
           These changes affect marketplace access. Confirm carefully.
         </p>
-        <div className="row">
-          <button type="button" className="btn" disabled={busy} onClick={toggleSuspend}>
-            {suspended ? 'Reactivate account' : 'Suspend account'}
-          </button>
-        </div>
+        {deleted ? (
+          <div className="row">
+            <button type="button" className="btn" disabled={busy} onClick={restoreUser}>
+              Restore deleted account
+            </button>
+          </div>
+        ) : (
+          <div className="row">
+            <button type="button" className="btn" disabled={busy} onClick={toggleSuspend}>
+              {suspended ? 'Reactivate account' : 'Suspend account'}
+            </button>
+          </div>
+        )}
         <div className="stack" style={{ marginTop: 8 }}>
           <div className="small muted">Roles</div>
           <div className="row">
@@ -285,7 +414,7 @@ export function AdminUserDetailPage() {
                   key={role}
                   type="button"
                   className={`btn ${on ? '' : 'secondary'}`}
-                  disabled={busy}
+                  disabled={busy || deleted}
                   onClick={() => toggleRole(role)}
                 >
                   {on ? `Remove ${role}` : `Add ${role}`}
@@ -293,9 +422,19 @@ export function AdminUserDetailPage() {
               );
             })}
           </div>
-          {user.role_state?.locked ? (
-            <p className="small muted">Role governance is locked for this account.</p>
-          ) : null}
+          {governanceLocked ? (
+            <div className="stack">
+              <p className="small muted" style={{ margin: 0 }}>
+                Self-service role changes are locked for this account (admin role edits still work). Unlocking
+                clears the allow-list and lets the user add roles via self-service again.
+              </p>
+              <button type="button" className="btn secondary" disabled={busy || deleted} onClick={unlockGovernance}>
+                Unlock self-service role governance
+              </button>
+            </div>
+          ) : (
+            <p className="small muted">Self-service role governance is open for this account.</p>
+          )}
         </div>
       </section>
     </div>

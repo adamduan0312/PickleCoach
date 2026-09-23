@@ -170,6 +170,8 @@ async function main() {
   const { booking, payment } = await confirmBookingFromPaymentIntent({
     studentId: student.id,
     paymentIntentId: intent.payment_intent_id,
+    // Fixture is captured below — coach must not get a misleading "accept or decline" email.
+    skipCoachBookingRequestNotification: true,
   });
 
   console.log(`Capturing PaymentIntent ${intent.payment_intent_id}…`);
@@ -233,7 +235,8 @@ async function main() {
           resolution_notes: 'QA: uphold misconduct and full student refund against live test charge.',
         },
         note:
-          'Refund enqueues payment_actions; Stripe refund worker runs ~2 min later. Escrow should stay held until refund path settles.',
+          'Refund enqueues payment_actions; Stripe refund worker runs ~2 min later. Escrow should stay held until refund path settles. ' +
+          'Coach booking-request email is suppressed (fixture is captured immediately). Each run creates a new booking — resolving several yields one dispute_resolved email per dispute, not duplicates of the same event.',
       },
       null,
       2,

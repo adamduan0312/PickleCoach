@@ -6,6 +6,10 @@ import { EmptyState, ErrorState, LoadingState, StatusBadge } from '../../compone
 import { AdminPageHeader } from '../../components/admin/AdminPageHeader.jsx';
 import { AdminFilterRow } from '../../components/admin/AdminFilterRow.jsx';
 import { adminDisputeStatusView, disputeAgeLabel } from '../../domain/adminStatus.js';
+import {
+  adminDisputesListHint,
+  sortAdminDisputesForList,
+} from '../../domain/adminDisputeList.js';
 import { formatInZone } from '../../utils/datetime.js';
 
 const FILTERS = [
@@ -13,10 +17,6 @@ const FILTERS = [
   { value: 'resolved', label: 'Resolved' },
   { value: 'all', label: 'All' },
 ];
-
-function isOpenDispute(d) {
-  return d?.status === 'open' || d?.status === 'under_review';
-}
 
 function disputeTypeLabel(d) {
   return d?.disputeType?.name || d?.disputeType?.code || d?.dispute_type?.name || d?.dispute_type?.code || d?.dispute_type_id || '—';
@@ -27,7 +27,6 @@ export function AdminDisputesPage() {
   const filter = params.get('status') || 'open';
 
   const { data, error, loading } = useAsync(async () => {
-    // Fetch open + under_review separately when filter=open; otherwise use API status or all.
     if (filter === 'open') {
       const [openRows, reviewRows] = await Promise.all([
         disputesApi.list({ status: 'open', limit: 100 }).then((r) => asList(r.data)),
@@ -35,7 +34,7 @@ export function AdminDisputesPage() {
       ]);
       const map = new Map();
       [...openRows, ...reviewRows].forEach((d) => map.set(d.id, d));
-      return [...map.values()].sort((a, b) => String(b.opened_at || '').localeCompare(String(a.opened_at || '')));
+      return [...map.values()];
     }
     if (filter === 'resolved') {
       return asList((await disputesApi.list({ status: 'resolved', limit: 100 })).data);
@@ -43,9 +42,15 @@ export function AdminDisputesPage() {
     return asList((await disputesApi.list({ limit: 100 })).data);
   }, [filter]);
 
-  const rows = useMemo(() => data || [], [data]);
-  const openRows = rows.filter(isOpenDispute);
-  const resolvedRows = rows.filter((d) => !isOpenDispute(d));
+  const rows = useMemo(
+    () => sortAdminDisputesForList(data || [], filter),
+    [data, filter],
+  );
+
+  const listHint = useMemo(
+    () => adminDisputesListHint(rows, filter),
+    [rows, filter],
+  );
 
   function setFilter(next) {
     const nextParams = new URLSearchParams(params);
@@ -54,58 +59,18 @@ export function AdminDisputesPage() {
     setParams(nextParams);
   }
 
-  function renderTable(list) {
-    if (!list.length) return null;
-    return (
-      <div className="table-wrap card">
-        <table className="data">
-          <thead>
-            <tr>
-              <th>Dispute</th>
-              <th>Booking</th>
-              <th>Issue type</th>
-              <th>Reported</th>
-              <th>Age</th>
-              <th>Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {list.map((d) => {
-              const status = adminDisputeStatusView(d);
-              return (
-                <tr key={d.id}>
-                  <td>
-                    <Link to={`/admin/disputes/${d.id}`}>#{d.id}</Link>
-                    <div className="small muted">by {d.opened_by || '—'}</div>
-                  </td>
-                  <td>
-                    {d.booking_id ? (
-                      <Link to={`/admin/bookings/${d.booking_id}`}>#{d.booking_id}</Link>
-                    ) : '—'}
-                  </td>
-                  <td>{disputeTypeLabel(d)}</td>
-                  <td className="small muted">{formatInZone(d.opened_at)}</td>
-                  <td className="small muted">{disputeAgeLabel(d.opened_at)}</td>
-                  <td>
-                    <StatusBadge status={status.value} label={status.value} tone={status.tone} />
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    );
-  }
-
   return (
     <div className="page">
       <AdminPageHeader
         title="Disputes"
-        subtitle="Open cases first. Resolve from the case file when ready."
+        subtitle="Dispute lifecycle first — open/under review before closed. Booking status and financial outcomes stay on the case file."
       />
 
       <AdminFilterRow options={FILTERS} value={filter} onChange={setFilter} />
+
+      {listHint && !loading && !error ? (
+        <p className="small muted" style={{ marginTop: 0 }}>{listHint}</p>
+      ) : null}
 
       {loading ? <LoadingState /> : null}
       {error ? <ErrorState error={error} /> : null}
@@ -116,21 +81,46 @@ export function AdminDisputesPage() {
         />
       ) : null}
 
-      {filter === 'all' && openRows.length ? (
-        <section className="stack admin-section-card">
-          <h2 className="booking-detail-section-title">Open</h2>
-          {renderTable(openRows)}
-        </section>
+      {rows.length ? (
+        <div className="table-wrap card">
+          <table className="data">
+            <thead>
+              <tr>
+                <th>Dispute</th>
+                <th>Booking</th>
+                <th>Issue type</th>
+                <th>Reported</th>
+                <th>Age</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((d) => {
+                const status = adminDisputeStatusView(d);
+                return (
+                  <tr key={d.id}>
+                    <td>
+                      <Link to={`/admin/disputes/${d.id}`}>#{d.id}</Link>
+                      <div className="small muted">by {d.opened_by || '—'}</div>
+                    </td>
+                    <td>
+                      {d.booking_id ? (
+                        <Link to={`/admin/bookings/${d.booking_id}`}>#{d.booking_id}</Link>
+                      ) : '—'}
+                    </td>
+                    <td>{disputeTypeLabel(d)}</td>
+                    <td className="small muted">{formatInZone(d.opened_at)}</td>
+                    <td className="small muted">{disputeAgeLabel(d.opened_at)}</td>
+                    <td>
+                      <StatusBadge status={status.value} label={status.value} tone={status.tone} />
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       ) : null}
-
-      {filter === 'all' && resolvedRows.length ? (
-        <section className="stack admin-section-card">
-          <h2 className="booking-detail-section-title">Resolved</h2>
-          {renderTable(resolvedRows)}
-        </section>
-      ) : null}
-
-      {filter !== 'all' ? renderTable(rows) : null}
     </div>
   );
 }

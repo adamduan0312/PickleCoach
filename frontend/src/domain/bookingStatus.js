@@ -538,51 +538,84 @@ export function bookingListFilterLabel(filterStatus, { audience = 'student' } = 
 /**
  * Default “All” list order.
  *
- * Student: pending → upcoming → awaiting_verification → other past → cancelled.
+ * Student: action required (pending, awaiting confirmation, open issues/disputes)
+ *   → upcoming → completed/past → cancelled.
  * Coach: pending → awaiting_verification (confirmation) → upcoming → other past → cancelled.
  *
  * Within pending/upcoming: soonest lesson first.
- * Within awaiting/past/cancelled: most recent lesson first.
+ * Within awaiting/issues/past/cancelled: most recent lesson first (awaiting: oldest first).
  */
 export function sortBookingsForList(bookings, nowMs = Date.now(), { audience = 'student' } = {}) {
   if (!Array.isArray(bookings) || bookings.length < 2) return bookings || [];
 
   function lifecycleGroup(booking) {
     const status = booking?.status;
-    if (status === 'pending') return 0;
     if (status === 'cancelled') return LIST_CANCELLED_GROUP;
 
-    const upcoming = lessonStartMs(booking) >= nowMs;
+    if (audience === 'student') {
+      // Action required — student must wait on coach, confirm attendance, or follow an issue.
+      if (
+        status === 'pending'
+        || status === 'awaiting_verification'
+        || status === 'disputed'
+        || hasOpenIssueReport(booking)
+      ) {
+        return 0;
+      }
+      if (status === 'confirmed' && !hasLessonEnded(booking, nowMs)) {
+        return 1;
+      }
+      return 2; // completed / no-show / past confirmed
+    }
 
-    if (audience === 'coach' && status === 'awaiting_verification') {
+    // Coach
+    if (status === 'pending') return 0;
+
+    if (status === 'awaiting_verification') {
       return 1;
     }
 
-    if (upcoming) {
-      return audience === 'coach' ? 2 : 1;
-    }
-
-    if (status === 'awaiting_verification') {
-      return 2;
-    }
+    const upcoming = lessonStartMs(booking) >= nowMs;
+    if (upcoming) return 2;
 
     return 3;
   }
 
-  function sortSoonestFirst(group) {
-    if (audience === 'coach') {
+  function actionStatusRank(booking) {
+    const status = booking?.status;
+    if (status === 'pending') return 0;
+    if (status === 'awaiting_verification') return 1;
+    if (status === 'disputed' || hasOpenIssueReport(booking)) return 2;
+    return 3;
+  }
+
+  function sortSoonestFirst(group, audienceMode) {
+    if (audienceMode === 'coach') {
       return group === 0 || group === 2;
     }
-    return group === 0 || group === 1;
+    // Student: pending (within action) + upcoming soonest; awaiting/issues oldest below.
+    return group === 1;
   }
 
   return [...bookings].sort((a, b) => {
     const ga = lifecycleGroup(a);
     const gb = lifecycleGroup(b);
     if (ga !== gb) return ga - gb;
+
+    if (audience === 'student' && ga === 0) {
+      const ra = actionStatusRank(a);
+      const rb = actionStatusRank(b);
+      if (ra !== rb) return ra - rb;
+      const ta = lessonStartMs(a);
+      const tb = lessonStartMs(b);
+      // Pending: soonest first. Awaiting / issues: oldest outstanding first.
+      if (ra === 0) return ta - tb;
+      return ta - tb;
+    }
+
     const ta = lessonStartMs(a);
     const tb = lessonStartMs(b);
-    if (sortSoonestFirst(ga)) return ta - tb;
+    if (sortSoonestFirst(ga, audience)) return ta - tb;
     return tb - ta;
   });
 }

@@ -17,6 +17,8 @@ export function buildPrimaryNavLinks({ mode, student, coach, admin }) {
     links.push({ to: '/admin/bookings', label: 'Bookings' });
     links.push({ to: '/admin/disputes', label: 'Disputes' });
     links.push({ to: '/admin/payments', label: 'Payments' });
+    links.push({ to: '/admin/lessons', label: 'Lessons' });
+    links.push({ to: '/admin/reviews', label: 'Reviews' });
   } else if (mode === 'coach' && coach) {
     links.push({ to: '/coach', label: 'Dashboard' });
     links.push({ to: '/coach/bookings', label: 'Bookings', attention: 'bookings' });

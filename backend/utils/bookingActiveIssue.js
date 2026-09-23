@@ -11,7 +11,7 @@ import { financialActionFromResolutionActionCode } from './disputeDto.js';
 
 /**
  * @param {Iterable<number|string>} bookingIds
- * @returns {Promise<Map<number, { id: number, status: string, opened_by: string }>>}
+ * @returns {Promise<Map<number, { id: number, status: string, opened_by: string, opened_at?: string|Date }>>}
  */
 export async function loadActiveIssuesByBookingId(bookingIds) {
   const ids = [...new Set(
@@ -27,7 +27,7 @@ export async function loadActiveIssuesByBookingId(bookingIds) {
       booking_id: { [Op.in]: ids },
       status: { [Op.in]: [...ACTIVE_DISPUTE_STATUSES] },
     },
-    attributes: ['id', 'booking_id', 'status', 'opened_by'],
+    attributes: ['id', 'booking_id', 'status', 'opened_by', 'opened_at'],
     order: [['id', 'DESC']],
   });
 
@@ -38,6 +38,7 @@ export async function loadActiveIssuesByBookingId(bookingIds) {
       id: row.id,
       status: row.status,
       opened_by: row.opened_by,
+      opened_at: row.opened_at,
     });
   }
   return map;

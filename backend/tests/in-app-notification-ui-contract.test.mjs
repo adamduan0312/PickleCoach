@@ -188,7 +188,7 @@ describe('in-app notification UI contract', () => {
       }),
     });
     assertInAppUiContract(confirmAttendance, { type: 'confirm_attendance_reminder', expectPreview: true });
-    assert.equal(confirmAttendance.headline, 'Confirm attendance');
+    assert.equal(confirmAttendance.headline, 'Confirm your lesson attendance');
     assert.match(confirmAttendance.summary, /Mira Miami/);
     assert.equal(confirmAttendance.route, '/bookings/81');
 

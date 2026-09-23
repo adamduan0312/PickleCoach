@@ -327,8 +327,15 @@ async function findConfirmIdempotentResult({
 
 /**
  * Confirm booking after client-side authorization. Idempotent per payment_intent_id.
+ * @param {{ studentId: number, paymentIntentId: string, skipCoachBookingRequestNotification?: boolean }} params
+ *   skipCoachBookingRequestNotification — internal/seed paths that capture immediately and never
+ *   need a coach "accept or decline" email (avoids spurious booking_request_coach mail).
  */
-export async function confirmBookingFromPaymentIntent({ studentId, paymentIntentId }) {
+export async function confirmBookingFromPaymentIntent({
+  studentId,
+  paymentIntentId,
+  skipCoachBookingRequestNotification = false,
+}) {
   const existing = await findConfirmIdempotentResult({ paymentIntentId, studentId });
   if (existing) return existing;
 
@@ -565,14 +572,16 @@ export async function confirmBookingFromPaymentIntent({ studentId, paymentIntent
     },
   });
 
-  void notificationService.notifyCoachNewBookingRequest(booking.id).catch((err) => {
-    logger.warn({
-      component: 'booking',
-      event: 'notify_coach_after_confirm_failed',
-      bookingId: booking.id,
-      message: err?.message || String(err),
+  if (!skipCoachBookingRequestNotification) {
+    void notificationService.notifyCoachNewBookingRequest(booking.id).catch((err) => {
+      logger.warn({
+        component: 'booking',
+        event: 'notify_coach_after_confirm_failed',
+        bookingId: booking.id,
+        message: err?.message || String(err),
+      });
     });
-  });
+  }
 
   return { booking, payment, idempotentReplay: false };
 }

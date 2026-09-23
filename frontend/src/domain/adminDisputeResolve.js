@@ -89,7 +89,7 @@ export function resolveFormHint(disputeTypeCodeValue) {
     return 'Attendance outcome sets booking status and reliability. Coach no-show requires a refund; student no-show requires no financial action. When rejecting a claim because the lesson happened, choose Neither / lesson occurred (booking Completed, no refund). The API remains the final authority.';
   }
   if (isBehaviorDisputeType(disputeTypeCodeValue)) {
-    return 'Uphold must penalize coach or student (Neither is not allowed). No financial action is allowed when a role is penalized. Refund size is chosen separately. The API remains the final authority.';
+    return 'Uphold must penalize coach or student (Neither is not allowed). Financial action depends on which party is penalized. The API remains the final authority.';
   }
   if (isCatchallDisputeType(disputeTypeCodeValue)) {
     return 'Other disputes have no reliability penalty. You may uphold with no refund and no reliability penalty. Rejected decisions require no financial action. The API remains the final authority.';
@@ -138,10 +138,19 @@ export function penalizeRoleOptions(decision) {
 }
 
 /**
- * Soft option filter mirroring attendance / reject financial alignment.
+ * Soft option filter mirroring attendance / reject / behavior-penalize financial alignment.
+ * Backend Layer 3 remains the final authority.
  */
-export function financialActionOptions({ disputeTypeCode: typeCode, decision, outcome } = {}) {
+export function financialActionOptions({
+  disputeTypeCode: typeCode,
+  decision,
+  outcome,
+  penalizeRole,
+} = {}) {
   if ((isBehaviorDisputeType(typeCode) || isCatchallDisputeType(typeCode)) && decision === 'rejected') {
+    return RESOLVE_FINANCIAL_ACTIONS.filter((o) => o.value === 'no_change');
+  }
+  if (isBehaviorDisputeType(typeCode) && isSustainedDecision(decision) && penalizeRole === 'student') {
     return RESOLVE_FINANCIAL_ACTIONS.filter((o) => o.value === 'no_change');
   }
   if (isAttendanceDisputeType(typeCode)) {
@@ -318,11 +327,36 @@ export function formatResolveApiError(err) {
   if (status === 400 && code === 'behavior_penalize_required') {
     return 'Uphold for this dispute requires penalizing coach or student (Neither is not allowed).';
   }
+  if (status === 400 && code === 'behavior_financial_penalize_mismatch') {
+    return 'When penalizing the student, financial action must be no change (do not refund the at-fault student).';
+  }
+  if (status === 400 && code === 'behavior_rejected_financial') {
+    return 'Rejecting a behavior dispute requires no financial action.';
+  }
+  if (status === 400 && code === 'behavior_rejected_penalize') {
+    return 'Rejecting a behavior dispute requires reliability penalty Neither.';
+  }
   if (status === 400 && code === 'attendance_financial_mismatch') {
     return err.message || 'Attendance outcome and financial action do not match.';
   }
   if (status === 400 && code === 'attendance_neutral_requires_rejected') {
     return 'Neither / lesson occurred is only allowed when rejecting an attendance claim.';
+  }
+  if (status === 400 && code === 'attendance_outcome_required') {
+    return 'Select an attendance outcome for this dispute type.';
+  }
+  if (status === 400 && code === 'attendance_rejected_outcome_aligns_with_claim') {
+    return err.message
+      || 'Rejecting this claim cannot confirm the same no-show. Choose the other party or Neither / lesson occurred.';
+  }
+  if (status === 400 && code === 'catchall_rejected_financial') {
+    return 'Rejecting an other dispute requires no financial action.';
+  }
+  if (status === 400 && code === 'catchall_penalize_forbidden') {
+    return 'Other disputes do not support a reliability penalty.';
+  }
+  if (status === 400 && code === 'unsupported_dispute_alignment_type') {
+    return 'This dispute type cannot be resolved with the current alignment rules.';
   }
   if (status === 400 && current === 'resolved') {
     return 'This dispute is already resolved.';

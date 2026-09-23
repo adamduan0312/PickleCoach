@@ -8,6 +8,7 @@ import { Op } from 'sequelize';
 import { logger } from '../config/logger.js';
 import { getPagination, getPagingData } from '../utils/pagination.js';
 import { getDbRoleAssignments, getEffectiveRolesForUserRecord } from '../utils/roleGovernance.js';
+import { serializeAvailability } from '../utils/availabilityDto.js';
 
 export const getDashboardStats = async (req, res) => {
   try {
@@ -69,11 +70,7 @@ export const createAdmin = async (req, res) => {
       return errorResponse(res, 'Unauthorized: Only admins can create admin accounts', 403);
     }
 
-    const { full_name, email, password, phone, timezone } = req.body;
-
-    if (!full_name || !email || !password) {
-      return errorResponse(res, 'full_name, email, and password are required', 400);
-    }
+    const { full_name, email, password, phone, timezone } = req.validated;
 
     // Check if email already exists
     const existingUser = await User.findOne({ where: { email } });
@@ -88,7 +85,7 @@ export const createAdmin = async (req, res) => {
       full_name,
       email,
       password_hash,
-      phone,
+      phone: phone || null,
       timezone: timezone || 'UTC',
       is_active: true,
     });
@@ -370,6 +367,45 @@ export const deleteCoachCourtForAdmin = async (req, res) => {
   } catch (error) {
     logger.error('Admin delete coach court error:', error);
     return errorResponse(res, 'Failed to remove court from coach', 500);
+  }
+};
+
+/**
+ * GET /api/admin/coaches/:coachId/availability
+ * Admin inventory of availability slots for a coach (active, suspended, or soft-deleted).
+ * Does not use marketplace/public coach gates. Delete remains DELETE .../availability/:id.
+ */
+export const getCoachAvailabilityForAdmin = async (req, res) => {
+  try {
+    if (!(req.user.roles || []).includes('admin')) {
+      return errorResponse(res, 'Unauthorized', 403);
+    }
+    const coachId = parseInt(req.params.coachId, 10);
+    if (Number.isNaN(coachId)) {
+      return errorResponse(res, 'Invalid coach ID', 400);
+    }
+    const coach = await User.findByPk(coachId, {
+      include: [{ model: UserRole, as: 'userRoles', attributes: ['role'] }],
+    });
+    const dbRoles = getDbRoleAssignments(coach);
+    if (!coach || !dbRoles.includes('coach')) {
+      return errorResponse(res, 'Coach not found', 404);
+    }
+    const rows = await CoachAvailability.findAll({
+      where: { coach_id: coachId },
+      order: [
+        ['weekday', 'ASC'],
+        ['start_time', 'ASC'],
+      ],
+    });
+    return successResponse(
+      res,
+      rows.map((r) => serializeAvailability(r)),
+      'Coach availability retrieved successfully',
+    );
+  } catch (error) {
+    logger.error('Admin get coach availability error:', error);
+    return errorResponse(res, 'Failed to retrieve availability', 500);
   }
 };
 

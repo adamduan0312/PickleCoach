@@ -782,7 +782,7 @@ export const resolveDisputeOpenedRecipients = ({ openedBy, coachId, studentId } 
   return [];
 };
 
-/** Coach: in-app only when the lesson ends and attendance is still unconfirmed. */
+/** Coach: in-app + email once when the lesson ends and attendance is still unconfirmed. */
 export const notifyCoachConfirmAttendanceReminder = async (bookingId) => {
   const booking = await loadBookingNotificationContext(bookingId);
   if (!booking?.coach_id) return null;
@@ -798,27 +798,17 @@ export const notifyCoachConfirmAttendanceReminder = async (bookingId) => {
     return null;
   }
 
+  const base = bookingNotifyBase(booking, 'coach');
   const payload = {
-    ...bookingNotifyBase(booking, 'coach'),
-    ...buildConfirmAttendanceReminderNotificationContent(bookingNotifyBase(booking, 'coach')),
+    ...base,
+    ...buildConfirmAttendanceReminderNotificationContent(base),
   };
 
-  const inApp = await createNotification(booking.coach_id, type, 'in_app', payload, {
-    entity_type: 'booking',
-    entity_id: booking.id,
+  await deliverDualChannel(booking.coach_id, type, payload, {
+    email: booking.coach?.email,
+    ...bookingEntity(booking),
   });
-  try {
-    await sendNotification(inApp.id);
-  } catch (error) {
-    logger.warn({
-      component: 'notification',
-      event: 'confirm_attendance_reminder_in_app_send_failed',
-      bookingId: booking.id,
-      userId: booking.coach_id,
-      message: error?.message,
-    });
-  }
-  return inApp;
+  return null;
 };
 
 /** Student: in-app only when the coach marks the lesson complete. */

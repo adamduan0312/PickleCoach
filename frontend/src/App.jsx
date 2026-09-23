@@ -31,11 +31,15 @@ import { ConversationPage, ConversationsPage } from './pages/messages/MessagesPa
 import { SettingsPage } from './pages/settings/SettingsPage.jsx';
 import {
   AdminBookingsPage,
+  AdminCoachSupportPage,
+  AdminCreateAdminPage,
   AdminDisputeDetailPage,
   AdminDisputesPage,
   AdminHomePage,
+  AdminLessonsPage,
   AdminPaymentsPage,
   AdminPaymentDetailPage,
+  AdminReviewsPage,
   AdminUserDetailPage,
   AdminUsersPage,
 } from './pages/admin/index.js';
@@ -98,13 +102,17 @@ export default function App() {
 
             <Route path="/admin" element={<RequireRole roles={['admin']}><AdminHomePage /></RequireRole>} />
             <Route path="/admin/users" element={<RequireRole roles={['admin']}><AdminUsersPage /></RequireRole>} />
+            <Route path="/admin/users/new-admin" element={<RequireRole roles={['admin']}><AdminCreateAdminPage /></RequireRole>} />
             <Route path="/admin/users/:id" element={<RequireRole roles={['admin']}><AdminUserDetailPage /></RequireRole>} />
+            <Route path="/admin/users/:id/coach-support" element={<RequireRole roles={['admin']}><AdminCoachSupportPage /></RequireRole>} />
             <Route path="/admin/bookings" element={<RequireRole roles={['admin']}><AdminBookingsPage /></RequireRole>} />
             <Route path="/admin/bookings/:id" element={<RequireRole roles={['admin']}><BookingDetailPage admin /></RequireRole>} />
             <Route path="/admin/disputes" element={<RequireRole roles={['admin']}><AdminDisputesPage /></RequireRole>} />
             <Route path="/admin/disputes/:id" element={<RequireRole roles={['admin']}><AdminDisputeDetailPage /></RequireRole>} />
             <Route path="/admin/payments" element={<RequireRole roles={['admin']}><AdminPaymentsPage /></RequireRole>} />
             <Route path="/admin/payments/:id" element={<RequireRole roles={['admin']}><AdminPaymentDetailPage /></RequireRole>} />
+            <Route path="/admin/lessons" element={<RequireRole roles={['admin']}><AdminLessonsPage /></RequireRole>} />
+            <Route path="/admin/reviews" element={<RequireRole roles={['admin']}><AdminReviewsPage /></RequireRole>} />
           </Route>
 
           <Route path="*" element={<NotFoundPage />} />

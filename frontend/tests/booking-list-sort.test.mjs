@@ -37,7 +37,7 @@ describe('sortBookingsForList', () => {
     assert.deepEqual(ids, [2, 1, 4, 3, 6, 5]);
   });
 
-  it('student QA matrix: awaiting_verification after upcoming, before completed', () => {
+  it('student All: action required (pending + awaiting + issues) before upcoming before completed', () => {
     const input = [
       b(1, 'cancelled', '2026-09-02T15:00:00.000Z'),
       b(2, 'cancelled', '2026-08-25T15:00:00.000Z'),
@@ -46,9 +46,16 @@ describe('sortBookingsForList', () => {
       b(5, 'confirmed', '2026-09-01T14:00:00.000Z'),
       b(6, 'pending', '2026-09-02T15:00:00.000Z'),
       b(7, 'awaiting_verification', '2026-09-01T10:00:00.000Z'),
+      {
+        id: 8,
+        status: 'completed',
+        scheduled_at: '2026-08-30T10:00:00.000Z',
+        active_issue: { id: 99 },
+      },
     ];
     const ids = sortBookingsForList(input, now, { audience: 'student' }).map((x) => x.id);
-    assert.deepEqual(ids, [6, 5, 4, 7, 3, 1, 2]);
+    // pending (6) → awaiting (7) → issue on completed (8) → upcoming confirmed (5,4) → completed (3) → cancelled (1,2)
+    assert.deepEqual(ids, [6, 7, 8, 5, 4, 3, 1, 2]);
   });
 
   it('coach QA matrix: awaiting_verification boosted after pending, before upcoming', () => {

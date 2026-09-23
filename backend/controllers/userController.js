@@ -7,15 +7,28 @@ import { serializeAdminUserList, serializeAdminUserDetail } from '../utils/userD
 import { validateAdminRoleRemovalSafeguards, countOtherLiveAdmins, validateAdminSuspendSafeguards } from '../utils/userRoleChangeGuards.js';
 import { effectiveRolesFromGovernance, serializeRoleState } from '../utils/roleGovernance.js';
 import { softDeleteUserAccount, restoreUserAccount } from '../utils/userLifecycle.js';
+import { buildAdminUsersListOrder } from '../utils/adminUsersListOrder.js';
 
 export const getAllUsers = async (req, res) => {
   try {
-    const { page, limit, role, include_deleted, search } = req.validated;
+    const { page, limit, role, include_deleted, search, is_active, deleted } = req.validated;
 
     const andConditions = [];
-    // Default: non–soft-deleted users (Active + Suspended). Pass include_deleted=true for Deleted too.
-    if (include_deleted !== 'true') {
+    // Soft-delete filter precedence: deleted=true|false, else include_deleted legacy, else exclude deleted.
+    if (deleted === 'true') {
+      andConditions.push({ deleted_at: { [Op.ne]: null } });
+    } else if (deleted === 'false') {
       andConditions.push({ deleted_at: null });
+    } else if (include_deleted !== 'true') {
+      andConditions.push({ deleted_at: null });
+    }
+    // Active / Suspended only apply to non-deleted rows (deleted=true ignores is_active).
+    if (deleted !== 'true') {
+      if (is_active === 'true') {
+        andConditions.push({ is_active: true });
+      } else if (is_active === 'false') {
+        andConditions.push({ is_active: false });
+      }
     }
     // Always include user_roles so we can return roles for each user; filter by role when requested
     const includeForRole = role
@@ -39,7 +52,7 @@ export const getAllUsers = async (req, res) => {
       where,
       attributes: { exclude: ['password_hash'] },
       include: includeForRole,
-      order: [['id', 'DESC']],
+      order: buildAdminUsersListOrder({ deleted, is_active }),
       distinct: true,
     };
 

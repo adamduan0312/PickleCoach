@@ -138,12 +138,16 @@ function preLesson24hBody(payload = {}) {
     : !card
       ? `<p style="${BODY_P_STYLE}">Scheduled: see your booking in PickleCoach.</p>`
       : '';
+  const studentIssueWindowHint = !isCoach
+    ? `<p style="${BODY_P_STYLE}">After your lesson ends, you’ll have <strong>24 hours</strong> to report an issue with the lesson or payment before payment is normally finalized.</p>`
+    : '';
 
   return `
       <h2 style="${HEADING_STYLE}">Tomorrow's lesson</h2>
       <p style="${BODY_P_STYLE}">Your pickleball lesson is scheduled for tomorrow.</p>
       ${card}
       ${whenFallback}
+      ${studentIssueWindowHint}
       ${payload.booking_id != null ? emailButton('View booking', emailAppUrl(`/bookings/${payload.booking_id}`)) : ''}
       ${bookingIdFooter(payload.booking_id)}
     `;
@@ -167,6 +171,7 @@ const SUPPORTED_EMAIL_TYPES = [
   'dispute_opened',
   'dispute_resolved',
   'booking_request_expired',
+  'confirm_attendance_reminder',
   'refund_succeeded',
   'review_received',
 ];
@@ -193,6 +198,7 @@ export function getEmailSubject(type, payload) {
     dispute_opened: payload?.headline || 'An issue was reported',
     dispute_resolved: 'Dispute resolved',
     booking_request_expired: 'Booking request expired',
+    confirm_attendance_reminder: 'Confirm your lesson attendance',
     refund_succeeded: 'Refund completed',
     review_received: 'You received a new review',
   };
@@ -290,7 +296,7 @@ function bookingConfirmedBody(payload = {}) {
       <p style="${BODY_P_STYLE}">Your lesson with <strong>${escapeHtml(coachName)}</strong> is confirmed.</p>
       ${card}
       <p style="${BODY_P_STYLE}"><strong>What happens next</strong></p>
-      <p style="${BODY_P_STYLE}">Your card was authorized when you requested the lesson. Payment is normally finalized after the 24-hour post-lesson review window.</p>
+      <p style="${BODY_P_STYLE}">Your card was authorized when you requested the lesson. After the lesson ends, you’ll have <strong>24 hours</strong> to report an issue with the lesson or payment. Payment is normally finalized when that window closes.</p>
       ${emailButton('View booking', emailAppUrl(`/bookings/${payload.booking_id}`))}
       ${bookingIdFooter(payload.booking_id)}
     `;
@@ -343,6 +349,24 @@ function bookingCancelledBody(payload = {}) {
       ${notes}
       ${refund}
       ${emailButton('View booking', emailAppUrl(`/bookings/${payload.booking_id}`))}
+      ${bookingIdFooter(payload.booking_id)}
+    `;
+}
+
+function confirmAttendanceReminderBody(payload = {}) {
+  const card = bookingDetailCard(payload, {
+    personLabel: 'Student',
+    personName: payload.student_name || null,
+  });
+  return `
+      <h2 style="${HEADING_STYLE}">${escapeHtml(payload.headline || 'Confirm your lesson attendance')}</h2>
+      <p style="${BODY_P_STYLE}">${escapeHtml(
+    payload.summary
+      || 'Your lesson has ended. Please confirm whether the lesson happened or mark the student as a no-show within 24 hours.',
+  )}</p>
+      ${card}
+      <p style="${BODY_P_STYLE}">Marking attendance records what happened; it does not determine your payout by itself. If you do nothing, the booking may be auto-completed after 24 hours.</p>
+      ${emailButton('Confirm attendance', emailAppUrl(`/bookings/${payload.booking_id}`))}
       ${bookingIdFooter(payload.booking_id)}
     `;
 }
@@ -546,6 +570,7 @@ export function getEmailBodyFragment(type, payload = {}) {
     dispute_opened: disputeOpenedBody(payload),
     dispute_resolved: disputeResolvedBody(payload),
     booking_request_expired: bookingRequestExpiredBody(payload),
+    confirm_attendance_reminder: confirmAttendanceReminderBody(payload),
     refund_succeeded: refundSucceededBody(payload),
     review_received: reviewReceivedBody(payload),
   };

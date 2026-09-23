@@ -245,6 +245,8 @@ export function serializeBookingListItem(
 
   const dto = serializeBookingSummary(bookingCore);
   attachPendingAcceptanceFields(dto, plain);
+  // Cancellation timestamp for admin/history lists (most-recently-cancelled sort).
+  if (plain.cancelled_at != null) dto.cancelled_at = plain.cancelled_at;
   if (lesson !== undefined) dto.lesson = serializeLessonSummary(lesson);
   if (coach !== undefined) dto.coach = serializeUserPartySummary(coach);
   if (primaryStudent !== undefined) {

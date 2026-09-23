@@ -23,11 +23,18 @@ import { getEmailSubject } from '../notifications/emailTemplates.js';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 describe('buildConfirmAttendanceReminderNotificationContent', () => {
-  it('coach copy prompts complete or student no-show', () => {
+  it('coach copy prompts complete or student no-show within 24 hours', () => {
     const content = buildConfirmAttendanceReminderNotificationContent({ student_name: 'Mira Miami' });
-    assert.equal(content.headline, 'Confirm attendance');
+    assert.equal(content.headline, 'Confirm your lesson attendance');
     assert.match(content.summary, /Mira Miami/);
-    assert.match(content.summary, /Mark the lesson complete or report a student no-show/);
+    assert.match(content.summary, /within 24 hours/);
+    assert.match(content.summary, /mark the student as a no-show/i);
+  });
+});
+
+describe('confirm_attendance_reminder email', () => {
+  it('has a dedicated subject and body template', () => {
+    assert.equal(getEmailSubject('confirm_attendance_reminder'), 'Confirm your lesson attendance');
   });
 });
 
@@ -232,6 +239,20 @@ describe('resolveDisputeOpenedRecipients', () => {
   });
 });
 
+describe('notifyCoachConfirmAttendanceReminder delivery', () => {
+  const notifSrc = readFileSync(join(__dirname, '../services/notificationService.js'), 'utf8');
+
+  it('uses deliverDualChannel once per booking (in-app + email)', () => {
+    const start = notifSrc.indexOf('export const notifyCoachConfirmAttendanceReminder');
+    const end = notifSrc.indexOf('export const notifyStudentLessonCompleted');
+    assert.ok(start > 0 && end > start);
+    const block = notifSrc.slice(start, end);
+    assert.match(block, /reminderAlreadyDelivered/);
+    assert.match(block, /deliverDualChannel/);
+    assert.doesNotMatch(block, /createNotification\(\s*booking\.coach_id,\s*type,\s*'in_app'/);
+  });
+});
+
 describe('notifyCoachNoShow recipients (admin mark path)', () => {
   const notifSrc = readFileSync(join(__dirname, '../services/notificationService.js'), 'utf8');
 
@@ -274,6 +295,7 @@ describe('controller wiring', () => {
     const src = readFileSync(join(__dirname, '../workers/autoConfirmWorker.js'), 'utf8');
     assert.match(src, /notifyCoachConfirmAttendanceReminder/);
     assert.match(src, /confirm_attendance_reminder_notify_failed/);
+    assert.doesNotMatch(src, /notifyStudentIssueReportingWindowOpened/);
   });
 
   it('disputeController notifies open and resolve', () => {
@@ -313,5 +335,6 @@ describe('email subjects for dual-channel types', () => {
     assert.equal(getEmailSubject('password_changed'), 'Your PickleCoach password was changed');
     assert.equal(getEmailSubject('booking_request_expired'), 'Booking request expired');
     assert.equal(getEmailSubject('refund_succeeded'), 'Refund completed');
+    assert.equal(getEmailSubject('confirm_attendance_reminder'), 'Confirm your lesson attendance');
   });
 });

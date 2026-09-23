@@ -6,6 +6,7 @@ import { EmptyState, ErrorState, LoadingState, StatusBadge } from '../../compone
 import { AdminPageHeader } from '../../components/admin/AdminPageHeader.jsx';
 import { AdminFilterRow } from '../../components/admin/AdminFilterRow.jsx';
 import { adminAccountStatusView, formatAdminRoles } from '../../domain/adminStatus.js';
+import { adminUsersListHint } from '../../domain/adminUserList.js';
 import { formatDateInZone } from '../../utils/datetime.js';
 
 const ROLE_FILTERS = [
@@ -16,42 +17,53 @@ const ROLE_FILTERS = [
 ];
 
 const STATUS_FILTERS = [
-  { value: '', label: 'All status' },
+  { value: '', label: 'All' },
   { value: 'active', label: 'Active' },
   { value: 'suspended', label: 'Suspended' },
+  { value: 'deleted', label: 'Deleted' },
 ];
+
+const PAGE_SIZE = 50;
 
 export function AdminUsersPage() {
   const [params, setParams] = useSearchParams();
   const role = params.get('role') || '';
   const status = params.get('status') || '';
   const search = params.get('q') || '';
+  const page = Math.max(1, Number(params.get('page') || 1) || 1);
   const [qDraft, setQDraft] = useState(search);
 
   const { data, error, loading } = useAsync(async () => {
-    const query = { limit: 100 };
+    const query = { limit: PAGE_SIZE, page };
     if (role) query.role = role;
     if (search) query.search = search;
-    return asList((await adminApi.users(query)).data);
-  }, [role, search]);
+    if (status === 'active') query.is_active = 'true';
+    if (status === 'suspended') query.is_active = 'false';
+    if (status === 'deleted') query.deleted = 'true';
+    const res = await adminApi.users(query);
+    return {
+      rows: asList(res.data),
+      pagination: res.pagination || null,
+    };
+  }, [role, search, status, page]);
 
-  const rows = useMemo(() => {
-    const list = data || [];
-    if (status === 'active') {
-      return list.filter((u) => u.is_active !== false && !u.deleted_at);
-    }
-    if (status === 'suspended') {
-      return list.filter((u) => u.is_active === false && !u.deleted_at);
-    }
-    return list;
-  }, [data, status]);
+  const rows = useMemo(() => data?.rows || [], [data]);
+  const pagination = data?.pagination || null;
+  const totalPages = Math.max(1, Number(pagination?.totalPages) || 1);
+  const totalItems = pagination?.totalItems;
 
-  function patchParams(patch) {
+  const listHint = useMemo(
+    () => adminUsersListHint({ statusFilter: status, roleFilter: role, totalItems }),
+    [status, role, totalItems],
+  );
+
+  function patchParams(patch, { resetPage = true } = {}) {
     const next = new URLSearchParams(params);
     Object.entries(patch).forEach(([key, value]) => {
       if (value) next.set(key, value);
       else next.delete(key);
     });
+    if (resetPage && patch.page === undefined) next.delete('page');
     setParams(next);
   }
 
@@ -60,11 +72,17 @@ export function AdminUsersPage() {
     patchParams({ q: qDraft.trim() });
   }
 
+  function goPage(nextPage) {
+    const p = Math.min(totalPages, Math.max(1, nextPage));
+    patchParams({ page: p > 1 ? String(p) : '' }, { resetPage: false });
+  }
+
   return (
     <div className="page">
       <AdminPageHeader
         title="Users"
-        subtitle="Search and filter marketplace accounts. Reliability and Stripe readiness live on the user detail page."
+        subtitle="Account state first (Active / Suspended / Deleted). Role is a separate filter. Reliability and Stripe readiness live on the user detail page."
+        actions={<Link className="btn" to="/admin/users/new-admin">Create admin</Link>}
       />
 
       <form className="row admin-filter-row" onSubmit={submitSearch}>
@@ -79,7 +97,7 @@ export function AdminUsersPage() {
             onChange={(e) => setQDraft(e.target.value)}
           />
         </div>
-        <button className="btn" type="submit">Search</button>
+        <button className="btn secondary" type="submit">Search</button>
         {search ? (
           <button
             className="btn secondary"
@@ -95,15 +113,19 @@ export function AdminUsersPage() {
       </form>
 
       <AdminFilterRow
-        options={ROLE_FILTERS}
-        value={role}
-        onChange={(next) => patchParams({ role: next })}
-      />
-      <AdminFilterRow
         options={STATUS_FILTERS}
         value={status}
         onChange={(next) => patchParams({ status: next })}
       />
+      <AdminFilterRow
+        options={ROLE_FILTERS}
+        value={role}
+        onChange={(next) => patchParams({ role: next })}
+      />
+
+      {listHint && !loading && !error ? (
+        <p className="small muted" style={{ marginTop: 0 }}>{listHint}</p>
+      ) : null}
 
       {loading ? <LoadingState /> : null}
       {error ? <ErrorState error={error} /> : null}
@@ -145,6 +167,33 @@ export function AdminUsersPage() {
               })}
             </tbody>
           </table>
+        </div>
+      ) : null}
+
+      {!loading && !error && pagination ? (
+        <div className="spread" style={{ marginTop: '0.75rem', alignItems: 'center' }}>
+          <p className="small muted" style={{ margin: 0 }}>
+            Page {pagination.currentPage || page} of {totalPages}
+            {totalItems != null ? ` · ${totalItems} users` : ''}
+          </p>
+          <div className="row">
+            <button
+              type="button"
+              className="btn secondary"
+              disabled={page <= 1}
+              onClick={() => goPage(page - 1)}
+            >
+              Previous
+            </button>
+            <button
+              type="button"
+              className="btn secondary"
+              disabled={page >= totalPages}
+              onClick={() => goPage(page + 1)}
+            >
+              Next
+            </button>
+          </div>
         </div>
       ) : null}
     </div>

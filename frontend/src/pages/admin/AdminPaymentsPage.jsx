@@ -12,6 +12,10 @@ import {
   adminPayoutViewForPaymentRow,
   adminRefundStatusView,
 } from '../../domain/adminStatus.js';
+import {
+  adminPaymentsListHint,
+  sortAdminPaymentsForList,
+} from '../../domain/adminPaymentList.js';
 import { formatMoney } from '../../utils/format.js';
 
 const FILTERS = [
@@ -48,7 +52,15 @@ export function AdminPaymentsPage() {
     return rows.filter((p) => matchesClientFilter(p, filter));
   }, [filter]);
 
-  const rows = useMemo(() => data || [], [data]);
+  const rows = useMemo(
+    () => sortAdminPaymentsForList(data || [], filter),
+    [data, filter],
+  );
+
+  const listHint = useMemo(
+    () => adminPaymentsListHint(rows, filter),
+    [rows, filter],
+  );
 
   function setFilter(next) {
     const nextParams = new URLSearchParams(params);
@@ -61,10 +73,14 @@ export function AdminPaymentsPage() {
     <div className="page">
       <AdminPageHeader
         title="Payments"
-        subtitle="PickleCoach money view — student payment, escrow, refund, and coach payout are separate concepts."
+        subtitle="Financial lifecycle first — exceptions and in-progress before settled. Student payment, escrow, refund, and coach payout stay separate."
       />
 
       <AdminFilterRow options={FILTERS} value={filter} onChange={setFilter} />
+
+      {listHint && !loading && !error ? (
+        <p className="small muted" style={{ marginTop: 0 }}>{listHint}</p>
+      ) : null}
 
       {loading ? <LoadingState /> : null}
       {error ? <ErrorState error={error} /> : null}

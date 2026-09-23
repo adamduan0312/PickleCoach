@@ -17,6 +17,7 @@ import { Op } from 'sequelize';
 import { logger } from '../config/logger.js';
 import { getEffectiveRolesForUserRecord } from '../utils/roleGovernance.js';
 import { serializeCoachPublicUser, serializeCoachListItem, serializeCoachProfilePublic, distanceMiles } from '../utils/userDto.js';
+import { sortMarketplaceCoaches } from '../utils/marketplaceCoachRank.js';
 import { toYmdApi } from '../utils/dateOnly.js';
 import { PUBLIC_ACTIVE_USER_WHERE, findPublicActiveCoach } from '../utils/userLifecycle.js';
 import { serializeAvailability } from '../utils/availabilityDto.js';
@@ -152,12 +153,18 @@ export const getCoaches = async (req, res) => {
       }),
     );
 
+    const ranked = sortMarketplaceCoaches(shaped, {
+      hasLocation: isGeoSearch,
+      minSkill: min_skill_rating ?? null,
+      maxSkill: max_skill_rating ?? null,
+    });
+
     if (!isPaginated) {
-      return successResponse(res, shaped, 'Coaches retrieved successfully');
+      return successResponse(res, ranked, 'Coaches retrieved successfully');
     }
 
     const response = getPagingData(
-      { count: coaches.count, rows: shaped },
+      { count: coaches.count, rows: ranked },
       page,
       queryLimit
     );

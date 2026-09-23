@@ -83,6 +83,15 @@ export const registerSchema = Joi.object({
   avatar_url: Joi.string().uri().max(255).allow('').optional(),
 });
 
+/** POST /api/admin/users — provision an administrator (same password policy as register). */
+export const createAdminSchema = Joi.object({
+  full_name: Joi.string().min(2).max(100).required(),
+  email: Joi.string().email().max(150).required(),
+  password: mvpPasswordSchema.required(),
+  phone: Joi.string().max(30).allow('').optional(),
+  timezone: Joi.string().max(64).default('UTC'),
+});
+
 export const loginSchema = Joi.object({
   email: Joi.string().email().required(),
   password: Joi.string().required(),
@@ -506,6 +515,15 @@ export const getUsersQuerySchema = Joi.object({
   limit: Joi.number().integer().min(1).max(10000).optional(),
   role: Joi.string().valid('student', 'coach', 'admin').optional(),
   include_deleted: Joi.string().valid('true', 'false').optional(),
+  /**
+   * Explicit soft-delete filter:
+   * - `true` → only soft-deleted users (`deleted_at` set)
+   * - `false` → only non-deleted (`deleted_at` null)
+   * When omitted, default excludes deleted unless `include_deleted=true` (legacy).
+   */
+  deleted: Joi.string().valid('true', 'false').optional(),
+  /** Filter Active (`true`) or Suspended (`false`). Ignored when `deleted=true`. */
+  is_active: Joi.string().valid('true', 'false').optional(),
   search: Joi.string().max(200).allow('').optional(),
 });
 
@@ -618,6 +636,8 @@ export const getDisputesQuerySchema = Joi.object({
   limit: Joi.number().integer().min(1).max(10000).optional(),
   status: Joi.string().valid('open', 'under_review', 'resolved').optional(),
   booking_id: Joi.number().integer().positive().optional(),
+  /** Admin only: disputes for bookings where this user is coach or primary student. */
+  user_id: Joi.number().integer().positive().optional(),
 });
 
 export const getNotificationsQuerySchema = Joi.object({

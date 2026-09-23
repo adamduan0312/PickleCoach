@@ -75,9 +75,10 @@ export function AdminDisputeResolveForm({ dispute, onResolved }) {
     disputeTypeCode: typeCode,
     decision,
     outcome,
+    penalizeRole,
   });
 
-  // Drop selections that became invalid when decision / outcome filters change.
+  // Drop selections that became invalid when decision / outcome / penalize filters change.
   useEffect(() => {
     setOutcome((prev) => keepIfAllowed(prev, attendanceOutcomeOptions(typeCode, decision)));
   }, [decision, typeCode]);
@@ -91,8 +92,9 @@ export function AdminDisputeResolveForm({ dispute, onResolved }) {
       disputeTypeCode: typeCode,
       decision,
       outcome,
+      penalizeRole,
     })));
-  }, [decision, outcome, typeCode]);
+  }, [decision, outcome, typeCode, penalizeRole]);
 
   const form = {
     decision,
@@ -212,7 +214,11 @@ export function AdminDisputeResolveForm({ dispute, onResolved }) {
                 ? 'Lesson occurred: no refund; booking stays Completed.'
                 : decision === 'rejected' && (visibility.showPenalizeRole || typeCode === 'other')
                   ? 'Rejected decisions require no financial action.'
-                  : null
+                  : visibility.showPenalizeRole && decision === 'upheld' && penalizeRole === 'student'
+                    ? 'When the student is penalized, no refund is allowed.'
+                    : visibility.showPenalizeRole && decision === 'upheld' && penalizeRole === 'coach'
+                      ? 'When the coach is penalized, a refund may be issued.'
+                      : null
         }
       />
 

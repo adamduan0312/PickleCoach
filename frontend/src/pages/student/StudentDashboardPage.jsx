@@ -159,8 +159,8 @@ export function StudentDashboardPage() {
         </div>
       </div>
 
-      <HowBookingsWorkGuide userId={user?.id} role="student" />
       {!loading && !error ? <DashboardReminders items={reminders} /> : null}
+      <HowBookingsWorkGuide userId={user?.id} role="student" />
 
       <section className="card dashboard-search" aria-labelledby="dashboard-find-coach">
         <h2 id="dashboard-find-coach">Find a coach</h2>
@@ -290,6 +290,34 @@ export function StudentDashboardPage() {
         ) : null}
       </section>
 
+      {moreUpcoming.length > 0 ? (
+        <section className="card" style={{ marginTop: 16 }} aria-labelledby="dashboard-upcoming">
+          <h2 id="dashboard-upcoming">Upcoming lessons</h2>
+          <div className="stack">
+            {moreUpcoming.map((b) => (
+              <Link key={b.id} to={`/bookings/${b.id}`} style={{ textDecoration: 'none', color: 'inherit' }}>
+                <div className="spread">
+                  <div>
+                    <strong>{b.lesson?.title || 'Lesson'}</strong>
+                    <div className="small muted">
+                      with {b.coach?.full_name || 'Coach'}
+                      {' · '}
+                      {formatDateInZone(b.scheduled_at, tz)}
+                      {' · '}
+                      {formatTimeInZone(b.scheduled_at, tz)}
+                    </div>
+                    {bookingCourtName(b) ? (
+                      <div className="small muted">{bookingCourtName(b)}</div>
+                    ) : null}
+                  </div>
+                  <StatusBadge status={b.status} label={bookingDisplayLabel(b)} tone={bookingDisplayTone(b)} />
+                </div>
+              </Link>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
       {recentLessons.length > 0 ? (
         <section className="card" style={{ marginTop: 16 }} aria-labelledby="dashboard-recent-lessons">
           <h2 id="dashboard-recent-lessons">Recent lessons</h2>
@@ -315,34 +343,6 @@ export function StudentDashboardPage() {
                     label={bookingDisplayLabel(b, { audience: 'student' })}
                     tone={bookingDisplayTone(b)}
                   />
-                </div>
-              </Link>
-            ))}
-          </div>
-        </section>
-      ) : null}
-
-      {moreUpcoming.length > 0 ? (
-        <section className="card" style={{ marginTop: 16 }} aria-labelledby="dashboard-upcoming">
-          <h2 id="dashboard-upcoming">Upcoming lessons</h2>
-          <div className="stack">
-            {moreUpcoming.map((b) => (
-              <Link key={b.id} to={`/bookings/${b.id}`} style={{ textDecoration: 'none', color: 'inherit' }}>
-                <div className="spread">
-                  <div>
-                    <strong>{b.lesson?.title || 'Lesson'}</strong>
-                    <div className="small muted">
-                      with {b.coach?.full_name || 'Coach'}
-                      {' · '}
-                      {formatDateInZone(b.scheduled_at, tz)}
-                      {' · '}
-                      {formatTimeInZone(b.scheduled_at, tz)}
-                    </div>
-                    {bookingCourtName(b) ? (
-                      <div className="small muted">{bookingCourtName(b)}</div>
-                    ) : null}
-                  </div>
-                  <StatusBadge status={b.status} label={bookingDisplayLabel(b)} tone={bookingDisplayTone(b)} />
                 </div>
               </Link>
             ))}

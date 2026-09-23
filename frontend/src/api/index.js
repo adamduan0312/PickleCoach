@@ -106,6 +106,8 @@ export const messagesApi = {
 
 export const reviewsApi = {
   create: (body) => apiRequest('/reviews', { method: 'POST', body }),
+  update: (id, body) => apiRequest(`/reviews/${id}`, { method: 'PUT', body }),
+  remove: (id) => apiRequest(`/reviews/${id}`, { method: 'DELETE' }),
 };
 
 export const disputesApi = {
@@ -121,6 +123,7 @@ export const adminApi = {
   users: (params) => apiRequest(`/users${qs(params)}`),
   user: (id) => apiRequest(`/users/${id}`),
   updateUser: (id, body) => apiRequest(`/users/${id}`, { method: 'PUT', body }),
+  createAdmin: (body) => apiRequest('/admin/users', { method: 'POST', body }),
   auditLogs: (params) => apiRequest(`/admin/audit-logs${qs(params)}`),
   bookings: (params) => apiRequest(`/admin/bookings${qs(params)}`),
   booking: (id) => apiRequest(`/admin/bookings/${id}`),
@@ -128,6 +131,17 @@ export const adminApi = {
   refundBooking: (id, body) => apiRequest(`/admin/bookings/${id}/refund`, { method: 'POST', body }),
   studentNoShow: (id, body) => apiRequest(`/admin/bookings/${id}/student-no-show`, { method: 'POST', body: body || {} }),
   coachNoShow: (id, body) => apiRequest(`/admin/bookings/${id}/coach-no-show`, { method: 'POST', body: body || {} }),
+  createDispute: (body) => apiRequest('/admin/disputes', { method: 'POST', body }),
+  getUserReliability: (id, params) => apiRequest(`/admin/users/${id}/reliability${qs(params)}`),
+  adjustUserReliability: (id, body) => apiRequest(`/admin/users/${id}/reliability`, { method: 'PUT', body }),
+  lessons: (params) => apiRequest(`/admin/lessons${qs(params)}`),
+  reviews: (params) => apiRequest(`/admin/reviews${qs(params)}`),
+  coachCourts: (coachId) => apiRequest(`/admin/coaches/${coachId}/courts`),
+  coachAvailability: (coachId) => apiRequest(`/admin/coaches/${coachId}/availability`),
+  deleteCoachCourt: (coachId, courtId) =>
+    apiRequest(`/admin/coaches/${coachId}/courts/${courtId}`, { method: 'DELETE' }),
+  deleteCoachAvailability: (coachId, availabilityId) =>
+    apiRequest(`/admin/coaches/${coachId}/availability/${availabilityId}`, { method: 'DELETE' }),
 };
 
 export const paymentsApi = {

@@ -11,6 +11,15 @@ import { AdminStatusStack } from '../../components/admin/AdminStatusStack.jsx';
 import { CHAR_LIMITS } from '../../utils/charLimits.js';
 import { hasAdminRole } from '../../domain/userReadiness.js';
 import {
+  canAdminCancelBooking,
+  adminCancelBlockedMessage,
+  adminRefundEligibility,
+  adminNoShowEligibility,
+  canAdminCreateDispute,
+  ADMIN_REFUND_REASONS,
+  formatAdminBookingActionError,
+} from '../../domain/adminBookingActions.js';
+import {
   bookingStatusLabel,
   bookingDisplayLabel,
   bookingDisplayTone,
@@ -551,7 +560,7 @@ export function BookingDetailPage({ admin = false }) {
       pageTopRef.current?.focus({ preventScroll: true });
       return true;
     } catch (err) {
-      setError(err.message);
+      setError(admin ? formatAdminBookingActionError(err) : err.message);
       return false;
     } finally {
       setBusy(false);
@@ -667,7 +676,16 @@ export function BookingDetailPage({ admin = false }) {
           onSubmit={(body) => run(() => bookingsApi.cancel(id, body))}
         />
       ) : null}
-      {admin ? <AdminBookingActions id={id} busy={busy} run={run} /> : null}
+      {admin ? (
+        <AdminBookingActions
+          id={id}
+          booking={booking}
+          payment={payment}
+          busy={busy}
+          now={now}
+          run={run}
+        />
+      ) : null}
       {(isStudent || isCoach) && canReportLessonIssue(booking, now) ? (
         <ReportIssueForm
           booking={booking}
@@ -1338,27 +1356,225 @@ function AdminMoneyStateSection({ booking, payment }) {
   );
 }
 
-function AdminBookingActions({ id, busy, run }) {
+function AdminRefundForm({ id, remaining, busy, run }) {
+  const [mode, setMode] = useState('full');
+  const [amount, setAmount] = useState('');
+  const [reason, setReason] = useState('requested_by_customer');
+  const maxHint = remaining != null ? remaining : null;
+
+  function submit(e) {
+    e.preventDefault();
+    const body = { reason };
+    if (mode === 'partial') {
+      const n = Number(amount);
+      if (!Number.isFinite(n) || n < 0.01) {
+        window.alert('Enter a partial refund amount of at least $0.01.');
+        return;
+      }
+      if (maxHint != null && n > maxHint + 1e-9) {
+        window.alert(`Partial refund cannot exceed the remaining refundable amount (${formatMoney(maxHint)}).`);
+        return;
+      }
+      body.refund_amount = n;
+    }
+    const label = mode === 'partial'
+      ? `Issue a partial refund of ${formatMoney(Number(amount))}?`
+      : `Issue a full refund${maxHint != null ? ` of about ${formatMoney(maxHint)}` : ''}?`;
+    const ok = window.confirm(
+      `${label}\n\nReason: ${ADMIN_REFUND_REASONS.find((r) => r.value === reason)?.label || reason}\n\nShould not be used if a payout has already been sent.`,
+    );
+    if (!ok) return;
+    run(() => adminApi.refundBooking(id, body), 'Refund submitted.');
+  }
+
+  return (
+    <form className="stack" onSubmit={submit}>
+      <h3 style={{ margin: 0, fontSize: '1rem' }}>Admin refund</h3>
+      {maxHint != null ? (
+        <p className="small muted" style={{ margin: 0 }}>
+          Soft remaining balance (from payment DTO): {formatMoney(maxHint)}. Stripe / backend remain authoritative.
+        </p>
+      ) : null}
+      <FormField label="Refund type" name="admin_refund_mode">
+        <select id="admin_refund_mode" value={mode} onChange={(e) => setMode(e.target.value)} disabled={busy}>
+          <option value="full">Full refund (remaining balance)</option>
+          <option value="partial">Partial refund</option>
+        </select>
+      </FormField>
+      {mode === 'partial' ? (
+        <FormField label="Refund amount (USD)" name="admin_refund_amount" required>
+          <input
+            id="admin_refund_amount"
+            type="number"
+            min="0.01"
+            step="0.01"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+            disabled={busy}
+            required
+          />
+        </FormField>
+      ) : null}
+      <FormField label="Stripe refund reason" name="admin_refund_reason">
+        <select id="admin_refund_reason" value={reason} onChange={(e) => setReason(e.target.value)} disabled={busy}>
+          {ADMIN_REFUND_REASONS.map((r) => (
+            <option key={r.value} value={r.value}>{r.label}</option>
+          ))}
+        </select>
+      </FormField>
+      <button className="btn secondary" type="submit" disabled={busy}>
+        {mode === 'partial' ? 'Submit partial refund' : 'Submit full refund'}
+      </button>
+    </form>
+  );
+}
+
+function AdminCreateDisputeForm({ booking, busy, run }) {
+  const { data: types } = useAsync(async () => asList((await disputesApi.types()).data), []);
+  const [disputeTypeId, setDisputeTypeId] = useState('');
+  const [notes, setNotes] = useState('');
+  const effectiveTypeId = disputeTypeId || (types?.[0] ? String(types[0].id) : '');
+
+  function submit(e) {
+    e.preventDefault();
+    if (!effectiveTypeId) return;
+    const ok = window.confirm('Create an admin-opened dispute for this booking?');
+    if (!ok) return;
+    run(
+      () => adminApi.createDispute({
+        booking_id: booking.id,
+        dispute_type_id: Number(effectiveTypeId),
+        notes: notes.trim() || undefined,
+      }),
+      'Dispute created.',
+    );
+  }
+
+  return (
+    <form className="stack" onSubmit={submit}>
+      <h3 style={{ margin: 0, fontSize: '1rem' }}>Create dispute (admin)</h3>
+      <p className="small muted" style={{ margin: 0 }}>
+        Opens an in-app issue with opened_by = admin. Prefer this when support records a problem without a participant self-serve report.
+      </p>
+      <FormField label="Issue type" name="admin_dispute_type" required>
+        <select
+          id="admin_dispute_type"
+          value={effectiveTypeId}
+          onChange={(e) => setDisputeTypeId(e.target.value)}
+          disabled={busy || !types?.length}
+          required
+        >
+          {(types || []).map((t) => (
+            <option key={t.id} value={t.id}>{t.name || t.code}</option>
+          ))}
+        </select>
+      </FormField>
+      <FormField label="Notes (optional)" name="admin_dispute_notes">
+        <textarea
+          id="admin_dispute_notes"
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+          maxLength={1000}
+          disabled={busy}
+        />
+      </FormField>
+      <button className="btn secondary" type="submit" disabled={busy || !effectiveTypeId}>
+        Create dispute
+      </button>
+    </form>
+  );
+}
+
+function AdminBookingActions({ id, booking, payment, busy, now, run }) {
+  const cancelOk = canAdminCancelBooking(booking, now);
+  const refund = adminRefundEligibility(booking, payment, now);
+  const studentNs = adminNoShowEligibility(booking, payment, 'student_no_show', now);
+  const coachNs = adminNoShowEligibility(booking, payment, 'coach_no_show', now);
+  const createDisputeOk = canAdminCreateDispute(booking, now);
+  const openIssue = hasOpenIssueReport(booking);
+
+  const showCard = cancelOk || refund.allowed || studentNs.allowed || coachNs.allowed || createDisputeOk || openIssue;
+  if (!showCard) return null;
+
   return (
     <div className="stack admin-actions-card" style={{ padding: '0.85rem', borderRadius: 12 }}>
       <p className="small muted" style={{ margin: 0 }}>
-        Destructive money actions require confirmation. Prefer the dispute resolve API for open issue cases.
+        Destructive money and attendance actions require confirmation. Prefer dispute resolve when an issue is open.
       </p>
-      <button
-        className="btn secondary"
-        type="button"
-        disabled={busy}
-        onClick={() => {
-          const ok = window.confirm(
-            'Issue a refund for this booking?\n\nThis uses the admin refund endpoint and should not be used if a payout has already been sent.',
-          );
-          if (!ok) return;
-          run(() => adminApi.refundBooking(id, { reason: 'requested_by_customer' }), 'Refund submitted.');
-        }}
-      >
-        Refund
-      </button>
-      <CancelForm busy={busy} onSubmit={(body) => run(() => adminApi.cancelBooking(id, body), 'Admin cancelled.')} />
+      {openIssue && booking.active_issue?.id ? (
+        <p className="small" style={{ margin: 0 }}>
+          Active dispute{' '}
+          <Link to={`/admin/disputes/${booking.active_issue.id}`}>#{booking.active_issue.id}</Link>
+          {' — '}
+          resolve it for any refund or attendance outcome.
+        </p>
+      ) : null}
+
+      {refund.allowed ? (
+        <AdminRefundForm id={id} remaining={refund.remaining} busy={busy} run={run} />
+      ) : (
+        <p className="small muted" style={{ margin: 0 }}>
+          {refund.message || 'Refund is not available for this booking.'}
+        </p>
+      )}
+
+      {(studentNs.allowed || coachNs.allowed) ? (
+        <div className="stack">
+          <h3 style={{ margin: 0, fontSize: '1rem' }}>Admin attendance</h3>
+          {studentNs.allowed ? (
+            <button
+              className="btn ghost"
+              type="button"
+              disabled={busy}
+              onClick={() => {
+                const ok = window.confirm(
+                  'Mark this booking as student no-show?\n\nThis updates attendance only. Money outcomes with an open dispute must go through dispute resolve.',
+                );
+                if (!ok) return;
+                run(() => adminApi.studentNoShow(id, {}), 'Marked student no-show.');
+              }}
+            >
+              Mark student no-show
+            </button>
+          ) : (
+            <p className="small muted" style={{ margin: 0 }}>{studentNs.message}</p>
+          )}
+          {coachNs.allowed ? (
+            <button
+              className="btn ghost"
+              type="button"
+              disabled={busy}
+              onClick={() => {
+                const ok = window.confirm(
+                  'Mark this booking as coach no-show?\n\nThe backend may enqueue an automatic refund when eligible. Prefer dispute resolve when an issue is open.',
+                );
+                if (!ok) return;
+                run(() => adminApi.coachNoShow(id, {}), 'Marked coach no-show.');
+              }}
+            >
+              Mark coach no-show
+            </button>
+          ) : (
+            <p className="small muted" style={{ margin: 0 }}>{coachNs.message}</p>
+          )}
+        </div>
+      ) : (
+        <p className="small muted" style={{ margin: 0 }}>
+          {studentNs.message || coachNs.message || 'Admin no-show actions are not available for this booking.'}
+        </p>
+      )}
+
+      {createDisputeOk ? (
+        <AdminCreateDisputeForm booking={booking} busy={busy} run={run} />
+      ) : null}
+
+      {cancelOk ? (
+        <CancelForm busy={busy} onSubmit={(body) => run(() => adminApi.cancelBooking(id, body), 'Admin cancelled.')} />
+      ) : (
+        <p className="small muted" style={{ margin: 0 }}>
+          {adminCancelBlockedMessage(booking, now)}
+        </p>
+      )}
     </div>
   );
 }

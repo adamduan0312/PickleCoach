@@ -215,13 +215,13 @@ export const DISPUTE_TYPE_LABELS = {
 };
 
 /** Student recipient when the booking is marked `student_no_show`. */
-/** Coach: lesson ended — confirm attendance or report student no-show (in-app only). */
+/** Coach: lesson ended — confirm attendance or report student no-show (in-app + email). */
 export const buildConfirmAttendanceReminderNotificationContent = (payload = {}) => {
   const studentName = payload.student_name || 'your student';
   const lessonTitle = payload.lesson_title || 'Lesson';
   return {
-    headline: 'Confirm attendance',
-    summary: `Did the lesson with ${studentName} happen? Mark the lesson complete or report a student no-show.`,
+    headline: 'Confirm your lesson attendance',
+    summary: `Your lesson with ${studentName} has ended. Please confirm whether the lesson happened or mark the student as a no-show within 24 hours.`,
     preview: lessonTitle,
   };
 };

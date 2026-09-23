@@ -55,6 +55,14 @@ npm run seed:all:dev
 # or: seed:test-flows → seed:booking-action-tests → seed:cancel-test-bookings → seed:dev-frontend → seed:geosearch
 ```
 
+### Admin panel acceptance (booking matrix + users/courts)
+```bash
+npm run seed:test-flows   # once if testflow users missing
+npm run seed:admin-qa     # wipe+reseed qa_admin_matrix_* only
+npm run seed:coach-reliability-demo  # adamduan0312 coach Settings reliability (8 bookings, 1 late cancel)
+```
+Login: `admin.testflow@picklecoach.example.org` / `Test1234!Ab`. See `scripts/seed-admin-qa-matrix.js` header for case list.
+
 ### Dispute list with more open disputes
 ```bash
 npm run seed:more-disputes
