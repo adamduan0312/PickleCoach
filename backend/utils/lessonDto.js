@@ -16,6 +16,8 @@ export const PUBLIC_MARKETPLACE_LESSON_FIELDS = [
   'price',
   'effective_hourly_rate',
   'max_students',
+  'lesson_type',
+  'max_players',
 ];
 
 export const COACH_OWNER_LESSON_FIELDS = [
@@ -27,6 +29,8 @@ export const COACH_OWNER_LESSON_FIELDS = [
   'price',
   'effective_hourly_rate',
   'max_students',
+  'lesson_type',
+  'max_players',
   'is_active',
   'created_at',
 ];
@@ -40,6 +44,8 @@ export const ADMIN_LESSON_FIELDS = [
   'price',
   'effective_hourly_rate',
   'max_students',
+  'lesson_type',
+  'max_players',
   'is_active',
   'deleted_at',
   'created_at',
@@ -54,6 +60,8 @@ export const LESSON_DETAIL_FIELDS = [
   'price',
   'effective_hourly_rate',
   'max_students',
+  'lesson_type',
+  'max_players',
   'is_active',
   'deleted_at',
   'created_at',

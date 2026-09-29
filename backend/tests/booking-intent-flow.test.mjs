@@ -370,4 +370,15 @@ describe('post-confirm lifecycle (pure)', () => {
     assert.match(bookingIntentServiceSrc, /SequelizeUniqueConstraintError/);
     assert.equal(SLOT_NO_LONGER_AVAILABLE_CODE, 'slot_no_longer_available');
   });
+
+  it('confirm slot conflict reports whether the authorization was cancelled', () => {
+    assert.match(bookingIntentServiceSrc, /err\.authorizationCancelled = authorizationCancelled/);
+    assert.match(bookingControllerSrc, /authorization_cancelled: error\.authorizationCancelled/);
+  });
+
+  it('coach overlap and coach availability changes use distinct codes', () => {
+    const bookingServiceSrc = readFileSync(join(__dirname, '../services/bookingService.js'), 'utf8');
+    assert.match(bookingServiceSrc, /code: SLOT_OUTSIDE_COACH_AVAILABILITY_CODE/);
+    assert.match(bookingServiceSrc, /code: SLOT_NO_LONGER_AVAILABLE_CODE/);
+  });
 });

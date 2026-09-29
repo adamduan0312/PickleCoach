@@ -8,10 +8,12 @@ import { CHAR_LIMITS } from '../../utils/charLimits.js';
 import { useAuth } from '../../auth/AuthContext.jsx';
 import { formatInZone, detectLocalTimezone, relativeFromNow } from '../../utils/datetime.js';
 import { conversationClosedNotice } from '../../domain/bookingStatus.js';
-import { sortConversationsForInbox } from '../../domain/conversationInbox.js';
+import { counterpartRoleLabel, sortConversationsForInbox } from '../../domain/conversationInbox.js';
 
-function bookingContextLabel(bookingId, scheduledAt, timeZone) {
+function bookingContextLabel(bookingId, scheduledAt, timeZone, counterpartRole) {
   const parts = [];
+  const roleLabel = counterpartRoleLabel(counterpartRole);
+  if (roleLabel) parts.push(roleLabel);
   if (bookingId != null) parts.push(`Booking #${bookingId}`);
   if (scheduledAt) {
     parts.push(
@@ -38,7 +40,7 @@ export function ConversationsPage() {
         <div>
           <h1>Messages</h1>
           <p className="muted messages-page-lead">
-            Unread and active conversations first — empty booking threads stay below.
+            Keep lesson conversations and questions in one place.
           </p>
         </div>
       </div>
@@ -56,8 +58,8 @@ export function ConversationsPage() {
             const counterpartName = c.counterpart?.full_name?.trim() || null;
             const title = counterpartName || `Booking #${c.booking_id}`;
             const context = counterpartName
-              ? bookingContextLabel(c.booking_id, c.booking?.scheduled_at, tz)
-              : bookingContextLabel(null, c.booking?.scheduled_at, tz);
+              ? bookingContextLabel(c.booking_id, c.booking?.scheduled_at, tz, c.counterpart?.role)
+              : bookingContextLabel(null, c.booking?.scheduled_at, tz, null);
             const preview = c.latest_message?.message_text?.trim();
             const hasPreview = Boolean(preview);
             const latestAt = c.latest_message?.created_at;
@@ -221,8 +223,8 @@ export function ConversationPage() {
   const heading = counterpartName
     || (data.booking_id != null ? `Booking #${data.booking_id}` : 'Conversation');
   const context = counterpartName
-    ? bookingContextLabel(data.booking_id, data.booking?.scheduled_at, tz)
-    : bookingContextLabel(null, data.booking?.scheduled_at, tz);
+    ? bookingContextLabel(data.booking_id, data.booking?.scheduled_at, tz, data.counterpart?.role)
+    : bookingContextLabel(null, data.booking?.scheduled_at, tz, null);
   const canSend = !locked && !busy && Boolean(text.trim());
 
   return (

@@ -1,6 +1,6 @@
 import { BrowserRouter, Navigate, Outlet, Route, Routes } from 'react-router-dom';
 import { AuthProvider, useAuth } from './auth/AuthContext.jsx';
-import { GuestOnly, RequireAuth, RequireRole } from './auth/guards.jsx';
+import { GuestOnly, RequireAuth, RequireRole, RequireStudentMode } from './auth/guards.jsx';
 import { homePathFor } from './auth/paths.js';
 import { AppShell } from './components/layout/AppShell.jsx';
 import { LoadingState } from './components/ui/States.jsx';
@@ -79,8 +79,26 @@ export default function App() {
             <Route path="/dashboard" element={<RequireRole roles={['student']}><StudentDashboardPage /></RequireRole>} />
             <Route path="/discover" element={<RequireRole roles={['student', 'coach', 'admin']}><DiscoverPage /></RequireRole>} />
             <Route path="/coaches/:id" element={<RequireRole roles={['student', 'coach', 'admin']}><CoachPublicProfilePage /></RequireRole>} />
-            <Route path="/book/:coachId/checkout" element={<RequireRole roles={['student']}><BookingCheckoutPage /></RequireRole>} />
-            <Route path="/bookings/confirming" element={<RequireRole roles={['student']}><BookingConfirmingPage /></RequireRole>} />
+            <Route
+              path="/book/:coachId/checkout"
+              element={(
+                <RequireRole roles={['student']}>
+                  <RequireStudentMode>
+                    <BookingCheckoutPage />
+                  </RequireStudentMode>
+                </RequireRole>
+              )}
+            />
+            <Route
+              path="/bookings/confirming"
+              element={(
+                <RequireRole roles={['student']}>
+                  <RequireStudentMode>
+                    <BookingConfirmingPage />
+                  </RequireStudentMode>
+                </RequireRole>
+              )}
+            />
             <Route path="/bookings" element={<RequireRole roles={['student']}><BookingsListPage audience="student" /></RequireRole>} />
             <Route path="/bookings/:id" element={<BookingDetailPage />} />
             <Route path="/issues/:id" element={<RequireRole roles={['student', 'coach']}><IssueDetailPage /></RequireRole>} />

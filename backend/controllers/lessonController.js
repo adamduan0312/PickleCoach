@@ -5,6 +5,7 @@ import { logger } from '../config/logger.js';
 import { findPublicActiveCoach } from '../utils/userLifecycle.js';
 import * as coachMarketplaceEligibility from '../services/coachMarketplaceEligibility.js';
 import { buildAdminLessonsWhere, buildLessonPriceWhere } from '../utils/lessonListQuery.js';
+import { resolveLessonOffering } from '../utils/lessonOffering.js';
 import {
   serializePublicMarketplaceLesson,
   serializeCoachOwnerLesson,
@@ -13,6 +14,16 @@ import {
 } from '../utils/lessonDto.js';
 
 const MAX_LIST_ALL_LESSONS = 10000;
+
+/** Same body shape as validateRequest so the form can map it to the field. */
+function lessonOfferingValidationError(res, req, offering) {
+  return res.status(400).json({
+    success: false,
+    error: 'Validation failed',
+    details: [{ field: offering.field, message: offering.message }],
+    requestId: req.id,
+  });
+}
 
 /** Mutable deps for unit tests (ESM named exports are read-only). */
 export const lessonByIdDeps = {
@@ -278,6 +289,11 @@ export const createLesson = async (req, res) => {
       return errorResponse(res, 'Only coaches can create lessons', 403);
     }
 
+    const offering = resolveLessonOffering(req.validated);
+    if (!offering.ok) {
+      return lessonOfferingValidationError(res, req, offering);
+    }
+
     const lesson = await Lesson.create({
       coach_id: req.user.id,
       title,
@@ -285,6 +301,8 @@ export const createLesson = async (req, res) => {
       duration_minutes,
       price,
       max_students: max_students || 1,
+      lesson_type: offering.lesson_type,
+      max_players: offering.max_players,
     });
 
     return successResponse(res, serializeCoachOwnerLesson(lesson), 'Lesson created successfully', 201);
@@ -313,7 +331,14 @@ export const updateLesson = async (req, res) => {
 
     const { title, description, duration_minutes, price, max_students, is_active } = req.validated;
 
+    const offering = resolveLessonOffering(req.validated, lesson);
+    if (!offering.ok) {
+      return lessonOfferingValidationError(res, req, offering);
+    }
+
     await lesson.update({
+      lesson_type: offering.lesson_type,
+      max_players: offering.max_players,
       title: title || lesson.title,
       description: description !== undefined ? description : lesson.description,
       // Use explicit undefined checks (not `||`) so duration/price stay consistent with Joi min() and with effective_hourly_rate = price / (duration_minutes / 60).

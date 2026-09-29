@@ -5,6 +5,22 @@
 
 const STUDENT_SCHEDULE_CONFLICT = 'student_schedule_conflict';
 const SLOT_NO_LONGER_AVAILABLE = 'slot_no_longer_available';
+const SLOT_OUTSIDE_COACH_AVAILABILITY = 'slot_outside_coach_availability';
+
+const SLOT_UNAVAILABLE_TITLE = 'This time slot is no longer available.';
+
+/**
+ * Wording for what happened to the card when a slot conflict is found.
+ * `authorization_cancelled` is only present on confirm (after the card was authorized).
+ */
+function authorizationOutcomeSentence(err) {
+  const cancelled = err?.payload?.authorization_cancelled;
+  if (cancelled === true) return ' Your payment authorization was cancelled.';
+  if (cancelled === false) {
+    return ' You were not charged, and any temporary hold on your card will be released automatically.';
+  }
+  return '';
+}
 
 /**
  * @param {unknown} err
@@ -16,14 +32,25 @@ export function bookingApiErrorCopy(err) {
     return {
       kind: 'student_schedule',
       title: 'You already have a booking at this time.',
-      body: "You can't book overlapping lessons. Please choose another time.",
+      body: `You can't book overlapping lessons.${authorizationOutcomeSentence(err)} Please choose another time.`,
     };
   }
   if (code === SLOT_NO_LONGER_AVAILABLE) {
+    const afterAuthorization = typeof err?.payload?.authorization_cancelled === 'boolean';
+    const lead = afterAuthorization
+      ? 'Another student booked this time while you were completing checkout.'
+      : 'Another student has already booked this time.';
     return {
       kind: 'slot_taken',
-      title: 'This time is no longer available.',
-      body: 'Someone else may have booked this coach for that slot. Please choose another time.',
+      title: SLOT_UNAVAILABLE_TITLE,
+      body: `${lead}${authorizationOutcomeSentence(err)} Please choose another available time.`,
+    };
+  }
+  if (code === SLOT_OUTSIDE_COACH_AVAILABILITY) {
+    return {
+      kind: 'slot_taken',
+      title: SLOT_UNAVAILABLE_TITLE,
+      body: `The coach's availability has changed.${authorizationOutcomeSentence(err)} Please choose another available time.`,
     };
   }
   return null;

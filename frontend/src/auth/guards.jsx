@@ -57,3 +57,22 @@ export function RequireRole({ roles, children }) {
   }
   return children;
 }
+
+/**
+ * Mode-scoped booking surfaces (checkout). Roles still authorize via RequireRole;
+ * active mode must be Student so Coach mode cannot initiate bookings.
+ */
+export function RequireStudentMode({ children }) {
+  const { mode, bootstrapping, isAuthenticated, user } = useAuth();
+  if (bootstrapping) return <LoadingState label="Loading session…" />;
+  if (!isAuthenticated) {
+    if (isIntentionalLogout()) {
+      return <Navigate to="/login" replace />;
+    }
+    return <Navigate to="/login" replace />;
+  }
+  if (mode !== 'student') {
+    return <Navigate to={homePathFor(user, mode)} replace />;
+  }
+  return children;
+}

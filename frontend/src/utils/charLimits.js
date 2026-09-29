@@ -10,6 +10,8 @@ export const CHAR_LIMITS = {
   courtName: 255,
   courtAddress: 255,
   courtCity: 100,
+  lessonTitle: 255,
+  lessonDescription: 1000,
 };
 
 export function charCount(value) {

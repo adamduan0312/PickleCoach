@@ -22,6 +22,8 @@ const fullLesson = {
   price: '60.00',
   effective_hourly_rate: 60,
   max_students: 1,
+  lesson_type: 'private',
+  max_players: null,
   is_active: true,
   deleted_at: null,
   created_at: '2026-07-01T00:00:00.000Z',

@@ -14,7 +14,11 @@ import crypto from 'crypto';
  */
 export const BOOKING_INTENT_FLOW_METADATA = 'authorize_then_book';
 
+/** Another booking now occupies this coach time. */
 export const SLOT_NO_LONGER_AVAILABLE_CODE = 'slot_no_longer_available';
+
+/** Requested time is outside the coach's current recurring availability. */
+export const SLOT_OUTSIDE_COACH_AVAILABILITY_CODE = 'slot_outside_coach_availability';
 
 /** Student already has a pending/confirmed lesson overlapping this time (any coach). */
 export const STUDENT_SCHEDULE_CONFLICT_CODE = 'student_schedule_conflict';

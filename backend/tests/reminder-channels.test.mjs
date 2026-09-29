@@ -85,7 +85,9 @@ describe('lessonReminderCopy', () => {
     // 2026-08-26T22:00:00Z = 6:00 PM Eastern
     const iso = '2026-08-26T22:00:00.000Z';
     assert.equal(formatLessonDateForEmail(iso, 'America/New_York'), 'Wednesday, August 26');
-    assert.equal(formatLessonTimeForEmail(iso, 'America/New_York'), '6:00 PM EDT');
+    assert.equal(formatLessonTimeForEmail(iso, 'America/New_York'), '6:00 PM Eastern Time');
+    assert.equal(formatLessonTimeForEmail(iso, 'America/Chicago'), '5:00 PM Central Time');
+    assert.equal(formatLessonTimeForEmail(iso, 'UTC'), '10:00 PM UTC');
   });
 
   it('builds detail fields from booking.courtLocation for a public court', () => {
@@ -104,8 +106,8 @@ describe('lessonReminderCopy', () => {
     assert.equal(fields.court_address, '123 Main St, Fort Lauderdale, FL 33301');
     assert.equal(fields.court_address_revealed, true);
     assert.equal(fields.lesson_date, 'Wednesday, August 26');
-    assert.equal(fields.lesson_time, '6:00 PM EDT');
-    assert.equal(fields.lesson_when, 'Wednesday, August 26 · 6:00 PM EDT');
+    assert.equal(fields.lesson_time, '6:00 PM Eastern Time');
+    assert.equal(fields.lesson_when, 'Wednesday, August 26 · 6:00 PM Eastern Time');
   });
 
   it('confirmed private court: student reminder reveals street address', () => {

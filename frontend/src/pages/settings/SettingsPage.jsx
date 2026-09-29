@@ -1,29 +1,52 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../auth/AuthContext.jsx';
 import { authApi } from '../../api/index.js';
 import { FormField } from '../../components/ui/FormField.jsx';
 import { Alert } from '../../components/ui/States.jsx';
+import { Avatar } from '../../components/ui/Avatar.jsx';
 import { passwordHint, validatePassword } from '../../utils/format.js';
 import { detectLocalTimezone } from '../../utils/datetime.js';
+import { TimezoneSelect } from '../../components/ui/TimezoneSelect.jsx';
+import { sanitizePhoneInput, validatePhone } from '../../domain/phone.js';
 import { hasCoachRole, hasStudentRole } from '../../domain/userReadiness.js';
 import { reopenHowBookingsWork } from '../../utils/howBookingsWorkStorage.js';
 import { ReliabilitySelfServeCard } from '../../components/settings/ReliabilitySelfServeCard.jsx';
 
+const ACCEPTED_PHOTO_TYPES = 'image/jpeg,image/png,image/webp';
+
 export function SettingsPage() {
   const { user, mode, refreshProfile, applySession, readiness } = useAuth();
   const navigate = useNavigate();
+  const photoInputRef = useRef(null);
   const [profile, setProfile] = useState({
     full_name: user?.full_name || '',
     phone: user?.phone || '',
+    // Prefer saved timezone; never overwrite from browser on Settings load.
     timezone: user?.timezone || detectLocalTimezone(),
-    avatar_url: user?.avatar_url || '',
   });
   const [pw, setPw] = useState({ current_password: '', new_password: '' });
   const [emailForm, setEmailForm] = useState({ new_email: '', password: '' });
   const [message, setMessage] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [photoBusy, setPhotoBusy] = useState(false);
+  const [phoneError, setPhoneError] = useState(null);
+
+  const profileDirty =
+    profile.full_name !== (user?.full_name || '')
+    || profile.phone !== (user?.phone || '')
+    || profile.timezone !== (user?.timezone || detectLocalTimezone());
+
+  useEffect(() => {
+    if (!profileDirty) return undefined;
+    function onBeforeUnload(e) {
+      e.preventDefault();
+      e.returnValue = '';
+    }
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [profileDirty]);
 
   function openHowBookingsGuide(role) {
     if (!user?.id) return;
@@ -33,16 +56,56 @@ export function SettingsPage() {
 
   async function saveProfile(e) {
     e.preventDefault();
+    const phoneProblem = validatePhone(profile.phone);
+    if (phoneProblem) {
+      setPhoneError(phoneProblem);
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
-      await authApi.updateProfile(profile);
+      await authApi.updateProfile({
+        full_name: profile.full_name,
+        phone: profile.phone,
+        timezone: profile.timezone,
+      });
       await refreshProfile();
-      setMessage('Profile updated.');
+      setMessage('Profile saved.');
     } catch (err) {
       setError(err.message);
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function onPhotoSelected(e) {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setPhotoBusy(true);
+    setError(null);
+    try {
+      await authApi.uploadAvatar(file);
+      await refreshProfile();
+      setMessage('Profile photo updated.');
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setPhotoBusy(false);
+    }
+  }
+
+  async function removePhoto() {
+    setPhotoBusy(true);
+    setError(null);
+    try {
+      await authApi.removeAvatar();
+      await refreshProfile();
+      setMessage('Profile photo removed.');
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setPhotoBusy(false);
     }
   }
 
@@ -118,6 +181,7 @@ export function SettingsPage() {
   // Must keep at least one marketplace role; dual-role users can drop either (admins use admin tools).
   const canRemoveStudent = !isAdmin && isStudent && isCoach;
   const canRemoveCoach = !isAdmin && isCoach && isStudent;
+  const hasPhoto = Boolean(user?.avatar_url);
 
   return (
     <div className="page">
@@ -128,11 +192,84 @@ export function SettingsPage() {
         <form className="card stack" onSubmit={saveProfile}>
           <h2>Profile</h2>
           <FormField label="Name" name="full_name" value={profile.full_name} onChange={(e) => setProfile((p) => ({ ...p, full_name: e.target.value }))} />
-          <FormField label="Phone" name="phone" value={profile.phone} onChange={(e) => setProfile((p) => ({ ...p, phone: e.target.value }))} />
-          <FormField label="Time zone" name="timezone" value={profile.timezone} onChange={(e) => setProfile((p) => ({ ...p, timezone: e.target.value }))} hint="IANA name such as America/New_York. Detected at signup; change it here if you move or travel." />
-          <FormField label="Avatar URL" name="avatar_url" value={profile.avatar_url} onChange={(e) => setProfile((p) => ({ ...p, avatar_url: e.target.value }))} />
-          <div className="small muted">Email: {user?.email} {user?.email_verified_at ? '(verified)' : '(not verified)'}</div>
-          <button className="btn" type="submit" disabled={busy}>Save profile</button>
+          <FormField
+            label="Phone"
+            name="phone"
+            type="tel"
+            inputMode="tel"
+            autoComplete="tel"
+            placeholder="(555) 123-4567"
+            value={profile.phone}
+            error={phoneError}
+            onChange={(e) => {
+              setPhoneError(null);
+              setProfile((p) => ({ ...p, phone: sanitizePhoneInput(e.target.value) }));
+            }}
+          />
+          <FormField
+            label="Time zone"
+            name="timezone"
+            hint="Your time zone was detected when you signed up. Change it if you move or travel."
+          >
+            <TimezoneSelect
+              id="timezone"
+              value={profile.timezone}
+              disabled={busy}
+              onChange={(timezone) => setProfile((p) => ({ ...p, timezone }))}
+            />
+          </FormField>
+          {isCoach ? (
+            <p className="small settings-timezone-coach-note">
+              Changing your time zone will change when your recurring availability occurs. Existing
+              bookings stay at the same time, but will be displayed in your new time zone.
+            </p>
+          ) : null}
+
+          <div className="field settings-photo-field">
+            <span className="settings-photo-label" id="profile-photo-label">Profile photo</span>
+            <div className="row settings-photo-row" aria-labelledby="profile-photo-label">
+              <Avatar name={user?.full_name || profile.full_name} src={user?.avatar_url} size="lg" />
+              <div className="stack settings-photo-actions">
+                <input
+                  ref={photoInputRef}
+                  type="file"
+                  accept={ACCEPTED_PHOTO_TYPES}
+                  hidden
+                  onChange={onPhotoSelected}
+                />
+                <button
+                  className="btn secondary"
+                  type="button"
+                  disabled={busy || photoBusy}
+                  onClick={() => photoInputRef.current?.click()}
+                >
+                  {hasPhoto ? 'Change photo' : 'Upload photo'}
+                </button>
+                {hasPhoto ? (
+                  <button
+                    className="btn ghost"
+                    type="button"
+                    disabled={busy || photoBusy}
+                    onClick={removePhoto}
+                  >
+                    Remove photo
+                  </button>
+                ) : null}
+                <span className="muted small">JPG, PNG, or WebP · up to 2 MB</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="small muted">
+            Email: {user?.email}{' '}
+            {user?.email_verified_at ? '(verified)' : '(not verified)'}
+          </div>
+          {profileDirty ? (
+            <p className="small settings-unsaved-note" role="status">
+              You have unsaved changes. Click Save profile to keep them.
+            </p>
+          ) : null}
+          <button className="btn" type="submit" disabled={busy || photoBusy}>Save profile</button>
         </form>
         <form className="card stack" onSubmit={changePassword}>
           <h2>Change password</h2>

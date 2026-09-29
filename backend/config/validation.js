@@ -3,6 +3,18 @@ import { getValidReasons } from '../services/reliabilityPenaltyService.js';
 import { getValidDeclineReasonCodes } from '../utils/declineReasonCodes.js';
 import { MIN_LESSON_PRICE_USD } from '../services/paymentEngine.js';
 import { validateDisputeResolutionPayload } from '../utils/disputeResolutionAlignment.js';
+import {
+  LESSON_TYPES,
+  GROUP_MAX_PLAYERS_MIN,
+  GROUP_MAX_PLAYERS_MAX,
+  LESSON_TITLE_MIN,
+  LESSON_TITLE_MAX,
+  LESSON_DESCRIPTION_MAX,
+  LESSON_DURATION_MIN,
+  LESSON_DURATION_MAX,
+  LESSON_PRICE_MAX_USD,
+  hasCentsPrecision,
+} from '../utils/lessonOffering.js';
 
 // Environment variable validation
 export const envSchema = Joi.object({
@@ -72,14 +84,49 @@ export const mvpPasswordSchema = Joi.string()
     'password.missingDigit': 'Password must contain at least one number.',
   });
 
+/**
+ * Phone numbers: digits with optional leading +, spaces, dashes, dots, parentheses.
+ * 7–15 digits (E.164 max). Empty string clears the phone where `.allow('')` is used.
+ */
+export const phoneSchema = Joi.string()
+  .trim()
+  .max(30)
+  .pattern(/^\+?[\d\s().-]+$/)
+  .custom((value, helpers) => {
+    const digits = value.replace(/\D/g, '').length;
+    if (digits < 7 || digits > 15) return helpers.error('phone.digits');
+    return value;
+  })
+  .messages({
+    'string.pattern.base': 'Phone number can only contain digits, spaces, and + ( ) - .',
+    'phone.digits': 'Enter a valid phone number (7–15 digits).',
+  });
+
+/** True when the runtime recognizes `value` as an IANA time zone (e.g. America/Chicago, UTC). */
+export function isValidTimeZone(value) {
+  if (typeof value !== 'string' || !value.trim()) return false;
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: value });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export const timezoneSchema = Joi.string()
+  .trim()
+  .max(50)
+  .custom((value, helpers) => (isValidTimeZone(value) ? value : helpers.error('timezone.invalid')))
+  .messages({ 'timezone.invalid': 'Please choose a valid time zone.' });
+
 // Request validation schemas
 export const registerSchema = Joi.object({
   full_name: Joi.string().min(2).max(100).required(),
   email: Joi.string().email().max(150).required(),
   password: mvpPasswordSchema.required(),
   role: Joi.string().valid('student', 'coach').required(), // Remove 'admin' and make required
-  phone: Joi.string().max(30).optional(),
-  timezone: Joi.string().default('UTC'),
+  phone: phoneSchema.allow('').optional(),
+  timezone: timezoneSchema.default('UTC'),
   avatar_url: Joi.string().uri().max(255).allow('').optional(),
 });
 
@@ -88,8 +135,8 @@ export const createAdminSchema = Joi.object({
   full_name: Joi.string().min(2).max(100).required(),
   email: Joi.string().email().max(150).required(),
   password: mvpPasswordSchema.required(),
-  phone: Joi.string().max(30).allow('').optional(),
-  timezone: Joi.string().max(64).default('UTC'),
+  phone: phoneSchema.allow('').optional(),
+  timezone: timezoneSchema.default('UTC'),
 });
 
 export const loginSchema = Joi.object({
@@ -98,13 +145,62 @@ export const loginSchema = Joi.object({
 });
 
 /** Lesson `price` is total for the slot; `effective_hourly_rate` = price / (duration_minutes / 60). Duration must stay > 0 (enforced: min 15). */
+const lessonTitleSchema = Joi.string().trim().min(LESSON_TITLE_MIN).max(LESSON_TITLE_MAX).messages({
+  'string.empty': 'Enter a lesson title.',
+  'string.min': `Title must be at least ${LESSON_TITLE_MIN} characters.`,
+  'string.max': `Title must be ${LESSON_TITLE_MAX} characters or fewer.`,
+  'any.required': 'Enter a lesson title.',
+});
+
+const lessonDescriptionSchema = Joi.string().trim().allow('').max(LESSON_DESCRIPTION_MAX).messages({
+  'string.max': `Description must be ${LESSON_DESCRIPTION_MAX} characters or fewer.`,
+});
+
+const lessonDurationSchema = Joi.number().integer().min(LESSON_DURATION_MIN).max(LESSON_DURATION_MAX).messages({
+  'number.base': 'Choose a lesson duration.',
+  'number.integer': 'Duration must be a whole number of minutes.',
+  'number.min': `Duration must be at least ${LESSON_DURATION_MIN} minutes.`,
+  'number.max': `Duration must be ${LESSON_DURATION_MAX} minutes or fewer.`,
+  'any.required': 'Choose a lesson duration.',
+});
+
+const lessonPriceSchema = Joi.number()
+  .min(MIN_LESSON_PRICE_USD)
+  .max(LESSON_PRICE_MAX_USD)
+  .custom((value, helpers) => (hasCentsPrecision(value) ? value : helpers.error('price.cents')))
+  .messages({
+    'number.base': 'Enter a price.',
+    'number.min': `Price must be at least $${MIN_LESSON_PRICE_USD.toFixed(2)} USD (all bookings require payment).`,
+    'number.max': `Price must be $${LESSON_PRICE_MAX_USD.toLocaleString('en-US')} or less.`,
+    'price.cents': 'Price can have at most two decimal places.',
+    'any.required': 'Enter a price.',
+  });
+
+const lessonTypeSchema = Joi.string().valid(...LESSON_TYPES).messages({
+  'any.only': 'Lesson type must be Private or Group.',
+});
+
+/** Group lessons require a value (checked with lesson_type in resolveLessonOffering). */
+const lessonMaxPlayersSchema = Joi.number()
+  .integer()
+  .min(GROUP_MAX_PLAYERS_MIN)
+  .max(GROUP_MAX_PLAYERS_MAX)
+  .allow(null)
+  .messages({
+    'number.base': `Maximum players must be a number from ${GROUP_MAX_PLAYERS_MIN} to ${GROUP_MAX_PLAYERS_MAX}.`,
+    'number.integer': 'Maximum players must be a whole number.',
+    'number.min': `Maximum players must be at least ${GROUP_MAX_PLAYERS_MIN}.`,
+    'number.max': `Maximum players must be ${GROUP_MAX_PLAYERS_MAX} or fewer.`,
+  });
+
 export const createLessonSchema = Joi.object({
-  title: Joi.string().min(3).max(255).required(),
-  description: Joi.string().optional(),
-  duration_minutes: Joi.number().integer().min(15).max(480).required(),
-  price: Joi.number().positive().min(MIN_LESSON_PRICE_USD).required()
-    .messages({ 'number.min': `Price must be at least $${MIN_LESSON_PRICE_USD.toFixed(2)} USD (all bookings require payment).` }),
+  title: lessonTitleSchema.required(),
+  description: lessonDescriptionSchema.optional(),
+  duration_minutes: lessonDurationSchema.required(),
+  price: lessonPriceSchema.required(),
   max_students: Joi.number().integer().min(1).max(20).default(1),
+  lesson_type: lessonTypeSchema.default('private'),
+  max_players: lessonMaxPlayersSchema.optional(),
 });
 
 export const createBookingSchema = Joi.object({
@@ -211,9 +307,8 @@ export const confirmEmailVerificationSchema = Joi.object({
 // Update schemas
 export const updateProfileSchema = Joi.object({
   full_name: Joi.string().min(2).max(100).allow('').optional(),
-  phone: Joi.string().max(30).allow('').optional(),
-  timezone: Joi.string().max(50).optional(),
-  avatar_url: Joi.string().uri().max(255).allow('').optional(),
+  phone: phoneSchema.allow('').optional(),
+  timezone: timezoneSchema.optional(),
 });
 
 export const addUserRoleSchema = Joi.object({
@@ -225,9 +320,15 @@ export const addUserRoleSchema = Joi.object({
 export const updateUserSchema = Joi.object({
   full_name: Joi.string().min(2).max(100).optional(),
   email: Joi.string().email().max(150).optional(),
-  phone: Joi.string().max(30).allow('').optional(),
-  timezone: Joi.string().max(50).optional(),
-  avatar_url: Joi.string().uri().max(255).allow('').optional(),
+  phone: phoneSchema.allow('').optional(),
+  timezone: timezoneSchema.optional(),
+  avatar_url: Joi.alternatives()
+    .try(
+      Joi.string().uri({ scheme: ['http', 'https'] }).max(255),
+      Joi.string().pattern(/^\/uploads\/avatars\/[A-Za-z0-9._-]+$/).max(255),
+    )
+    .allow('', null)
+    .optional(),
   /**
    * Account access flag (admin only).
    * - `true` = reactivate (Active) — rejected if user is still soft-deleted unless `deleted_at: null` is also sent
@@ -261,13 +362,14 @@ export const updateUserSchema = Joi.object({
 });
 
 export const updateLessonSchema = Joi.object({
-  title: Joi.string().min(3).max(255).optional(),
-  description: Joi.string().allow('').optional(),
+  title: lessonTitleSchema.optional(),
+  description: lessonDescriptionSchema.optional(),
   /** Omit to leave unchanged; when sent, must be ≥ 15 so hourly derivation never divides by zero. */
-  duration_minutes: Joi.number().integer().min(15).max(480).optional(),
-  price: Joi.number().positive().min(MIN_LESSON_PRICE_USD).optional()
-    .messages({ 'number.min': `Price must be at least $${MIN_LESSON_PRICE_USD.toFixed(2)} USD (all bookings require payment).` }),
+  duration_minutes: lessonDurationSchema.optional(),
+  price: lessonPriceSchema.optional(),
   max_students: Joi.number().integer().min(1).max(20).optional(),
+  lesson_type: lessonTypeSchema.optional(),
+  max_players: lessonMaxPlayersSchema.optional(),
   is_active: Joi.boolean().optional(),
 });
 

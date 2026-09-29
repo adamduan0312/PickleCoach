@@ -1,7 +1,11 @@
 import { Booking, Lesson, CoachAvailability, User, sequelize } from '../models/index.js';
 import { Op } from 'sequelize';
 import { calendarDateInTimezone, toYmdApi } from '../utils/dateOnly.js';
-import { STUDENT_SCHEDULE_CONFLICT_CODE } from '../utils/bookingIntentContract.js';
+import {
+  SLOT_NO_LONGER_AVAILABLE_CODE,
+  SLOT_OUTSIDE_COACH_AVAILABILITY_CODE,
+  STUDENT_SCHEDULE_CONFLICT_CODE,
+} from '../utils/bookingIntentContract.js';
 
 const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
@@ -227,7 +231,7 @@ export const checkBookingAvailability = async (lessonId, scheduledAt, durationMi
   // Check coach availability first (coach-maintained availability)
   const coachAvailability = await checkCoachAvailability(coachId, scheduledAt, durationMinutes);
   if (!coachAvailability.available) {
-    return coachAvailability;
+    return { ...coachAvailability, code: SLOT_OUTSIDE_COACH_AVAILABILITY_CODE };
   }
 
   const scheduledDate = new Date(scheduledAt);
@@ -249,7 +253,11 @@ export const checkBookingAvailability = async (lessonId, scheduledAt, durationMi
   });
 
   if (overlappingBookings.length > 0) {
-    return { available: false, reason: 'This time slot is no longer available.' };
+    return {
+      available: false,
+      reason: 'This time slot is no longer available.',
+      code: SLOT_NO_LONGER_AVAILABLE_CODE,
+    };
   }
 
   if (studentId != null) {

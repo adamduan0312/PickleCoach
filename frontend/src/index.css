@@ -235,6 +235,114 @@ button, input, select, textarea {
 .field.invalid select,
 .field.invalid textarea { border-color: var(--pc-danger); }
 
+.lesson-type-field { border: 0; padding: 0; margin: 0; min-width: 0; }
+.lesson-type-field legend { font-size: 0.85rem; font-weight: 600; padding: 0; margin-bottom: 0.3rem; }
+.lesson-type-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0.6rem; }
+.field .lesson-type-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  border: 1px solid var(--pc-line);
+  border-radius: 10px;
+  padding: 0.65rem 0.75rem;
+  background: #fff;
+  cursor: pointer;
+  font-weight: 400;
+}
+.field .lesson-type-option.selected { border-color: var(--pc-green); background: var(--pc-green-soft); }
+.field .lesson-type-option input[type='radio'] { width: auto; margin-top: 0.2rem; accent-color: var(--pc-green); }
+.lesson-type-option > span { display: flex; flex-direction: column; gap: 0.15rem; }
+.lesson-type-option > span > strong { font-size: 0.92rem; }
+
+.tz-select { position: relative; }
+.tz-select-trigger {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  border: 1px solid var(--pc-line);
+  border-radius: 8px;
+  padding: 0.55rem 0.7rem;
+  background: #fff;
+  color: var(--pc-ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.tz-select-trigger:disabled { opacity: 0.55; cursor: not-allowed; }
+.tz-select-caret { color: var(--pc-muted); font-size: 0.8rem; }
+.tz-select-popover {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  background: #fff;
+  border: 1px solid var(--pc-line);
+  border-radius: 10px;
+  box-shadow: var(--pc-shadow);
+  padding: 0.5rem;
+}
+.field .tz-select-search { margin-bottom: 0.4rem; }
+.tz-select-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 280px;
+  overflow-y: auto;
+}
+.tz-select-divider {
+  margin: 0.5rem 0 0.1rem;
+  padding: 0.35rem 0.5rem 0;
+  border-top: 1px solid var(--pc-line);
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--pc-ink);
+}
+.tz-select-group {
+  padding: 0.45rem 0.5rem 0.2rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--pc-muted);
+}
+.tz-select-option {
+  padding: 0.4rem 0.5rem;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.tz-select-option.active { background: var(--pc-green-soft); }
+.tz-select-option.selected { font-weight: 600; }
+.tz-select-empty { padding: 0.5rem; }
+
+.settings-timezone-coach-note {
+  margin: -0.35rem 0 0;
+  padding: 0.5rem 0.65rem;
+  border-radius: 8px;
+  background: var(--pc-warning-soft);
+  color: var(--pc-ink);
+}
+
+.settings-unsaved-note {
+  margin: 0;
+  color: var(--pc-warning);
+}
+
+.settings-photo-label {
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+.settings-photo-row {
+  align-items: center;
+  gap: 1rem;
+}
+.settings-photo-actions {
+  gap: 0.45rem;
+  align-items: flex-start;
+}
+
 .password-input {
   position: relative;
 }
@@ -1206,6 +1314,12 @@ table.data th { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0
 }
 .coach-lesson-desc {
   margin: 0.35rem 0 0;
+}
+.coach-lesson-type {
+  display: block;
+  margin-top: 0.15rem;
+  color: var(--pc-green-dark);
+  font-weight: 600;
 }
 .coach-lesson-card-meta {
   display: flex;

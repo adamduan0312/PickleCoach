@@ -17,9 +17,12 @@ function toPlain(row) {
  * Safe display fields only; null when the viewer is not a booking party
  * (e.g. admin) or party associations are missing.
  *
+ * `role` is the counterpart's role on this booking relative to the viewer
+ * (`coach` | `student`) so dual-role inboxes can label the relationship.
+ *
  * @param {object|null|undefined} booking — Booking with optional coach / primaryStudent
  * @param {number|string|null|undefined} viewerUserId
- * @returns {{ id: number, full_name: string, avatar_url: string|null }|null}
+ * @returns {{ id: number, full_name: string, avatar_url: string|null, role: 'coach'|'student' }|null}
  */
 export function resolveConversationCounterpart(booking, viewerUserId) {
   if (!booking || viewerUserId == null) return null;
@@ -31,15 +34,21 @@ export function resolveConversationCounterpart(booking, viewerUserId) {
   const studentId = plain.primary_student_id != null ? Number(plain.primary_student_id) : null;
 
   let other = null;
+  /** @type {'coach'|'student'|null} */
+  let role = null;
   if (coachId != null && viewerId === coachId) {
     other = plain.primaryStudent;
+    role = 'student';
   } else if (studentId != null && viewerId === studentId) {
     other = plain.coach;
+    role = 'coach';
   } else {
     return null;
   }
 
-  return serializeUserPartySummary(other);
+  const summary = serializeUserPartySummary(other);
+  if (!summary || !role) return null;
+  return { ...summary, role };
 }
 
 /**

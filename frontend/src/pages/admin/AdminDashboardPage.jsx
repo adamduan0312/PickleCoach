@@ -14,6 +14,7 @@ import {
 } from '../../domain/adminStatus.js';
 import { formatInZone } from '../../utils/datetime.js';
 import { formatMoney } from '../../utils/format.js';
+import { bookingLessonTitle } from '../../domain/lessonOffering.js';
 
 function humanizeAudit(row) {
   const action = String(row.action || 'event').replace(/_/g, ' ');
@@ -157,7 +158,7 @@ export function AdminDashboardPage() {
                   style={{ color: 'inherit', textDecoration: 'none', alignItems: 'flex-start' }}
                 >
                   <div>
-                    <strong>#{b.id} {b.lesson?.title || 'Lesson'}</strong>
+                    <strong>#{b.id} {bookingLessonTitle(b)}</strong>
                     <div className="small muted">
                       {b.primaryStudent?.full_name || 'Student'} → {b.coach?.full_name || 'Coach'}
                     </div>

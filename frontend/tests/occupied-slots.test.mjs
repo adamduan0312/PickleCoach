@@ -87,6 +87,7 @@ describe('occupied-slot wiring contracts', () => {
     assert.match(src, /annotateSlotsWithOccupancy/);
     assert.match(src, /occupied_slots/);
     assert.match(src, /Booked/);
-    assert.match(src, /disabled=\{isOwnProfile \|\| occupied\}/);
+    assert.match(src, /disabled=\{occupied\}/);
+    assert.match(src, /bookingAllowed = mode === 'student' && !isOwnProfile/);
   });
 });

@@ -27,6 +27,33 @@ const Booking = sequelize.define('bookings', {
     type: DataTypes.INTEGER,
     allowNull: false,
   },
+  /** Lesson offering at booking time; NULL on legacy rows (fall back to lesson). */
+  lesson_type_at_booking: {
+    type: DataTypes.ENUM('private', 'group'),
+    allowNull: true,
+  },
+  max_players_at_booking: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+  },
+  lesson_title_at_booking: {
+    type: DataTypes.STRING(255),
+    allowNull: true,
+  },
+  /**
+   * Court as booked; NULL on legacy rows (fall back to courtLocation).
+   * Never serialize these directly — go through courtLocationAsBooked so
+   * private-court redaction applies.
+   */
+  court_name_at_booking: { type: DataTypes.STRING(255), allowNull: true },
+  court_address_line1_at_booking: { type: DataTypes.STRING(255), allowNull: true },
+  court_city_at_booking: { type: DataTypes.STRING(100), allowNull: true },
+  court_state_at_booking: { type: DataTypes.STRING(2), allowNull: true },
+  court_postal_code_at_booking: { type: DataTypes.STRING(20), allowNull: true },
+  court_country_at_booking: { type: DataTypes.STRING(2), allowNull: true },
+  court_is_private_at_booking: { type: DataTypes.BOOLEAN, allowNull: true },
+  court_latitude_at_booking: { type: DataTypes.DOUBLE, allowNull: true },
+  court_longitude_at_booking: { type: DataTypes.DOUBLE, allowNull: true },
   price: {
     type: DataTypes.DECIMAL(10, 2),
     allowNull: false,

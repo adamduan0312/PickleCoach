@@ -32,6 +32,17 @@ export function conversationInboxGroup(conversation) {
 }
 
 /**
+ * Display label for the counterpart's booking role (relative to the viewer).
+ * @param {string|null|undefined} role
+ * @returns {'Coach'|'Student'|null}
+ */
+export function counterpartRoleLabel(role) {
+  if (role === 'coach') return 'Coach';
+  if (role === 'student') return 'Student';
+  return null;
+}
+
+/**
  * @param {Array<object>} conversations inbox DTOs
  */
 export function sortConversationsForInbox(conversations) {

@@ -4,6 +4,13 @@ export const API_BASE_URL = (
   import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000/api'
 ).replace(/\/$/, '');
 
+export { resolveMediaUrl } from '../utils/mediaUrl.js';
+
+/** @deprecated Prefer resolveMediaUrl(src, API_BASE_URL); kept for callers that need the origin alone. */
+export function apiOrigin() {
+  return API_BASE_URL.replace(/\/api$/i, '') || API_BASE_URL;
+}
+
 export class ApiError extends Error {
   constructor(message, { status = 0, details = null, code = null, payload = null } = {}) {
     super(message);

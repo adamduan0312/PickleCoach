@@ -5,11 +5,46 @@
  */
 
 import {
+  courtLocationAsBooked,
   serializeCourtLocationForBooking,
   buildFullCourtAddress,
 } from './courtAddressVisibility.js';
 
 const DEFAULT_TZ = 'UTC';
+
+/** Where Intl's generic name disagrees with the Settings time zone labels. */
+const ZONE_NAME_OVERRIDES = {
+  UTC: 'UTC',
+  'Etc/UTC': 'UTC',
+  'America/Phoenix': 'Arizona Time',
+  'Pacific/Honolulu': 'Hawaii Time',
+};
+
+/**
+ * Friendly zone name for booking times, e.g. "Central Time", "Pacific Time".
+ * @param {string} [timeZone]
+ */
+export function timezoneDisplayName(timeZone = DEFAULT_TZ) {
+  const tz = timeZone || DEFAULT_TZ;
+  if (ZONE_NAME_OVERRIDES[tz]) return ZONE_NAME_OVERRIDES[tz];
+  try {
+    const part = new Intl.DateTimeFormat('en-US', { timeZone: tz, timeZoneName: 'longGeneric' })
+      .formatToParts(new Date())
+      .find((p) => p.type === 'timeZoneName');
+    return part?.value || tz;
+  } catch {
+    return tz;
+  }
+}
+
+function formatClockTime(date, timeZone) {
+  const time = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(date);
+  return `${time} ${timezoneDisplayName(timeZone)}`;
+}
 
 /**
  * @param {string|Date} scheduledAt
@@ -37,17 +72,12 @@ export function formatLessonDateForEmail(scheduledAt, timeZone = DEFAULT_TZ) {
 /**
  * @param {string|Date} scheduledAt
  * @param {string} [timeZone]
- * @returns {string} e.g. "6:00 PM EDT"
+ * @returns {string} e.g. "6:00 PM Eastern Time"
  */
 export function formatLessonTimeForEmail(scheduledAt, timeZone = DEFAULT_TZ) {
   if (!scheduledAt) return 'N/A';
   try {
-    return new Intl.DateTimeFormat('en-US', {
-      timeZone: timeZone || DEFAULT_TZ,
-      hour: 'numeric',
-      minute: '2-digit',
-      timeZoneName: 'short',
-    }).format(new Date(scheduledAt));
+    return formatClockTime(new Date(scheduledAt), timeZone || DEFAULT_TZ);
   } catch {
     return new Date(scheduledAt).toLocaleTimeString('en-US', {
       hour: 'numeric',
@@ -85,13 +115,7 @@ export function formatDeadlineLabelForEmail(deadlineAt, timeZone = DEFAULT_TZ) {
       month: 'long',
       day: 'numeric',
     }).format(date);
-    const time = new Intl.DateTimeFormat('en-US', {
-      timeZone: timeZone || DEFAULT_TZ,
-      hour: 'numeric',
-      minute: '2-digit',
-      timeZoneName: 'short',
-    }).format(date);
-    return `${weekdayMonthDay} · ${time}`;
+    return `${weekdayMonthDay} · ${formatClockTime(date, timeZone || DEFAULT_TZ)}`;
   } catch {
     return formatLessonWhenForEmail(deadlineAt, timeZone);
   }
@@ -119,7 +143,7 @@ export function formatReminderCourtAddress(serializedCourt) {
  *   coach → privileged (always exact address); student → status-gated for private courts
  */
 export function buildLessonReminderDetailFields(booking, viewerTimezone, opts = {}) {
-  const court = booking.courtLocation || booking.court_location || null;
+  const court = courtLocationAsBooked(booking, booking.courtLocation || booking.court_location || null);
   const tz = viewerTimezone || DEFAULT_TZ;
   const audience = opts.audience || 'student';
   const serialized = serializeCourtLocationForBooking(court, {
@@ -144,7 +168,7 @@ export function buildLessonReminderDetailFields(booking, viewerTimezone, opts = 
   }
 
   return {
-    lesson_title: booking.lesson?.title || 'Lesson',
+    lesson_title: booking.lesson_title_at_booking || booking.lesson?.title || 'Lesson',
     lesson_date,
     lesson_time,
     lesson_when: formatLessonWhenForEmail(booking.scheduled_at, tz),

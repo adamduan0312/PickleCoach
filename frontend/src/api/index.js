@@ -1,6 +1,6 @@
 import { apiRequest, qs } from './client.js';
 
-export { ApiError, API_BASE_URL, asList, getStoredToken, setStoredToken, clearStoredToken, onUnauthorized } from './client.js';
+export { ApiError, API_BASE_URL, asList, getStoredToken, setStoredToken, clearStoredToken, onUnauthorized, resolveMediaUrl, apiOrigin } from './client.js';
 
 export const authApi = {
   register: (body) => apiRequest('/auth/register', { method: 'POST', body, skipAuth: true, ignoreUnauthorized: true }),
@@ -10,6 +10,12 @@ export const authApi = {
   resetPassword: (body) => apiRequest('/auth/reset-password', { method: 'POST', body, skipAuth: true }),
   getProfile: (opts) => apiRequest('/auth/profile', opts),
   updateProfile: (body) => apiRequest('/auth/profile', { method: 'PUT', body }),
+  uploadAvatar: (file) => {
+    const body = new FormData();
+    body.append('photo', file);
+    return apiRequest('/auth/profile/avatar', { method: 'POST', body });
+  },
+  removeAvatar: () => apiRequest('/auth/profile/avatar', { method: 'DELETE' }),
   logout: () => apiRequest('/auth/logout', { method: 'POST' }),
   addRole: (role) => apiRequest('/auth/me/role', { method: 'PUT', body: { role, action: 'add' } }),
   removeRole: (role) => apiRequest('/auth/me/role', { method: 'PUT', body: { role, action: 'remove' } }),

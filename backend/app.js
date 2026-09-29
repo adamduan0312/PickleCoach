@@ -2,6 +2,7 @@
  * Express application factory (no listen). Used by server.js and HTTP integration tests.
  */
 import express from 'express';
+import path from 'path';
 import cors from 'cors';
 import helmet from 'helmet';
 import compression from 'compression';
@@ -11,7 +12,7 @@ import { sequelize } from './models/index.js';
 import { requestId } from './middleware/requestId.js';
 import { rateLimiter } from './middleware/rateLimiter.js';
 import { logger } from './config/logger.js';
-
+import { BACKEND_ROOT } from './utils/avatarStorage.js';
 /**
  * @param {{ env?: string }} [options]
  * @returns {import('express').Express}
@@ -100,6 +101,20 @@ export function createApp(options = {}) {
   });
 
   app.use('/api', routes);
+
+  // Profile photos and other local uploads (paths stored on users.avatar_url).
+  app.use(
+    '/uploads',
+    (req, res, next) => {
+      res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+      next();
+    },
+    express.static(path.join(BACKEND_ROOT, 'uploads'), {
+      fallthrough: true,
+      maxAge: env === 'production' ? '7d' : 0,
+    }),
+  );
+
   app.use(notFound);
   app.use(errorHandler);
 

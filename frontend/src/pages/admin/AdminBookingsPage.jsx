@@ -12,6 +12,7 @@ import {
   sortAdminBookingsForList,
 } from '../../domain/adminBookingList.js';
 import { bookingStatusLabel } from '../../domain/bookingStatus.js';
+import { bookingLessonTitle } from '../../domain/lessonOffering.js';
 import { formatInZone } from '../../utils/datetime.js';
 
 const STATUS_FILTERS = [
@@ -95,7 +96,7 @@ export function AdminBookingsPage() {
                   </td>
                   <td>{b.primaryStudent?.full_name || '—'}</td>
                   <td>{b.coach?.full_name || '—'}</td>
-                  <td>{b.lesson?.title || 'Lesson'}</td>
+                  <td>{bookingLessonTitle(b)}</td>
                   <td className="small muted">{formatInZone(b.scheduled_at)}</td>
                   <td>
                     <AdminStatusStack items={[adminBookingStatusView(b), adminIssueStatusView(b)]} />

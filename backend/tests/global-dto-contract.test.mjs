@@ -226,7 +226,7 @@ describe('message / availability / audit / cancellation contracts', () => {
     assert.equal(dto.booking.lesson_id, 1);
     assert.equal(dto.booking.messaging_locked, false);
     assert.equal(dto.messages[0].message_text, 'yo');
-    assert.deepEqual(dto.counterpart, { id: 2, full_name: 'Coach', avatar_url: null });
+    assert.deepEqual(dto.counterpart, { id: 2, full_name: 'Coach', avatar_url: null, role: 'coach' });
     assert.equal(dto.counterpart.email, undefined);
   });
 

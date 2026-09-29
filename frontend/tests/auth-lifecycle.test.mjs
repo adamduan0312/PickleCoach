@@ -105,6 +105,12 @@ describe('protected paths after authorization shrinks', () => {
     assert.equal(pathMatchesMode('/dashboard', 'student'), true);
   });
 
+  it('does not treat coach mode as matching student booking URLs', () => {
+    assert.equal(pathMatchesMode('/book/12/checkout', 'coach'), false);
+    assert.equal(pathMatchesMode('/bookings/confirming', 'coach'), false);
+    assert.equal(pathMatchesMode('/book/12/checkout', 'student'), true);
+  });
+
   it('homePathFor follows remaining roles after preferred mode is invalid', () => {
     assert.equal(homePathFor({ roles: ['student'] }, 'coach'), '/dashboard');
     assert.equal(homePathFor({ roles: ['coach'] }, 'admin'), '/coach');
@@ -151,6 +157,13 @@ describe('session wiring contracts', () => {
   it('RequireAuth sends unauthenticated users to login; RequireRole sends missing roles to forbidden', () => {
     assert.match(guardsSrc, /to="\/login"/);
     assert.match(guardsSrc, /to="\/forbidden"/);
+  });
+
+  it('checkout requires Student mode so Coach mode cannot initiate bookings', () => {
+    const appSrc = readFileSync(join(__dirname, '../src/App.jsx'), 'utf8');
+    assert.match(guardsSrc, /export function RequireStudentMode/);
+    assert.match(appSrc, /RequireStudentMode/);
+    assert.match(appSrc, /BookingCheckoutPage/);
   });
 
   it('401 API responses clear the stored session', () => {

@@ -11,6 +11,10 @@ import * as notificationService from '../services/notificationService.js';
 import { canSelfServiceAddRole, canSelfServiceRemoveRole } from '../utils/roleGovernance.js';
 import { countOtherLiveAdmins } from '../utils/userRoleChangeGuards.js';
 import { softDeleteUserAccount } from '../utils/userLifecycle.js';
+import {
+  deleteManagedAvatarFile,
+  publicPathForAvatarFilename,
+} from '../utils/avatarStorage.js';
 
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
 /** Minimum interval between verification emails for the same user (spam / cost control). */
@@ -161,7 +165,7 @@ export const getProfile = async (req, res) => {
 
 export const updateProfile = async (req, res) => {
   try {
-    const { full_name, phone, timezone, avatar_url } = req.validated;
+    const { full_name, phone, timezone } = req.validated;
     const user = await User.findByPk(req.user.id);
 
     if (!user) {
@@ -173,7 +177,6 @@ export const updateProfile = async (req, res) => {
       full_name: full_name || user.full_name,
       phone: phone !== undefined ? phone : user.phone,
       timezone: timezone || user.timezone,
-      avatar_url: avatar_url !== undefined ? avatar_url : user.avatar_url,
     });
 
     await logAudit(req.user.id, 'profile_updated', 'users', user.id, beforeState, user.toJSON(), req);
@@ -187,6 +190,70 @@ export const updateProfile = async (req, res) => {
   } catch (error) {
     logger.error('Update profile error:', error);
     return errorResponse(res, 'Failed to update profile', 500);
+  }
+};
+
+/**
+ * POST /api/auth/profile/avatar — multipart field `photo` (JPG/PNG/WebP).
+ */
+export const uploadProfileAvatar = async (req, res) => {
+  try {
+    if (!req.file) {
+      return errorResponse(res, 'Please choose a photo to upload.', 400);
+    }
+
+    const user = await User.findByPk(req.user.id);
+    if (!user) {
+      return errorResponse(res, 'User not found', 404);
+    }
+
+    const previous = user.avatar_url;
+    const nextPath = publicPathForAvatarFilename(req.file.filename);
+    const beforeState = user.toJSON();
+
+    await user.update({ avatar_url: nextPath });
+    deleteManagedAvatarFile(previous);
+
+    await logAudit(req.user.id, 'profile_avatar_uploaded', 'users', user.id, beforeState, user.toJSON(), req);
+
+    const refreshed = await loadUserForAuthProfile(req.user.id);
+    if (!refreshed) {
+      return errorResponse(res, 'User not found', 404);
+    }
+
+    return successResponse(res, serializeAuthProfileUser(refreshed), 'Profile photo updated');
+  } catch (error) {
+    logger.error('Upload profile avatar error:', error);
+    return errorResponse(res, 'Failed to upload profile photo', 500);
+  }
+};
+
+/**
+ * DELETE /api/auth/profile/avatar — clear photo (and delete managed file when applicable).
+ */
+export const removeProfileAvatar = async (req, res) => {
+  try {
+    const user = await User.findByPk(req.user.id);
+    if (!user) {
+      return errorResponse(res, 'User not found', 404);
+    }
+
+    const beforeState = user.toJSON();
+    const previous = user.avatar_url;
+    await user.update({ avatar_url: null });
+    deleteManagedAvatarFile(previous);
+
+    await logAudit(req.user.id, 'profile_avatar_removed', 'users', user.id, beforeState, user.toJSON(), req);
+
+    const refreshed = await loadUserForAuthProfile(req.user.id);
+    if (!refreshed) {
+      return errorResponse(res, 'User not found', 404);
+    }
+
+    return successResponse(res, serializeAuthProfileUser(refreshed), 'Profile photo removed');
+  } catch (error) {
+    logger.error('Remove profile avatar error:', error);
+    return errorResponse(res, 'Failed to remove profile photo', 500);
   }
 };
 

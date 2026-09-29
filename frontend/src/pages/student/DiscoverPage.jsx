@@ -35,7 +35,8 @@ const RADIUS_OPTIONS = [
 const DEFAULT_SEARCH_RADIUS = '25';
 
 export function DiscoverPage() {
-  const { user } = useAuth();
+  const { user, mode } = useAuth();
+  const browseOnly = mode === 'coach';
   const [searchParams, setSearchParams] = useSearchParams();
   const [filters, setFilters] = useState({
     min_skill_rating: '',
@@ -303,9 +304,11 @@ export function DiscoverPage() {
     <div className="page discover-page">
       <div className="page-header">
         <div>
-          <h1>Find a coach</h1>
+          <h1>{browseOnly ? 'Browse coaches' : 'Find a coach'}</h1>
           <p className="muted">
-            Browse marketplace coaches ready to take bookings.
+            {browseOnly
+              ? 'Explore marketplace coaches (research only). Switch to Student mode to book.'
+              : 'Browse marketplace coaches ready to take bookings.'}
             {hasLocation
               ? ` Searching within ${applied.radius || DEFAULT_SEARCH_RADIUS} miles.`
               : ' Add a location to search within 25 miles by default.'}

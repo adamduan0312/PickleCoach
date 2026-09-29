@@ -9,7 +9,8 @@ import { HowBookingsWorkGuide } from '../../components/guides/HowBookingsWorkGui
 import { DashboardReminders } from '../../components/dashboard/DashboardReminders.jsx';
 import { bookingDisplayLabel, bookingDisplayTone, coachAcceptanceDeadlineAt, sortBookingsForList } from '../../domain/bookingStatus.js';
 import { coachDashboardReminders } from '../../domain/dashboardReminders.js';
-import { formatListWhenInZone } from '../../utils/datetime.js';
+import { bookingLessonTitle } from '../../domain/lessonOffering.js';
+import { formatListWhenInZone, formatListWhenWithZone } from '../../utils/datetime.js';
 
 const STEP_LABELS = {
   profile: 'Coach profile',
@@ -21,7 +22,7 @@ const STEP_LABELS = {
 
 function respondByWhen(booking, tz) {
   const iso = coachAcceptanceDeadlineAt(booking);
-  return iso ? formatListWhenInZone(iso, tz) : null;
+  return iso ? formatListWhenWithZone(iso, tz) : null;
 }
 
 export function CoachDashboardPage() {
@@ -124,10 +125,10 @@ export function CoachDashboardPage() {
               style={{ color: 'inherit', textDecoration: 'none' }}
             >
               <BookingListCardBody
-                lessonTitle={b.lesson?.title || 'Lesson'}
+                lessonTitle={bookingLessonTitle(b)}
                 partyName={b.primaryStudent?.full_name}
                 price={b.price}
-                lessonWhen={formatListWhenInZone(b.scheduled_at, tz)}
+                lessonWhen={formatListWhenWithZone(b.scheduled_at, tz)}
                 requestedWhen={b.created_at ? formatListWhenInZone(b.created_at, tz) : null}
                 deadlineWhen={respondByWhen(b, tz)}
                 audience="coach"

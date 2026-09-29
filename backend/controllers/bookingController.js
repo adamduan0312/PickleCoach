@@ -351,7 +351,12 @@ export const confirmBooking = async (req, res) => {
     );
   } catch (error) {
     if (error.statusCode && error.code) {
-      return errorResponse(res, error.message, error.statusCode, null, { code: error.code });
+      return errorResponse(res, error.message, error.statusCode, null, {
+        code: error.code,
+        ...(typeof error.authorizationCancelled === 'boolean'
+          ? { authorization_cancelled: error.authorizationCancelled }
+          : {}),
+      });
     }
     if (error.statusCode) {
       return errorResponse(res, error.message, error.statusCode);

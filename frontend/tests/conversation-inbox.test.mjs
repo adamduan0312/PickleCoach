@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   conversationInboxGroup,
+  counterpartRoleLabel,
   sortConversationsForInbox,
 } from '../src/domain/conversationInbox.js';
 
@@ -52,5 +53,14 @@ describe('sortConversationsForInbox', () => {
     ]).map((c) => c.id);
 
     assert.deepEqual(ids, [1, 2, 3, 11, 10]);
+  });
+});
+
+describe('counterpartRoleLabel', () => {
+  it('labels booking-party roles for dual-role inboxes', () => {
+    assert.equal(counterpartRoleLabel('coach'), 'Coach');
+    assert.equal(counterpartRoleLabel('student'), 'Student');
+    assert.equal(counterpartRoleLabel(null), null);
+    assert.equal(counterpartRoleLabel('admin'), null);
   });
 });

@@ -195,6 +195,34 @@ export function serializeCourtForPublicViewer(court, opts = {}) {
 }
 
 /**
+ * The court as it was when the booking was made: the booking's `court_*_at_booking`
+ * snapshot when present, else the live court row (legacy bookings).
+ * Returns an unredacted court-shaped object — always pass the result through
+ * serializeCourtLocationForBooking before exposing it.
+ *
+ * @param {object|null|undefined} booking plain booking (snapshot columns)
+ * @param {object|null|undefined} liveCourt associated CourtLocation (may be null)
+ */
+export function courtLocationAsBooked(booking, liveCourt) {
+  const live = liveCourt?.toJSON ? liveCourt.toJSON() : liveCourt;
+  if (!booking || booking.court_name_at_booking == null) return live ?? null;
+  return {
+    id: live?.id ?? booking.court_location_id ?? null,
+    name: booking.court_name_at_booking,
+    address_line1: booking.court_address_line1_at_booking ?? null,
+    city: booking.court_city_at_booking ?? null,
+    state: booking.court_state_at_booking ?? null,
+    postal_code: booking.court_postal_code_at_booking ?? null,
+    country: booking.court_country_at_booking ?? null,
+    is_private: booking.court_is_private_at_booking == null
+      ? Boolean(live?.is_private)
+      : Boolean(booking.court_is_private_at_booking),
+    latitude: booking.court_latitude_at_booking ?? null,
+    longitude: booking.court_longitude_at_booking ?? null,
+  };
+}
+
+/**
  * Booking-embedded court summary (latitude/longitude field names).
  * @param {object|null|undefined} courtLocation
  * @param {{

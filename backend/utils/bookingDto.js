@@ -1,5 +1,5 @@
 import { isMessagingLocked } from './bookingMessaging.js';
-import { serializeCourtLocationForBooking } from './courtAddressVisibility.js';
+import { courtLocationAsBooked, serializeCourtLocationForBooking } from './courtAddressVisibility.js';
 import { serializeFinancialReview } from './financialReviewWindow.js';
 import { getCoachAcceptanceTimeoutHours, getMinBookingLeadHours, getCoachAcceptanceDeadlineAt } from './coachAcceptanceTimeout.js';
 
@@ -24,6 +24,9 @@ export const BOOKING_SUMMARY_FIELD_NAMES = [
   'primary_student_id',
   'scheduled_at',
   'duration_minutes',
+  'lesson_title_at_booking',
+  'lesson_type_at_booking',
+  'max_players_at_booking',
   'price',
   'status',
   'court_location_id',
@@ -60,6 +63,8 @@ export const LESSON_SUMMARY_FIELD_NAMES = [
   'price',
   'effective_hourly_rate',
   'max_students',
+  'lesson_type',
+  'max_players',
   'is_active',
 ];
 
@@ -253,7 +258,7 @@ export function serializeBookingListItem(
     dto.primaryStudent = serializeUserPartySummary(primaryStudent, { includeStudentReliability });
   }
   if (courtLocation !== undefined) {
-    dto.courtLocation = serializeCourtLocationSummary(courtLocation, {
+    dto.courtLocation = serializeCourtLocationSummary(courtLocationAsBooked(plain, courtLocation), {
       bookingStatus: dto.status ?? plain.status,
       viewerIsPrivileged,
     });
@@ -295,7 +300,7 @@ export function serializeBookingDetailPayload(
     dto.primaryStudent = serializeUserPartySummary(primaryStudent, { includeStudentReliability });
   }
   if (courtLocation !== undefined) {
-    dto.courtLocation = serializeCourtLocationSummary(courtLocation, {
+    dto.courtLocation = serializeCourtLocationSummary(courtLocationAsBooked(plain, courtLocation), {
       bookingStatus: dto.status ?? plain.status,
       viewerIsPrivileged,
     });

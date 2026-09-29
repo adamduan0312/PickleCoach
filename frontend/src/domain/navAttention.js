@@ -4,10 +4,10 @@
  */
 
 /**
- * @param {{ mode: string|null, student: boolean, coach: boolean, admin: boolean }} opts
+ * @param {{ mode: string|null, student?: boolean, coach: boolean, admin: boolean }} opts
  * @returns {{ to: string, label: string, attention?: 'messages' | 'bookings' }[]}
  */
-export function buildPrimaryNavLinks({ mode, student, coach, admin }) {
+export function buildPrimaryNavLinks({ mode, coach, admin }) {
   /** @type {{ to: string, label: string, attention?: 'messages' | 'bookings' }[]} */
   const links = [];
 
@@ -25,7 +25,8 @@ export function buildPrimaryNavLinks({ mode, student, coach, admin }) {
     links.push({ to: '/coach/lessons', label: 'Lessons' });
     links.push({ to: '/coach/availability', label: 'Availability' });
     links.push({ to: '/coach/courts', label: 'Courts' });
-    if (student) links.push({ to: '/discover', label: 'Find a coach' });
+    // Browse/research only in Coach mode — booking CTAs require Student mode.
+    links.push({ to: '/discover', label: 'Browse coaches' });
   } else {
     links.push({ to: '/dashboard', label: 'Dashboard' });
     links.push({ to: '/discover', label: 'Find a coach' });

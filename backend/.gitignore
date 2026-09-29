@@ -22,3 +22,6 @@ testDb.js
 
 # Local email presentation snapshots
 tmp-email-presentation/
+
+# User-uploaded profile photos
+uploads/

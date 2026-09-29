@@ -1,3 +1,5 @@
+import { timezoneShortLabel } from '../domain/timezones.js';
+
 const WEEKDAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
 
 export function detectLocalTimezone() {
@@ -149,6 +151,20 @@ export function formatListDateInZone(iso, timeZone) {
 export function formatListWhenInZone(iso, timeZone) {
   if (!iso) return '—';
   return `${formatListDateInZone(iso, timeZone)} · ${formatTimeInZone(iso, timeZone)}`;
+}
+
+/** `Mon, Sep 28, 2026 · 8:00 AM Pacific Time` — lesson times and deadlines on booking screens. */
+export function formatBookingWhenInZone(iso, timeZone) {
+  if (!iso) return '—';
+  const zone = timeZone || detectLocalTimezone();
+  return `${formatDateInZone(iso, zone)} · ${formatTimeInZone(iso, zone)} ${timezoneShortLabel(zone)}`;
+}
+
+/** `Mon, Sep 28 · 8:00 AM Pacific Time` — list/dashboard cards. */
+export function formatListWhenWithZone(iso, timeZone) {
+  if (!iso) return '—';
+  const zone = timeZone || detectLocalTimezone();
+  return `${formatListWhenInZone(iso, zone)} ${timezoneShortLabel(zone)}`;
 }
 
 /** Milliseconds until `iso`, or 0 if missing/past. */

@@ -6,11 +6,12 @@ import { bookingsApi, coachesApi, asList } from '../../api/index.js';
 import { Alert, ErrorState, LoadingState } from '../../components/ui/States.jsx';
 import { Avatar } from '../../components/ui/Avatar.jsx';
 import { formatMoney, courtLabel, teachingLocationLabel } from '../../utils/format.js';
-import { formatDateInZone, formatTimeInZone, detectLocalTimezone } from '../../utils/datetime.js';
+import { formatBookingWhenInZone, detectLocalTimezone } from '../../utils/datetime.js';
 import { useAuth } from '../../auth/AuthContext.jsx';
 import { CheckoutPolicyExplainer } from '../../components/bookings/CheckoutPolicyExplainer.jsx';
 import { bookingApiErrorCopy, bookingApiErrorMessage, stripePaymentFormErrorCopy } from '../../domain/bookingErrors.js';
 import { ensureCheckoutAttemptParams, getCheckoutAttemptId } from '../../utils/checkoutAttempt.js';
+import { GROUP_LESSON_NOTE, isGroupLesson, lessonTypeLabel } from '../../domain/lessonOffering.js';
 
 const STRIPE_PUBLISHABLE_KEY = import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY || '';
 const stripePromise = STRIPE_PUBLISHABLE_KEY ? loadStripe(STRIPE_PUBLISHABLE_KEY) : null;
@@ -179,9 +180,7 @@ function BookingSummary({ meta, scheduledAt, tz, amount, currency }) {
   const coach = meta.coach;
   const lesson = meta.lesson;
   const profile = coach?.coachProfile || {};
-  const whenLabel = scheduledAt
-    ? `${formatDateInZone(scheduledAt, tz)} · ${formatTimeInZone(scheduledAt, tz)}`
-    : '—';
+  const whenLabel = scheduledAt ? formatBookingWhenInZone(scheduledAt, tz) : '—';
   const total = amount != null ? formatMoney(amount, currency || 'USD') : formatMoney(lesson?.price);
 
   return (
@@ -202,6 +201,10 @@ function BookingSummary({ meta, scheduledAt, tz, amount, currency }) {
           <dd>
             {lesson?.title || 'Lesson'}
             {lesson?.duration_minutes != null ? ` · ${lesson.duration_minutes} minutes` : null}
+            {lesson ? <span className="small muted" style={{ display: 'block' }}>{lessonTypeLabel(lesson)}</span> : null}
+            {isGroupLesson(lesson) ? (
+              <span className="small muted" style={{ display: 'block' }}>{GROUP_LESSON_NOTE}</span>
+            ) : null}
           </dd>
         </div>
         <div>
@@ -279,7 +282,11 @@ function CheckoutForm({ intent, coachId }) {
   );
 
   const amountLabel = formatMoney(intent.amount, intent.currency);
-  const canAuthorize = Boolean(stripe && elements && paymentElementReady && !paymentElementLoadError && !busy);
+  // After a slot conflict the PaymentIntent is cancelled; the student must pick a new time.
+  const slotConflict = Boolean(bookingApiErrorCopy(error));
+  const canAuthorize = Boolean(
+    stripe && elements && paymentElementReady && !paymentElementLoadError && !busy && !slotConflict,
+  );
 
   async function onSubmit(e) {
     e.preventDefault();

@@ -21,12 +21,16 @@ import {
   groupSlotsByDate,
   formatDateInZone,
   formatTimeInZone,
+  formatBookingWhenInZone,
   detectLocalTimezone,
   AVAILABILITY_LOOKAHEAD_DAYS,
   AVAILABILITY_INITIAL_SLOT_COUNT,
   AVAILABILITY_SLOT_PAGE_SIZE,
 } from '../../utils/datetime.js';
 import { useAuth } from '../../auth/AuthContext.jsx';
+import { hasStudentRole } from '../../domain/userReadiness.js';
+import { timezoneLabel } from '../../domain/timezones.js';
+import { GROUP_LESSON_NOTE, isGroupLesson, lessonTypeLabel } from '../../domain/lessonOffering.js';
 
 function courtTeachingLabel(court) {
   const name = court?.name || 'Court';
@@ -46,7 +50,7 @@ function reviewRatingValue(review) {
 export function CoachPublicProfilePage() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, mode } = useAuth();
   const viewerTz = user?.timezone || detectLocalTimezone();
   const [lessonId, setLessonId] = useState('');
   const [courtId, setCourtId] = useState('');
@@ -74,6 +78,8 @@ export function CoachPublicProfilePage() {
   const selectedLesson = (data?.lessons || []).find((l) => String(l.id) === String(lessonId));
   const selectedCourt = (data?.courts || []).find((c) => String(c.court_id || c.id) === String(courtId));
   const isOwnProfile = user?.id != null && String(user.id) === String(id);
+  /** Coach mode may browse profiles but cannot initiate student bookings. */
+  const bookingAllowed = mode === 'student' && !isOwnProfile;
 
   const slots = useMemo(() => {
     if (!data || !selectedLesson) return [];
@@ -121,7 +127,7 @@ export function CoachPublicProfilePage() {
   }
 
   function continueBooking() {
-    if (isOwnProfile || !lessonId || !courtId || !slotIso) return;
+    if (!bookingAllowed || !lessonId || !courtId || !slotIso) return;
     const q = new URLSearchParams({ lesson: lessonId, court: courtId, at: slotIso });
     navigate(`/book/${id}/checkout?${q.toString()}`);
   }
@@ -145,7 +151,7 @@ export function CoachPublicProfilePage() {
     hasReviews = Number.isFinite(ratingAverage) && reviewCount > 0;
   }
   const ratingParts = coachRatingCompactParts(ratingAverage, reviewCount);
-  const canBook = !isOwnProfile && data.lessons.length > 0;
+  const canBook = bookingAllowed && data.lessons.length > 0;
   const bookingReady = Boolean(lessonId && courtId && slotIso);
 
   return (
@@ -232,15 +238,40 @@ export function CoachPublicProfilePage() {
       ) : null}
 
       <section className="card coach-profile-section coach-booking-section">
-        <h2>Book a lesson</h2>
+        <h2>{bookingAllowed ? 'Book a lesson' : 'Lessons offered'}</h2>
         {isOwnProfile ? (
           <Alert tone="info">
             This is your coach profile. Students book you from Discover — you can’t book yourself.
           </Alert>
         ) : null}
+        {!isOwnProfile && !bookingAllowed ? (
+          <Alert tone="info">
+            {hasStudentRole(user?.roles)
+              ? 'You’re browsing in Coach mode. Switch to Student mode to book a lesson.'
+              : 'Coach mode is browse-only. Booking requires a student account.'}
+          </Alert>
+        ) : null}
 
         {data.lessons.length === 0 ? (
           <EmptyState title="No bookable lessons" detail="This coach is not currently offering marketplace lessons." />
+        ) : !bookingAllowed ? (
+          <ul className="stack" style={{ listStyle: 'none', padding: 0, margin: '12px 0 0' }}>
+            {data.lessons.map((l) => (
+              <li key={l.id} className="coach-lesson-card" style={{ cursor: 'default' }}>
+                <div className="coach-lesson-card-main">
+                  <strong>{l.title}</strong>
+                  <span className="small coach-lesson-type">{lessonTypeLabel(l)}</span>
+                  {l.description ? (
+                    <p className="small muted coach-lesson-desc">{l.description}</p>
+                  ) : null}
+                </div>
+                <div className="coach-lesson-card-meta">
+                  <span>{l.duration_minutes} min</span>
+                  <strong>{formatMoney(l.price)}</strong>
+                </div>
+              </li>
+            ))}
+          </ul>
         ) : (
           <div className="coach-booking-flow">
             <div className="coach-booking-step">
@@ -254,10 +285,10 @@ export function CoachPublicProfilePage() {
                       type="button"
                       className={`coach-lesson-card${selected ? ' selected' : ''}`}
                       onClick={() => selectLesson(l.id)}
-                      disabled={isOwnProfile}
                     >
                       <div className="coach-lesson-card-main">
                         <strong>{l.title}</strong>
+                        <span className="small coach-lesson-type">{lessonTypeLabel(l)}</span>
                         {l.description ? (
                           <p className="small muted coach-lesson-desc">{l.description}</p>
                         ) : null}
@@ -288,7 +319,6 @@ export function CoachPublicProfilePage() {
                           type="button"
                           className={`coach-court-card${selected ? ' selected' : ''}`}
                           onClick={() => selectCourt(cid)}
-                          disabled={isOwnProfile}
                         >
                           {courtTeachingLabel(c)}
                         </button>
@@ -303,7 +333,8 @@ export function CoachPublicProfilePage() {
               <div className="coach-booking-step">
                 <h3 className="coach-booking-step-title">3. Choose when</h3>
                 <p className="small muted coach-section-intro">
-                  Next available times in your timezone ({viewerTz}). Coach timezone: {coach.timezone || 'UTC'}.
+                  Next available times in your time zone ({timezoneLabel(viewerTz)}). Coach time zone:{' '}
+                  {timezoneLabel(coach.timezone || 'UTC')}.
                 </p>
                 {slots.length === 0 ? (
                   <EmptyState
@@ -325,11 +356,11 @@ export function CoachPublicProfilePage() {
                                   key={s.scheduled_at}
                                   className={`slot${slotIso === s.scheduled_at ? ' selected' : ''}${occupied ? ' occupied' : ''}`}
                                   onClick={() => {
-                                    if (occupied || isOwnProfile) return;
+                                    if (occupied) return;
                                     setSlotIso(s.scheduled_at);
                                   }}
-                                  disabled={isOwnProfile || occupied}
-                                  aria-disabled={occupied || isOwnProfile}
+                                  disabled={occupied}
+                                  aria-disabled={occupied}
                                   title={occupied ? 'Booked' : undefined}
                                 >
                                   <strong>{formatTimeInZone(s.scheduled_at, viewerTz)}</strong>
@@ -346,7 +377,6 @@ export function CoachPublicProfilePage() {
                         type="button"
                         className="btn secondary slot-see-more"
                         onClick={showMoreSlots}
-                        disabled={isOwnProfile}
                       >
                         See more times
                       </button>
@@ -365,13 +395,22 @@ export function CoachPublicProfilePage() {
                     <dd>{selectedLesson.title} · {selectedLesson.duration_minutes} min · {formatMoney(selectedLesson.price)}</dd>
                   </div>
                   <div>
+                    <dt>Type</dt>
+                    <dd>
+                      {lessonTypeLabel(selectedLesson)}
+                      {isGroupLesson(selectedLesson) ? (
+                        <span className="small muted" style={{ display: 'block' }}>{GROUP_LESSON_NOTE}</span>
+                      ) : null}
+                    </dd>
+                  </div>
+                  <div>
                     <dt>Where</dt>
                     <dd>{courtTeachingLabel(selectedCourt)}</dd>
                   </div>
                   <div>
                     <dt>When</dt>
                     <dd>
-                      {formatDateInZone(slotIso, viewerTz)} · {formatTimeInZone(slotIso, viewerTz)}
+                      {formatBookingWhenInZone(slotIso, viewerTz)}
                     </dd>
                   </div>
                 </dl>

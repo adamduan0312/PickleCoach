@@ -68,13 +68,21 @@ import {
   adminBookingMoneyStatusItems,
   adminRefundStatusView,
 } from '../../domain/adminStatus.js';
-import { formatInZone, formatDateInZone, formatTimeInZone, formatRemainingUntil, detectLocalTimezone } from '../../utils/datetime.js';
+import {
+  formatInZone,
+  formatDateInZone,
+  formatTimeInZone,
+  formatBookingWhenInZone,
+  formatRemainingUntil,
+  detectLocalTimezone,
+} from '../../utils/datetime.js';
 import { courtLabel, formatMoney } from '../../utils/format.js';
+import { bookingLessonTitle, bookingLessonTypeLabel } from '../../domain/lessonOffering.js';
 import { useAuth } from '../../auth/AuthContext.jsx';
 
 function formatAcceptanceDeadline(iso, tz) {
   if (!iso) return null;
-  return `${formatDateInZone(iso, tz)} · ${formatTimeInZone(iso, tz)}`;
+  return formatBookingWhenInZone(iso, tz);
 }
 
 function bookingDetailHeadline(booking, { audience }) {
@@ -146,7 +154,7 @@ function bookingDetailLead(booking, { audience, tz, now = Date.now(), payment = 
 
 function bookingDetailNextSteps(booking, { audience, tz, now = Date.now(), payment = null }) {
   const deadlineLabel = formatAcceptanceDeadline(coachAcceptanceDeadlineAt(booking), tz);
-  const whenLabel = `${formatDateInZone(booking.scheduled_at, tz)} · ${formatTimeInZone(booking.scheduled_at, tz)}`;
+  const whenLabel = formatBookingWhenInZone(booking.scheduled_at, tz);
   const reviewOpen = isFinancialReviewWindowOpen(booking, now);
 
   // Open issue / payment dispute: IssueReportedPanel owns the primary message.
@@ -368,11 +376,11 @@ function bookingDetailNextSteps(booking, { audience, tz, now = Date.now(), payme
 }
 
 function BookingDetailLessonSection({ booking, payment, tz, isCoach, admin }) {
-  const lessonWhenLabel = `${formatDateInZone(booking.scheduled_at, tz)} · ${formatTimeInZone(booking.scheduled_at, tz)}`;
+  const lessonWhenLabel = formatBookingWhenInZone(booking.scheduled_at, tz);
   const requestedLabel = booking.created_at
     ? `${formatDateInZone(booking.created_at, tz)} · ${formatTimeInZone(booking.created_at, tz)}`
     : null;
-  const lessonTitle = booking.lesson?.title || 'Lesson';
+  const lessonTitle = bookingLessonTitle(booking);
   const duration = booking.duration_minutes != null ? ` · ${booking.duration_minutes} min` : '';
   const amount = payment?.total_charge_to_student ?? booking.price;
   const coachCancelMoney = isCoach && !admin
@@ -424,7 +432,12 @@ function BookingDetailLessonSection({ booking, payment, tz, isCoach, admin }) {
         ) : null}
         <div>
           <dt>Lesson</dt>
-          <dd>{lessonTitle}{duration}</dd>
+          <dd>
+            {lessonTitle}{duration}
+            {booking.lesson_type_at_booking || booking.lesson ? (
+              <span className="small muted" style={{ display: 'block' }}>{bookingLessonTypeLabel(booking)}</span>
+            ) : null}
+          </dd>
         </div>
         {admin ? (
           <div className="booking-detail-facts-full">
@@ -690,6 +703,7 @@ export function BookingDetailPage({ admin = false }) {
         <ReportIssueForm
           booking={booking}
           isCoach={isCoach}
+          tz={tz}
           busy={busy}
           now={now}
           onSubmit={(body) => run(() => disputesApi.create(body))}
@@ -984,7 +998,7 @@ function FinancialReviewBanner({ booking, payment, isCoach, isStudent, tz, now: 
   // Before lesson end with no open window: hide. After lesson end, show open or closed copy.
   if (!lessonEnded && !windowOpen) return null;
 
-  const deadline = formatInZone(review.review_until, tz);
+  const deadline = formatBookingWhenInZone(review.review_until, tz);
   const remaining = formatRemainingUntil(review.review_until, new Date(now));
   const stillOpen = windowOpen && remaining !== 'ended';
   const payoutPaid = isCoachPayoutReleased(booking);
@@ -1078,7 +1092,7 @@ function FinancialReviewBanner({ booking, payment, isCoach, isStudent, tz, now: 
   return null;
 }
 
-function ReportIssueForm({ booking, isCoach, busy, onSubmit, now = Date.now() }) {
+function ReportIssueForm({ booking, isCoach, tz, busy, onSubmit, now = Date.now() }) {
   const { data: types } = useAsync(async () => asList((await disputesApi.types()).data), []);
   const allowedCodes = isCoach
     ? ['misconduct', 'lesson_not_completed', 'other']
@@ -1115,7 +1129,7 @@ function ReportIssueForm({ booking, isCoach, busy, onSubmit, now = Date.now() })
     >
       <h3>Report an issue</h3>
       <p className="small muted">
-        You have until {formatInZone(booking.financial_review?.review_until)} ({remaining} left) to report a payment or lesson problem before this booking is normally finalized.
+        You have until {formatBookingWhenInZone(booking.financial_review?.review_until, tz)} ({remaining} left) to report a payment or lesson problem before this booking is normally finalized.
       </p>
       <FormField label="Issue type" name="dispute_type_id">
         <select id="dispute_type_id" value={disputeTypeId} onChange={(e) => setDisputeTypeId(e.target.value)} required>

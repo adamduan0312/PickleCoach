@@ -21,6 +21,7 @@ import {
 } from '../../domain/adminDisputeResolve.js';
 import { formatInZone } from '../../utils/datetime.js';
 import { courtLabel, formatMoney } from '../../utils/format.js';
+import { bookingLessonTitle } from '../../domain/lessonOffering.js';
 
 function disputeTypeLabel(d) {
   return d?.disputeType?.name || d?.disputeType?.code || d?.dispute_type?.name || d?.dispute_type?.code || d?.dispute_type_id || '—';
@@ -161,7 +162,7 @@ export function AdminDisputeDetailPage() {
           <dl className="booking-detail-facts">
             <div>
               <dt>Lesson</dt>
-              <dd>{booking.lesson?.title || 'Lesson'}</dd>
+              <dd>{bookingLessonTitle(booking)}</dd>
             </div>
             <div>
               <dt>When</dt>

@@ -30,6 +30,15 @@ describe('buildPrimaryNavLinks', () => {
     assert.ok(coach.some((l) => l.to === '/coach/bookings' && l.attention === 'bookings'));
   });
 
+  it('shows Browse coaches in Coach mode for research (even without student role)', () => {
+    const coachOnly = buildPrimaryNavLinks({ mode: 'coach', student: false, coach: true, admin: false });
+    const dual = buildPrimaryNavLinks({ mode: 'coach', student: true, coach: true, admin: false });
+    const student = buildPrimaryNavLinks({ mode: 'student', student: true, coach: true, admin: false });
+    assert.ok(coachOnly.some((l) => l.to === '/discover' && l.label === 'Browse coaches'));
+    assert.ok(dual.some((l) => l.to === '/discover' && l.label === 'Browse coaches'));
+    assert.ok(student.some((l) => l.to === '/discover' && l.label === 'Find a coach'));
+  });
+
   it('does not put bookings attention on admin Bookings', () => {
     const admin = buildPrimaryNavLinks({ mode: 'admin', student: false, coach: false, admin: true });
     assert.equal(admin.some((l) => l.attention === 'bookings'), false);

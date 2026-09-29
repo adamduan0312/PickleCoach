@@ -457,14 +457,14 @@ describe('booking email presentation polish', () => {
 describe('timezone-aware schedule labels', () => {
   it('formats lesson when and deadlines in America/New_York with zone abbr', () => {
     const iso = '2026-09-04T14:00:00.000Z'; // 10:00 AM Eastern (EDT)
-    assert.equal(formatLessonWhenForEmail(iso, 'America/New_York'), 'Friday, September 4 · 10:00 AM EDT');
+    assert.equal(formatLessonWhenForEmail(iso, 'America/New_York'), 'Friday, September 4 · 10:00 AM Eastern Time');
     assert.equal(
       formatLessonWhenForEmail(iso, 'America/Los_Angeles'),
-      'Friday, September 4 · 7:00 AM PDT',
+      'Friday, September 4 · 7:00 AM Pacific Time',
     );
     assert.equal(
       formatDeadlineLabelForEmail('2026-09-01T15:32:00.000Z', 'America/New_York'),
-      'Tuesday, September 1 · 11:32 AM EDT',
+      'Tuesday, September 1 · 11:32 AM Eastern Time',
     );
   });
 });

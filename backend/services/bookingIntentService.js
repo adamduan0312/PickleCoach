@@ -473,8 +473,10 @@ export async function confirmBookingFromPaymentIntent({
         idempotencyKey: parsedMeta.idempotencyKey,
       });
       if (racedConfirm) return racedConfirm;
+      let authorizationCancelled = false;
       try {
         await stripeService.cancelPaymentIntent(paymentIntentId);
+        authorizationCancelled = true;
       } catch (cancelErr) {
         logger.warn({
           component: 'booking',
@@ -492,6 +494,7 @@ export async function confirmBookingFromPaymentIntent({
       );
       err.statusCode = 409;
       err.code = conflictCode;
+      err.authorizationCancelled = authorizationCancelled;
       throw err;
     }
 
@@ -503,6 +506,18 @@ export async function confirmBookingFromPaymentIntent({
         idempotency_key: parsedMeta.idempotencyKey || `pi_${paymentIntentId}`,
         scheduled_at: parsedMeta.scheduledAt,
         duration_minutes: finalDuration,
+        lesson_title_at_booking: lesson.title,
+        lesson_type_at_booking: lesson.lesson_type,
+        max_players_at_booking: lesson.max_players,
+        court_name_at_booking: court.name,
+        court_address_line1_at_booking: court.address_line1,
+        court_city_at_booking: court.city,
+        court_state_at_booking: court.state,
+        court_postal_code_at_booking: court.postal_code,
+        court_country_at_booking: court.country,
+        court_is_private_at_booking: court.is_private,
+        court_latitude_at_booking: court.latitude,
+        court_longitude_at_booking: court.longitude,
         price: amounts.lesson_price,
         court_location_id: parsedMeta.courtLocationId,
         status: 'pending',

@@ -15,6 +15,7 @@ import {
   formatReliabilityPercent,
 } from '../../domain/adminStatus.js';
 import { formatDateInZone, formatInZone } from '../../utils/datetime.js';
+import { bookingLessonTitle } from '../../domain/lessonOffering.js';
 
 const ROLE_OPTIONS = ['student', 'coach', 'admin'];
 
@@ -344,7 +345,7 @@ export function AdminUserDetailPage() {
               >
                 <div className="spread" style={{ alignItems: 'flex-start' }}>
                   <div>
-                    <strong>#{b.id} {b.lesson?.title || 'Lesson'}</strong>
+                    <strong>#{b.id} {bookingLessonTitle(b)}</strong>
                     <div className="small muted">{formatInZone(b.scheduled_at)}</div>
                   </div>
                   <AdminStatusStack items={[adminBookingStatusView(b), adminIssueStatusView(b)]} />

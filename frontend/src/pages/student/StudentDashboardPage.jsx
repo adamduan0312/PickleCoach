@@ -14,7 +14,9 @@ import {
   hasLessonEnded,
 } from '../../domain/bookingStatus.js';
 import { studentDashboardReminders } from '../../domain/dashboardReminders.js';
-import { formatDateInZone, formatTimeInZone, detectLocalTimezone } from '../../utils/datetime.js';
+import { formatDateInZone, formatTimeInZone, formatBookingWhenInZone, detectLocalTimezone } from '../../utils/datetime.js';
+import { timezoneShortLabel } from '../../domain/timezones.js';
+import { bookingLessonTitle } from '../../domain/lessonOffering.js';
 import {
   LOCATION_ACCESS_OFF_DETAIL,
   LOCATION_ACCESS_OFF_TITLE,
@@ -266,19 +268,19 @@ export function StudentDashboardPage() {
               <p className="small" style={{ margin: '0.35rem 0 0' }}>
                 Waiting for the coach to accept
                 {coachAcceptanceDeadlineAt(nextLesson)
-                  ? ` · by ${formatDateInZone(coachAcceptanceDeadlineAt(nextLesson), tz)} · ${formatTimeInZone(coachAcceptanceDeadlineAt(nextLesson), tz)}`
+                  ? ` · by ${formatBookingWhenInZone(coachAcceptanceDeadlineAt(nextLesson), tz)}`
                   : ''}
                 .
               </p>
             ) : null}
-            <h3 className="dashboard-next-title">{nextLesson.lesson?.title || 'Lesson'}</h3>
+            <h3 className="dashboard-next-title">{bookingLessonTitle(nextLesson)}</h3>
             <p className="muted" style={{ margin: '0.25rem 0 0' }}>
               with {nextLesson.coach?.full_name || 'Coach'}
             </p>
             <p style={{ margin: '0.75rem 0 0' }}>
               <strong>{formatDateInZone(nextLesson.scheduled_at, tz)}</strong>
               {' · '}
-              {formatTimeInZone(nextLesson.scheduled_at, tz)}
+              {formatTimeInZone(nextLesson.scheduled_at, tz)} {timezoneShortLabel(tz)}
             </p>
             {bookingCourtName(nextLesson) ? (
               <p className="muted" style={{ margin: '0.35rem 0 0' }}>{bookingCourtName(nextLesson)}</p>
@@ -298,13 +300,11 @@ export function StudentDashboardPage() {
               <Link key={b.id} to={`/bookings/${b.id}`} style={{ textDecoration: 'none', color: 'inherit' }}>
                 <div className="spread">
                   <div>
-                    <strong>{b.lesson?.title || 'Lesson'}</strong>
+                    <strong>{bookingLessonTitle(b)}</strong>
                     <div className="small muted">
                       with {b.coach?.full_name || 'Coach'}
                       {' · '}
-                      {formatDateInZone(b.scheduled_at, tz)}
-                      {' · '}
-                      {formatTimeInZone(b.scheduled_at, tz)}
+                      {formatBookingWhenInZone(b.scheduled_at, tz)}
                     </div>
                     {bookingCourtName(b) ? (
                       <div className="small muted">{bookingCourtName(b)}</div>
@@ -326,7 +326,7 @@ export function StudentDashboardPage() {
               <Link key={b.id} to={`/bookings/${b.id}`} style={{ textDecoration: 'none', color: 'inherit' }}>
                 <div className="spread">
                   <div>
-                    <strong>{b.lesson?.title || 'Lesson'}</strong>
+                    <strong>{bookingLessonTitle(b)}</strong>
                     <div className="small muted">
                       with {b.coach?.full_name || 'Coach'}
                       {' · '}

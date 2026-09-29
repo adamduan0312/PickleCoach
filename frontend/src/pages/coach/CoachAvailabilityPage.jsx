@@ -5,6 +5,7 @@ import { Alert, EmptyState, ErrorState, LoadingState } from '../../components/ui
 import { FormField } from '../../components/ui/FormField.jsx';
 import { WEEKDAYS } from '../../utils/datetime.js';
 import { useAuth } from '../../auth/AuthContext.jsx';
+import { timezoneLabel } from '../../domain/timezones.js';
 
 export function CoachAvailabilityPage() {
   const { user } = useAuth();
@@ -52,7 +53,10 @@ export function CoachAvailabilityPage() {
   return (
     <div className="page">
       <h1>Availability</h1>
-      <p className="muted">Recurring weekly windows in your coach timezone ({user?.timezone || 'UTC'}). Students pick a slot; the API stores the time in UTC.</p>
+      <p className="muted">
+        Recurring weekly windows in your time zone ({timezoneLabel(user?.timezone || 'UTC')}). Students
+        see these times converted to their own time zone.
+      </p>
       <Alert tone="error">{err}</Alert>
       <Alert tone="success">{message}</Alert>
       <form className="card grid-3" onSubmit={create} style={{ marginBottom: 16 }}>

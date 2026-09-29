@@ -142,6 +142,7 @@ describe('conversationInboxDto serialization', () => {
       id: 10,
       full_name: 'Coach Kim',
       avatar_url: '/coach.png',
+      role: 'coach',
     });
   });
 
@@ -179,6 +180,7 @@ describe('conversationInboxDto serialization', () => {
       id: 20,
       full_name: 'Student Sam',
       avatar_url: null,
+      role: 'student',
     });
   });
 
@@ -253,6 +255,7 @@ describe('getConversations inbox list', () => {
       id: 20,
       full_name: 'Student Sam',
       avatar_url: null,
+      role: 'student',
     });
   });
 

@@ -17,7 +17,8 @@ import {
   bookingListFilterLabel,
   isFinancialReviewWindowOpen,
 } from '../../domain/bookingStatus.js';
-import { formatListWhenInZone, formatRemainingUntil } from '../../utils/datetime.js';
+import { formatListWhenInZone, formatListWhenWithZone, formatRemainingUntil } from '../../utils/datetime.js';
+import { bookingLessonTitle } from '../../domain/lessonOffering.js';
 
 function emptyStateCopy(audience, filter) {
   if (!filter) {
@@ -159,12 +160,12 @@ export function BookingsListPage({ audience = 'student' }) {
             >
               <div className="spread booking-list-card">
                 <BookingListCardBody
-                  lessonTitle={b.lesson?.title || 'Lesson'}
+                  lessonTitle={bookingLessonTitle(b)}
                   partyName={other?.full_name}
                   price={b.price}
-                  lessonWhen={formatListWhenInZone(b.scheduled_at, tz)}
+                  lessonWhen={formatListWhenWithZone(b.scheduled_at, tz)}
                   requestedWhen={b.created_at ? formatListWhenInZone(b.created_at, tz) : null}
-                  deadlineWhen={deadlineIso ? formatListWhenInZone(deadlineIso, tz) : null}
+                  deadlineWhen={deadlineIso ? formatListWhenWithZone(deadlineIso, tz) : null}
                   audience={audience}
                 >
                   {audience === 'coach'

@@ -15,6 +15,7 @@ import {
   verifyEmailRequestSchema,
   confirmEmailVerificationSchema,
 } from '../config/validation.js';
+import { handleAvatarUpload } from '../middleware/avatarUpload.js';
 
 const router = express.Router();
 
@@ -25,6 +26,13 @@ router.post('/forgot-password', validateRequest(forgotPasswordSchema), authContr
 router.post('/reset-password', validateRequest(resetPasswordSchema), authController.resetPassword);
 router.get('/profile', authenticate, authController.getProfile);
 router.put('/profile', authenticate, validateRequest(updateProfileSchema), authController.updateProfile);
+router.post(
+  '/profile/avatar',
+  authenticate,
+  handleAvatarUpload,
+  authController.uploadProfileAvatar,
+);
+router.delete('/profile/avatar', authenticate, authController.removeProfileAvatar);
 router.post('/logout', authenticate, authController.logout);
 /** Self-service: add `student` or `coach` to `user_roles` (does not remove roles). */
 router.put('/me/role', authenticate, validateRequest(addUserRoleSchema), authController.addUserRole);

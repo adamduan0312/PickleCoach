@@ -41,6 +41,18 @@ const Lesson = sequelize.define('lessons', {
     type: DataTypes.INTEGER,
     defaultValue: 1,
   },
+  /** Offering type shown to students. Bookings are always one paying student either way. */
+  lesson_type: {
+    type: DataTypes.ENUM('private', 'group'),
+    allowNull: false,
+    defaultValue: 'private',
+  },
+  /** Group only: people the coach allows (paying student + friends). Informational, not capacity. */
+  max_players: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+    defaultValue: null,
+  },
   is_active: {
     type: DataTypes.BOOLEAN,
     allowNull: false,
