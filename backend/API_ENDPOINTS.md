@@ -578,9 +578,9 @@ Authorization: Bearer <token>
         "headline": null,
         "bio": "Experienced coach",
         "experience_years": 0,
-        "skill_rating": 4.5,
-        "rating_system": "self",
-        "certifications": null,
+        "skill_rating": 4.217,
+        "rating_system": "DUPR",
+        "certifications": [],
         "location": null,
         "rating_average": 0,
         "rating_count": 0,
@@ -670,6 +670,12 @@ Authorization: Bearer <token>
 
 ## Geo (`/api/geo`)
 
+### `GET /api/geo/places`
+- **Auth**: Required (**coach** or **admin**)
+- **Description**: Autocomplete for the coach profile **“Based in”** field. Returns US city-level suggestions only — ZIPs and street addresses collapse to their city; no coordinates. Provider: Photon (OSM), since Nominatim disallows search-as-you-type. Cached ~10 minutes per query. Saving the profile still re-validates `location` server-side.
+- **Query**: `q` (required, 2–200 chars; 1–4 digit partial ZIPs return `[]`), `limit` (1–10, default 6; street queries return at most 3).
+- **Response** (200): `{ "results": [{ "label": "Davie, FL", "detail": "Davie, Broward County, Florida, United States" }] }`. Provider outage → `503`/`502`.
+
 ### `GET /api/geo/search`
 - **Auth**: Required (student, coach, or admin) — same roles as marketplace Discover.
 - **Description**: Convert a free-text **ZIP code, city, or address** into latitude/longitude for Discover radius search. Geocoding runs **server-side** (default: OpenStreetMap Nominatim). The query is **not** persisted. Provider API keys (if any) stay on the server.
@@ -715,8 +721,9 @@ Authorization: Bearer <token>
   - `lng` (optional) – longitude in degrees (center point for distance filter)
   - `radius` (optional) – miles from (lat, lng); default **25** (launch default for sparse markets), max 500
   - `court_location_id` (optional) – `court_locations.id`; return only coaches linked to that court. Missing/soft-deleted court → **`404`**. Works for public and private courts (private addresses still redacted on the card).
-  - `min_skill_rating` (optional) – numeric **self-reported** playing level **≥** this value (**2.0–6.0**, **0.5** steps). Excludes coaches with **`skill_rating`** unset (`null`).
-  - `max_skill_rating` (optional) – **≤** this value; same rules. Cannot be less than `min_skill_rating` when both are sent.
+  - `rating_system` (optional) – **`DUPR`** or **`UTR-P`**. Returns only coaches rated on that system (with a rating). Omit for **Any** (no skill filtering or skill ranking).
+  - `min_skill_rating` (optional) – playing level **≥** this value on `rating_system`’s scale (DUPR 2.000–8.000, UTR-P 1.0–10.0). **Requires `rating_system`** (`400` otherwise); out-of-scale values → `400`.
+  - `max_skill_rating` (optional) – **≤** this value; same rules. Cannot be less than `min_skill_rating` when both are sent. Skill-fit ranking only compares coaches on the requested system.
   - `min_rating` (optional) – minimum **review** `rating_average` (0–5), distinct from skill
   - `page` (optional) – page number (used when paginating)
   - `limit` (optional) – items per page; provide to paginate (omit for all results)
@@ -735,9 +742,9 @@ Authorization: Bearer <token>
         "headline": "~1.5mi — inside radius 5 from downtown SF",
         "bio": "Fixture coach for GET /coaches radius / geo search tests.",
         "experience_years": 7,
-        "skill_rating": 4.0,
-        "rating_system": "self",
-        "certifications": null,
+        "skill_rating": 4.217,
+        "rating_system": "DUPR",
+        "certifications": [],
         "location": "San Francisco Mission",
         "rating_average": 4.9,
         "rating_count": 10,
@@ -851,18 +858,19 @@ Authorization: Bearer <token>
 ### `POST /api/coaches/profile`
 - **Auth**: Required (coach role only)
 - **Description**: Create your own coach profile. Coach-only: only the authenticated coach can create a profile; profile is always for the logged-in user. Admins cannot use this endpoint.
-- **Skill rating**: Self-reported pickleball level on a **2.0–6.0** scale, **half-point** steps only (e.g. 3.0, 3.5, 4.0). Optional; leave unset until the coach enters it.
-- **`rating_system`**: Optional; omit to default to **`"self"`**. When sent, must be exactly one of: **`"self"`**, **`"DUPR"`**, **`"UTR-P"`** (MVP allow-list; values are not verified against external APIs yet).
+- **Skill rating**: Optional. Only **DUPR** (**2.000–8.000**, up to **3** decimals, e.g. 4.217, 7.218) or **UTR-P** (**1.0–10.0**, **1** decimal, e.g. 4.5, 9.5). Invalid values are rejected (never rounded). Values are stored as `DECIMAL(5,3)` and returned with their `rating_system`. DUPR and UTR-P are never converted or compared.
+- **`rating_system`**: **`"DUPR"`** | **`"UTR-P"`** | `null`. Required whenever `skill_rating` is set; `"self"`, `"UTPR"`, empty strings, and other values are rejected. Not verified against external APIs.
+- **`location`** (“Based in”): Must be a real US place (city + state, ZIP, or address). The server geocodes it and stores a city-level label such as **`"Davie, FL"`** (street and ZIP are never stored). Unknown places → `400` with `details: [{ field: "location" }]`; geocoder outage → `503`. `""` clears it. Unchanged values are not re-geocoded. Independent of teaching courts — not used for Discover, radius, or distance, and not required to be near a court. Same rules on both update routes.
 - **Pricing**: Coach profiles do **not** store an hourly rate. Listings and checkout use each **lesson’s** `price` and `duration_minutes`; see **`effective_hourly_rate`** on lesson JSON (derived: `price / (duration_minutes / 60)`).
 - **Request Body**:
   ```json
   {
     "headline": "string (optional)",
-    "bio": "string (optional)",
+    "bio": "string (optional; trimmed, max 1,000 characters)",
     "experience_years": "number (optional, defaults to 0)",
-    "skill_rating": "number | null (optional, 2.0–6.0 in 0.5 steps)",
-    "rating_system": "\"self\" | \"DUPR\" | \"UTR-P\" (optional; default self when omitted)",
-    "certifications": "string (optional)",
+    "skill_rating": "number | null (optional; DUPR 2.000–8.000 up to 3 dp, UTR-P 1.0–10.0 1 dp)",
+    "rating_system": "\"DUPR\" | \"UTR-P\" | null (required when skill_rating is set)",
+    "certifications": "string[] | null (optional; up to 20 names, each trimmed and max 500 characters; blanks and duplicates dropped; [] or null clears)",
     "location": "string (optional)"
   }
   ```
@@ -877,9 +885,9 @@ Authorization: Bearer <token>
       "headline": "Former tournament player",
       "bio": "Experienced pickleball coach with 10 years of teaching",
       "experience_years": 10,
-      "skill_rating": 4.5,
-      "rating_system": "self",
-      "certifications": "USAPA Certified",
+      "skill_rating": 4.217,
+      "rating_system": "DUPR",
+      "certifications": ["USAPA Certified"],
       "location": "New York, NY",
       "created_at": "2026-01-01T00:00:00.000Z"
     }
@@ -889,16 +897,16 @@ Authorization: Bearer <token>
 ### `PUT /api/coaches/me/profile`
 - **Auth**: Required (**coach** role only)
 - **Description**: Update **your own** coach profile. No path parameter — the server always uses the authenticated user’s id (same pattern as `GET /api/coaches/me/reliability`, `POST /api/coaches/me/courts`, etc.).
-- **`rating_system`**: When sent, must be one of **`"self"`**, **`"DUPR"`**, **`"UTR-P"`** (same allow-list as profile create).
+- **Rating validation uses the effective pair after merge** (stored values + sent fields): e.g. DUPR 7.218 → send `skill_rating: 7.5` ✅; send only `rating_system: "UTR-P"` ❌ (7.218 isn’t a valid UTR-P value); UTR-P 9.5 → send only `rating_system: "DUPR"` ❌; DUPR 4.217 → send `rating_system: "UTR-P", skill_rating: 4.2` ✅. Errors return `400` with `details: [{ field, message }]`.
 - **Request Body** (all fields optional — omit fields you do not want to change):
   ```json
   {
     "headline": "string (optional)",
-    "bio": "string (optional)",
+    "bio": "string (optional; trimmed, max 1,000 characters)",
     "experience_years": "number (optional)",
     "skill_rating": "number | null (optional, clear with null)",
-    "rating_system": "\"self\" | \"DUPR\" | \"UTR-P\" (optional)",
-    "certifications": "string (optional)",
+    "rating_system": "\"DUPR\" | \"UTR-P\" | null (optional)",
+    "certifications": "string[] | null (optional; up to 20 names, each trimmed and max 500 characters; blanks and duplicates dropped; [] or null clears)",
     "location": "string (optional)"
   }
   ```
@@ -912,8 +920,8 @@ Authorization: Bearer <token>
       "headline": "Updated Headline",
       "bio": "Updated bio with more experience",
       "experience_years": 12,
-      "skill_rating": 4.5,
-      "rating_system": "self"
+      "skill_rating": 4.217,
+      "rating_system": "DUPR"
     }
   }
   ```
@@ -922,7 +930,7 @@ Authorization: Bearer <token>
 ### `PUT /api/coaches/profile/:id` (admin only)
 - **Auth**: Required (**admin** role only)
 - **Description**: Update **another** user’s coach profile (support / corrections). Path `:id` is that coach’s **user id** (same id used in `GET /api/coaches/:id`). Coaches **cannot** use this route — use **`PUT /api/coaches/me/profile`**.
-- **`rating_system`**: Same allow-list as create (**`"self"`** | **`"DUPR"`** | **`"UTR-P"`**) when sent.
+- **Rating rules**: Same as create; validated on the effective (merged) pair.
 - **Request Body** (same as `PUT /api/coaches/me/profile`).
 - **Response** (Status: 200):
   ```json
@@ -934,8 +942,8 @@ Authorization: Bearer <token>
       "headline": "Updated Headline",
       "bio": "Updated bio with more experience",
       "experience_years": 12,
-      "skill_rating": 4.5,
-      "rating_system": "self"
+      "skill_rating": 4.217,
+      "rating_system": "DUPR"
     }
   }
   ```
@@ -967,6 +975,13 @@ Authorization: Bearer <token>
   }
   ```
 - **Example – Mondays 9am–5pm from Feb 1 to Dec 1**: `{ "weekday": "monday", "start_date": "2026-02-01", "end_date": "2026-12-01", "start_time": "09:00", "end_time": "17:00" }`
+- **Validation** (400, `details: [{ field, message }]`; "today" is the coach's calendar day in their timezone):
+  - `start_date` / `end_date` must be **real calendar dates** (`2026-13-45`, `2026-02-30` rejected).
+  - `end_time` must be after `start_time` on the same day (windows can't cross midnight — split across two weekdays).
+  - `end_date` must be on or after `start_date`, and **not before today** (a range that has already ended is rejected). A past `start_date` with a future/blank `end_date` is allowed.
+  - `start_date` / `end_date` may be at most **24 months** after today. Omitting `end_date` (repeat indefinitely) is always allowed.
+- **Overlap** (400, `error: "Availability overlap"`, `conflict_availability_id`): windows on the same weekday whose date ranges and times intersect are rejected (touching ends like 9–12 and 12–4 are fine). The message names the conflicting window and the explicit fixes — nothing is merged automatically, e.g. *"This overlaps your Monday 9:00 AM–12:00 PM window. Edit that window to 9:00 AM–4:00 PM, or add 12:00 PM–4:00 PM instead."*, or *"This time is already covered by your Monday 9:00 AM–12:00 PM window."*
+- **Booking visibility**: windows are stored as entered, but the student booking flow only lists slots in the next **60 days**; a window whose first date is further out becomes bookable 60 days before that date.
 - **Response** (Status: 201):
   ```json
   {
@@ -987,7 +1002,7 @@ Authorization: Bearer <token>
 
 ### `PUT /api/coaches/me/availability/:id`
 - **Auth**: Required (**Coach** only)
-- **Description**: Update one availability row **you own**. `:id` is the availability **record** id. Body uses the **same fields as POST** (full replacement of that slot’s window fields). Overlap rules match create (cannot overlap another slot for the same weekday and date range).
+- **Description**: Update one availability row **you own**. `:id` is the availability **record** id. Body uses the **same fields as POST** (full replacement of that slot’s window fields). Date validation and overlap rules/messages match create (the row being edited is excluded from the overlap check).
 - **Error responses**: `403` (not coach, or not own row), `404`, `400` (validation / overlap), `500`.
 
 ### `GET /api/coaches/:id/availability`

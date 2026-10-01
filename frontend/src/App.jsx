@@ -1,4 +1,11 @@
-import { BrowserRouter, Navigate, Outlet, Route, Routes } from 'react-router-dom';
+import {
+  Navigate,
+  Outlet,
+  Route,
+  RouterProvider,
+  createBrowserRouter,
+  createRoutesFromElements,
+} from 'react-router-dom';
 import { AuthProvider, useAuth } from './auth/AuthContext.jsx';
 import { GuestOnly, RequireAuth, RequireRole, RequireStudentMode } from './auth/guards.jsx';
 import { homePathFor } from './auth/paths.js';
@@ -61,81 +68,86 @@ function RootRedirect() {
   return <LandingPage />;
 }
 
+// Data router (not <BrowserRouter>) so pages can block navigation via useBlocker.
+const router = createBrowserRouter(
+  createRoutesFromElements(
+    <>
+      <Route path="/" element={<RootRedirect />} />
+      <Route path="/login" element={<GuestOnly><LoginPage /></GuestOnly>} />
+      <Route path="/register" element={<GuestOnly><RegisterPage /></GuestOnly>} />
+      <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+      <Route path="/reset-password" element={<ResetPasswordPage />} />
+      <Route path="/verify-email" element={<VerifyEmailPage />} />
+      <Route path="/change-email/confirm" element={<ChangeEmailConfirmPage />} />
+      <Route path="/forbidden" element={<ForbiddenPage />} />
+
+      <Route element={<ShellLayout />}>
+        <Route path="/dashboard" element={<RequireRole roles={['student']}><StudentDashboardPage /></RequireRole>} />
+        <Route path="/discover" element={<RequireRole roles={['student', 'coach', 'admin']}><DiscoverPage /></RequireRole>} />
+        <Route path="/coaches/:id" element={<RequireRole roles={['student', 'coach', 'admin']}><CoachPublicProfilePage /></RequireRole>} />
+        <Route
+          path="/book/:coachId/checkout"
+          element={(
+            <RequireRole roles={['student']}>
+              <RequireStudentMode>
+                <BookingCheckoutPage />
+              </RequireStudentMode>
+            </RequireRole>
+          )}
+        />
+        <Route
+          path="/bookings/confirming"
+          element={(
+            <RequireRole roles={['student']}>
+              <RequireStudentMode>
+                <BookingConfirmingPage />
+              </RequireStudentMode>
+            </RequireRole>
+          )}
+        />
+        <Route path="/bookings" element={<RequireRole roles={['student']}><BookingsListPage audience="student" /></RequireRole>} />
+        <Route path="/bookings/:id" element={<BookingDetailPage />} />
+        <Route path="/issues/:id" element={<RequireRole roles={['student', 'coach']}><IssueDetailPage /></RequireRole>} />
+
+        <Route path="/coach" element={<RequireRole roles={['coach']}><CoachDashboardPage /></RequireRole>} />
+        <Route path="/coach/profile" element={<RequireRole roles={['coach']}><CoachProfileEditPage /></RequireRole>} />
+        <Route path="/coach/lessons" element={<RequireRole roles={['coach']}><CoachLessonsPage /></RequireRole>} />
+        <Route path="/coach/availability" element={<RequireRole roles={['coach']}><CoachAvailabilityPage /></RequireRole>} />
+        <Route path="/coach/courts" element={<RequireRole roles={['coach']}><CoachCourtsPage /></RequireRole>} />
+        <Route path="/coach/stripe" element={<RequireRole roles={['coach']}><StripeConnectPage /></RequireRole>} />
+        <Route path="/coach/onboarding/return" element={<RequireRole roles={['coach']}><StripeReturnPage /></RequireRole>} />
+        <Route path="/coach/onboarding/refresh" element={<RequireRole roles={['coach']}><StripeRefreshPage /></RequireRole>} />
+        <Route path="/coach/bookings" element={<RequireRole roles={['coach']}><BookingsListPage audience="coach" /></RequireRole>} />
+
+        <Route path="/messages" element={<ConversationsPage />} />
+        <Route path="/messages/:id" element={<ConversationPage />} />
+        <Route path="/notifications" element={<NotificationsPage />} />
+        <Route path="/settings" element={<SettingsPage />} />
+
+        <Route path="/admin" element={<RequireRole roles={['admin']}><AdminHomePage /></RequireRole>} />
+        <Route path="/admin/users" element={<RequireRole roles={['admin']}><AdminUsersPage /></RequireRole>} />
+        <Route path="/admin/users/new-admin" element={<RequireRole roles={['admin']}><AdminCreateAdminPage /></RequireRole>} />
+        <Route path="/admin/users/:id" element={<RequireRole roles={['admin']}><AdminUserDetailPage /></RequireRole>} />
+        <Route path="/admin/users/:id/coach-support" element={<RequireRole roles={['admin']}><AdminCoachSupportPage /></RequireRole>} />
+        <Route path="/admin/bookings" element={<RequireRole roles={['admin']}><AdminBookingsPage /></RequireRole>} />
+        <Route path="/admin/bookings/:id" element={<RequireRole roles={['admin']}><BookingDetailPage admin /></RequireRole>} />
+        <Route path="/admin/disputes" element={<RequireRole roles={['admin']}><AdminDisputesPage /></RequireRole>} />
+        <Route path="/admin/disputes/:id" element={<RequireRole roles={['admin']}><AdminDisputeDetailPage /></RequireRole>} />
+        <Route path="/admin/payments" element={<RequireRole roles={['admin']}><AdminPaymentsPage /></RequireRole>} />
+        <Route path="/admin/payments/:id" element={<RequireRole roles={['admin']}><AdminPaymentDetailPage /></RequireRole>} />
+        <Route path="/admin/lessons" element={<RequireRole roles={['admin']}><AdminLessonsPage /></RequireRole>} />
+        <Route path="/admin/reviews" element={<RequireRole roles={['admin']}><AdminReviewsPage /></RequireRole>} />
+      </Route>
+
+      <Route path="*" element={<NotFoundPage />} />
+    </>,
+  ),
+);
+
 export default function App() {
   return (
     <AuthProvider>
-      <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<RootRedirect />} />
-          <Route path="/login" element={<GuestOnly><LoginPage /></GuestOnly>} />
-          <Route path="/register" element={<GuestOnly><RegisterPage /></GuestOnly>} />
-          <Route path="/forgot-password" element={<ForgotPasswordPage />} />
-          <Route path="/reset-password" element={<ResetPasswordPage />} />
-          <Route path="/verify-email" element={<VerifyEmailPage />} />
-          <Route path="/change-email/confirm" element={<ChangeEmailConfirmPage />} />
-          <Route path="/forbidden" element={<ForbiddenPage />} />
-
-          <Route element={<ShellLayout />}>
-            <Route path="/dashboard" element={<RequireRole roles={['student']}><StudentDashboardPage /></RequireRole>} />
-            <Route path="/discover" element={<RequireRole roles={['student', 'coach', 'admin']}><DiscoverPage /></RequireRole>} />
-            <Route path="/coaches/:id" element={<RequireRole roles={['student', 'coach', 'admin']}><CoachPublicProfilePage /></RequireRole>} />
-            <Route
-              path="/book/:coachId/checkout"
-              element={(
-                <RequireRole roles={['student']}>
-                  <RequireStudentMode>
-                    <BookingCheckoutPage />
-                  </RequireStudentMode>
-                </RequireRole>
-              )}
-            />
-            <Route
-              path="/bookings/confirming"
-              element={(
-                <RequireRole roles={['student']}>
-                  <RequireStudentMode>
-                    <BookingConfirmingPage />
-                  </RequireStudentMode>
-                </RequireRole>
-              )}
-            />
-            <Route path="/bookings" element={<RequireRole roles={['student']}><BookingsListPage audience="student" /></RequireRole>} />
-            <Route path="/bookings/:id" element={<BookingDetailPage />} />
-            <Route path="/issues/:id" element={<RequireRole roles={['student', 'coach']}><IssueDetailPage /></RequireRole>} />
-
-            <Route path="/coach" element={<RequireRole roles={['coach']}><CoachDashboardPage /></RequireRole>} />
-            <Route path="/coach/profile" element={<RequireRole roles={['coach']}><CoachProfileEditPage /></RequireRole>} />
-            <Route path="/coach/lessons" element={<RequireRole roles={['coach']}><CoachLessonsPage /></RequireRole>} />
-            <Route path="/coach/availability" element={<RequireRole roles={['coach']}><CoachAvailabilityPage /></RequireRole>} />
-            <Route path="/coach/courts" element={<RequireRole roles={['coach']}><CoachCourtsPage /></RequireRole>} />
-            <Route path="/coach/stripe" element={<RequireRole roles={['coach']}><StripeConnectPage /></RequireRole>} />
-            <Route path="/coach/onboarding/return" element={<RequireRole roles={['coach']}><StripeReturnPage /></RequireRole>} />
-            <Route path="/coach/onboarding/refresh" element={<RequireRole roles={['coach']}><StripeRefreshPage /></RequireRole>} />
-            <Route path="/coach/bookings" element={<RequireRole roles={['coach']}><BookingsListPage audience="coach" /></RequireRole>} />
-
-            <Route path="/messages" element={<ConversationsPage />} />
-            <Route path="/messages/:id" element={<ConversationPage />} />
-            <Route path="/notifications" element={<NotificationsPage />} />
-            <Route path="/settings" element={<SettingsPage />} />
-
-            <Route path="/admin" element={<RequireRole roles={['admin']}><AdminHomePage /></RequireRole>} />
-            <Route path="/admin/users" element={<RequireRole roles={['admin']}><AdminUsersPage /></RequireRole>} />
-            <Route path="/admin/users/new-admin" element={<RequireRole roles={['admin']}><AdminCreateAdminPage /></RequireRole>} />
-            <Route path="/admin/users/:id" element={<RequireRole roles={['admin']}><AdminUserDetailPage /></RequireRole>} />
-            <Route path="/admin/users/:id/coach-support" element={<RequireRole roles={['admin']}><AdminCoachSupportPage /></RequireRole>} />
-            <Route path="/admin/bookings" element={<RequireRole roles={['admin']}><AdminBookingsPage /></RequireRole>} />
-            <Route path="/admin/bookings/:id" element={<RequireRole roles={['admin']}><BookingDetailPage admin /></RequireRole>} />
-            <Route path="/admin/disputes" element={<RequireRole roles={['admin']}><AdminDisputesPage /></RequireRole>} />
-            <Route path="/admin/disputes/:id" element={<RequireRole roles={['admin']}><AdminDisputeDetailPage /></RequireRole>} />
-            <Route path="/admin/payments" element={<RequireRole roles={['admin']}><AdminPaymentsPage /></RequireRole>} />
-            <Route path="/admin/payments/:id" element={<RequireRole roles={['admin']}><AdminPaymentDetailPage /></RequireRole>} />
-            <Route path="/admin/lessons" element={<RequireRole roles={['admin']}><AdminLessonsPage /></RequireRole>} />
-            <Route path="/admin/reviews" element={<RequireRole roles={['admin']}><AdminReviewsPage /></RequireRole>} />
-          </Route>
-
-          <Route path="*" element={<NotFoundPage />} />
-        </Routes>
-      </BrowserRouter>
+      <RouterProvider router={router} />
     </AuthProvider>
   );
 }

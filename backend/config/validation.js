@@ -3,6 +3,9 @@ import { getValidReasons } from '../services/reliabilityPenaltyService.js';
 import { getValidDeclineReasonCodes } from '../utils/declineReasonCodes.js';
 import { MIN_LESSON_PRICE_USD } from '../services/paymentEngine.js';
 import { validateDisputeResolutionPayload } from '../utils/disputeResolutionAlignment.js';
+import { COACH_RATING_SYSTEM_VALUES, validateSkillRatingForSystem } from '../utils/coachRating.js';
+import { COACH_CERTIFICATION_MAX_LENGTH, COACH_CERTIFICATIONS_MAX_COUNT } from '../utils/coachCertifications.js';
+import { isRealCalendarDate } from '../utils/availabilityRules.js';
 import {
   LESSON_TYPES,
   GROUP_MAX_PLAYERS_MIN,
@@ -411,60 +414,79 @@ export const updateReviewSchema = Joi.object({
   comment: Joi.string().max(1000).allow('').optional(),
 });
 
-/** Pickleball-style self-reported level: 2.0–6.0 inclusive, half-point steps only. */
-const coachSkillRatingValueSchema = Joi.number()
-  .min(2)
-  .max(6)
-  .custom((value, helpers) => {
-    const n = Number(value);
-    if (!Number.isFinite(n)) return helpers.error('any.invalid');
-    const doubled = n * 2;
-    if (Math.abs(doubled - Math.round(doubled)) > 1e-9) {
-      return helpers.error('any.custom', {
-        message: 'skill_rating must use 0.5 increments between 2.0 and 6.0 (e.g. 3.0, 3.5, 4.0)',
-      });
-    }
-    return Math.round(n * 10) / 10;
-  });
-
-/** MVP: allowed `coach_profiles.rating_system` values (self-report vs named external systems). */
-export const COACH_RATING_SYSTEM_VALUES = ['self', 'DUPR', 'UTR-P'];
+/**
+ * Shape only — range/precision depend on the rating system and are checked on the
+ * effective (merged) pair by `resolveCoachRating` in the coach controller.
+ */
+const coachSkillRatingValueSchema = Joi.number().messages({
+  'number.base': 'skill_rating must be a number',
+});
 
 const coachRatingSystemSchema = Joi.string()
   .valid(...COACH_RATING_SYSTEM_VALUES)
+  .allow(null)
   .optional()
   .messages({
     'any.only': `rating_system must be one of: ${COACH_RATING_SYSTEM_VALUES.join(', ')}`,
+    'string.empty': `rating_system must be one of: ${COACH_RATING_SYSTEM_VALUES.join(', ')}`,
   });
 
-export const createCoachProfileSchema = Joi.object({
-  headline: Joi.string().max(255).allow('').optional(),
-  bio: Joi.string().allow('').optional(),
-  experience_years: Joi.number().integer().min(0).max(100).optional(),
-  skill_rating: coachSkillRatingValueSchema.optional().allow(null),
-  /** Omit to default to `self` (MVP). Must be one of **COACH_RATING_SYSTEM_VALUES** when sent. */
-  rating_system: coachRatingSystemSchema,
-  certifications: Joi.string().allow('').optional(),
-  location: Joi.string().max(255).allow('').optional(),
-});
+export const COACH_BIO_MAX = 1000;
 
-export const updateCoachProfileSchema = Joi.object({
+const coachCertificationsSchema = Joi.array()
+  .items(
+    Joi.string()
+      .trim()
+      .allow('')
+      .max(COACH_CERTIFICATION_MAX_LENGTH)
+      .messages({
+        'string.base': 'Each certification must be text.',
+        'string.max': `Each certification must be ${COACH_CERTIFICATION_MAX_LENGTH} characters or fewer.`,
+      }),
+  )
+  .max(COACH_CERTIFICATIONS_MAX_COUNT)
+  .allow(null)
+  .optional()
+  .messages({
+    'array.base': 'Certifications must be a list of names.',
+    'array.max': `You can list up to ${COACH_CERTIFICATIONS_MAX_COUNT} certifications.`,
+  });
+
+const coachProfileFields = {
   headline: Joi.string().max(255).allow('').optional(),
-  bio: Joi.string().allow('').optional(),
+  bio: Joi.string()
+    .trim()
+    .max(COACH_BIO_MAX)
+    .allow('')
+    .optional()
+    .messages({ 'string.max': `Bio must be ${COACH_BIO_MAX.toLocaleString('en-US')} characters or fewer.` }),
   experience_years: Joi.number().integer().min(0).max(100).optional(),
   skill_rating: coachSkillRatingValueSchema.optional().allow(null),
   rating_system: coachRatingSystemSchema,
-  certifications: Joi.string().allow('').optional(),
+  certifications: coachCertificationsSchema,
   location: Joi.string().max(255).allow('').optional(),
-});
+};
+
+export const createCoachProfileSchema = Joi.object(coachProfileFields);
+
+export const updateCoachProfileSchema = Joi.object(coachProfileFields);
 
 const WEEKDAY_NAMES = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
 
-/** Plain calendar YYYY-MM-DD (no Date coercion — avoids timezone off-by-one). */
+const AVAILABILITY_DATE_LABELS = { start_date: 'Start date', end_date: 'End date' };
+
+/** Plain calendar YYYY-MM-DD (no Date coercion — avoids timezone off-by-one); must be a real day. */
 const dateOnlyYmdSchema = Joi.string()
-  .pattern(/^\d{4}-\d{2}-\d{2}$/)
+  .trim()
+  .allow('', null)
   .optional()
-  .allow('', null);
+  .custom((value, helpers) => {
+    if (!value) return value;
+    if (isRealCalendarDate(value)) return value;
+    const label = AVAILABILITY_DATE_LABELS[helpers.state.path.at(-1)] || 'Date';
+    return helpers.error('availability.rule', { message: `${label} must be a real calendar date (YYYY-MM-DD).` });
+  })
+  .messages({ 'availability.rule': '{{#message}}' });
 
 export const createAvailabilitySchema = Joi.object({
   weekday: Joi.alternatives()
@@ -495,18 +517,18 @@ export const createAvailabilitySchema = Joi.object({
       if (parts.length === 2) return `${parts[0].padStart(2, '0')}:${parts[1].padStart(2, '0')}:00`;
       return `${parts[0].padStart(2, '0')}:${parts[1].padStart(2, '0')}:${(parts[2] || '00').padStart(2, '0')}`;
     };
+    const fieldError = (field, message) => helpers.error('availability.rule', { message }, { ...helpers.state, path: [field] });
     const a = normalize(st);
     const b = normalize(et);
-    if (a >= b) return helpers.error('any.invalid');
+    if (a >= b) {
+      return fieldError('end_time', 'End time must be after start time. Windows can’t cross midnight — add the late part to the next day instead.');
+    }
     const sdx = sd && String(sd).trim() ? String(sd).trim() : null;
     const edx = ed && String(ed).trim() ? String(ed).trim() : null;
-    if (sdx && edx && sdx > edx) return helpers.error('any.invalid');
+    if (sdx && edx && sdx > edx) return fieldError('end_date', 'End date must be on or after the start date.');
     return { ...value, start_date: sdx, end_date: edx };
   }, 'start before end and date range')
-  .messages({
-    'any.invalid':
-      'start_time must be before end_time; when both start_date and end_date are set, start_date must be on or before end_date.',
-  });
+  .messages({ 'availability.rule': '{{#message}}' });
 
 /** PUT /api/coaches/me/availability/:id — same shape as create (replace slot fields). */
 export const updateAvailabilitySchema = createAvailabilitySchema;
@@ -654,9 +676,13 @@ export const getCoachesQuerySchema = Joi.object({
   lat: Joi.number().min(-90).max(90).optional(),
   lng: Joi.number().min(-180).max(180).optional(),
   radius: Joi.number().positive().max(500).default(25), // miles; launch default favors sparse markets
-  /** Playing skill (`skill_rating` 2.0–6.0); excludes null skill_rating. Not review stars. */
+  /** Only coaches rated on this system; required for min/max_skill_rating (systems are never compared). */
+  rating_system: Joi.string().valid(...COACH_RATING_SYSTEM_VALUES).optional().messages({
+    'any.only': `rating_system must be one of: ${COACH_RATING_SYSTEM_VALUES.join(', ')}`,
+  }),
+  /** Playing skill lower bound on `rating_system`'s scale. Not review stars. */
   min_skill_rating: coachSkillRatingValueSchema.optional(),
-  /** Playing skill upper bound; not review stars. */
+  /** Playing skill upper bound on `rating_system`'s scale. Not review stars. */
   max_skill_rating: coachSkillRatingValueSchema.optional(),
   /** Review star average (`rating_average` 0–5); distinct from min/max_skill_rating. */
   min_rating: Joi.number().min(0).max(5).optional(),
@@ -666,22 +692,39 @@ export const getCoachesQuerySchema = Joi.object({
    */
   court_location_id: Joi.number().integer().positive().optional(),
 }).custom((value, helpers) => {
+  const hasSkillBound = value.min_skill_rating != null || value.max_skill_rating != null;
+  if (hasSkillBound && !value.rating_system) {
+    return helpers.error('skill.filter', {
+      message: 'rating_system (DUPR or UTR-P) is required when filtering by skill rating',
+    });
+  }
+  for (const key of ['min_skill_rating', 'max_skill_rating']) {
+    if (value[key] == null) continue;
+    const bad = validateSkillRatingForSystem(value.rating_system, value[key]);
+    if (bad) return helpers.error('skill.filter', { message: `${key}: ${bad}` });
+  }
   if (
     value.min_skill_rating != null
     && value.max_skill_rating != null
     && value.min_skill_rating > value.max_skill_rating
   ) {
-    return helpers.error('any.custom', {
+    return helpers.error('skill.filter', {
       message: 'min_skill_rating cannot be greater than max_skill_rating',
     });
   }
   return value;
-});
+}).messages({ 'skill.filter': '{{#message}}' });
 
 /** GET /api/geo/search — ZIP / city / address → lat/lng for Discover. */
 export const geocodeSearchQuerySchema = Joi.object({
   q: Joi.string().trim().min(2).max(200).required(),
   limit: Joi.number().integer().min(1).max(10).default(5),
+});
+
+/** GET /api/geo/places — coach "Based in" autocomplete. */
+export const placeSuggestQuerySchema = Joi.object({
+  q: Joi.string().trim().min(2).max(200).required(),
+  limit: Joi.number().integer().min(1).max(10).default(6),
 });
 
 export const getLessonsQuerySchema = Joi.object({

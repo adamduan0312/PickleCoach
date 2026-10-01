@@ -93,7 +93,7 @@ async function suiteConnectStatus(models) {
     bio: 'audit',
     experience_years: 1,
     skill_rating: 3,
-    rating_system: 'self',
+    rating_system: 'DUPR',
     location: 'NY',
     stripe_account_id: 'acct_testflow_seed',
     stripe_ready: true,

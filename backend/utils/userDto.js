@@ -22,6 +22,7 @@ import {
   serializeCourtForPublicViewer,
 } from './courtAddressVisibility.js';
 import { serializePublicMarketplaceLesson } from './lessonDto.js';
+import { certificationsFromStored } from './coachCertifications.js';
 import {
   serializePublicReviewCard,
 } from './reviewDto.js';
@@ -129,7 +130,7 @@ export function serializeCoachProfilePublic(profile) {
     experience_years: p.experience_years ?? null,
     skill_rating: p.skill_rating != null ? Number(p.skill_rating) : null,
     rating_system: p.rating_system ?? null,
-    certifications: p.certifications ?? null,
+    certifications: certificationsFromStored(p.certifications),
     location: p.location ?? null,
     rating_average: p.rating_average != null ? Number(p.rating_average) : null,
     rating_count: p.rating_count ?? null,
@@ -157,7 +158,7 @@ export function serializeCoachProfileDiscovery(profile) {
     experience_years: p.experience_years ?? null,
     skill_rating: p.skill_rating != null ? Number(p.skill_rating) : null,
     rating_system: p.rating_system ?? null,
-    certifications: p.certifications ?? null,
+    certifications: certificationsFromStored(p.certifications),
     location: p.location ?? null,
     rating_average: p.rating_average != null ? Number(p.rating_average) : null,
     rating_count: p.rating_count ?? null,
@@ -274,7 +275,7 @@ export function serializeCoachListItem(coachInstance, { searchLat = null, search
     experience_years: profile?.experience_years ?? null,
     skill_rating: profile?.skill_rating != null ? Number(profile.skill_rating) : null,
     rating_system: profile?.rating_system ?? null,
-    certifications: profile?.certifications ?? null,
+    certifications: certificationsFromStored(profile?.certifications),
     location: profile?.location ?? null,
     rating_average: profile?.rating_average != null ? Number(profile.rating_average) : null,
     rating_count: profile?.rating_count ?? null,

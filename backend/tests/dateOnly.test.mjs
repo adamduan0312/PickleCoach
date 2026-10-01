@@ -22,6 +22,16 @@ test('toYmdApi preserves leading YYYY-MM-DD from strings', () => {
   assert.equal(toYmdApi(u), '2026-01-01');
 });
 
+test('createAvailabilitySchema rejects impossible calendar dates', () => {
+  const { error } = createAvailabilitySchema.validate({
+    weekday: 'monday',
+    start_date: '2026-13-45',
+    start_time: '09:00',
+    end_time: '17:00',
+  });
+  assert.ok(error);
+});
+
 test('createAvailabilitySchema keeps start_date and end_date as plain YMD strings', () => {
   const { value, error } = createAvailabilitySchema.validate({
     weekday: 'monday',

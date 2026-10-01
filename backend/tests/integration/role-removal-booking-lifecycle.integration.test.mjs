@@ -205,7 +205,7 @@ describeHttp('HTTP integration: role removal preserves booking lifecycle', () =>
           bio: 'For role-remove test',
           experience_years: 1,
           skill_rating: 3,
-          rating_system: 'self',
+          rating_system: 'DUPR',
           location: 'Brooklyn, NY',
           stripe_ready: false,
         },

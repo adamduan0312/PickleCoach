@@ -25,16 +25,18 @@ const CoachProfile = sequelize.define('coach_profiles', {
     defaultValue: 0,
   },
   /** Self-reported pickleball numeric level (standard-style scale), 2.0–6.0 in 0.5 steps; nullable until set. */
+  /** DUPR (3 dp) or UTR-P (1 dp) — rules in utils/coachRating.js. Never compared across systems. */
   skill_rating: {
-    type: DataTypes.DECIMAL(3, 1),
+    type: DataTypes.DECIMAL(5, 3),
     allowNull: true,
   },
-  /** MVP allow-list; not verified against external APIs. DB column VARCHAR(32). */
+  /** 'DUPR' | 'UTR-P' | null. Required whenever skill_rating is set. Not verified against external APIs. */
   rating_system: {
     type: DataTypes.STRING(32),
-    allowNull: false,
-    defaultValue: 'self',
+    allowNull: true,
+    defaultValue: null,
   },
+  /** JSON array of certification names, or null when none. */
   certifications: {
     type: DataTypes.JSON,
     allowNull: true,

@@ -93,6 +93,8 @@ button, input, select, textarea {
 .spread { display: flex; justify-content: space-between; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
 .grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1rem; }
 .grid-3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; }
+.availability-note { margin: 0; color: #8a5a00; }
+.availability-editing { outline: 2px solid var(--pc-green); }
 
 .visually-hidden {
   position: absolute;
@@ -199,6 +201,8 @@ button, input, select, textarea {
 }
 .btn:hover { background: var(--pc-green-dark); text-decoration: none; }
 .btn:disabled { opacity: 0.55; cursor: not-allowed; }
+/* Looks disabled but still clickable, so the page can explain why the action is blocked. */
+.btn[aria-disabled='true'] { opacity: 0.55; cursor: not-allowed; }
 .btn.secondary { background: #eef3ef; color: var(--pc-ink); }
 .btn.secondary:hover { background: #e1eae3; }
 .btn.ghost { background: transparent; color: var(--pc-ink); border: 1px solid var(--pc-line); }
@@ -206,6 +210,34 @@ button, input, select, textarea {
 .btn.block { width: 100%; }
 
 .field { display: flex; flex-direction: column; gap: 0.3rem; }
+.cert-rows { display: grid; gap: 0.5rem; }
+.cert-row { display: flex; flex-direction: column; gap: 0.25rem; }
+.cert-row-main { display: flex; align-items: center; gap: 0.4rem; }
+.cert-row-main input { flex: 1; }
+.cert-row-main input[aria-invalid='true'] { border-color: var(--pc-danger); }
+.cert-row-remove {
+  flex-shrink: 0;
+  width: 2rem;
+  height: 2rem;
+  border: 1px solid var(--pc-line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--pc-muted);
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.cert-row-remove:hover { color: var(--pc-danger); border-color: var(--pc-danger); }
+.cert-add {
+  justify-self: start;
+  border: 0;
+  background: none;
+  padding: 0.2rem 0;
+  color: var(--pc-green-dark);
+  font-weight: 600;
+  cursor: pointer;
+}
+.cert-add:hover { text-decoration: underline; }
 .field label { font-size: 0.85rem; font-weight: 600; }
 .field input,
 .field select,
@@ -316,6 +348,7 @@ button, input, select, textarea {
 .tz-select-option.active { background: var(--pc-green-soft); }
 .tz-select-option.selected { font-weight: 600; }
 .tz-select-empty { padding: 0.5rem; }
+.place-autocomplete-detail { display: block; }
 
 .settings-timezone-coach-note {
   margin: -0.35rem 0 0;
@@ -377,6 +410,9 @@ button, input, select, textarea {
 .alert.success { background: var(--pc-green-soft); color: #145c3a; }
 .alert.info { background: var(--pc-info-soft); color: #163a66; }
 .alert.warning { background: var(--pc-warning-soft); color: #7a4e0c; }
+.coach-preview-banner { margin-bottom: 16px; }
+.coach-preview-banner p { margin: 0.25rem 0 0; }
+.coach-preview-badge { align-self: flex-start; }
 
 .badge {
   display: inline-flex;
@@ -996,8 +1032,13 @@ table.data th { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0
   padding: 0.45rem 0.5rem;
 }
 
+.checklist { list-style: none; padding-left: 0; }
 .checklist li { margin: 0.35rem 0; }
 .checklist .done { color: var(--pc-green-dark); }
+.checklist .done a { color: inherit; }
+.checklist .disabled { color: #888; }
+.coach-next-step-label { text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600; }
+.coach-next-step h2 { margin-top: 0.25rem; }
 
 .hamburger { display: none; }
 
@@ -1251,6 +1292,13 @@ table.data th { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0
 .coach-profile-bio {
   margin: 0;
   line-height: 1.55;
+}
+.coach-certifications {
+  margin: 0;
+  padding-left: 1.25rem;
+  display: grid;
+  gap: 0.35rem;
+  line-height: 1.45;
 }
 .coach-teaching-locations {
   list-style: none;

@@ -13,7 +13,7 @@ import { serializeMessage, serializeConversationDetail } from '../utils/messageD
 import { serializeAvailability } from '../utils/availabilityDto.js';
 import { serializeAuditLog } from '../utils/auditLogDto.js';
 import { serializeCancellationHistoryItem } from '../utils/bookingDto.js';
-import { serializeCoachProfilePublic } from '../utils/userDto.js';
+import { serializeCoachProfileDiscovery, serializeCoachProfilePublic } from '../utils/userDto.js';
 
 describe('dispute response contract', () => {
   it('participant shape omits Stripe dispute fields and serializes payment safely', () => {
@@ -292,7 +292,7 @@ describe('coach profile mutation DTO', () => {
       bio: null,
       experience_years: 1,
       skill_rating: 4,
-      rating_system: 'self',
+      rating_system: 'DUPR',
       certifications: null,
       location: 'SF',
       rating_average: 5,
@@ -307,6 +307,13 @@ describe('coach profile mutation DTO', () => {
     });
     assert.equal(dto.stripe_account_id, 'acct_x');
     assert.equal(dto.secret_column, undefined);
+    assert.deepEqual(dto.certifications, []);
+  });
+
+  it('certifications are always an array in coach profile DTOs', () => {
+    const base = { id: 1, user_id: 2 };
+    assert.deepEqual(serializeCoachProfilePublic({ ...base, certifications: ['IPTPA', 'PPA'] }).certifications, ['IPTPA', 'PPA']);
+    assert.deepEqual(serializeCoachProfileDiscovery({ ...base, certifications: null }).certifications, []);
   });
 });
 

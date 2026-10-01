@@ -271,14 +271,14 @@ async function nominatimFetch(params, signal) {
 }
 
 /**
- * Geocode a free-text query (ZIP, city, or address) to coordinates.
+ * Raw Nominatim hits for a free-text query (ZIP, city, or address), with fallbacks.
  * @param {string} query
  * @param {{ limit?: number, signal?: AbortSignal }} [opts]
- * @returns {Promise<{ label: string, lat: number, lng: number, type: string|null }[]>}
+ * @returns {Promise<{ raw: object[], preferPostcode: boolean }>}
  */
-export async function geocodeSearch(query, opts = {}) {
+async function geocodeRawHits(query, opts = {}) {
   const q = String(query || '').trim();
-  if (!q) return [];
+  if (!q) return { raw: [], preferPostcode: false };
 
   const limit = Math.min(Math.max(Number(opts.limit) || 5, 1), 10);
   const parsed = parseGeocodeQuery(q);
@@ -322,7 +322,184 @@ export async function geocodeSearch(query, opts = {}) {
     }, opts.signal);
   }
 
-  return mapNominatimResults(raw, { preferPostcode: parsed.preferPostcode });
+  return { raw: Array.isArray(raw) ? raw : [], preferPostcode: parsed.preferPostcode, kind: parsed.kind };
+}
+
+/**
+ * Geocode a free-text query (ZIP, city, or address) to coordinates.
+ * @param {string} query
+ * @param {{ limit?: number, signal?: AbortSignal }} [opts]
+ * @returns {Promise<{ label: string, lat: number, lng: number, type: string|null }[]>}
+ */
+export async function geocodeSearch(query, opts = {}) {
+  const { raw, preferPostcode } = await geocodeRawHits(query, opts);
+  return mapNominatimResults(raw, { preferPostcode });
+}
+
+/**
+ * City-level public label ("Davie, FL") from a Nominatim hit — never street or ZIP.
+ * Falls back to the county when the hit has no city-like name. Null when not a US place.
+ * @param {object} hit
+ * @returns {string|null}
+ */
+export function cityLevelLabelFromHit(hit) {
+  const a = hit?.address && typeof hit.address === 'object' ? hit.address : {};
+  const state = normalizeUsStateCode(a.state);
+  const place = settlementName(a) || a.county || null;
+  if (!state || !place) return null;
+  return `${String(place).trim()}, ${state}`.slice(0, 255);
+}
+
+const ADDRESS_HIT_CLASSES = new Set(['place', 'boundary', 'highway', 'building']);
+
+/**
+ * Whether a hit is a geographic place (city/town/ZIP/admin area) rather than a business or
+ * landmark that merely shares the name ("Hogwarts" shop). Street hits count only for address input.
+ * @param {object} hit
+ * @param {'zip'|'city_state'|'address'|'free'} kind
+ */
+export function isPlaceHit(hit, kind) {
+  const cls = String(hit?.class || '');
+  if (kind === 'address') return ADDRESS_HIT_CLASSES.has(cls);
+  return cls === 'place' || cls === 'boundary';
+}
+
+/**
+ * Resolve free text to a real place at city level, e.g. "davie fl" / "33314" → "Davie, FL".
+ * @param {string} query
+ * @param {{ signal?: AbortSignal }} [opts]
+ * @returns {Promise<string|null>} null when no matching place exists
+ */
+export async function resolveCityLevelPlace(query, opts = {}) {
+  const { raw, preferPostcode, kind } = await geocodeRawHits(query, { limit: 5, signal: opts.signal });
+  const ranked = raw
+    .filter((hit) => hit && typeof hit === 'object' && isPlaceHit(hit, kind))
+    .map((hit) => ({ hit, score: rankGeocodeHit(hit, { preferPostcode }) }))
+    .sort((x, y) => y.score - x.score);
+  for (const { hit } of ranked) {
+    const label = cityLevelLabelFromHit(hit);
+    if (label) return label;
+  }
+  return null;
+}
+
+// --- "Based in" autocomplete (Photon) ------------------------------------
+// Nominatim's usage policy forbids search-as-you-type, so suggestions use Photon
+// (OSM-based, built for autocomplete). Saving still re-validates with Nominatim.
+
+const PHOTON_URL = process.env.PHOTON_URL || 'https://photon.komoot.io/api/';
+/** Covers the 50 states + DC + PR; non-US hits inside the box are dropped by countrycode. */
+const PHOTON_US_BBOX = '-180,17,-64,72';
+const SUGGESTION_CACHE_MAX = 300;
+const SUGGESTION_CACHE_TTL_MS = 10 * 60 * 1000;
+const suggestionCache = new Map();
+
+/** @returns {'zip'|'address'|'city'|null} null = too short / partial ZIP (no lookup) */
+export function placeSuggestionKind(query) {
+  const q = String(query || '').trim();
+  if (q.length < 2) return null;
+  if (/^\d+$/.test(q)) return /^\d{5}$/.test(q) ? 'zip' : null;
+  return parseGeocodeQuery(q).kind === 'address' ? 'address' : 'city';
+}
+
+/**
+ * City-level suggestion from a Photon feature — never a street address or ZIP as the label.
+ * @param {object} feature GeoJSON feature from Photon
+ * @param {'zip'|'address'|'city'} kind
+ * @returns {{ label: string, detail: string }|null}
+ */
+export function citySuggestionFromPhotonFeature(feature, kind) {
+  const p = feature?.properties;
+  if (!p || p.countrycode !== 'US') return null;
+  const state = normalizeUsStateCode(p.state);
+  if (!state) return null;
+  const isPlace = p.osm_key === 'place' || p.osm_key === 'boundary';
+  let name;
+  if (kind === 'city') {
+    if (!isPlace || p.type !== 'city') return null;
+    name = p.name;
+  } else if (kind === 'zip') {
+    if (p.osm_value !== 'postcode') return null;
+    name = p.city || p.district || p.county;
+  } else {
+    name = p.city || p.district || (isPlace && p.type === 'city' ? p.name : null) || p.county;
+  }
+  name = name && String(name).trim();
+  if (!name) return null;
+  const detail = [name, p.county && p.county !== name ? p.county : null, p.state, 'United States']
+    .filter(Boolean)
+    .join(', ');
+  return { label: `${name}, ${state}`.slice(0, 255), detail };
+}
+
+/**
+ * @param {unknown} raw Photon FeatureCollection
+ * @param {'zip'|'address'|'city'} kind
+ * @param {number} limit
+ */
+export function mapPhotonCitySuggestions(raw, kind, limit) {
+  const features = Array.isArray(raw?.features) ? raw.features : [];
+  const out = [];
+  const seen = new Set();
+  for (const f of features) {
+    const s = citySuggestionFromPhotonFeature(f, kind);
+    if (!s || seen.has(s.label)) continue;
+    seen.add(s.label);
+    out.push(s);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+/**
+ * Autocomplete for the coach "Based in" field: "Dav" → Davie, FL / Davis, CA / …
+ * @param {string} query
+ * @param {{ limit?: number, signal?: AbortSignal }} [opts]
+ * @returns {Promise<{ label: string, detail: string }[]>}
+ */
+export async function suggestCityLevelPlaces(query, opts = {}) {
+  const q = String(query || '').trim().replace(/\s+/g, ' ');
+  const kind = placeSuggestionKind(q);
+  if (!kind) return [];
+  // Street queries match loosely after the first few hits; keep only the closest cities.
+  const limit = Math.min(Math.max(Number(opts.limit) || 6, 1), kind === 'address' ? 3 : 10);
+  const cacheKey = `${kind}|${limit}|${q.toLowerCase()}`;
+  const cached = suggestionCache.get(cacheKey);
+  if (cached && Date.now() - cached.at < SUGGESTION_CACHE_TTL_MS) return cached.results;
+
+  const params = new URLSearchParams({ q, lang: 'en', limit: String(limit * 3), bbox: PHOTON_US_BBOX });
+  if (kind === 'city') params.append('layer', 'city');
+  if (kind === 'zip') params.append('osm_tag', 'place:postcode');
+
+  let res;
+  try {
+    res = await fetch(`${PHOTON_URL}?${params.toString()}`, {
+      method: 'GET',
+      headers: { Accept: 'application/json', 'User-Agent': USER_AGENT },
+      signal: opts.signal,
+    });
+  } catch (err) {
+    if (err?.name === 'AbortError') throw err;
+    logger.warn('Place suggestion network error:', err.message);
+    const e = new Error('Location suggestions are temporarily unavailable.');
+    e.code = 'GEOCODE_UNAVAILABLE';
+    e.status = 503;
+    throw e;
+  }
+  if (!res.ok) {
+    logger.warn('Place suggestion provider HTTP %s', res.status);
+    const e = new Error('Location suggestions are temporarily unavailable.');
+    e.code = 'GEOCODE_PROVIDER_ERROR';
+    e.status = 502;
+    throw e;
+  }
+
+  const results = mapPhotonCitySuggestions(await res.json(), kind, limit);
+  if (suggestionCache.size >= SUGGESTION_CACHE_MAX) {
+    suggestionCache.delete(suggestionCache.keys().next().value);
+  }
+  suggestionCache.set(cacheKey, { at: Date.now(), results });
+  return results;
 }
 
 /**

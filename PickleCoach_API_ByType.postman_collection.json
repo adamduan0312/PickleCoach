@@ -1141,7 +1141,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"headline\": \"Professional Pickleball Coach\",\n  \"bio\": \"Experienced pickleball coach with 10 years of teaching\",\n  \"experience_years\": 10,\n  \"skill_rating\": 4.5,\n  \"rating_system\": \"self\",\n  \"certifications\": \"USAPA Certified\",\n  \"location\": \"New York, NY\"\n}"
+							"raw": "{\n  \"headline\": \"Professional Pickleball Coach\",\n  \"bio\": \"Experienced pickleball coach with 10 years of teaching\",\n  \"experience_years\": 10,\n  \"skill_rating\": 4.217,\n  \"rating_system\": \"DUPR\",\n  \"certifications\": [\"USAPA Certified\"],\n  \"location\": \"New York, NY\"\n}"
 						},
 						"url": {
 							"raw": "{{api_url}}/coaches/profile",
@@ -1196,7 +1196,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"headline\": \"Updated Headline\",\n  \"bio\": \"Updated bio with more experience\",\n  \"experience_years\": 12,\n  \"skill_rating\": 4.5,\n  \"rating_system\": \"self\",\n  \"certifications\": \"USAPA Certified, PPR Certified\",\n  \"location\": \"Los Angeles, CA\"\n}"
+							"raw": "{\n  \"headline\": \"Updated Headline\",\n  \"bio\": \"Updated bio with more experience\",\n  \"experience_years\": 12,\n  \"skill_rating\": 4.217,\n  \"rating_system\": \"DUPR\",\n  \"certifications\": [\"USAPA Certified\", \"PPR Certified\"],\n  \"location\": \"Los Angeles, CA\"\n}"
 						},
 						"url": {
 							"raw": "{{api_url}}/coaches/me/profile",
@@ -1884,15 +1884,21 @@
 									"description": "Miles. With seed:geosearch: 5=SF only; 10=+Oakland; 15=+Berkeley; 25=+SanMateo; 50=+SanJose. NYC/LA/NoCourt never appear."
 								},
 								{
+									"key": "rating_system",
+									"value": "DUPR",
+									"description": "DUPR or UTR-P. Only coaches rated on this system. Required for min/max_skill_rating. Omit for Any (no skill filter/ranking).",
+									"disabled": true
+								},
+								{
 									"key": "min_skill_rating",
 									"value": "4.0",
-									"description": "Playing skill filter: coachProfile.skill_rating ≥ this (2.0–6.0, 0.5 steps). Self-reported / DUPR / UTR-P level — not review stars. Excludes coaches with null skill_rating.",
+									"description": "Playing skill filter: coachProfile.skill_rating ≥ this, on rating_system's scale (DUPR 2.000–8.000, UTR-P 1.0–10.0). Requires rating_system (400 otherwise). Not review stars.",
 									"disabled": true
 								},
 								{
 									"key": "max_skill_rating",
 									"value": "5.5",
-									"description": "Playing skill filter: coachProfile.skill_rating ≤ this (2.0–6.0). Must be ≥ min_skill_rating when both set. Not review stars.",
+									"description": "Playing skill filter: coachProfile.skill_rating ≤ this, on rating_system's scale. Requires rating_system. Must be ≥ min_skill_rating when both set. Not review stars.",
 									"disabled": true
 								},
 								{
@@ -5171,7 +5177,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"headline\": \"Updated Headline\",\n  \"bio\": \"Updated bio with more experience\",\n  \"experience_years\": 12,\n  \"skill_rating\": 4.5,\n  \"rating_system\": \"self\",\n  \"certifications\": \"USAPA Certified, PPR Certified\",\n  \"location\": \"Los Angeles, CA\"\n}"
+							"raw": "{\n  \"headline\": \"Updated Headline\",\n  \"bio\": \"Updated bio with more experience\",\n  \"experience_years\": 12,\n  \"skill_rating\": 4.217,\n  \"rating_system\": \"DUPR\",\n  \"certifications\": [\"USAPA Certified\", \"PPR Certified\"],\n  \"location\": \"Los Angeles, CA\"\n}"
 						},
 						"url": {
 							"raw": "{{api_url}}/coaches/profile/:id",

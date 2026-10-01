@@ -703,7 +703,7 @@ pm.test("Profile updated successfully", function () {
 - Method: `GET`
 - URL: `{{api_url}}/coaches`
 - Headers: None (public endpoint)
-- Query params (all optional): `lat`, `lng`, `radius` (miles, default **25** at launch), `min_skill_rating`, `max_skill_rating`, `min_rating`, `page`, `limit` – use lat/lng/radius to find coaches near a location (e.g. "coaches near me").
+- Query params (all optional): `lat`, `lng`, `radius` (miles, default **25** at launch), `rating_system` (`DUPR` | `UTR-P`), `min_skill_rating`, `max_skill_rating` (require `rating_system`; on that system’s scale), `min_rating`, `page`, `limit` – use lat/lng/radius to find coaches near a location (e.g. "coaches near me").
 - Body: None
 
 **Test Script:**
@@ -731,7 +731,7 @@ Creating a coach involves **two separate steps**:
 
 2. **Then**: Create the Coach Profile (this endpoint)
    - This creates the CoachProfile record linked to your User account
-   - Contains coach-specific data: `bio`, `skill_rating`, `rating_system` (when set: **`self`**, **`DUPR`**, or **`UTR-P`** only — API-enforced), `experience_years`, etc. (Pricing is per **lesson**: `price` + `duration_minutes`; lessons expose read-only `effective_hourly_rate`.)
+   - Contains coach-specific data: `bio`, `skill_rating`, `rating_system` (**`DUPR`** 2.000–8.000 up to 3 dp, or **`UTR-P`** 1.0–10.0 1 dp; required when `skill_rating` is set — API-enforced), `experience_years`, etc. (Pricing is per **lesson**: `price` + `duration_minutes`; lessons expose read-only `effective_hourly_rate`.)
 
 **Why two steps?** The User account (`full_name`, `email`, `password_hash`, `role`, etc.) is separate from the Coach Profile (`bio`, `skill_rating`, etc.). This allows:
 - Users to exist without profiles (e.g., students)
@@ -748,8 +748,8 @@ Creating a coach involves **two separate steps**:
 ```json
 {
   "bio": "Experienced pickleball coach with 10 years of teaching",
-  "skill_rating": 4.5,
-  "rating_system": "self",
+  "skill_rating": 4.217,
+  "rating_system": "DUPR",
   "experience_years": 10
 }
 ```
@@ -769,8 +769,8 @@ Creating a coach involves **two separate steps**:
 ```json
 {
   "bio": "Experienced pickleball coach with 10 years of teaching",
-  "skill_rating": 4.5,
-  "rating_system": "self",
+  "skill_rating": 4.217,
+  "rating_system": "DUPR",
   "experience_years": 10
 }
 ```
@@ -780,8 +780,8 @@ Creating a coach involves **two separate steps**:
 {
   "user_id": 27,
   "bio": "Experienced pickleball coach with 10 years of teaching",
-  "skill_rating": 4.5,
-  "rating_system": "self",
+  "skill_rating": 4.217,
+  "rating_system": "DUPR",
   "experience_years": 10
 }
 ```
@@ -819,9 +819,9 @@ pm.test("Coach profile created", function () {
   "headline": "Updated Headline",
   "bio": "Updated bio with more experience",
   "experience_years": 12,
-  "skill_rating": 4.5,
-  "rating_system": "self",
-  "certifications": "USAPA Certified, PPR Certified",
+  "skill_rating": 4.217,
+  "rating_system": "DUPR",
+  "certifications": ["USAPA Certified", "PPR Certified"],
   "location": "Los Angeles, CA"
 }
 ```
@@ -2091,8 +2091,8 @@ Authorization: Bearer <token>
         "id": 1,
         "user_id": 1,
         "bio": "Experienced coach",
-        "skill_rating": 4.5,
-        "rating_system": "self"
+        "skill_rating": 4.217,
+        "rating_system": "DUPR"
       },
       "reliability": {
         "user_id": 1,
@@ -2152,8 +2152,8 @@ Authorization: Bearer <token>
 
 ### `GET /api/coaches` (List / search coaches)
 - **Auth**: Required (student, coach, or admin). Same public marketplace cards for all; booking still requires the **student** role.
-- **Description**: Flattened marketplace list. Optional **lat** / **lng** / **radius** for geo search (adds **`distance_miles`**). Other filters: **min_skill_rating**, **max_skill_rating**, **min_rating**, page, limit.
-- **Query Parameters**: `lat`, `lng`, `radius` (miles), `min_skill_rating`, `max_skill_rating`, `min_rating`, `page`, `limit` (all optional).
+- **Description**: Flattened marketplace list. Optional **lat** / **lng** / **radius** for geo search (adds **`distance_miles`**). Other filters: **rating_system** (DUPR | UTR-P), **min_skill_rating**, **max_skill_rating** (require rating_system; never compared across systems), **min_rating**, page, limit.
+- **Query Parameters**: `lat`, `lng`, `radius` (miles), `rating_system`, `min_skill_rating`, `max_skill_rating` (skill bounds require `rating_system`), `min_rating`, `page`, `limit` (all optional).
 - **Response** (Status: 200): Flattened cards — `headline`, `skill_rating`, `rating_*`, `reliability_score`, `courts[]` (no join IDs). With lat/lng: `distance_miles`. Paged responses include `pagination` (`totalItems`, `totalPages`, `currentPage`, `pageSize`). See **backend/API_ENDPOINTS.md** for full example.
 
 ### `GET /api/coaches/:id`
@@ -2169,8 +2169,8 @@ Authorization: Bearer <token>
       "user_id": 2,
       "full_name": "Jane Coach",
       "coachProfile": {
-        "skill_rating": 4.5,
-        "rating_system": "self",
+        "skill_rating": 4.217,
+        "rating_system": "DUPR",
         "rating_average": 4.8
       },
       "total_reviews": 25,
@@ -2188,11 +2188,11 @@ Authorization: Bearer <token>
   {
     "user_id": "number (optional, admin only - defaults to authenticated user's ID)",
     "headline": "string (optional)",
-    "bio": "string (optional)",
+    "bio": "string (optional; trimmed, max 1,000 characters)",
     "experience_years": "number (optional, defaults to 0)",
-    "skill_rating": "number (optional, 2.0–6.0, 0.5 steps) or null",
-    "rating_system": "\"self\" | \"DUPR\" | \"UTR-P\" (optional; default self when omitted)",
-    "certifications": "string (optional)",
+    "skill_rating": "number or null (optional; DUPR 2.000–8.000 up to 3 dp, UTR-P 1.0–10.0 1 dp)",
+    "rating_system": "\"DUPR\" | \"UTR-P\" | null (required when skill_rating is set)",
+    "certifications": "string[] | null (optional; up to 20 names, each trimmed and max 500 characters; blanks and duplicates dropped; [] or null clears)",
     "location": "string (optional)"
   }
   ```
@@ -2207,9 +2207,9 @@ Authorization: Bearer <token>
       "headline": "Professional Pickleball Coach",
       "bio": "Experienced pickleball coach with 10 years of teaching",
       "experience_years": 10,
-      "skill_rating": 4.5,
-      "rating_system": "self",
-      "certifications": "USAPA Certified",
+      "skill_rating": 4.217,
+      "rating_system": "DUPR",
+      "certifications": ["USAPA Certified"],
       "location": "New York, NY",
       "created_at": "2026-01-01T00:00:00.000Z"
     }
@@ -2223,11 +2223,11 @@ Authorization: Bearer <token>
   ```json
   {
     "headline": "string (optional)",
-    "bio": "string (optional)",
+    "bio": "string (optional; trimmed, max 1,000 characters)",
     "experience_years": "number (optional)",
     "skill_rating": "number (optional) or null",
-    "rating_system": "\"self\" | \"DUPR\" | \"UTR-P\" (optional)",
-    "certifications": "string (optional)",
+    "rating_system": "\"DUPR\" | \"UTR-P\" | null (optional; validated with the stored rating after merge)",
+    "certifications": "string[] | null (optional; up to 20 names, each trimmed and max 500 characters; blanks and duplicates dropped; [] or null clears)",
     "location": "string (optional)"
   }
   ```
@@ -2241,8 +2241,8 @@ Authorization: Bearer <token>
       "headline": "Updated Headline",
       "bio": "Updated bio with more experience",
       "experience_years": 12,
-      "skill_rating": 4.5,
-      "rating_system": "self"
+      "skill_rating": 4.217,
+      "rating_system": "DUPR"
     }
   }
   ```
@@ -2261,8 +2261,8 @@ Authorization: Bearer <token>
       "headline": "Updated Headline",
       "bio": "Updated bio with more experience",
       "experience_years": 12,
-      "skill_rating": 4.5,
-      "rating_system": "self"
+      "skill_rating": 4.217,
+      "rating_system": "DUPR"
     }
   }
   ```

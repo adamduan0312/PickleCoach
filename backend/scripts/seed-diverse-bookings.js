@@ -181,7 +181,7 @@ async function ensureCoachStack(coach, templateIndex) {
       bio: 'Seeded for diverse booking endpoint tests.',
       experience_years: 3 + (coach.id % 5),
       skill_rating: 3.5,
-      rating_system: 'self',
+      rating_system: 'DUPR',
       rating_average: 4.5,
       rating_count: 0,
       location: 'New York',

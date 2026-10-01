@@ -399,8 +399,8 @@ test('serializeCoachListItem flattens profile, renames courts, drops join IDs', 
       headline: 'SF coach',
       bio: 'Bio',
       experience_years: 7,
-      skill_rating: 4.0,
-      rating_system: 'self',
+      skill_rating: 9.5,
+      rating_system: 'UTR-P',
       certifications: null,
       location: 'SF',
       rating_average: 4.9,
@@ -434,7 +434,8 @@ test('serializeCoachListItem flattens profile, renames courts, drops join IDs', 
   assert.equal(out.coachProfile, undefined);
   assert.equal(out.coachCourts, undefined);
   assert.equal(out.headline, 'SF coach');
-  assert.equal(out.skill_rating, 4.0);
+  assert.equal(out.skill_rating, 9.5);
+  assert.equal(out.rating_system, 'UTR-P');
   assert.equal(out.rating_average, 4.9);
   assert.equal(out.reliability_score, 100);
   assert.equal(out.courts.length, 1);

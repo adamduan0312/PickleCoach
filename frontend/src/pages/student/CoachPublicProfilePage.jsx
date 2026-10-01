@@ -31,6 +31,8 @@ import { useAuth } from '../../auth/AuthContext.jsx';
 import { hasStudentRole } from '../../domain/userReadiness.js';
 import { timezoneLabel } from '../../domain/timezones.js';
 import { GROUP_LESSON_NOTE, isGroupLesson, lessonTypeLabel } from '../../domain/lessonOffering.js';
+import { certificationList } from '../../domain/coachRating.js';
+import { ownProfileLessonPreview } from '../../domain/coachSetup.js';
 
 function courtTeachingLabel(court) {
   const name = court?.name || 'Court';
@@ -57,27 +59,35 @@ export function CoachPublicProfilePage() {
   const [slotIso, setSlotIso] = useState('');
   const [visibleSlotCount, setVisibleSlotCount] = useState(AVAILABILITY_INITIAL_SLOT_COUNT);
 
+  const isOwnProfile = user?.id != null && String(user.id) === String(id);
+
   const { data, error, loading } = useAsync(async () => {
-    const [coachRes, lessonsRes, courtsRes, availabilityRes, reviewsRes] = await Promise.all([
+    const [coachRes, lessonsRes, courtsRes, availabilityRes, reviewsRes, ownLessonsRes, statusRes] = await Promise.all([
       coachesApi.getById(id),
       coachesApi.getLessons(id).catch(() => ({ data: [] })),
       coachesApi.getCourts(id).catch(() => ({ data: [] })),
       coachesApi.getAvailability(id).catch(() => ({ data: [] })),
       coachesApi.getReviews(id).catch(() => ({ data: [] })),
+      isOwnProfile ? coachesApi.myLessons().catch(() => ({ data: [] })) : null,
+      isOwnProfile ? coachesApi.marketplaceStatus().catch(() => null) : null,
     ]);
+    const marketplaceLessons = asList(lessonsRes.data).length ? asList(lessonsRes.data) : asList(coachRes.data?.lessons);
+    const lessonView = isOwnProfile
+      ? ownProfileLessonPreview({ marketplaceLessons, ownLessons: asList(ownLessonsRes?.data), status: statusRes?.data })
+      : { preview: false, lessons: marketplaceLessons };
     return {
       coach: coachRes.data,
-      lessons: asList(lessonsRes.data).length ? asList(lessonsRes.data) : asList(coachRes.data?.lessons),
+      lessons: lessonView.lessons,
+      preview: lessonView.preview ? { missing: lessonView.missing } : null,
       courts: asList(courtsRes.data),
       availability: asList(availabilityRes.data).length ? asList(availabilityRes.data) : asList(coachRes.data?.availabilities),
       occupiedSlots: asList(availabilityRes.raw?.occupied_slots),
       reviews: asList(reviewsRes.data).length ? asList(reviewsRes.data) : asList(coachRes.data?.reviewsReceived),
     };
-  }, [id]);
+  }, [id, isOwnProfile]);
 
   const selectedLesson = (data?.lessons || []).find((l) => String(l.id) === String(lessonId));
   const selectedCourt = (data?.courts || []).find((c) => String(c.court_id || c.id) === String(courtId));
-  const isOwnProfile = user?.id != null && String(user.id) === String(id);
   /** Coach mode may browse profiles but cannot initiate student bookings. */
   const bookingAllowed = mode === 'student' && !isOwnProfile;
 
@@ -139,6 +149,7 @@ export function CoachPublicProfilePage() {
   const coach = data.coach;
   const profile = coach.coachProfile || {};
   const skillLine = formatSkillRatingLine(profile.skill_rating, profile.rating_system);
+  const certifications = certificationList(profile.certifications);
   const reliabilityLine = formatReliabilityLabel(coach.reliability?.reliability_score);
   const listedReviews = data.reviews || [];
   const profileSummary = coachReviewSummary(profile.rating_average, profile.rating_count);
@@ -156,6 +167,23 @@ export function CoachPublicProfilePage() {
 
   return (
     <div className="page coach-profile-page">
+      {data.preview ? (
+        <div className="alert warning coach-preview-banner" role="status">
+          <strong>Your public profile preview</strong>
+          <p>Students won’t see your lessons until you’re listed.</p>
+          {data.preview.missing.length ? (
+            <p>
+              Finish setup:{' '}
+              {data.preview.missing.map((s, i) => (
+                <span key={s.key}>
+                  {i > 0 ? ', ' : null}
+                  <Link to={s.to}>{s.label}</Link>
+                </span>
+              ))}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
       <section className="card coach-profile-hero">
         <div className="coach-profile-hero-top">
           <Avatar name={coach.full_name} src={coach.avatar_url} size="lg" />
@@ -200,13 +228,19 @@ export function CoachPublicProfilePage() {
         </div>
       </section>
 
-      {(profile.bio || profile.certifications) ? (
+      {profile.bio ? (
         <section className="card coach-profile-section">
           <h2>About</h2>
-          {profile.bio ? <p className="coach-profile-bio">{profile.bio}</p> : null}
-          {profile.certifications ? (
-            <p className="small muted">Certifications: {profile.certifications}</p>
-          ) : null}
+          <p className="coach-profile-bio">{profile.bio}</p>
+        </section>
+      ) : null}
+
+      {certifications.length > 0 ? (
+        <section className="card coach-profile-section">
+          <h2>Certifications</h2>
+          <ul className="coach-certifications">
+            {certifications.map((c) => <li key={c}>{c}</li>)}
+          </ul>
         </section>
       ) : null}
 
@@ -239,7 +273,11 @@ export function CoachPublicProfilePage() {
 
       <section className="card coach-profile-section coach-booking-section">
         <h2>{bookingAllowed ? 'Book a lesson' : 'Lessons offered'}</h2>
-        {isOwnProfile ? (
+        {isOwnProfile && data.preview ? (
+          <Alert tone="info">
+            Preview only — students can’t see these lessons yet. They’ll appear here once you’re listed.
+          </Alert>
+        ) : isOwnProfile ? (
           <Alert tone="info">
             This is your coach profile. Students book you from Discover — you can’t book yourself.
           </Alert>
@@ -252,7 +290,13 @@ export function CoachPublicProfilePage() {
           </Alert>
         ) : null}
 
-        {data.lessons.length === 0 ? (
+        {data.lessons.length === 0 && data.preview ? (
+          <EmptyState
+            title="No lessons yet"
+            detail="Add a lesson so students have something to book."
+            action={<Link className="btn secondary" to="/coach/lessons">Go to Lessons</Link>}
+          />
+        ) : data.lessons.length === 0 ? (
           <EmptyState title="No bookable lessons" detail="This coach is not currently offering marketplace lessons." />
         ) : !bookingAllowed ? (
           <ul className="stack" style={{ listStyle: 'none', padding: 0, margin: '12px 0 0' }}>
@@ -261,6 +305,7 @@ export function CoachPublicProfilePage() {
                 <div className="coach-lesson-card-main">
                   <strong>{l.title}</strong>
                   <span className="small coach-lesson-type">{lessonTypeLabel(l)}</span>
+                  {data.preview ? <span className="badge warning coach-preview-badge">Hidden from students</span> : null}
                   {l.description ? (
                     <p className="small muted coach-lesson-desc">{l.description}</p>
                   ) : null}

@@ -18,7 +18,11 @@ import { logger } from '../config/logger.js';
 import { getEffectiveRolesForUserRecord } from '../utils/roleGovernance.js';
 import { serializeCoachPublicUser, serializeCoachListItem, serializeCoachProfilePublic, distanceMiles } from '../utils/userDto.js';
 import { sortMarketplaceCoaches } from '../utils/marketplaceCoachRank.js';
-import { toYmdApi } from '../utils/dateOnly.js';
+import { resolveCoachRating } from '../utils/coachRating.js';
+import { resolveCoachLocation } from '../utils/coachLocation.js';
+import { certificationsForStorage } from '../utils/coachCertifications.js';
+import { calendarDateInTimezone, toYmdApi } from '../utils/dateOnly.js';
+import { availabilityConflictMessage, validateAvailabilityDates } from '../utils/availabilityRules.js';
 import { PUBLIC_ACTIVE_USER_WHERE, findPublicActiveCoach } from '../utils/userLifecycle.js';
 import { serializeAvailability } from '../utils/availabilityDto.js';
 import {
@@ -46,6 +50,7 @@ export const getCoaches = async (req, res) => {
       lat,
       lng,
       radius,
+      rating_system,
       min_skill_rating,
       max_skill_rating,
       min_rating,
@@ -65,8 +70,9 @@ export const getCoaches = async (req, res) => {
     if (min_rating) {
       profileWhereParts.push({ rating_average: { [Op.gte]: parseFloat(min_rating) } });
     }
-    if (min_skill_rating != null || max_skill_rating != null) {
-      profileWhereParts.push({ skill_rating: { [Op.ne]: null } });
+    // Skill bounds are only accepted with rating_system (validated), so they never span scales.
+    if (rating_system) {
+      profileWhereParts.push({ rating_system, skill_rating: { [Op.ne]: null } });
       if (min_skill_rating != null) {
         profileWhereParts.push({ skill_rating: { [Op.gte]: min_skill_rating } });
       }
@@ -155,6 +161,7 @@ export const getCoaches = async (req, res) => {
 
     const ranked = sortMarketplaceCoaches(shaped, {
       hasLocation: isGeoSearch,
+      ratingSystem: rating_system ?? null,
       minSkill: min_skill_rating ?? null,
       maxSkill: max_skill_rating ?? null,
     });
@@ -240,15 +247,20 @@ export const createCoachProfile = async (req, res) => {
       return errorResponse(res, 'Coach profile already exists', 409);
     }
 
+    const rating = resolveCoachRating({ skill_rating, rating_system });
+    if (!rating.ok) return coachProfileValidationError(res, req, rating);
+    const basedIn = await resolveCoachLocation({ location });
+    if (!basedIn.ok) return coachProfileValidationError(res, req, basedIn);
+
     const profile = await CoachProfile.create({
       user_id: targetUserId,
       headline,
       bio,
       experience_years: experience_years ?? 0,
-      skill_rating: skill_rating ?? null,
-      rating_system: rating_system ?? 'self',
-      certifications,
-      location,
+      skill_rating: rating.skill_rating,
+      rating_system: rating.rating_system,
+      certifications: certificationsForStorage(certifications),
+      location: basedIn.location,
     });
 
     return successResponse(
@@ -258,6 +270,7 @@ export const createCoachProfile = async (req, res) => {
       201,
     );
   } catch (error) {
+    if (isGeocodeOutage(error)) return errorResponse(res, error.message, error.status || 503);
     logger.error('Create coach profile error:', error);
     // Include error details in response for debugging
     const errorMessage = error.message || 'Failed to create coach profile';
@@ -265,26 +278,45 @@ export const createCoachProfile = async (req, res) => {
   }
 };
 
-/** @param {import('sequelize').Model} profile @param {object} validated */
+function coachProfileValidationError(res, req, result) {
+  return res.status(400).json({
+    success: false,
+    error: 'Validation failed',
+    details: [{ field: result.field, message: result.message }],
+    requestId: req.id,
+  });
+}
+
+function isGeocodeOutage(error) {
+  return error?.code === 'GEOCODE_UNAVAILABLE' || error?.code === 'GEOCODE_PROVIDER_ERROR';
+}
+
+/**
+ * Validates the effective rating pair (after merge) and the "Based in" place before writing anything.
+ * @param {import('sequelize').Model} profile @param {object} validated
+ * @returns {Promise<{ ok: true } | { ok: false, field: string, message: string }>}
+ */
 async function applyCoachProfileUpdate(profile, validated) {
   const {
     headline,
     bio,
     experience_years,
-    skill_rating,
-    rating_system,
     certifications,
-    location,
   } = validated;
+  const rating = resolveCoachRating(validated, profile);
+  if (!rating.ok) return rating;
+  const basedIn = await resolveCoachLocation(validated, profile);
+  if (!basedIn.ok) return basedIn;
   await profile.update({
     headline: headline !== undefined ? headline : profile.headline,
     bio: bio !== undefined ? bio : profile.bio,
     experience_years: experience_years !== undefined ? experience_years : profile.experience_years,
-    skill_rating: skill_rating !== undefined ? skill_rating : profile.skill_rating,
-    rating_system: rating_system !== undefined ? rating_system : profile.rating_system,
-    certifications: certifications !== undefined ? certifications : profile.certifications,
-    location: location !== undefined ? location : profile.location,
+    skill_rating: rating.skill_rating,
+    rating_system: rating.rating_system,
+    certifications: certifications !== undefined ? certificationsForStorage(certifications) : profile.certifications,
+    location: basedIn.location,
   });
+  return { ok: true };
 }
 
 /**
@@ -296,13 +328,15 @@ export const updateMyCoachProfile = async (req, res) => {
     if (!profile) {
       return errorResponse(res, 'Coach profile not found', 404);
     }
-    await applyCoachProfileUpdate(profile, req.validated);
+    const result = await applyCoachProfileUpdate(profile, req.validated);
+    if (!result.ok) return coachProfileValidationError(res, req, result);
     return successResponse(
       res,
       serializeCoachProfilePublic(profile),
       'Coach profile updated successfully',
     );
   } catch (error) {
+    if (isGeocodeOutage(error)) return errorResponse(res, error.message, error.status || 503);
     logger.error('Update my coach profile error:', error);
     return errorResponse(res, 'Failed to update coach profile', 500);
   }
@@ -321,13 +355,15 @@ export const updateCoachProfile = async (req, res) => {
       return errorResponse(res, 'Coach profile not found', 404);
     }
 
-    await applyCoachProfileUpdate(profile, req.validated);
+    const result = await applyCoachProfileUpdate(profile, req.validated);
+    if (!result.ok) return coachProfileValidationError(res, req, result);
     return successResponse(
       res,
       serializeCoachProfilePublic(profile),
       'Coach profile updated successfully',
     );
   } catch (error) {
+    if (isGeocodeOutage(error)) return errorResponse(res, error.message, error.status || 503);
     logger.error('Update coach profile error:', error);
     return errorResponse(res, 'Failed to update coach profile', 500);
   }
@@ -375,6 +411,58 @@ function dateRangesOverlap(aStart, aEnd, bStart, bEnd) {
   return aS <= bE && bS <= aE;
 }
 
+function availabilityFieldError(res, req, field, message) {
+  return res.status(400).json({
+    success: false,
+    error: 'Validation failed',
+    message,
+    details: [{ field, message }],
+    requestId: req.id,
+  });
+}
+
+/** Past/ceiling date checks against "today" in the coach's own timezone. */
+function checkAvailabilityDates(req, startDate, endDate) {
+  const today = calendarDateInTimezone(new Date(), req.user.timezone || 'UTC');
+  return validateAvailabilityDates({ start_date: startDate, end_date: endDate }, { today });
+}
+
+/**
+ * First same-weekday window (earliest start) whose date range and time range overlap the requested one,
+ * turned into a 400 error that names it; null when there is no conflict.
+ */
+function availabilityConflictError(rows, weekday, requested) {
+  const conflict = [...rows]
+    .sort((a, b) => String(a.start_time).localeCompare(String(b.start_time)))
+    .find((row) =>
+      dateRangesOverlap(requested.start_date, requested.end_date, toYmdApi(row.start_date), toYmdApi(row.end_date))
+      && timeRangesOverlap(requested.start_time, requested.end_time, row.start_time, row.end_time));
+  if (!conflict) return null;
+  const err = new Error(availabilityConflictMessage({
+    weekday,
+    existing: {
+      start_time: conflict.start_time,
+      end_time: conflict.end_time,
+      start_date: toYmdApi(conflict.start_date),
+      end_date: toYmdApi(conflict.end_date),
+    },
+    requested,
+  }));
+  err.statusCode = 400;
+  err.conflictId = conflict.id;
+  return err;
+}
+
+function availabilityConflictResponse(res, req, err) {
+  return res.status(400).json({
+    success: false,
+    error: 'Availability overlap',
+    message: err.message,
+    conflict_availability_id: err.conflictId,
+    requestId: req.id,
+  });
+}
+
 /**
  * POST /api/coaches/me/availability
  * Coach only (route); `coach_id` is always `req.user.id` — never taken from the body or URL coach param.
@@ -393,6 +481,9 @@ export const createAvailability = async (req, res) => {
     const resolvedStartTime = normalizeTimeOfDay(start_time);
     const resolvedEndTime = normalizeTimeOfDay(end_time);
 
+    const dates = checkAvailabilityDates(req, resolvedStartDate, resolvedEndDate);
+    if (!dates.ok) return availabilityFieldError(res, req, dates.field, dates.message);
+
     let availability;
     try {
       availability = await sequelize.transaction(async (t) => {
@@ -405,29 +496,13 @@ export const createAvailability = async (req, res) => {
           transaction: t,
           lock: t.LOCK.UPDATE,
         });
-        for (const row of existing) {
-          const dateOverlap = dateRangesOverlap(
-            resolvedStartDate,
-            resolvedEndDate,
-            toYmdApi(row.start_date),
-            toYmdApi(row.end_date)
-          );
-          if (!dateOverlap) continue;
-
-          const timeOverlap = timeRangesOverlap(
-            resolvedStartTime,
-            resolvedEndTime,
-            row.start_time,
-            row.end_time
-          );
-          if (timeOverlap) {
-            const err = new Error(
-              'This availability overlaps an existing slot for the same day and date range. Use a non-overlapping time window (e.g. 09:00–12:00 and 13:00–17:00).',
-            );
-            err.statusCode = 400;
-            throw err;
-          }
-        }
+        const conflict = availabilityConflictError(existing, weekday, {
+          start_date: resolvedStartDate,
+          end_date: resolvedEndDate,
+          start_time: resolvedStartTime,
+          end_time: resolvedEndTime,
+        });
+        if (conflict) throw conflict;
 
         return CoachAvailability.create(
           {
@@ -442,9 +517,7 @@ export const createAvailability = async (req, res) => {
         );
       });
     } catch (err) {
-      if (err?.statusCode === 400) {
-        return errorResponse(res, err.message, 400);
-      }
+      if (err?.statusCode === 400) return availabilityConflictResponse(res, req, err);
       throw err;
     }
 
@@ -563,6 +636,9 @@ export const updateMyAvailability = async (req, res) => {
     const resolvedStartTime = normalizeTimeOfDay(start_time);
     const resolvedEndTime = normalizeTimeOfDay(end_time);
 
+    const dates = checkAvailabilityDates(req, resolvedStartDate, resolvedEndDate);
+    if (!dates.ok) return availabilityFieldError(res, req, dates.field, dates.message);
+
     let row;
     try {
       row = await sequelize.transaction(async (t) => {
@@ -593,29 +669,13 @@ export const updateMyAvailability = async (req, res) => {
           transaction: t,
           lock: t.LOCK.UPDATE,
         });
-        for (const other of existing) {
-          const dateOverlap = dateRangesOverlap(
-            resolvedStartDate,
-            resolvedEndDate,
-            toYmdApi(other.start_date),
-            toYmdApi(other.end_date)
-          );
-          if (!dateOverlap) continue;
-
-          const timeOverlap = timeRangesOverlap(
-            resolvedStartTime,
-            resolvedEndTime,
-            other.start_time,
-            other.end_time
-          );
-          if (timeOverlap) {
-            const err = new Error(
-              'This availability overlaps an existing slot for the same day and date range. Use a non-overlapping time window (e.g. 09:00–12:00 and 13:00–17:00).',
-            );
-            err.statusCode = 400;
-            throw err;
-          }
-        }
+        const conflict = availabilityConflictError(existing, weekday, {
+          start_date: resolvedStartDate,
+          end_date: resolvedEndDate,
+          start_time: resolvedStartTime,
+          end_time: resolvedEndTime,
+        });
+        if (conflict) throw conflict;
 
         await locked.update(
           {
@@ -633,7 +693,7 @@ export const updateMyAvailability = async (req, res) => {
     } catch (err) {
       if (err?.statusCode === 404) return errorResponse(res, err.message, 404);
       if (err?.statusCode === 403) return errorResponse(res, err.message, 403);
-      if (err?.statusCode === 400) return errorResponse(res, err.message, 400);
+      if (err?.statusCode === 400) return availabilityConflictResponse(res, req, err);
       throw err;
     }
 

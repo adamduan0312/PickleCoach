@@ -11,8 +11,12 @@
  * | Skill only         | Skill fit          | trust → id                    |
  * | Location + skill   | Distance           | skill fit → trust → id        |
  *
+ * Skill fit is only computed within the requested rating system (DUPR vs UTR-P are
+ * separate scales and are never compared). Without a rating system there is no skill ranking.
+ *
  * Trust is a composite of reliability + review rating/volume — not reliability alone.
  */
+import { sameSystemSkillDistance } from './coachRating.js';
 
 function num(value, fallback = null) {
   const n = Number(value);
@@ -32,39 +36,21 @@ export function marketplaceTrustScore(coach) {
 }
 
 /**
- * Skill distance from preferred midpoint (0 = perfect fit).
- * Midpoint = average of min/max when both set; else the single bound.
- */
-export function skillFitDistance(skillRating, { minSkill = null, maxSkill = null } = {}) {
-  const skill = num(skillRating, null);
-  if (skill == null) return Number.POSITIVE_INFINITY;
-
-  const hasMin = minSkill != null && Number.isFinite(Number(minSkill));
-  const hasMax = maxSkill != null && Number.isFinite(Number(maxSkill));
-  if (!hasMin && !hasMax) return 0;
-
-  let target;
-  if (hasMin && hasMax) target = (Number(minSkill) + Number(maxSkill)) / 2;
-  else if (hasMin) target = Number(minSkill);
-  else target = Number(maxSkill);
-
-  return Math.abs(skill - target);
-}
-
-/**
  * @param {object} a coach list DTO
  * @param {object} b coach list DTO
  * @param {{
  *   hasLocation?: boolean,
+ *   ratingSystem?: 'DUPR'|'UTR-P'|null,
  *   minSkill?: number|null,
  *   maxSkill?: number|null,
  * }} [opts]
  */
 export function compareMarketplaceCoaches(a, b, opts = {}) {
   const hasLocation = Boolean(opts.hasLocation);
-  const hasSkill =
+  const hasSkill = Boolean(opts.ratingSystem) && (
     (opts.minSkill != null && Number.isFinite(Number(opts.minSkill)))
-    || (opts.maxSkill != null && Number.isFinite(Number(opts.maxSkill)));
+    || (opts.maxSkill != null && Number.isFinite(Number(opts.maxSkill)))
+  );
 
   if (hasLocation) {
     const da = num(a?.distance_miles, Number.POSITIVE_INFINITY);
@@ -73,14 +59,13 @@ export function compareMarketplaceCoaches(a, b, opts = {}) {
   }
 
   if (hasSkill) {
-    const fa = skillFitDistance(a?.skill_rating, {
+    const skillOpts = {
+      ratingSystem: opts.ratingSystem,
       minSkill: opts.minSkill,
       maxSkill: opts.maxSkill,
-    });
-    const fb = skillFitDistance(b?.skill_rating, {
-      minSkill: opts.minSkill,
-      maxSkill: opts.maxSkill,
-    });
+    };
+    const fa = sameSystemSkillDistance(a, skillOpts);
+    const fb = sameSystemSkillDistance(b, skillOpts);
     if (fa !== fb) return fa - fb;
   }
 
@@ -100,6 +85,7 @@ export function compareMarketplaceCoaches(a, b, opts = {}) {
  * @param {Array<object>} coaches serialized list DTOs
  * @param {{
  *   hasLocation?: boolean,
+ *   ratingSystem?: 'DUPR'|'UTR-P'|null,
  *   minSkill?: number|null,
  *   maxSkill?: number|null,
  * }} [opts]

@@ -55,6 +55,8 @@ export const coachesApi = {
 /** Server-side ZIP/city/address → coordinates for Discover (no provider keys in the browser). */
 export const geoApi = {
   search: (params) => apiRequest(`/geo/search${qs(params)}`),
+  /** City-level "Based in" suggestions: { results: [{ label: 'Davie, FL', detail }] }. */
+  places: (params) => apiRequest(`/geo/places${qs(params)}`),
 };
 
 export const studentsApi = {

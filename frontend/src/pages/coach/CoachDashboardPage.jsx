@@ -1,9 +1,9 @@
-import { useMemo } from 'react';
-import { Link } from 'react-router-dom';
+import { useEffect, useMemo, useState } from 'react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../auth/AuthContext.jsx';
 import { coachesApi, asList } from '../../api/index.js';
 import { useAsync } from '../../hooks/useAsync.js';
-import { EmptyState, ErrorState, LoadingState, StatusBadge } from '../../components/ui/States.jsx';
+import { Alert, EmptyState, ErrorState, LoadingState, StatusBadge } from '../../components/ui/States.jsx';
 import { BookingListCardBody } from '../../components/bookings/BookingListCardBody.jsx';
 import { HowBookingsWorkGuide } from '../../components/guides/HowBookingsWorkGuide.jsx';
 import { DashboardReminders } from '../../components/dashboard/DashboardReminders.jsx';
@@ -11,14 +11,7 @@ import { bookingDisplayLabel, bookingDisplayTone, coachAcceptanceDeadlineAt, sor
 import { coachDashboardReminders } from '../../domain/dashboardReminders.js';
 import { bookingLessonTitle } from '../../domain/lessonOffering.js';
 import { formatListWhenInZone, formatListWhenWithZone } from '../../utils/datetime.js';
-
-const STEP_LABELS = {
-  profile: 'Coach profile',
-  lesson: 'At least one lesson',
-  court: 'A court location',
-  availability: 'Availability windows',
-  stripe: 'Payouts enabled',
-};
+import { coachSetupView } from '../../domain/coachSetup.js';
 
 function respondByWhen(booking, tz) {
   const iso = coachAcceptanceDeadlineAt(booking);
@@ -28,6 +21,16 @@ function respondByWhen(booking, tz) {
 export function CoachDashboardPage() {
   const { user, readiness, refreshProfile, refreshStripeStatus } = useAuth();
   const tz = user?.timezone;
+  const location = useLocation();
+  const navigate = useNavigate();
+  const [flash] = useState(() => location.state?.flash || null);
+
+  // Show once: drop it from history so refresh/back doesn't repeat it.
+  useEffect(() => {
+    if (location.state?.flash) {
+      navigate(`${location.pathname}${location.search}`, { replace: true, state: null });
+    }
+  }, [location.state, location.pathname, location.search, navigate]);
   const { data: market, error: marketError, loading: marketLoading } = useAsync(async () => {
     const statusRes = await coachesApi.marketplaceStatus();
     return statusRes.data;
@@ -52,6 +55,9 @@ export function CoachDashboardPage() {
   );
 
   const loading = marketLoading || bookingsLoading;
+  // Without a profile the next step is known even if marketplace status fails to load.
+  const setupSteps = market?.steps || (readiness.coachUiPhase === 'start_setup' ? { profile: false } : null);
+  const setup = setupSteps ? coachSetupView(setupSteps, { coachUiPhase: readiness.coachUiPhase }) : null;
 
   return (
     <div className="page">
@@ -62,13 +68,20 @@ export function CoachDashboardPage() {
         </div>
         <Link className="btn" to="/coach/bookings">All bookings</Link>
       </div>
+      {flash ? (
+        <Alert tone="success">
+          {flash}{' '}
+          {user?.id ? <Link to={`/coaches/${user.id}`}>View public profile</Link> : null}
+        </Alert>
+      ) : null}
       <HowBookingsWorkGuide userId={user?.id} role="coach" />
       {!bookingsLoading && !bookingsError ? <DashboardReminders items={reminders} /> : null}
-      {readiness.coachUiPhase === 'start_setup' ? (
-        <div className="card" style={{ marginBottom: 16 }}>
-          <h2>Create your coach profile</h2>
-          <p>You have the coach role, but no profile yet.</p>
-          <Link className="btn" to="/coach/profile">Start setup</Link>
+      {setup?.next ? (
+        <div className="card coach-next-step" style={{ marginBottom: 16 }}>
+          <span className="small muted coach-next-step-label">Next step</span>
+          <h2>{setup.next.title}</h2>
+          <p>{setup.next.detail}</p>
+          <Link className="btn" to={setup.next.to}>{setup.next.cta}</Link>
         </div>
       ) : null}
       {loading ? <LoadingState /> : null}
@@ -92,18 +105,23 @@ export function CoachDashboardPage() {
             <p className="small muted">You’re visible to students in Discover.</p>
           )}
           <ul className="checklist">
-            {Object.entries(market.steps || {}).map(([key, done]) => (
-              <li key={key} className={done ? 'done' : ''}>
-                {done ? '✓' : '○'} {STEP_LABELS[key] || key}
+            {(setup?.checklist || []).map((item) => (
+              <li key={item.key} className={item.done ? 'done' : item.disabled ? 'disabled' : ''}>
+                <span aria-hidden="true">{item.done ? '✓' : '○'}</span>{' '}
+                {item.disabled ? (
+                  <span aria-disabled="true">
+                    {item.label} <span className="small muted">— {item.hint}</span>
+                  </span>
+                ) : (
+                  <Link to={item.to}>
+                    {item.label}
+                    <span className="visually-hidden">{item.done ? ' (done)' : ' (not done)'}</span>
+                  </Link>
+                )}
               </li>
             ))}
           </ul>
           <div className="row">
-            <Link className="btn secondary" to="/coach/profile">Profile</Link>
-            <Link className="btn secondary" to="/coach/lessons">Lessons</Link>
-            <Link className="btn secondary" to="/coach/courts">Courts</Link>
-            <Link className="btn secondary" to="/coach/availability">Availability</Link>
-            <Link className="btn secondary" to="/coach/stripe">Payouts</Link>
             <button type="button" className="btn ghost" onClick={() => { refreshProfile(); refreshStripeStatus(); }}>Refresh</button>
           </div>
         </div>

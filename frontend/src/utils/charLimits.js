@@ -7,6 +7,8 @@ export const CHAR_LIMITS = {
   disputeNotes: 1000,
   messageText: 5000,
   coachHeadline: 255,
+  coachBio: 1000,
+  coachCertification: 500,
   courtName: 255,
   courtAddress: 255,
   courtCity: 100,

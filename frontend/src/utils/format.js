@@ -58,33 +58,8 @@ export function discoverTeachingPlaceLabel(coach, { hasLocation = false } = {}) 
   return `${courts.length} teaching locations`;
 }
 
-/**
- * Human-readable source for coach_profiles.rating_system.
- * Backend values stay: self | DUPR | UTR-P — do not imply external verification.
- */
-export function formatRatingSystemLabel(ratingSystem) {
-  if (ratingSystem == null || ratingSystem === '') return null;
-  switch (String(ratingSystem)) {
-    case 'self':
-      return 'Self-reported rating';
-    case 'DUPR':
-      return 'DUPR rating';
-    case 'UTR-P':
-      return 'UTR-P rating';
-    default:
-      return `${ratingSystem} rating`;
-  }
-}
-
-/** Compact student-facing skill line, e.g. "Skill 4.0 · DUPR rating". */
-export function formatSkillRatingLine(skillRating, ratingSystem) {
-  if (skillRating == null || skillRating === '') return null;
-  const n = Number(skillRating);
-  if (!Number.isFinite(n)) return null;
-  const skill = `Skill ${n.toFixed(1)}`;
-  const source = formatRatingSystemLabel(ratingSystem);
-  return source ? `${skill} · ${source}` : skill;
-}
+/** "DUPR 4.217" / "UTR-P 9.5" — system always shown; null without a DUPR/UTR-P system. */
+export { formatSkillRatingLine } from '../domain/coachRating.js';
 
 /**
  * Student-facing reliability label (matches coach profile wording).

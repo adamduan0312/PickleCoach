@@ -82,7 +82,11 @@ describeHttp('HTTP integration: concurrent availability overlap race', () => {
     );
     assert.equal(failures.length, 1);
     assert.equal(failures[0].status, 400, failures[0].text);
-    assert.match(String(failures[0].json?.message || failures[0].text), /overlap/i);
+    assert.equal(failures[0].json?.error, 'Availability overlap', failures[0].text);
+    assert.equal(
+      failures[0].json?.message,
+      'This time is already covered by your Saturday 10:00 AM–12:00 PM window.',
+    );
 
     const after = await CoachAvailability.count({
       where: { coach_id: fixture.coach.id, weekday: 6 },

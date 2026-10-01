@@ -436,7 +436,7 @@ Use `API_ENDPOINTS.md` for full request/response specs. Minimal examples for flo
 
 - **Register:** `{ "full_name", "email", "password", "role": "student" | "coach", "phone?", "timezone?" }`
 - **Login:** `{ "email", "password" }`
-- **Create Coach Profile:** `{ "headline?", "bio?", "experience_years?", "skill_rating?" (2.0–6.0, 0.5 steps), "rating_system?" (**`self`** | **`DUPR`** | **`UTR-P`**; default `"self"`), "certifications?", "location?" }` — pricing is per **lesson** (`price` + `duration_minutes`), not on the profile.
+- **Create Coach Profile:** `{ "headline?", "bio?" (max 1,000 characters), "experience_years?", "skill_rating?" (DUPR 2.000–8.000 up to 3 dp, or UTR-P 1.0–10.0 1 dp; null to clear), "rating_system?" (**`DUPR`** | **`UTR-P`** | null; required when skill_rating is set), "certifications?" (array of names, up to 20, each max 500 characters), "location?" }` — pricing is per **lesson** (`price` + `duration_minutes`), not on the profile.
 - **Search Locations:** `GET /api/geo/search?q=` (+ optional `limit`) — auth required.
 - **Check Court Duplicates:** `{ "name", "address_line1", "city", "state", "postal_code", "latitude", "longitude", "country?" }`
 - **Create Court:** `{ "name", "address_line1", "city", "state", "postal_code", "country?", "latitude", "longitude", "is_private?", "acknowledge_possible_duplicates?" }` — coaches require lat/lng; no `coach_notes` / `notes` / free-text `address` (**400**). Auto-link: `data.coachCourt`. Link notes: **`POST /api/coaches/me/courts`** with `court_id` + `coach_notes`. See `API_ENDPOINTS.md` `POST /api/courts`.

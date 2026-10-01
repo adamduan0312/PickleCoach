@@ -24,8 +24,10 @@ import {
   markDiscoverUrlHandoffDone,
   runDiscoverQHandoffOnce,
 } from '../../utils/discoverUrlHandoff.js';
+import { COACH_RATING_SYSTEMS, ratingRangeLabel, skillFilterOptions } from '../../domain/coachRating.js';
 
-const SKILL_OPTIONS = ['', '2.0', '2.5', '3.0', '3.5', '4.0', '4.5', '5.0', '5.5', '6.0'];
+const SKILL_NEEDS_SYSTEM_HINT = 'Select a rating system to filter by skill.';
+
 const RADIUS_OPTIONS = [
   { value: '5', label: '5 miles' },
   { value: '10', label: '10 miles' },
@@ -39,6 +41,7 @@ export function DiscoverPage() {
   const browseOnly = mode === 'coach';
   const [searchParams, setSearchParams] = useSearchParams();
   const [filters, setFilters] = useState({
+    rating_system: '',
     min_skill_rating: '',
     max_skill_rating: '',
     radius: DEFAULT_SEARCH_RADIUS,
@@ -54,6 +57,7 @@ export function DiscoverPage() {
   const [locationCandidates, setLocationCandidates] = useState(null);
   const [skillError, setSkillError] = useState(null);
   const [applied, setApplied] = useState({
+    rating_system: '',
     min_skill_rating: '',
     max_skill_rating: '',
     radius: DEFAULT_SEARCH_RADIUS,
@@ -75,8 +79,12 @@ export function DiscoverPage() {
 
   const { data, error, loading } = useAsync(async () => {
     const params = {};
-    if (applied.min_skill_rating) params.min_skill_rating = applied.min_skill_rating;
-    if (applied.max_skill_rating) params.max_skill_rating = applied.max_skill_rating;
+    // Skill bounds only exist on a chosen system's scale; "Any" never filters or ranks by skill.
+    if (applied.rating_system) {
+      params.rating_system = applied.rating_system;
+      if (applied.min_skill_rating) params.min_skill_rating = applied.min_skill_rating;
+      if (applied.max_skill_rating) params.max_skill_rating = applied.max_skill_rating;
+    }
     if (applied.location?.lat != null && applied.location?.lng != null) {
       params.lat = applied.location.lat;
       params.lng = applied.location.lng;
@@ -103,6 +111,7 @@ export function DiscoverPage() {
     }
     setSkillError(null);
     setApplied({
+      rating_system: f.rating_system,
       min_skill_rating: f.min_skill_rating,
       max_skill_rating: f.max_skill_rating,
       radius: f.radius,
@@ -116,6 +125,7 @@ export function DiscoverPage() {
 
   function clearFilters() {
     const cleared = {
+      rating_system: '',
       min_skill_rating: '',
       max_skill_rating: '',
       radius: DEFAULT_SEARCH_RADIUS,
@@ -441,33 +451,60 @@ export function DiscoverPage() {
       <form className="card discover-filters" onSubmit={onFilterSubmit} style={{ marginTop: 16 }} aria-labelledby="discover-filters-heading">
         <h2 id="discover-filters-heading" className="discover-section-title">Filters</h2>
         <div className="grid-3">
-          <div className={`field${skillError ? ' invalid' : ''}`}>
-            <label htmlFor="min_skill_rating">Minimum skill</label>
+          <div className="field">
+            <label htmlFor="rating_system">Rating system</label>
             <select
-              id="min_skill_rating"
-              value={filters.min_skill_rating}
-              onChange={(e) => setFilters((f) => ({ ...f, min_skill_rating: e.target.value }))}
+              id="rating_system"
+              value={filters.rating_system}
+              onChange={(e) => setFilters((f) => ({
+                ...f,
+                rating_system: e.target.value,
+                min_skill_rating: '',
+                max_skill_rating: '',
+              }))}
             >
               <option value="">Any</option>
-              {SKILL_OPTIONS.filter(Boolean).map((v) => (
-                <option key={v} value={v}>{v}</option>
+              {Object.values(COACH_RATING_SYSTEMS).map((s) => (
+                <option key={s.value} value={s.value}>{s.label}</option>
               ))}
             </select>
+            <span className="muted small">
+              {filters.rating_system
+                ? `Only coaches with a ${filters.rating_system} rating (${ratingRangeLabel(filters.rating_system)}).`
+                : SKILL_NEEDS_SYSTEM_HINT}
+            </span>
           </div>
-          <div className={`field${skillError ? ' invalid' : ''}`}>
-            <label htmlFor="max_skill_rating">Maximum skill</label>
-            <select
-              id="max_skill_rating"
-              value={filters.max_skill_rating}
-              onChange={(e) => setFilters((f) => ({ ...f, max_skill_rating: e.target.value }))}
-            >
-              <option value="">Any</option>
-              {SKILL_OPTIONS.filter(Boolean).map((v) => (
-                <option key={v} value={v}>{v}</option>
-              ))}
-            </select>
-            {skillError ? <span className="error" role="alert">{skillError}</span> : null}
-          </div>
+          {filters.rating_system ? (
+            <>
+              <div className={`field${skillError ? ' invalid' : ''}`}>
+                <label htmlFor="min_skill_rating">Minimum {filters.rating_system}</label>
+                <select
+                  id="min_skill_rating"
+                  value={filters.min_skill_rating}
+                  onChange={(e) => setFilters((f) => ({ ...f, min_skill_rating: e.target.value }))}
+                >
+                  <option value="">Any</option>
+                  {skillFilterOptions(filters.rating_system).map((v) => (
+                    <option key={v} value={v}>{v}</option>
+                  ))}
+                </select>
+              </div>
+              <div className={`field${skillError ? ' invalid' : ''}`}>
+                <label htmlFor="max_skill_rating">Maximum {filters.rating_system}</label>
+                <select
+                  id="max_skill_rating"
+                  value={filters.max_skill_rating}
+                  onChange={(e) => setFilters((f) => ({ ...f, max_skill_rating: e.target.value }))}
+                >
+                  <option value="">Any</option>
+                  {skillFilterOptions(filters.rating_system).map((v) => (
+                    <option key={v} value={v}>{v}</option>
+                  ))}
+                </select>
+                {skillError ? <span className="error" role="alert">{skillError}</span> : null}
+              </div>
+            </>
+          ) : null}
           <div className="field">
             <label htmlFor="radius">Search radius</label>
             <select

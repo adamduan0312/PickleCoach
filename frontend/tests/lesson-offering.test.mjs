@@ -135,6 +135,60 @@ test('API validation details map to fields with general fallback', () => {
   assert.deepEqual(lessonApiFieldErrors(new Error('boom')), { fields: {}, general: null });
 });
 
+test('coach lessons: edit replaces the row in place; new lesson form stays on top', () => {
+  const src = readFileSync(new URL('../src/pages/coach/CoachLessonsPage.jsx', import.meta.url), 'utf8');
+  assert.match(src, /\{isNew \? lessonForm : null\}/);
+  assert.match(src, /editing === l\.id \? \(\s*<div key=\{l\.id\}>\{lessonForm\}<\/div>/);
+  assert.equal((src.match(/<form/g) || []).length, 1, 'single form definition');
+});
+
+test('coach lessons: blocked New/Edit stay clickable and explain why', () => {
+  const src = readFileSync(new URL('../src/pages/coach/CoachLessonsPage.jsx', import.meta.url), 'utf8');
+  assert.equal((src.match(/aria-disabled=\{editing \? 'true' : undefined\}/g) || []).length, 2);
+  assert.doesNotMatch(src, /disabled=\{Boolean\(editing\)\}/, 'native disabled swallows clicks');
+  assert.match(src, /onClick=\{\(\) => \(editing \? showBlockedNotice\(\) : startEdit\(null\)\)\}/);
+  assert.match(src, /onClick=\{\(\) => \(editing \? showBlockedNotice\(\) : startEdit\(l\)\)\}/);
+  assert.match(src, /'Please save or cancel the current lesson form before continuing\.'/);
+  assert.match(src, /title=\{editing \? NEW_BLOCKED_HINT : undefined\}/);
+  assert.match(src, /title=\{editing \? EDIT_BLOCKED_HINT : undefined\}/);
+  const css = readFileSync(new URL('../src/index.css', import.meta.url), 'utf8');
+  assert.match(css, /\.btn\[aria-disabled='true'\] \{ opacity: 0\.55; cursor: not-allowed; \}/);
+});
+
+test('coach lessons: unsaved changes are protected across navigation', () => {
+  const src = readFileSync(new URL('../src/pages/coach/CoachLessonsPage.jsx', import.meta.url), 'utf8');
+  assert.match(src, /useUnsavedChangesGuard\(isDirty\);/);
+  assert.match(src, /\}, \[location\.key\]\);/);
+  const guard = readFileSync(new URL('../src/hooks/useUnsavedChangesGuard.js', import.meta.url), 'utf8');
+  assert.match(guard, /export const UNSAVED_CHANGES_PROMPT = 'You have unsaved changes\. Leave this page\?';/);
+  assert.match(guard, /useBlocker\(\(\) => dirtyRef\.current && !bypassRef\.current\)/);
+  assert.match(guard, /if \(window\.confirm\(UNSAVED_CHANGES_PROMPT\)\) blocker\.proceed\(\);\s*else blocker\.reset\(\);/);
+  assert.match(guard, /addEventListener\('beforeunload'/);
+  const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
+  assert.match(app, /createBrowserRouter\(/);
+  assert.match(app, /<RouterProvider router=\{router\} \/>/);
+  assert.doesNotMatch(app, /import \{[^}]*\bBrowserRouter\b/);
+});
+
+test('coach lesson form: title/description guidance and placeholders (shared by create and edit)', () => {
+  const src = readFileSync(new URL('../src/pages/coach/CoachLessonsPage.jsx', import.meta.url), 'utf8');
+  assert.match(src, /<strong>Tip:<\/strong> Use a clear, specific name that tells students what the lesson focuses on\./);
+  assert.match(src, /<strong>Tip:<\/strong> Explain what students will learn, who the lesson is for, and what they can expect\./);
+  assert.match(src, /label="Title" name="title" required error=\{fieldErrors\.title\} hint=\{TITLE_TIP\}/);
+  assert.match(src, /label="Description" name="description" error=\{fieldErrors\.description\} hint=\{DESCRIPTION_TIP\}/);
+  assert.match(src, /placeholder="e\.g\. Beginner Pickleball Lesson"/);
+  assert.match(src, /placeholder="e\.g\. Learn the basics of serving, returning, positioning, and scoring\."/);
+  // One form element renders for both "Create lesson" and "Edit lesson".
+  assert.equal((src.match(/<form/g) || []).length, 1);
+  assert.match(src, /\{isNew \? 'Create lesson' : 'Edit lesson'\}/);
+  // Group explanation appears once (on the Group option), not repeated elsewhere.
+  assert.equal((src.match(/\{GROUP_LESSON_NOTE\}/g) || []).length, 1);
+  const priceBlock = src.slice(src.indexOf('label="Price (USD)"'), src.indexOf('</FormField>', src.indexOf('label="Price (USD)"')));
+  assert.doesNotMatch(priceBlock, /Tip:|placeholder/);
+  const durationBlock = src.slice(src.indexOf('label="Duration"'), src.indexOf('</FormField>', src.indexOf('label="Duration"')));
+  assert.doesNotMatch(durationBlock, /Tip:|hint=/);
+});
+
 test('coach lesson form: field order and no multi-student booking fields', () => {
   const src = readFileSync(new URL('../src/pages/coach/CoachLessonsPage.jsx', import.meta.url), 'utf8');
   const order = ['name="title"', 'name="lesson_type"', 'name="max_players"', 'name="description"', 'name="duration_minutes"', 'name="price"']

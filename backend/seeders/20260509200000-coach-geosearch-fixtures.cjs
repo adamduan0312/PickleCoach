@@ -228,7 +228,7 @@ module.exports = {
         bio: 'Fixture coach for GET /coaches radius / geo search tests.',
         experience_years: experienceYears,
         skill_rating: skillRating,
-        rating_system: 'self',
+        rating_system: 'DUPR',
         rating_average: ratingAverage,
         rating_count: ratingCount,
         location: locationText,
