@@ -94,6 +94,14 @@ export const bookingsApi = {
   complete: (id, body) => apiRequest(`/bookings/${id}/complete`, { method: 'POST', body: body || {} }),
   studentNoShow: (id, body) => apiRequest(`/bookings/${id}/student-no-show`, { method: 'POST', body: body || {} }),
   cancel: (id, body) => apiRequest(`/bookings/${id}/cancel`, { method: 'POST', body }),
+  requestWeatherCancellation: (id, body) =>
+    apiRequest(`/bookings/${id}/weather-cancellation`, { method: 'POST', body: body || {} }),
+  acceptWeatherCancellation: (id, requestId) =>
+    apiRequest(`/bookings/${id}/weather-cancellation/${requestId}/accept`, { method: 'POST' }),
+  declineWeatherCancellation: (id, requestId) =>
+    apiRequest(`/bookings/${id}/weather-cancellation/${requestId}/decline`, { method: 'POST' }),
+  withdrawWeatherCancellation: (id, requestId) =>
+    apiRequest(`/bookings/${id}/weather-cancellation/${requestId}/withdraw`, { method: 'POST' }),
 };
 
 export const notificationsApi = {

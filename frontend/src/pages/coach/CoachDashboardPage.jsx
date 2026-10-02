@@ -57,7 +57,13 @@ export function CoachDashboardPage() {
   const loading = marketLoading || bookingsLoading;
   // Without a profile the next step is known even if marketplace status fails to load.
   const setupSteps = market?.steps || (readiness.coachUiPhase === 'start_setup' ? { profile: false } : null);
-  const setup = setupSteps ? coachSetupView(setupSteps, { coachUiPhase: readiness.coachUiPhase }) : null;
+  const setup = setupSteps
+    ? coachSetupView(setupSteps, {
+      coachUiPhase: readiness.coachUiPhase,
+      profileExists: market?.profile_exists ?? readiness.coachUiPhase !== 'start_setup',
+      profileMissingFields: market?.profile_missing_fields,
+    })
+    : null;
 
   return (
     <div className="page">
@@ -121,6 +127,17 @@ export function CoachDashboardPage() {
               </li>
             ))}
           </ul>
+          {!user?.avatar_url ? (
+            <div className="coach-photo-tip">
+              <span className="small muted coach-next-step-label">Optional</span>
+              <p>
+                <strong>Add a profile photo</strong>
+                <br />
+                <span className="small">Help students recognize you before booking.</span>
+              </p>
+              <Link className="btn secondary" to="/coach/profile">Add photo</Link>
+            </div>
+          ) : null}
           <div className="row">
             <button type="button" className="btn ghost" onClick={() => { refreshProfile(); refreshStripeStatus(); }}>Refresh</button>
           </div>
@@ -151,7 +168,7 @@ export function CoachDashboardPage() {
                 deadlineWhen={respondByWhen(b, tz)}
                 audience="coach"
               />
-              <StatusBadge status={b.status} label={bookingDisplayLabel(b, { audience: 'coach' })} tone={bookingDisplayTone(b)} />
+              <StatusBadge status={b.status} label={bookingDisplayLabel(b, { audience: 'coach' })} tone={bookingDisplayTone(b, { audience: 'coach' })} />
             </Link>
           ))}
         </div>

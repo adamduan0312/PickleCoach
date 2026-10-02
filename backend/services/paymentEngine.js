@@ -120,10 +120,15 @@ export const parseTotalChargeCentsFromBooking = (payment, booking) => {
 /**
  * Split cancellation into refund vs penalty in whole cents; invariant refundCents + penaltyCents === totalChargeCents.
  */
-export const computeCancellationSplitCents = ({ totalChargeCents, isLateCancel, cancelledBy }) => {
+export const computeCancellationSplitCents = ({ totalChargeCents, isLateCancel, cancelledBy, mutualWeather = false }) => {
   const t = Math.round(totalChargeCents);
   if (t < 1) {
     return { refundCents: 0, penaltyCents: 0, penaltyReason: null };
+  }
+
+  // Both participants agreed to cancel for weather: no late-cancel split, whoever asked.
+  if (mutualWeather) {
+    return { refundCents: t, penaltyCents: 0, penaltyReason: 'Weather cancellation (agreed)' };
   }
 
   if (isLateCancel && cancelledBy === 'student') {

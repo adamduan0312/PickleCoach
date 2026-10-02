@@ -1,10 +1,9 @@
 /**
- * Hidden Reliability Penalty Service
+ * Reliability Penalty Service
  *
- * Server-side-only logic for classifying cancellation reasons as excused or unexcused.
- *
- * ⚠️ IMPORTANT: This logic must NEVER be exposed to the frontend.
- * The frontend only sees the reason enum values, never the penalty classification.
+ * Classifies cancellation reasons as excused or unexcused. The excused categories are published
+ * in product copy (frontend/src/domain/cancellationPolicy.js mirrors NON_PENALIZED_REASONS);
+ * per-row `affects_reliability` flags stay out of list/detail payloads (see sanitizeResponse).
  */
 
 /** Excused — no reliability impact (uncontrollable circumstances). */

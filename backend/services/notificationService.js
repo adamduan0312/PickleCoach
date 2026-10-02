@@ -26,6 +26,9 @@ import {
   buildBookingConfirmedNotificationContent,
   buildBookingRequestCoachNotificationContent,
   buildPreLessonReminderNotificationContent,
+  buildWeatherCancellationRequestedNotificationContent,
+  buildWeatherCancellationDeclinedNotificationContent,
+  buildWeatherCancellationAcceptedNotificationContent,
   buildBookingDeclinedNotificationContent,
   buildBookingCancelledNotificationContent,
   buildNewMessageNotificationPayload,
@@ -680,6 +683,52 @@ export const notifyBookingCancelled = async (bookingId, {
     );
   }
 };
+
+function participantFor(booking, role) {
+  return role === 'coach'
+    ? { userId: booking.coach_id, email: booking.coach?.email }
+    : { userId: booking.primary_student_id, email: booking.primaryStudent?.email };
+}
+
+async function notifyWeatherParticipant(bookingId, recipientRole, type, buildContent, extra = {}) {
+  const booking = await loadBookingNotificationContext(bookingId);
+  if (!booking) return;
+  const { userId, email } = participantFor(booking, recipientRole);
+  if (!userId) return;
+  const base = { ...bookingNotifyBase(booking, recipientRole), audience: recipientRole, ...extra };
+  await deliverDualChannel(userId, type, { ...base, ...buildContent(base) }, { email, ...bookingEntity(booking) });
+}
+
+const otherRole = (role) => (role === 'coach' ? 'student' : 'coach');
+
+/** Weather cancellation asked → the other participant (in-app + email; time-sensitive). */
+export const notifyWeatherCancellationRequested = async (bookingId, { requesterRole, note = null } = {}) =>
+  notifyWeatherParticipant(
+    bookingId,
+    otherRole(requesterRole),
+    'weather_cancellation_requested',
+    buildWeatherCancellationRequestedNotificationContent,
+    { requested_by: requesterRole, note },
+  );
+
+/** Weather cancellation declined → requester (lesson stays on). */
+export const notifyWeatherCancellationDeclined = async (bookingId, { requesterRole } = {}) =>
+  notifyWeatherParticipant(
+    bookingId,
+    requesterRole,
+    'weather_cancellation_declined',
+    buildWeatherCancellationDeclinedNotificationContent,
+  );
+
+/** Weather cancellation accepted → requester (the responder cancelled in-app and already knows). */
+export const notifyWeatherCancellationAccepted = async (bookingId, { requesterRole, refund_amount = null, refund_status = null } = {}) =>
+  notifyWeatherParticipant(
+    bookingId,
+    requesterRole,
+    'weather_cancellation_accepted',
+    buildWeatherCancellationAcceptedNotificationContent,
+    { reason: 'weather', refund_amount, refund_status },
+  );
 
 /**
  * Stripe revoked payout capability for a coach (stripe_ready true→false).

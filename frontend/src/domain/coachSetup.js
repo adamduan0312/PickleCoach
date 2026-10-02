@@ -1,3 +1,5 @@
+import { COACH_PROFILE_REQUIRED_FIELDS, incompleteProfileMessage } from './coachProfileCompleteness.js';
+
 /** Marketplace setup steps a coach must finish before students can see their lessons. */
 export const COACH_SETUP_STEPS = {
   profile: { label: 'Coach profile', to: '/coach/profile' },
@@ -28,10 +30,16 @@ export function missingSetupSteps(missing) {
     .map((key) => ({ key, ...COACH_SETUP_STEPS[key] }));
 }
 
-function nextStepCopy(key, coachUiPhase) {
+function nextStepCopy(key, { coachUiPhase, profileExists, profileMissingFields }) {
   switch (key) {
     case 'profile':
-      return { title: 'Create your coach profile', detail: 'You have the coach role, but no profile yet.', cta: 'Start setup' };
+      return profileExists
+        ? {
+          title: 'Complete your coach profile',
+          detail: incompleteProfileMessage(profileMissingFields?.length ? profileMissingFields : COACH_PROFILE_REQUIRED_FIELDS),
+          cta: 'Complete profile',
+        }
+        : { title: 'Create your coach profile', detail: 'Build the basic profile students see before booking.', cta: 'Start setup' };
     case 'lesson':
       return { title: 'Add your first lesson', detail: 'Lessons are what students book with you.', cta: 'Go to Lessons' };
     case 'court':
@@ -49,13 +57,15 @@ function nextStepCopy(key, coachUiPhase) {
 
 /**
  * Dashboard setup view from marketplace-status `steps` ({ profile: bool, ... }).
- * `next` is the first incomplete step in COACH_SETUP_ORDER (null once everything is done).
+ * `steps.profile` means the profile is complete; `profileExists` (a saved draft is enough)
+ * is what unlocks payouts. `next` is the first incomplete step in COACH_SETUP_ORDER
+ * (null once everything is done).
  */
-export function coachSetupView(steps, { coachUiPhase } = {}) {
+export function coachSetupView(steps, { coachUiPhase, profileExists, profileMissingFields } = {}) {
   const s = steps || {};
-  const hasProfile = Boolean(s.profile);
+  const exists = Boolean(profileExists ?? s.profile);
   const checklist = COACH_SETUP_ORDER.map((key) => {
-    const disabled = key === 'stripe' && !hasProfile && !s.stripe;
+    const disabled = key === 'stripe' && !exists && !s.stripe;
     return {
       key,
       label: CHECKLIST_LABELS[key],
@@ -67,7 +77,7 @@ export function coachSetupView(steps, { coachUiPhase } = {}) {
   });
   const first = checklist.find((item) => !item.done);
   const next = first
-    ? { key: first.key, to: first.to, ...nextStepCopy(first.key, coachUiPhase) }
+    ? { key: first.key, to: first.to, ...nextStepCopy(first.key, { coachUiPhase, profileExists: exists, profileMissingFields }) }
     : null;
   return { checklist, next };
 }

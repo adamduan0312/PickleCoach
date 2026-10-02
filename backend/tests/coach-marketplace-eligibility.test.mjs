@@ -2,17 +2,27 @@
  * Marketplace eligibility — unit tests (no DB / no Stripe).
  */
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
+import { afterEach, describe, it } from 'node:test';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import {
   computeMarketplaceEligibilityFromSteps,
+  getCoachMarketplaceEligibility,
   isStripeAccountReady,
   marketplaceDiscoveryProfileWhereBase,
   marketplaceDiscoveryIncludes,
   marketplaceEligibleCoachIncludeForLessonBrowse,
 } from '../services/coachMarketplaceEligibility.js';
+import { COACH_BIO_MIN, COACH_HEADLINE_MIN } from '../utils/coachProfileCompleteness.js';
+import { Op } from 'sequelize';
+import {
+  User,
+  CoachProfile,
+  Lesson,
+  CoachCourtLocation,
+  CoachAvailability,
+} from '../models/index.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const coachControllerSrc = readFileSync(
@@ -63,6 +73,73 @@ describe('computeMarketplaceEligibilityFromSteps', () => {
   });
 });
 
+describe('getCoachMarketplaceEligibility profile step', () => {
+  const originals = {};
+  const COMPLETE = {
+    headline: 'Patient coach for beginners',
+    bio: 'I have coached pickleball for six years and focus on footwork and dinks.',
+    location: 'Davie, FL',
+    stripe_ready: true,
+  };
+
+  function stub(profile) {
+    Object.assign(originals, {
+      findByPk: User.findByPk,
+      findOne: CoachProfile.findOne,
+      lessonCount: Lesson.count,
+      courtCount: CoachCourtLocation.count,
+      availabilityCount: CoachAvailability.count,
+    });
+    User.findByPk = async () => ({
+      id: 7,
+      is_active: true,
+      deleted_at: null,
+      role_governance_locked: false,
+      admin_allowed_roles: null,
+      userRoles: [{ role: 'coach' }],
+    });
+    CoachProfile.findOne = async () => profile;
+    Lesson.count = async () => 1;
+    CoachCourtLocation.count = async () => 1;
+    CoachAvailability.count = async () => 1;
+  }
+
+  afterEach(() => {
+    User.findByPk = originals.findByPk;
+    CoachProfile.findOne = originals.findOne;
+    Lesson.count = originals.lessonCount;
+    CoachCourtLocation.count = originals.courtCount;
+    CoachAvailability.count = originals.availabilityCount;
+  });
+
+  it('complete profile satisfies the profile step', async () => {
+    stub(COMPLETE);
+    const out = await getCoachMarketplaceEligibility(7);
+    assert.equal(out.listed, true);
+    assert.equal(out.steps.profile, true);
+    assert.equal(out.profile_exists, true);
+    assert.deepEqual(out.profile_missing_fields, []);
+  });
+
+  it('draft profile exists but does not satisfy the profile step or listing', async () => {
+    stub({ ...COMPLETE, headline: 'Coach', bio: '', location: null });
+    const out = await getCoachMarketplaceEligibility(7);
+    assert.equal(out.listed, false);
+    assert.equal(out.steps.profile, false);
+    assert.deepEqual(out.missing, ['profile']);
+    assert.equal(out.profile_exists, true);
+    assert.deepEqual(out.profile_missing_fields, ['headline', 'bio', 'location']);
+  });
+
+  it('no profile: profile_exists false and every required field missing', async () => {
+    stub(null);
+    const out = await getCoachMarketplaceEligibility(7);
+    assert.equal(out.profile_exists, false);
+    assert.equal(out.steps.profile, false);
+    assert.deepEqual(out.profile_missing_fields, ['headline', 'bio', 'location']);
+  });
+});
+
 describe('isStripeAccountReady', () => {
   it('requires payouts_enabled and details_submitted', () => {
     assert.equal(isStripeAccountReady({ payouts_enabled: true, details_submitted: true }), true);
@@ -73,11 +150,24 @@ describe('isStripeAccountReady', () => {
 });
 
 describe('discovery filters (DB-only)', () => {
-  it('requires stripe_ready on profile where base', () => {
-    assert.deepEqual(marketplaceDiscoveryProfileWhereBase(), {
-      deleted_at: null,
-      stripe_ready: true,
+  it('requires stripe_ready and a complete profile (headline ≥10, bio ≥50, location) on profile where base', () => {
+    const base = marketplaceDiscoveryProfileWhereBase();
+    assert.equal(base.deleted_at, null);
+    assert.equal(base.stripe_ready, true);
+    const conditions = base[Op.and];
+    assert.equal(conditions.length, 3);
+    const describeCond = (c) => ({
+      column: c.attribute.args[0].args[0].col,
+      fn: `${c.attribute.fn}(${c.attribute.args[0].fn})`,
+      min: c.logic[Op.gte],
     });
+    assert.deepEqual(conditions.map(describeCond), [
+      { column: 'coachProfile.headline', fn: 'CHAR_LENGTH(TRIM)', min: COACH_HEADLINE_MIN },
+      { column: 'coachProfile.bio', fn: 'CHAR_LENGTH(TRIM)', min: COACH_BIO_MIN },
+      { column: 'coachProfile.location', fn: 'CHAR_LENGTH(TRIM)', min: 1 },
+    ]);
+    const nested = marketplaceDiscoveryProfileWhereBase({ alias: 'coach->coachProfile' });
+    assert.equal(describeCond(nested[Op.and][0]).column, 'coach->coachProfile.headline');
   });
 
   it('requires courts, lessons, and availability includes', () => {
@@ -120,6 +210,7 @@ describe('discovery filters (DB-only)', () => {
     assert.ok(!aliases.includes('lessons'));
     const profile = coachInc.include.find((i) => i.as === 'coachProfile');
     assert.equal(profile.where.stripe_ready, true);
+    assert.equal(profile.where[Op.and][0].attribute.args[0].args[0].col, 'coach->coachProfile.headline');
   });
 
   it('getCoaches uses marketplace helpers and never calls Stripe', () => {

@@ -31,7 +31,7 @@ import { useAuth } from '../../auth/AuthContext.jsx';
 import { hasStudentRole } from '../../domain/userReadiness.js';
 import { timezoneLabel } from '../../domain/timezones.js';
 import { GROUP_LESSON_NOTE, isGroupLesson, lessonTypeLabel } from '../../domain/lessonOffering.js';
-import { certificationList } from '../../domain/coachRating.js';
+import { certificationList, formatExperienceYears } from '../../domain/coachRating.js';
 import { ownProfileLessonPreview } from '../../domain/coachSetup.js';
 
 function courtTeachingLabel(court) {
@@ -150,6 +150,7 @@ export function CoachPublicProfilePage() {
   const profile = coach.coachProfile || {};
   const skillLine = formatSkillRatingLine(profile.skill_rating, profile.rating_system);
   const certifications = certificationList(profile.certifications);
+  const experienceLine = formatExperienceYears(profile.experience_years);
   const reliabilityLine = formatReliabilityLabel(coach.reliability?.reliability_score);
   const listedReviews = data.reviews || [];
   const profileSummary = coachReviewSummary(profile.rating_average, profile.rating_count);
@@ -180,6 +181,11 @@ export function CoachPublicProfilePage() {
                   <Link to={s.to}>{s.label}</Link>
                 </span>
               ))}
+            </p>
+          ) : null}
+          {!coach.avatar_url ? (
+            <p>
+              <Link to="/coach/profile">Add a photo</Link> — Add a profile photo that students will see across PickleCoach.
             </p>
           ) : null}
         </div>
@@ -221,6 +227,12 @@ export function CoachPublicProfilePage() {
                 <li>
                   <span className="coach-highlight-label">Based in</span>
                   <span>{profile.location}</span>
+                </li>
+              ) : null}
+              {experienceLine ? (
+                <li>
+                  <span className="coach-highlight-label">Experience</span>
+                  <span>{experienceLine}</span>
                 </li>
               ) : null}
             </ul>

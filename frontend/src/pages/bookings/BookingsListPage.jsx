@@ -181,7 +181,7 @@ export function BookingsListPage({ audience = 'student' }) {
                 <StatusBadge
                   status={hasOpenIssueReport(b) || b.status === 'disputed' ? 'issue' : b.status}
                   label={bookingDisplayLabel(b, { audience })}
-                  tone={bookingDisplayTone(b)}
+                  tone={bookingDisplayTone(b, { audience })}
                 />
               </div>
             </Link>

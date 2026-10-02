@@ -32,6 +32,7 @@ const MessageTemplateModule = await import('./MessageTemplate.js');
 const SystemJobModule = await import('./SystemJob.js');
 const PromoCodeModule = await import('./PromoCode.js');
 const NotificationModule = await import('./Notification.js');
+const WeatherCancellationRequestModule = await import('./WeatherCancellationRequest.js');
 
 // Extract default exports
 const User = UserModule.default;
@@ -62,6 +63,7 @@ const MessageTemplate = MessageTemplateModule.default;
 const SystemJob = SystemJobModule.default;
 const PromoCode = PromoCodeModule.default;
 const Notification = NotificationModule.default;
+const WeatherCancellationRequest = WeatherCancellationRequestModule.default;
 
 // Initialize User model (it uses initModel pattern)
 User.initModel(sequelize);
@@ -122,6 +124,8 @@ Booking.hasMany(PaymentAction, { foreignKey: 'booking_id', as: 'paymentActions' 
 Booking.hasOne(Conversation, { foreignKey: 'booking_id', as: 'conversation' });
 Booking.hasMany(Review, { foreignKey: 'booking_id', as: 'reviews' });
 Booking.hasMany(StudentFeedback, { foreignKey: 'booking_id', as: 'feedback' });
+Booking.hasMany(WeatherCancellationRequest, { foreignKey: 'booking_id', as: 'weatherCancellationRequests' });
+WeatherCancellationRequest.belongsTo(Booking, { foreignKey: 'booking_id', as: 'booking' });
 
 // BookingPlayer associations (table kept for V2 group lessons; not used in MVP API)
 BookingPlayer.belongsTo(Booking, { foreignKey: 'booking_id', as: 'booking' });
@@ -222,4 +226,5 @@ export {
   SystemJob,
   PromoCode,
   Notification,
+  WeatherCancellationRequest,
 };

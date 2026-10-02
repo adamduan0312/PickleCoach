@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../auth/AuthContext.jsx';
 import { authApi } from '../../api/index.js';
 import { FormField } from '../../components/ui/FormField.jsx';
 import { Alert } from '../../components/ui/States.jsx';
-import { Avatar } from '../../components/ui/Avatar.jsx';
+import { ProfilePhotoField } from '../../components/ui/ProfilePhotoField.jsx';
 import { passwordHint, validatePassword } from '../../utils/format.js';
 import { detectLocalTimezone } from '../../utils/datetime.js';
 import { TimezoneSelect } from '../../components/ui/TimezoneSelect.jsx';
@@ -12,13 +12,9 @@ import { sanitizePhoneInput, validatePhone } from '../../domain/phone.js';
 import { hasCoachRole, hasStudentRole } from '../../domain/userReadiness.js';
 import { reopenHowBookingsWork } from '../../utils/howBookingsWorkStorage.js';
 import { ReliabilitySelfServeCard } from '../../components/settings/ReliabilitySelfServeCard.jsx';
-
-const ACCEPTED_PHOTO_TYPES = 'image/jpeg,image/png,image/webp';
-
 export function SettingsPage() {
   const { user, mode, refreshProfile, applySession, readiness } = useAuth();
   const navigate = useNavigate();
-  const photoInputRef = useRef(null);
   const [profile, setProfile] = useState({
     full_name: user?.full_name || '',
     phone: user?.phone || '',
@@ -75,37 +71,6 @@ export function SettingsPage() {
       setError(err.message);
     } finally {
       setBusy(false);
-    }
-  }
-
-  async function onPhotoSelected(e) {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file) return;
-    setPhotoBusy(true);
-    setError(null);
-    try {
-      await authApi.uploadAvatar(file);
-      await refreshProfile();
-      setMessage('Profile photo updated.');
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setPhotoBusy(false);
-    }
-  }
-
-  async function removePhoto() {
-    setPhotoBusy(true);
-    setError(null);
-    try {
-      await authApi.removeAvatar();
-      await refreshProfile();
-      setMessage('Profile photo removed.');
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setPhotoBusy(false);
     }
   }
 
@@ -181,7 +146,6 @@ export function SettingsPage() {
   // Must keep at least one marketplace role; dual-role users can drop either (admins use admin tools).
   const canRemoveStudent = !isAdmin && isStudent && isCoach;
   const canRemoveCoach = !isAdmin && isCoach && isStudent;
-  const hasPhoto = Boolean(user?.avatar_url);
 
   return (
     <div className="page">
@@ -225,40 +189,7 @@ export function SettingsPage() {
             </p>
           ) : null}
 
-          <div className="field settings-photo-field">
-            <span className="settings-photo-label" id="profile-photo-label">Profile photo</span>
-            <div className="row settings-photo-row" aria-labelledby="profile-photo-label">
-              <Avatar name={user?.full_name || profile.full_name} src={user?.avatar_url} size="lg" />
-              <div className="stack settings-photo-actions">
-                <input
-                  ref={photoInputRef}
-                  type="file"
-                  accept={ACCEPTED_PHOTO_TYPES}
-                  hidden
-                  onChange={onPhotoSelected}
-                />
-                <button
-                  className="btn secondary"
-                  type="button"
-                  disabled={busy || photoBusy}
-                  onClick={() => photoInputRef.current?.click()}
-                >
-                  {hasPhoto ? 'Change photo' : 'Upload photo'}
-                </button>
-                {hasPhoto ? (
-                  <button
-                    className="btn ghost"
-                    type="button"
-                    disabled={busy || photoBusy}
-                    onClick={removePhoto}
-                  >
-                    Remove photo
-                  </button>
-                ) : null}
-                <span className="muted small">JPG, PNG, or WebP · up to 2 MB</span>
-              </div>
-            </div>
-          </div>
+          <ProfilePhotoField disabled={busy} onBusyChange={setPhotoBusy} />
 
           <div className="small muted">
             Email: {user?.email}{' '}

@@ -28,6 +28,13 @@ import {
 import { PUBLIC_ACTIVE_USER_WHERE, isPubliclyActiveUser } from '../utils/userLifecycle.js';
 import { getEffectiveRolesForUserRecord } from '../utils/roleGovernance.js';
 import { logger } from '../config/logger.js';
+import { Op, col, fn, where as sequelizeWhere } from 'sequelize';
+import {
+  COACH_BIO_MIN,
+  COACH_HEADLINE_MIN,
+  COACH_PROFILE_REQUIRED_FIELDS,
+  coachProfileMissingFields,
+} from '../utils/coachProfileCompleteness.js';
 
 /** Mutable deps for unit tests (ESM named exports are read-only). */
 export const stripeReadySyncDeps = {
@@ -148,6 +155,7 @@ export async function getCoachMarketplaceEligibility(coachId) {
     where: { user_id: id, deleted_at: null },
   });
   const hasProfile = Boolean(profile) && activeCoach;
+  const profileMissingFields = profile ? coachProfileMissingFields(profile) : [...COACH_PROFILE_REQUIRED_FIELDS];
 
   // Court step: any non-deleted linked court counts — do NOT filter is_private.
   // is_private only hides courts from GET /api/courts; coaches who teach only at
@@ -168,23 +176,39 @@ export async function getCoachMarketplaceEligibility(coachId) {
     CoachAvailability.count({ where: { coach_id: id } }),
   ]);
 
-  return computeMarketplaceEligibilityFromSteps({
-    profile: hasProfile,
-    stripe: Boolean(profile?.stripe_ready),
-    lesson: lessonCount > 0,
-    court: courtCount > 0,
-    availability: availabilityCount > 0,
-  });
+  return {
+    ...computeMarketplaceEligibilityFromSteps({
+      profile: hasProfile && profileMissingFields.length === 0,
+      stripe: Boolean(profile?.stripe_ready),
+      lesson: lessonCount > 0,
+      court: courtCount > 0,
+      availability: availabilityCount > 0,
+    }),
+    profile_exists: hasProfile,
+    profile_missing_fields: profileMissingFields,
+  };
+}
+
+function trimmedLengthAtLeast(alias, column, min) {
+  return sequelizeWhere(fn('CHAR_LENGTH', fn('TRIM', col(`${alias}.${column}`))), { [Op.gte]: min });
 }
 
 /**
  * Sequelize profile `where` fragment for marketplace discovery (DB-only).
- * Merge with skill/rating filters as needed.
+ * Merge with skill/rating filters as needed. Includes the profile-completeness rule
+ * from {@link coachProfileMissingFields}; `alias` is the CoachProfile include path in the query.
+ *
+ * @param {{ alias?: string }} [opts]
  */
-export function marketplaceDiscoveryProfileWhereBase() {
+export function marketplaceDiscoveryProfileWhereBase({ alias = 'coachProfile' } = {}) {
   return {
     deleted_at: null,
     stripe_ready: true,
+    [Op.and]: [
+      trimmedLengthAtLeast(alias, 'headline', COACH_HEADLINE_MIN),
+      trimmedLengthAtLeast(alias, 'bio', COACH_BIO_MIN),
+      trimmedLengthAtLeast(alias, 'location', 1),
+    ],
   };
 }
 
@@ -260,7 +284,7 @@ export function marketplaceEligibleCoachIncludeForLessonBrowse() {
       {
         model: CoachProfile,
         as: 'coachProfile',
-        where: marketplaceDiscoveryProfileWhereBase(),
+        where: marketplaceDiscoveryProfileWhereBase({ alias: 'coach->coachProfile' }),
         required: true,
         attributes: [],
       },

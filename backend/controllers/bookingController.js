@@ -13,7 +13,9 @@ import {
   DisputeResolutionAction,
   PaymentAction,
   Review,
+  WeatherCancellationRequest,
 } from '../models/index.js';
+import { effectiveWeatherRequestStatus, serializeWeatherCancellation } from '../utils/weatherCancellation.js';
 import { successResponse, errorResponse, paginatedResponse } from '../utils/response.js';
 import { getPagination, getPagingData } from '../utils/pagination.js';
 import { Op } from 'sequelize';
@@ -130,6 +132,25 @@ const BOOKING_LIST_ORDER = [
 ];
 
 /**
+ * List DTOs: `pending_weather_request` ({ id, requested_by } | null) — an open weather request on a
+ * confirmed lesson that hasn't started, so lists can flag "action needed" for the other participant.
+ */
+async function attachPendingWeatherRequests(items) {
+  for (const dto of items) dto.pending_weather_request = null;
+  const ids = items.filter((dto) => dto?.status === 'confirmed').map((dto) => dto.id);
+  if (ids.length === 0) return;
+  const rows = await WeatherCancellationRequest.findAll({
+    where: { booking_id: ids, status: 'pending', expires_at: { [Op.gt]: new Date() } },
+    attributes: ['id', 'booking_id', 'requested_by_role'],
+  });
+  const byBooking = new Map(rows.map((r) => [Number(r.booking_id), r]));
+  for (const dto of items) {
+    const row = byBooking.get(Number(dto.id));
+    if (row) dto.pending_weather_request = { id: row.id, requested_by: row.requested_by_role };
+  }
+}
+
+/**
  * Shared list responder for coach / student / admin booking lists.
  * @param {'per_row_coach' | true | false} studentReliabilityMode
  */
@@ -178,6 +199,7 @@ async function respondWithBookingList(req, res, {
       const data = await attachConversationSummaries(bookings.rows, req.user.id, roles);
       const items = data.map((row) => serializeBookingListItem(row, serializeOpts(row)));
       await attachActiveIssuesToBookingDtos(items);
+      await attachPendingWeatherRequests(items);
       return successResponse(
         res,
         items,
@@ -189,6 +211,7 @@ async function respondWithBookingList(req, res, {
     response.items = await attachConversationSummaries(response.items, req.user.id, roles);
     const items = response.items.map((row) => serializeBookingListItem(row, serializeOpts(row)));
     await attachActiveIssuesToBookingDtos(items);
+    await attachPendingWeatherRequests(items);
     return paginatedResponse(
       res,
       items,
@@ -289,6 +312,15 @@ export const getBookingById = async (req, res) => {
     attachActiveIssue(dto, issueMap);
     const resolvedMap = await loadResolvedIssuesByBookingId([booking.id]);
     attachResolvedIssue(dto, resolvedMap);
+
+    const weatherRows = await WeatherCancellationRequest.findAll({ where: { booking_id: booking.id } });
+    const viewerRole = Number(req.user.id) === Number(booking.coach_id)
+      ? 'coach'
+      : Number(req.user.id) === Number(booking.primary_student_id) ? 'student' : null;
+    dto.weather_cancellation = serializeWeatherCancellation(weatherRows.map((r) => r.toJSON()), {
+      booking,
+      viewerRole,
+    });
 
     return successResponse(
       res,
@@ -901,10 +933,19 @@ export const declineBooking = async (req, res) => {
   }
 };
 
-export const cancelBooking = async (req, res) => {
+export const cancelBooking = (req, res) => runPreLessonCancel(req, res);
+
+/**
+ * Pre-lesson cancellation (participant or admin).
+ * `mutualWeather` ({ requestId }) is set only when the other participant accepts a weather request:
+ * the request's author is recorded as the canceller, the student is refunded in full, and nobody's
+ * reliability is affected.
+ */
+export async function runPreLessonCancel(req, res, mutualWeather = null) {
   try {
     const { id } = req.params;
-    const { reason, reason_notes } = req.validated;
+    const reason = mutualWeather ? 'weather' : req.validated?.reason;
+    const reason_notes = mutualWeather ? MUTUAL_WEATHER_CANCEL_NOTE : req.validated?.reason_notes;
 
     if (!reason) {
       return errorResponse(res, 'Reason is required for cancellation', 400);
@@ -927,10 +968,15 @@ export const cancelBooking = async (req, res) => {
       return errorResponse(res, 'Unauthorized', 403);
     }
 
-    const cancelledBy = isCoach ? 'coach' : isStudent ? 'student' : 'admin';
-    const willAffectReliability = cancelledBy === 'admin' ? false : affectsReliability(reason);
+    if (mutualWeather && !isParticipant) {
+      return errorResponse(res, 'Unauthorized', 403);
+    }
+    const actorRole = isCoach ? 'coach' : isStudent ? 'student' : 'admin';
+    let cancelledBy = actorRole;
+    const willAffectReliability = mutualWeather || cancelledBy === 'admin' ? false : affectsReliability(reason);
 
     let cancellationHistory;
+    let weatherRequest = null;
     let beforeState;
     let afterBooking;
     let refundPaymentId = null;
@@ -995,6 +1041,16 @@ export const cancelBooking = async (req, res) => {
 
       assertPreLessonCancelAllowed(booking.scheduled_at, new Date());
 
+      if (mutualWeather) {
+        weatherRequest = await WeatherCancellationRequest.findOne({
+          where: { id: mutualWeather.requestId, booking_id: booking.id },
+          transaction: t,
+          lock: t.LOCK.UPDATE,
+        });
+        assertWeatherRequestAcceptable(weatherRequest, booking, actorRole);
+        cancelledBy = weatherRequest.requested_by_role;
+      }
+
       beforeState = booking.toJSON();
 
       const now = new Date();
@@ -1015,6 +1071,7 @@ export const cancelBooking = async (req, res) => {
         totalChargeCents,
         isLateCancel,
         cancelledBy,
+        mutualWeather: Boolean(mutualWeather),
       });
       refundCents = split.refundCents;
       penaltyCents = split.penaltyCents;
@@ -1157,6 +1214,23 @@ export const cancelBooking = async (req, res) => {
         await cancellationHistory.update({ refund_payment_id: refundPaymentId }, { transaction: t });
       }
 
+      if (weatherRequest) {
+        await weatherRequest.update(
+          {
+            status: 'accepted',
+            responded_by_user_id: req.user.id,
+            responded_at: now,
+            cancellation_history_id: cancellationHistory.id,
+          },
+          { transaction: t },
+        );
+      } else {
+        await WeatherCancellationRequest.update(
+          { status: 'closed' },
+          { where: { booking_id: booking.id, status: 'pending' }, transaction: t },
+        );
+      }
+
       const queueLateCancelCoachPayout = shouldQueueLateCancelCoachPayout({
         bookingStatus: 'cancelled',
         cancelledBy,
@@ -1206,6 +1280,7 @@ export const cancelBooking = async (req, res) => {
         penalty_reason: voidedPaymentId ? null : penaltyReason,
         uncaptured_authorization_voided: Boolean(voidedPaymentId),
         stripe_remaining_cents_before_refund: stripeRemainingCents,
+        mutual_weather_request_id: weatherRequest?.id ?? null,
       },
       ip_address: req?.ip || req?.connection?.remoteAddress,
       user_agent: req?.get?.('user-agent'),
@@ -1226,18 +1301,26 @@ export const cancelBooking = async (req, res) => {
       }
     }
 
-    void notificationService.notifyBookingCancelled(id, {
-      cancelledBy,
-      reason,
-      reason_notes: cancellationHistory.reason_notes,
-      refund_amount: cancellationHistory.refund_amount,
-      penalty_amount: cancellationHistory.penalty_amount,
-      refund_status: queuedCancelRefundPaymentActionId
-        ? 'pending_stripe_execution'
-        : voidedPaymentId
-          ? 'voided_authorization'
-          : null,
-    }).catch((err) => {
+    const refundStatusForNotify = queuedCancelRefundPaymentActionId
+      ? 'pending_stripe_execution'
+      : voidedPaymentId
+        ? 'voided_authorization'
+        : null;
+    const notifyCancelled = weatherRequest
+      ? notificationService.notifyWeatherCancellationAccepted(id, {
+          requesterRole: weatherRequest.requested_by_role,
+          refund_amount: cancellationHistory.refund_amount,
+          refund_status: refundStatusForNotify,
+        })
+      : notificationService.notifyBookingCancelled(id, {
+          cancelledBy,
+          reason,
+          reason_notes: cancellationHistory.reason_notes,
+          refund_amount: cancellationHistory.refund_amount,
+          penalty_amount: cancellationHistory.penalty_amount,
+          refund_status: refundStatusForNotify,
+        });
+    void notifyCancelled.catch((err) => {
       logger.warn({ component: 'booking', event: 'cancel_notify_failed', bookingId: id, message: err?.message });
     });
 
@@ -1283,7 +1366,33 @@ export const cancelBooking = async (req, res) => {
     logger.error('Cancel booking error:', error);
     return errorResponse(res, 'Failed to cancel booking', 500);
   }
-};
+}
+
+const MUTUAL_WEATHER_CANCEL_NOTE = 'Cancelled for weather — agreed by both';
+
+function weatherAcceptError(message, code) {
+  const err = new Error(message);
+  err.statusCode = 400;
+  err.code = code;
+  return err;
+}
+
+/** Inside the cancel transaction (booking + request rows locked). */
+function assertWeatherRequestAcceptable(request, booking, actorRole) {
+  if (!request) throw weatherAcceptError('Weather cancellation request not found.', 'weather_request_not_found');
+  const status = effectiveWeatherRequestStatus(request, booking);
+  if (status !== 'pending') {
+    throw weatherAcceptError(
+      status === 'expired'
+        ? 'This weather cancellation request expired when the lesson started.'
+        : 'This weather cancellation request is no longer open.',
+      `weather_request_${status}`,
+    );
+  }
+  if (request.requested_by_role === actorRole) {
+    throw weatherAcceptError('You can’t accept your own weather cancellation request.', 'weather_request_own');
+  }
+}
 
 /**
  * Admin pre-lesson cancel — thin wrapper around `cancelBooking` (pending/confirmed only; same rules as student/coach cancel).

@@ -256,6 +256,11 @@ export const cancellationSchema = Joi.object({
   reason_notes: Joi.string().max(255).optional(),
 });
 
+/** POST /api/bookings/:id/weather-cancellation — optional note to the other participant. */
+export const weatherCancellationRequestSchema = Joi.object({
+  note: Joi.string().trim().max(255).allow('').optional(),
+});
+
 /** Coach decline (pending booking): required message to student; optional analytics reason code */
 export const declineBookingSchema = Joi.object({
   message_to_student: Joi.string().trim().min(3).max(500).required(),
@@ -453,14 +458,14 @@ const coachCertificationsSchema = Joi.array()
   });
 
 const coachProfileFields = {
-  headline: Joi.string().max(255).allow('').optional(),
+  headline: Joi.string().trim().max(255).allow('').optional(),
   bio: Joi.string()
     .trim()
     .max(COACH_BIO_MAX)
     .allow('')
     .optional()
     .messages({ 'string.max': `Bio must be ${COACH_BIO_MAX.toLocaleString('en-US')} characters or fewer.` }),
-  experience_years: Joi.number().integer().min(0).max(100).optional(),
+  experience_years: Joi.number().integer().min(0).max(100).allow(null).optional(),
   skill_rating: coachSkillRatingValueSchema.optional().allow(null),
   rating_system: coachRatingSystemSchema,
   certifications: coachCertificationsSchema,

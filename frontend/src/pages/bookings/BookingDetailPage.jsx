@@ -57,6 +57,15 @@ import {
   cancellationHistoryReasonDisplay,
 } from '../../domain/bookingStatus.js';
 import {
+  cancelReasonSharedHint,
+  cancelReliabilityConsequenceCopy,
+  cancelWeatherAlternativeHint,
+  cancellationPolicyLines,
+  cancellationPolicySummary,
+  isMutualWeatherCancellation,
+  weatherCancellationView,
+} from '../../domain/cancellationPolicy.js';
+import {
   coachPayoutLabel,
   issueResolutionFacts,
 } from '../../domain/issueResolutionDisplay.js';
@@ -625,7 +634,7 @@ export function BookingDetailPage({ admin = false }) {
           disabled={busy}
           onClick={() => {
             const ok = window.confirm(
-              'Accept this booking? The student’s card will be charged now. Declining or letting the request expire releases the authorization instead.',
+              'Accept this booking? The student’s card will be charged now. Declining or letting the request expire releases the authorization instead.\n\nIf you cancel after accepting, the student gets a full refund and you aren’t paid.',
             );
             if (!ok) return;
             run(() => bookingsApi.accept(id), 'Booking accepted. The student’s payment has been captured.');
@@ -685,6 +694,9 @@ export function BookingDetailPage({ admin = false }) {
       {(isStudent && canStudentCancel(booking)) || (isCoach && canCoachCancel(booking)) ? (
         <CancelForm
           busy={busy}
+          booking={booking}
+          audience={isCoach ? 'coach' : 'student'}
+          now={now}
           consequence={cancelMoneyConsequenceCopy(booking, payment, { audience: isCoach ? 'coach' : 'student' })}
           onSubmit={(body) => run(() => bookingsApi.cancel(id, body))}
         />
@@ -714,8 +726,33 @@ export function BookingDetailPage({ admin = false }) {
           There is no reschedule option yet. To change the time, cancel this booking and book a new slot.
         </p>
       ) : null}
+      {isStudent && isMutualWeatherCancellation(booking) && booking.coach_id ? (
+        <Link className="btn secondary" to={`/coaches/${booking.coach_id}`}>Book a new time</Link>
+      ) : null}
     </>
   );
+  const weatherView = !admin && (isStudent || isCoach)
+    ? weatherCancellationView(booking, { audience, now, tz })
+    : null;
+  const weatherSection = weatherView ? (
+    <WeatherCancellationSection
+      view={weatherView}
+      audience={audience}
+      busy={busy}
+      onRequest={(body) => run(
+        () => bookingsApi.requestWeatherCancellation(id, body),
+        `Weather cancellation requested. We’ve let ${isCoach ? 'the student' : 'your coach'} know.`,
+      )}
+      onAccept={(requestId) => run(
+        () => bookingsApi.acceptWeatherCancellation(id, requestId),
+      )}
+      onDecline={(requestId) => run(() => bookingsApi.declineWeatherCancellation(id, requestId))}
+      onWithdraw={(requestId) => run(
+        () => bookingsApi.withdrawWeatherCancellation(id, requestId),
+        'Weather cancellation request withdrawn.',
+      )}
+    />
+  ) : null;
 
   const headline = admin
     ? `Booking #${booking.id}`
@@ -748,7 +785,7 @@ export function BookingDetailPage({ admin = false }) {
           <StatusBadge
             status={hasOpenIssueReport(booking) || booking.status === 'disputed' ? 'issue' : booking.status}
             label={bookingDisplayLabel(booking, { audience })}
-            tone={bookingDisplayTone(booking)}
+            tone={bookingDisplayTone(booking, { audience })}
           />
         )}
       </div>
@@ -783,6 +820,8 @@ export function BookingDetailPage({ admin = false }) {
       {!admin && (isStudent || isCoach) && booking.resolved_issue?.id && !hasOpenIssueReport(booking) ? (
         <IssueResolvedPanel booking={booking} payment={payment} />
       ) : null}
+
+      {weatherView?.prominent ? weatherSection : null}
 
       <div className={`booking-detail-content-grid${nextSteps.length ? '' : ' booking-detail-content-grid--single'}`}>
         <BookingDetailLessonSection booking={booking} payment={payment} tz={tz} isCoach={isCoach} admin={admin} />
@@ -831,6 +870,12 @@ export function BookingDetailPage({ admin = false }) {
         </section>
       ) : null}
 
+      {weatherView && !weatherView.prominent ? weatherSection : null}
+
+      {!admin && (isStudent || isCoach) ? (
+        <CancellationPolicySection booking={booking} audience={isCoach ? 'coach' : 'student'} tz={tz} now={now} />
+      ) : null}
+
       <section className="card stack booking-detail-section booking-detail-actions">
         <h2 className="booking-detail-section-title">{admin ? 'Admin actions' : 'Booking actions'}</h2>
         {messagingLockedCopy(booking) ? (
@@ -843,8 +888,10 @@ export function BookingDetailPage({ admin = false }) {
           <h2 className="booking-detail-section-title">Cancellation history</h2>
           <ul className="booking-cancellation-history-list">
             {booking.cancellationHistory.map((row) => {
-              const eventLabel = cancellationHistoryEventLabel(row, { audience });
-              const reason = cancellationHistoryReasonDisplay(row);
+              const mutualWeather = row.id != null
+                && row.id === booking.weather_cancellation?.request?.cancellation_history_id;
+              const eventLabel = cancellationHistoryEventLabel(row, { audience: admin ? 'admin' : audience, mutualWeather });
+              const reason = mutualWeather ? null : cancellationHistoryReasonDisplay(row);
               return (
                 <li key={row.id} className="booking-cancellation-history-item">
                   <p className="booking-cancellation-history-event">{eventLabel}</p>
@@ -1155,22 +1202,129 @@ function ReportIssueForm({ booking, isCoach, tz, busy, onSubmit, now = Date.now(
   );
 }
 
-function CancelForm({ onSubmit, busy, consequence }) {
-  const [reason, setReason] = useState('schedule_conflict');
-  const [notes, setNotes] = useState('');
+function CancellationPolicySection({ booking, audience, tz, now }) {
+  const summary = cancellationPolicySummary(booking, { audience, now, tz });
+  if (!summary) return null;
   return (
-    <form className="stack" onSubmit={(e) => { e.preventDefault(); onSubmit({ reason, reason_notes: notes || undefined }); }}>
+    <section className="card stack booking-detail-section booking-cancellation-policy" aria-labelledby="cancellation-policy-title">
+      <h2 id="cancellation-policy-title" className="booking-detail-section-title">Cancellation policy</h2>
+      <div>
+        <p className="booking-cancellation-policy-headline">{summary.headline}</p>
+        <p className="small muted" style={{ margin: 0 }}>{summary.body}</p>
+      </div>
+      <details className="booking-cancellation-policy-details">
+        <summary className="small">Full cancellation policy</summary>
+        <ul className="small">
+          {cancellationPolicyLines(audience).map((line) => <li key={line}>{line}</li>)}
+        </ul>
+      </details>
+    </section>
+  );
+}
+
+function WeatherCancellationSection({ view, audience, busy, onRequest, onAccept, onDecline, onWithdraw }) {
+  const [note, setNote] = useState('');
+  const tone = view.kind === 'respond' ? 'warning' : view.kind === 'declined' ? 'info' : null;
+  return (
+    <section
+      className={`card stack booking-detail-section booking-weather-cancellation${tone ? ` booking-weather-cancellation--${tone}` : ''}`}
+      aria-labelledby="weather-cancellation-title"
+    >
+      <h2 id="weather-cancellation-title" className="booking-detail-section-title">{view.title}</h2>
+      <p className="small" style={{ margin: 0 }}>{view.body}</p>
+      {view.note ? (
+        <blockquote className="booking-weather-cancellation-note small">“{view.note}”</blockquote>
+      ) : null}
+
+      {view.kind === 'respond' ? (
+        <div className="row booking-weather-cancellation-actions">
+          <button
+            className="btn danger"
+            type="button"
+            disabled={busy}
+            onClick={() => {
+              const ok = window.confirm(
+                audience === 'coach'
+                  ? 'Cancel this lesson for weather? The student gets a full refund and you aren’t paid. Neither of you is penalized.'
+                  : 'Cancel this lesson for weather? You get a full refund. Neither of you is penalized.',
+              );
+              if (ok) onAccept(view.requestId);
+            }}
+          >
+            Agree & cancel lesson
+          </button>
+          <button className="btn secondary" type="button" disabled={busy} onClick={() => onDecline(view.requestId)}>
+            Keep the lesson
+          </button>
+        </div>
+      ) : null}
+
+      {view.kind === 'waiting' ? (
+        <div>
+          <button className="btn ghost" type="button" disabled={busy} onClick={() => onWithdraw(view.requestId)}>
+            Withdraw request
+          </button>
+        </div>
+      ) : null}
+
+      {view.kind === 'available' ? (
+        <form
+          className="stack"
+          onSubmit={(e) => {
+            e.preventDefault();
+            onRequest({ note: note.trim() || undefined });
+          }}
+        >
+          <FormField label="Note (optional)" name="weather_note">
+            <>
+              <textarea
+                id="weather_note"
+                name="weather_note"
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                maxLength={255}
+                placeholder="e.g. Heavy rain forecast all afternoon"
+              />
+              <CharacterMaxHint max={255} />
+            </>
+          </FormField>
+          <div>
+            <button className="btn secondary" type="submit" disabled={busy}>Ask to cancel for weather</button>
+          </div>
+          <p className="small muted" style={{ margin: 0 }}>You can ask once per lesson.</p>
+        </form>
+      ) : null}
+    </section>
+  );
+}
+
+function CancelForm({ onSubmit, busy, consequence, booking, audience, now }) {
+  const [reason, setReason] = useState('');
+  const [notes, setNotes] = useState('');
+  const weatherHint = cancelWeatherAlternativeHint(reason, booking, { audience, now });
+  return (
+    <form className="stack" onSubmit={(e) => { e.preventDefault(); if (!reason) return; onSubmit({ reason, reason_notes: notes || undefined }); }}>
       <h3 style={{ margin: 0, fontSize: '1rem' }}>Cancel booking</h3>
       {consequence ? (
         <div className="alert warning" role="status">
           <strong>If you cancel</strong>
           <div className="small" style={{ marginTop: 4 }}>{consequence}</div>
+          {reason ? (
+            <div className="small" style={{ marginTop: 4 }}>{cancelReliabilityConsequenceCopy(reason, booking, now)}</div>
+          ) : null}
+          {weatherHint ? (
+            <div className="small" style={{ marginTop: 4 }}><strong>{weatherHint}</strong></div>
+          ) : null}
         </div>
       ) : null}
-      <FormField label="Cancel reason" name="reason">
-        <select id="reason" value={reason} onChange={(e) => setReason(e.target.value)}>
-          {CANCEL_REASONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
-        </select>
+      <FormField label="Cancel reason" name="reason" required>
+        <>
+          <p className="small muted" style={{ margin: '0 0 6px' }}>{cancelReasonSharedHint(audience)}</p>
+          <select id="reason" value={reason} onChange={(e) => setReason(e.target.value)} required>
+            <option value="" disabled>Select a reason</option>
+            {CANCEL_REASONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
+          </select>
+        </>
       </FormField>
       <FormField label="Notes (optional)" name="reason_notes">
         <>
@@ -1184,7 +1338,7 @@ function CancelForm({ onSubmit, busy, consequence }) {
           <CharacterMaxHint max={CHAR_LIMITS.cancelNotes} />
         </>
       </FormField>
-      <button className="btn danger" type="submit" disabled={busy}>Cancel booking</button>
+      <button className="btn danger" type="submit" disabled={busy || !reason}>Cancel booking</button>
     </form>
   );
 }

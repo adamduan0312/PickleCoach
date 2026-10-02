@@ -9,6 +9,7 @@ import {
   coachProfileApiFieldErrors,
   coachProfileFormToPayload,
   coachProfileToForm,
+  formatExperienceYears,
   formatSkillRating,
   formatSkillRatingLine,
   ratingFieldCopy,
@@ -220,6 +221,32 @@ test('payload trims text and preserves rating precision', () => {
   assert.equal(coachProfileFormToPayload({ ...baseForm(), skill_rating: '' }).skill_rating, null);
 });
 
+test('experience: blank saves as null (not provided), 0 stays an explicit 0', () => {
+  assert.equal(coachProfileFormToPayload({ ...baseForm(), experience_years: '' }).experience_years, null);
+  assert.equal(coachProfileFormToPayload({ ...baseForm(), experience_years: '0' }).experience_years, 0);
+  assert.equal(coachProfileToForm({ experience_years: null }).experience_years, '');
+  assert.equal(coachProfileToForm({ experience_years: 0 }).experience_years, '0');
+});
+
+test('formatExperienceYears: 1 year / N years; hidden for 0 or missing', () => {
+  assert.equal(formatExperienceYears(1), '1 year');
+  assert.equal(formatExperienceYears(2), '2 years');
+  assert.equal(formatExperienceYears(6), '6 years');
+  assert.equal(formatExperienceYears('12'), '12 years');
+  for (const hidden of [0, null, undefined, '', -1, 2.5, 'abc']) {
+    assert.equal(formatExperienceYears(hidden), null, String(hidden));
+  }
+});
+
+test('public profile shows Experience in the highlights row; Discover cards do not', () => {
+  const profileSrc = readFileSync(new URL('../src/pages/student/CoachPublicProfilePage.jsx', import.meta.url), 'utf8');
+  assert.match(profileSrc, /const experienceLine = formatExperienceYears\(profile\.experience_years\);/);
+  assert.match(profileSrc, /\{experienceLine \? \(\s*<li>\s*<span className="coach-highlight-label">Experience<\/span>\s*<span>\{experienceLine\}<\/span>/);
+  assert.ok(profileSrc.indexOf('>Experience<') > profileSrc.indexOf('>Based in<'), 'Experience follows Based in');
+  const discoverSrc = readFileSync(new URL('../src/pages/student/DiscoverPage.jsx', import.meta.url), 'utf8');
+  assert.doesNotMatch(discoverSrc, /experience/i);
+});
+
 test('DUPR is the form default, but no rating system is saved without a rating', () => {
   const fresh = coachProfileToForm(null);
   assert.equal(fresh.rating_system, 'DUPR');
@@ -283,7 +310,7 @@ test('coach profile page: system before rating, dynamic copy, field errors, unsa
   assert.match(dash, /\{flash\}\{' '\}\s*\{user\?\.id \? <Link to=\{`\/coaches\/\$\{user\.id\}`\}>View public profile<\/Link> : null\}/);
   assert.match(src, /skill_rating: bad \? ratingSwitchMessage\(form\.skill_rating, system\) : undefined/);
   assert.doesNotMatch(src, /self|Self-reported|2\.0–6\.0|half steps/);
-  assert.match(src, /label="Location \(Based in\)"/);
+  assert.match(src, /label="Location \(Based in\) \*"/);
   assert.match(src, /hint="Choose a city and state or ZIP code\. This appears publicly as “Based in” and is separate from your teaching locations\."/);
   assert.match(src, /<PlaceAutocomplete\s+id="location"\s+value=\{form\.location\}\s+onChange=\{\(v\) => setField\('location', v\)\}/);
   assert.match(src, /placeholder="e\.g\. Davie, FL"/);

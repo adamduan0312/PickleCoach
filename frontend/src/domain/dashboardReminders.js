@@ -7,6 +7,7 @@ import {
   isFinancialReviewWindowOpen,
   isPostLessonReviewEligible,
 } from './bookingStatus.js';
+import { WEATHER_ACTION_NEEDED_LABEL, weatherRequestAwaitsResponse } from './cancellationPolicy.js';
 
 /**
  * Actionable dashboard reminders from booking list data.
@@ -25,12 +26,32 @@ function sortByScheduledAsc(a, b) {
   return new Date(a.scheduled_at).getTime() - new Date(b.scheduled_at).getTime();
 }
 
+/** Weather requests expire at lesson start, so this banner leads. */
+function weatherRequestReminder(list, audience, now) {
+  const waiting = list.filter((b) => weatherRequestAwaitsResponse(b, audience, now)).sort(sortByScheduledAsc);
+  if (waiting.length === 0) return null;
+  const many = waiting.length > 1;
+  const asker = audience === 'coach' ? 'Your student' : 'Your coach';
+  return {
+    id: `${audience}-weather-request`,
+    tone: 'warning',
+    title: many ? `Action needed — ${waiting.length} weather cancellation requests` : WEATHER_ACTION_NEEDED_LABEL,
+    body: many
+      ? 'Agree to cancel for weather or keep each lesson before it starts. Open the next request to respond.'
+      : `${asker} asked to cancel an upcoming lesson for weather. Agree or keep the lesson before it starts.`,
+    to: `/bookings/${waiting[0].id}`,
+    cta: many ? 'Respond to next request' : 'Respond',
+  };
+}
+
 /**
  * @returns {Array<{ id: string, tone: 'warning'|'info', title: string, body: string, to: string, cta: string }>}
  */
 export function coachDashboardReminders(bookings, now = Date.now()) {
   const list = Array.isArray(bookings) ? bookings : [];
   const out = [];
+  const weather = weatherRequestReminder(list, 'coach', now);
+  if (weather) out.push(weather);
 
   const pending = list.filter((b) => b?.status === 'pending').sort(sortByDeadlineAsc);
   if (pending.length > 0) {
@@ -79,6 +100,8 @@ export function coachDashboardReminders(bookings, now = Date.now()) {
 export function studentDashboardReminders(bookings, now = Date.now()) {
   const list = Array.isArray(bookings) ? bookings : [];
   const out = [];
+  const weather = weatherRequestReminder(list, 'student', now);
+  if (weather) out.push(weather);
 
   const pending = list.filter((b) => b?.status === 'pending').sort(sortByDeadlineAsc);
   if (pending.length > 0) {

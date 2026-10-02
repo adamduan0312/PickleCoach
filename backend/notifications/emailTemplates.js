@@ -153,8 +153,26 @@ function preLesson24hBody(payload = {}) {
     `;
 }
 
+function weatherCancellationBody(payload = {}, { heading, paragraphs, cta }) {
+  const isCoach = payload.audience === 'coach';
+  const card = bookingDetailCard(payload, {
+    personLabel: isCoach ? 'Student' : 'Coach',
+    personName: isCoach ? (payload.student_name || 'Your student') : (payload.coach_name || 'Your coach'),
+  });
+  return `
+      <h2 style="${HEADING_STYLE}">${escapeHtml(heading)}</h2>
+      ${paragraphs.filter(Boolean).map((p) => `<p style="${BODY_P_STYLE}">${escapeHtml(p)}</p>`).join('')}
+      ${card}
+      ${payload.booking_id != null ? emailButton(cta, emailAppUrl(`/bookings/${payload.booking_id}`)) : ''}
+      ${bookingIdFooter(payload.booking_id)}
+    `;
+}
+
 const SUPPORTED_EMAIL_TYPES = [
   'pre_lesson_24h',
+  'weather_cancellation_requested',
+  'weather_cancellation_declined',
+  'weather_cancellation_accepted',
   'booking_confirmed',
   'booking_declined',
   'booking_cancelled',
@@ -182,6 +200,9 @@ export function getEmailSubject(type, payload) {
     : 'New booking request — PickleCoach';
   const subjects = {
     pre_lesson_24h: 'Reminder: Your Pickleball Lesson Tomorrow',
+    weather_cancellation_requested: payload?.headline || 'Weather cancellation requested',
+    weather_cancellation_declined: payload?.headline || 'Weather cancellation declined',
+    weather_cancellation_accepted: payload?.headline || 'Lesson cancelled for weather',
     booking_confirmed: 'Booking Confirmed',
     booking_declined: 'Booking Declined',
     booking_cancelled: 'Booking Cancelled',
@@ -513,6 +534,21 @@ function passwordChangedBody(payload = {}) {
 export function getEmailBodyFragment(type, payload = {}) {
   const templates = {
     pre_lesson_24h: preLesson24hBody(payload),
+    weather_cancellation_requested: weatherCancellationBody(payload, {
+      heading: payload.headline || 'Weather cancellation requested',
+      paragraphs: [payload.note_line, payload.summary],
+      cta: 'Respond in PickleCoach',
+    }),
+    weather_cancellation_declined: weatherCancellationBody(payload, {
+      heading: payload.headline || 'Weather cancellation declined',
+      paragraphs: [payload.summary],
+      cta: 'View booking',
+    }),
+    weather_cancellation_accepted: weatherCancellationBody(payload, {
+      heading: payload.headline || 'Lesson cancelled for weather',
+      paragraphs: [payload.summary],
+      cta: 'View booking',
+    }),
     booking_confirmed: bookingConfirmedBody(payload),
     booking_declined: bookingDeclinedBody(payload),
     booking_cancelled: bookingCancelledBody(payload),

@@ -1,3 +1,12 @@
+import { formatMoney } from '../utils/format.js';
+import {
+  WEATHER_ACTION_NEEDED_LABEL,
+  isMutualWeatherCancellation,
+  isWithinLateCancelWindow,
+  studentCancellationPolicyLines,
+  weatherRequestAwaitsResponse,
+} from './cancellationPolicy.js';
+
 const STATUS_LABELS = {
   pending: 'Requested',
   confirmed: 'Confirmed',
@@ -49,19 +58,21 @@ export function bookingStatusLabel(status, { audience } = {}) {
  * User-facing badge for a booking row.
  * In-app open report → "Issue reported"; Stripe chargeback (`disputed`) → "Payment dispute under review".
  */
-export function bookingDisplayLabel(booking, { audience } = {}) {
+export function bookingDisplayLabel(booking, { audience, now = Date.now() } = {}) {
   if (!booking) return 'Unknown';
   if (hasOpenIssueReport(booking) || booking.status === 'disputed') {
     return booking.status === 'disputed' && !hasOpenIssueReport(booking)
       ? 'Payment dispute under review'
       : 'Issue reported';
   }
+  if (weatherRequestAwaitsResponse(booking, audience, now)) return WEATHER_ACTION_NEEDED_LABEL;
   return bookingStatusLabel(booking.status, { audience });
 }
 
-export function bookingDisplayTone(booking) {
+export function bookingDisplayTone(booking, { audience, now = Date.now() } = {}) {
   if (!booking) return 'neutral';
   if (hasOpenIssueReport(booking) || booking.status === 'disputed') return 'warning';
+  if (weatherRequestAwaitsResponse(booking, audience, now)) return 'warning';
   return bookingStatusTone(booking.status);
 }
 
@@ -156,7 +167,8 @@ export function isNoSuccessfulChargeState(payment) {
  */
 export function coachCancelMoneyPresentation(booking, payment) {
   if (!booking || booking.status !== 'cancelled') return null;
-  if (booking.cancelled_by !== 'coach') return null;
+  // An agreed weather cancellation settles like a coach cancel (full refund, no payout) whoever asked.
+  if (booking.cancelled_by !== 'coach' && !isMutualWeatherCancellation(booking)) return null;
   // If payout already moved, don't invent "not payable" over reality.
   if (isCoachPayoutReleased(booking)) return null;
 
@@ -244,7 +256,7 @@ export function coachCancelMoneyPresentation(booking, payment) {
  */
 export function studentCoachCancelMoneyPresentation(booking, payment) {
   if (!booking || booking.status !== 'cancelled') return null;
-  if (booking.cancelled_by !== 'coach') return null;
+  if (booking.cancelled_by !== 'coach' && !isMutualWeatherCancellation(booking)) return null;
 
   const ps = String(payment?.payment_status || '').toLowerCase();
   const rs = String(payment?.refund_status || 'none').toLowerCase();
@@ -403,19 +415,20 @@ export function cancelMoneyConsequenceCopy(booking, payment, { audience } = {}) 
 
   if (booking.status !== 'confirmed') return null;
 
-  const start = booking.scheduled_at ? new Date(booking.scheduled_at).getTime() : NaN;
-  const hoursUntil = Number.isFinite(start) ? (start - Date.now()) / (1000 * 60 * 60) : null;
-  const isLate = hoursUntil != null && hoursUntil >= 0 && hoursUntil < 24;
-
   if (audience === 'coach') {
-    return 'Cancelling refunds the student in full under the cancellation policy. Your payout for this lesson will not proceed.';
+    return 'The student gets a full refund and you aren’t paid for this lesson.';
   }
 
-  if (isLate) {
-    return 'Late cancellation: a refund of approximately half of the lesson amount may apply. The exact refund amount is calculated when the refund is processed.';
+  const totalCents = Math.round(Number(payment?.total_charge_to_student ?? booking.price) * 100);
+  const hasTotal = Number.isFinite(totalCents) && totalCents > 0;
+
+  if (isWithinLateCancelWindow(booking)) {
+    const amounts = hasTotal
+      ? ` (${formatMoney(Math.floor(totalCents / 2) / 100)} of ${formatMoney(totalCents / 100)})`
+      : '';
+    return `The lesson is less than 24 hours away, so you’ll be refunded 50%${amounts}.`;
   }
-  // Policy: full refund when ≥24h before start (isLateCancel=false → refundCents = total).
-  return 'You’ll receive a full refund of the captured lesson amount. The exact refund amount is calculated when the refund is processed.';
+  return `You’ll get a full refund${hasTotal ? ` of ${formatMoney(totalCents / 100)}` : ''}.`;
 }
 
 export function canStudentCancel(booking) {
@@ -553,12 +566,13 @@ export function sortBookingsForList(bookings, nowMs = Date.now(), { audience = '
     if (status === 'cancelled') return LIST_CANCELLED_GROUP;
 
     if (audience === 'student') {
-      // Action required — student must wait on coach, confirm attendance, or follow an issue.
+      // Action required — student must wait on coach, confirm attendance, follow an issue, or answer a weather request.
       if (
         status === 'pending'
         || status === 'awaiting_verification'
         || status === 'disputed'
         || hasOpenIssueReport(booking)
+        || weatherRequestAwaitsResponse(booking, 'student', nowMs)
       ) {
         return 0;
       }
@@ -569,7 +583,7 @@ export function sortBookingsForList(bookings, nowMs = Date.now(), { audience = '
     }
 
     // Coach
-    if (status === 'pending') return 0;
+    if (status === 'pending' || weatherRequestAwaitsResponse(booking, 'coach', nowMs)) return 0;
 
     if (status === 'awaiting_verification') {
       return 1;
@@ -583,7 +597,7 @@ export function sortBookingsForList(bookings, nowMs = Date.now(), { audience = '
 
   function actionStatusRank(booking) {
     const status = booking?.status;
-    if (status === 'pending') return 0;
+    if (status === 'pending' || weatherRequestAwaitsResponse(booking, 'student', nowMs)) return 0;
     if (status === 'awaiting_verification') return 1;
     if (status === 'disputed' || hasOpenIssueReport(booking)) return 2;
     return 3;
@@ -660,11 +674,7 @@ export function checkoutAcceptancePolicyCopy(bookingLike = {}) {
 
 /** Checkout — cancellation & no-show policy lines (student-facing, before commit). */
 export function checkoutCancellationNoShowPolicyLines() {
-  return [
-    'Cancel 24+ hours before your lesson for a full refund.',
-    'Cancellations within 24 hours may receive a 50% refund.',
-    'If you don\'t show up for your lesson, your payment may not be refunded and your reliability score may be affected.',
-  ];
+  return studentCancellationPolicyLines();
 }
 
 /** Coach confirm dialog before POST .../student-no-show. */
@@ -814,9 +824,9 @@ export function studentNeedsAttention(booking, now = Date.now()) {
   return false;
 }
 
-/** Alias for nav clarity — same semantics as {@link studentNeedsAttention}. */
+/** My bookings nav dot: {@link studentNeedsAttention}, plus a coach's weather request awaiting a reply. */
 export function studentBookingNeedsNavAttention(booking, now = Date.now()) {
-  return studentNeedsAttention(booking, now);
+  return studentNeedsAttention(booking, now) || weatherRequestAwaitsResponse(booking, 'student', now);
 }
 
 /**
@@ -827,6 +837,7 @@ export function studentBookingNeedsNavAttention(booking, now = Date.now()) {
  * - pending (accept/decline)
  * - awaiting_verification with attendance actions available
  * - open issue report or disputed (follow the case)
+ * - the student's weather cancellation request awaiting a reply
  *
  * OFF: confirmed / completed / cancelled / declined / normal no-show with no coach action.
  * Visiting /coach/bookings does not clear this — underlying state must change.
@@ -834,6 +845,7 @@ export function studentBookingNeedsNavAttention(booking, now = Date.now()) {
 export function coachBookingNeedsNavAttention(booking, now = Date.now()) {
   if (!booking?.status) return false;
   if (booking.status === 'pending') return true;
+  if (weatherRequestAwaitsResponse(booking, 'coach', now)) return true;
   if (hasOpenIssueReport(booking) || booking.status === 'disputed') return true;
   if (
     booking.status === 'awaiting_verification'
@@ -920,6 +932,15 @@ export function studentReviewWindowBannerCopy(booking, { remaining, deadlineForm
 /** Short cancelled-booking outcome for history rows and detail lead. */
 export function cancelledOutcomeCopy(booking, { audience, payment } = {}) {
   if (!booking || booking.status !== 'cancelled') return null;
+  if (isMutualWeatherCancellation(booking)) {
+    if (audience === 'coach') {
+      return 'You and the student agreed to cancel for weather. The student gets a full refund, and neither of you is penalized.';
+    }
+    if (audience === 'student') {
+      return 'You and your coach agreed to cancel for weather. You get a full refund, and neither of you is penalized.';
+    }
+    return 'Cancelled for weather — both participants agreed. Full refund, no reliability impact.';
+  }
   const by = booking.cancelled_by;
   if (by === 'system') {
     if (audience === 'coach') {
@@ -1054,7 +1075,8 @@ export function cancelReasonLabel(reason) {
  * Audience-aware headline for a cancellation_history row.
  * Uses “You …” when the viewer initiated the cancel; otherwise third person.
  */
-export function cancellationHistoryEventLabel(row, { audience } = {}) {
+export function cancellationHistoryEventLabel(row, { audience, mutualWeather = false } = {}) {
+  if (mutualWeather) return audience === 'admin' ? 'Cancelled for weather — both participants agreed' : 'Cancelled for weather — you both agreed';
   const by = row?.cancelled_by;
   if (by === 'system') return 'This booking was cancelled automatically';
   if (by === 'admin') return 'An administrator cancelled this booking';

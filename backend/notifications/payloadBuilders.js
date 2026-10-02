@@ -88,6 +88,51 @@ export const buildPreLessonReminderNotificationContent = (payload = {}) => {
   };
 };
 
+function otherPartyName(payload, fallbackForAudience) {
+  const isCoachRecipient = payload.audience === 'coach';
+  const name = isCoachRecipient ? payload.student_name : payload.coach_name;
+  return name || fallbackForAudience[isCoachRecipient ? 'coach' : 'student'];
+}
+
+/** To the other participant: accept (full refund, no penalty) or decline before the lesson starts. */
+export const buildWeatherCancellationRequestedNotificationContent = (payload = {}) => {
+  const requester = otherPartyName(payload, { coach: 'Your student', student: 'Your coach' });
+  const summary = payload.audience === 'coach'
+    ? 'If you agree, the lesson is cancelled and the student gets a full refund. You won’t be paid for it, and neither of you is penalized. Respond before the lesson starts.'
+    : 'If you agree, the lesson is cancelled and you get a full refund. Neither of you is penalized. Respond before the lesson starts.';
+  return {
+    headline: `${requester} asked to cancel for weather`,
+    summary,
+    note_line: payload.note ? `“${payload.note}”` : null,
+    preview: payload.lesson_title || 'Lesson',
+  };
+};
+
+/** To the requester: the lesson stays on. */
+export const buildWeatherCancellationDeclinedNotificationContent = (payload = {}) => {
+  const responder = otherPartyName(payload, { coach: 'Your student', student: 'Your coach' });
+  return {
+    headline: `${responder} declined your weather cancellation`,
+    summary: 'The lesson is still on. If you cancel, the normal cancellation rules apply.',
+    preview: payload.lesson_title || 'Lesson',
+  };
+};
+
+/** To the requester: the other participant agreed; booking cancelled with a full refund. */
+export const buildWeatherCancellationAcceptedNotificationContent = (payload = {}) => {
+  const responder = otherPartyName(payload, { coach: 'Your student', student: 'Your coach' });
+  const amount = payload.refund_amount != null && Number(payload.refund_amount) > 0
+    ? ` of $${Number(payload.refund_amount).toFixed(2)}`
+    : '';
+  return {
+    headline: `${responder} agreed to cancel for weather`,
+    summary: payload.audience === 'coach'
+      ? 'The lesson is cancelled and the student gets a full refund. Neither of you is penalized.'
+      : `The lesson is cancelled and you’ll get a full refund${amount}. Neither of you is penalized.`,
+    preview: payload.lesson_title || 'Lesson',
+  };
+};
+
 export const buildBookingDeclinedNotificationContent = (payload = {}) => {
   const reasonKey = payload.decline_reason_code;
   const reasonLabel = formatDeclineReasonLabel(reasonKey);

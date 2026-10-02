@@ -310,7 +310,7 @@ export function StudentDashboardPage() {
                       <div className="small muted">{bookingCourtName(b)}</div>
                     ) : null}
                   </div>
-                  <StatusBadge status={b.status} label={bookingDisplayLabel(b)} tone={bookingDisplayTone(b)} />
+                  <StatusBadge status={b.status} label={bookingDisplayLabel(b, { audience: 'student' })} tone={bookingDisplayTone(b, { audience: 'student' })} />
                 </div>
               </Link>
             ))}
@@ -341,7 +341,7 @@ export function StudentDashboardPage() {
                   <StatusBadge
                     status={b.status}
                     label={bookingDisplayLabel(b, { audience: 'student' })}
-                    tone={bookingDisplayTone(b)}
+                    tone={bookingDisplayTone(b, { audience: 'student' })}
                   />
                 </div>
               </Link>

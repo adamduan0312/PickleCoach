@@ -1039,6 +1039,12 @@ table.data th { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0
 .checklist .disabled { color: #888; }
 .coach-next-step-label { text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600; }
 .coach-next-step h2 { margin-top: 0.25rem; }
+.coach-photo-tip {
+  border-top: 1px solid var(--pc-line);
+  padding-top: 0.75rem;
+  margin: 0.75rem 0;
+}
+.coach-photo-tip p { margin: 0.25rem 0 0.5rem; }
 
 .hamburger { display: none; }
 
@@ -1622,6 +1628,41 @@ table.data th { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0
 }
 .booking-cancellation-history {
   margin-top: 1rem;
+}
+.booking-cancellation-policy {
+  margin-top: 1rem;
+}
+.booking-cancellation-policy-headline {
+  margin: 0 0 0.25rem;
+  font-weight: 600;
+}
+.booking-cancellation-policy-details summary {
+  cursor: pointer;
+}
+.booking-cancellation-policy-details ul {
+  margin: 0.5rem 0 0;
+  padding-left: 1.25rem;
+}
+.booking-weather-cancellation {
+  margin-top: 1rem;
+}
+.booking-weather-cancellation--warning {
+  background: var(--pc-warning-soft);
+  border-color: transparent;
+}
+.booking-weather-cancellation--info {
+  background: var(--pc-info-soft);
+  border-color: transparent;
+}
+.booking-weather-cancellation-note {
+  margin: 0;
+  padding-left: 0.75rem;
+  border-left: 3px solid currentColor;
+  opacity: 0.85;
+}
+.booking-weather-cancellation-actions {
+  gap: 0.5rem;
+  flex-wrap: wrap;
 }
 .booking-cancellation-history-list {
   list-style: none;

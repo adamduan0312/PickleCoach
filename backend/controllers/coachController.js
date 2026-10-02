@@ -256,7 +256,7 @@ export const createCoachProfile = async (req, res) => {
       user_id: targetUserId,
       headline,
       bio,
-      experience_years: experience_years ?? 0,
+      experience_years: experience_years ?? null,
       skill_rating: rating.skill_rating,
       rating_system: rating.rating_system,
       certifications: certificationsForStorage(certifications),

@@ -20,9 +20,11 @@ const CoachProfile = sequelize.define('coach_profiles', {
     type: DataTypes.TEXT,
     allowNull: true,
   },
+  /** NULL = not provided; 0 = explicitly zero years. */
   experience_years: {
     type: DataTypes.INTEGER,
-    defaultValue: 0,
+    allowNull: true,
+    defaultValue: null,
   },
   /** Self-reported pickleball numeric level (standard-style scale), 2.0–6.0 in 0.5 steps; nullable until set. */
   /** DUPR (3 dp) or UTR-P (1 dp) — rules in utils/coachRating.js. Never compared across systems. */

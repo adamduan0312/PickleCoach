@@ -202,9 +202,17 @@ export function coachProfileFormToPayload(form) {
     location: form.location.trim(),
     rating_system: rating === '' ? null : form.rating_system,
     skill_rating: rating === '' ? null : Number(rating),
+    experience_years: years === '' ? null : Number(years),
   };
-  if (years !== '') body.experience_years = Number(years);
   return body;
+}
+
+/** "1 year" / "6 years"; null when not provided or 0 (hidden on the public profile). */
+export function formatExperienceYears(value) {
+  if (value == null || value === '') return null;
+  const n = Number(value);
+  if (!Number.isInteger(n) || n <= 0) return null;
+  return n === 1 ? '1 year' : `${n} years`;
 }
 
 /** Trimmed, non-blank names with case-insensitive duplicates removed (matches the backend). */

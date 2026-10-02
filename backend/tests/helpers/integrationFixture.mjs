@@ -102,7 +102,7 @@ export async function createBookingJourneyFixture({ studentCount = 1 } = {}) {
   await CoachProfile.create({
     user_id: coach.id,
     headline: 'Integration Coach',
-    bio: 'HTTP integration fixture',
+    bio: 'HTTP integration fixture coach with a complete, marketplace-ready profile.',
     experience_years: 5,
     skill_rating: 4.217,
     rating_system: 'DUPR',

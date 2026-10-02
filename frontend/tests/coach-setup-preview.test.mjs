@@ -38,8 +38,31 @@ test('new coach: next step is the profile; payouts disabled until a profile exis
   assert.equal(checklist[4].hint, 'Create your profile first');
   assert.deepEqual(
     { title: next.title, detail: next.detail, cta: next.cta, to: next.to },
-    { title: 'Create your coach profile', detail: 'You have the coach role, but no profile yet.', cta: 'Start setup', to: '/coach/profile' },
+    { title: 'Create your coach profile', detail: 'Build the basic profile students see before booking.', cta: 'Start setup', to: '/coach/profile' },
   );
+});
+
+test('draft profile: checklist stays ○, next step asks to complete it, payouts unlocked', () => {
+  const { checklist, next } = coachSetupView(NONE, {
+    coachUiPhase: 'connect_stripe',
+    profileExists: true,
+    profileMissingFields: ['headline', 'bio', 'location'],
+  });
+  assert.equal(checklist[0].done, false);
+  assert.equal(checklist[4].disabled, false);
+  assert.deepEqual(
+    { title: next.title, detail: next.detail, cta: next.cta, to: next.to },
+    {
+      title: 'Complete your coach profile',
+      detail: 'Add a headline, bio, and location to make your profile ready for students.',
+      cta: 'Complete profile',
+      to: '/coach/profile',
+    },
+  );
+  const onlyBio = coachSetupView(NONE, { profileExists: true, profileMissingFields: ['bio'] }).next;
+  assert.equal(onlyBio.detail, 'Add a bio to make your profile ready for students.');
+  // Status without field detail still gets sensible copy.
+  assert.match(coachSetupView(NONE, { profileExists: true }).next.detail, /headline, bio, and location/);
 });
 
 test('next step walks profile → lesson → court → availability → payouts', () => {
@@ -67,7 +90,9 @@ test('payout step reuses readiness phases; listed coach has no next step', () =>
 
 test('dashboard: one reusable Next step card + clickable checklist, no separate button row', () => {
   const src = read('../src/pages/coach/CoachDashboardPage.jsx');
-  assert.match(src, /coachSetupView\(setupSteps, \{ coachUiPhase: readiness\.coachUiPhase \}\)/);
+  assert.match(src, /coachSetupView\(setupSteps, \{\s*coachUiPhase: readiness\.coachUiPhase,/);
+  assert.match(src, /profileExists: market\?\.profile_exists \?\? readiness\.coachUiPhase !== 'start_setup'/);
+  assert.match(src, /profileMissingFields: market\?\.profile_missing_fields/);
   assert.match(src, /\{setup\?\.next \? \(/);
   assert.match(src, /<Link className="btn" to=\{setup\.next\.to\}>\{setup\.next\.cta\}<\/Link>/);
   assert.match(src, /<Link to=\{item\.to\}>/);

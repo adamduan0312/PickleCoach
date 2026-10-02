@@ -862,12 +862,13 @@ Authorization: Bearer <token>
 - **`rating_system`**: **`"DUPR"`** | **`"UTR-P"`** | `null`. Required whenever `skill_rating` is set; `"self"`, `"UTPR"`, empty strings, and other values are rejected. Not verified against external APIs.
 - **`location`** (“Based in”): Must be a real US place (city + state, ZIP, or address). The server geocodes it and stores a city-level label such as **`"Davie, FL"`** (street and ZIP are never stored). Unknown places → `400` with `details: [{ field: "location" }]`; geocoder outage → `503`. `""` clears it. Unchanged values are not re-geocoded. Independent of teaching courts — not used for Discover, radius, or distance, and not required to be near a court. Same rules on both update routes.
 - **Pricing**: Coach profiles do **not** store an hourly rate. Listings and checkout use each **lesson’s** `price` and `duration_minutes`; see **`effective_hourly_rate`** on lesson JSON (derived: `price / (duration_minutes / 60)`).
+- **Drafts**: Every field is optional on save, so a coach can save a partial profile. The marketplace `profile` step (and Discover listing) still requires `headline` ≥10 characters, `bio` ≥50 characters, and `location` — see `GET /api/coaches/me/marketplace-status`.
 - **Request Body**:
   ```json
   {
-    "headline": "string (optional)",
+    "headline": "string (optional; trimmed)",
     "bio": "string (optional; trimmed, max 1,000 characters)",
-    "experience_years": "number (optional, defaults to 0)",
+    "experience_years": "number | null (optional, 0–100; omitted or null = not provided, 0 = explicitly zero years)",
     "skill_rating": "number | null (optional; DUPR 2.000–8.000 up to 3 dp, UTR-P 1.0–10.0 1 dp)",
     "rating_system": "\"DUPR\" | \"UTR-P\" | null (required when skill_rating is set)",
     "certifications": "string[] | null (optional; up to 20 names, each trimmed and max 500 characters; blanks and duplicates dropped; [] or null clears)",
@@ -903,7 +904,7 @@ Authorization: Bearer <token>
   {
     "headline": "string (optional)",
     "bio": "string (optional; trimmed, max 1,000 characters)",
-    "experience_years": "number (optional)",
+    "experience_years": "number | null (optional, 0–100; null clears to not provided)",
     "skill_rating": "number | null (optional, clear with null)",
     "rating_system": "\"DUPR\" | \"UTR-P\" | null (optional)",
     "certifications": "string[] | null (optional; up to 20 names, each trimmed and max 500 characters; blanks and duplicates dropped; [] or null clears)",
@@ -1232,11 +1233,14 @@ Authorization: Bearer <token>
         "lesson": true,
         "court": true,
         "availability": false
-      }
+      },
+      "profile_exists": true,
+      "profile_missing_fields": []
     }
   }
   ```
 - **Steps**: `profile`, `stripe` (`stripe_ready`), `lesson`, `court`, `availability` (≥1 row). `listed` is true only when `missing` is empty.
+- **Profile step = complete profile**: a saved profile can be a draft. `steps.profile` is true only when `headline` is ≥10 characters, `bio` is ≥50 characters (both trimmed), and `location` ("Based in", geocoder-validated on save) is set. `profile_exists` reports whether a profile row exists at all (this is what unlocks Stripe onboarding); `profile_missing_fields` lists the incomplete required fields in `headline`, `bio`, `location` order. Discovery (`GET /api/coaches`) applies the same completeness rule in SQL.
 
 ### `POST /api/coaches/me/stripe-connect/onboard`
 - **Auth**: Required
@@ -1922,6 +1926,44 @@ The sections below document the **authorize-first write flow** first, then **bey
   - **`cancellation_type`**: `"late"` when cancel occurs **&lt; 24 hours** before `scheduled_at`; otherwise `"non_late"`. Independent of `penalty_reason` (timing vs financial rule).
   - **`affects_reliability`**: `true` when this cancellation **is included in reliability calculations** for the cancelling party (`false` for excused reasons `weather` / `emergency` / `sickness`, and always `false` for admin cancel). It means the cancel **qualifies** to affect reliability — **not** that the score was definitely reduced, or by any specific amount. Actual score movement depends on booking history, smoothing (`RELIABILITY_SMOOTHING_K`), decay window, and penalty weights; a single event on a lightly used account may produce a very small change. **`GET /api/bookings/:id`** history rows still omit this field; only the cancel response includes it.
 
+### Mutual weather cancellation
+
+The one deliberate exception to the normal cancellation rules. Either participant **asks**; only the **other participant's acceptance** cancels the lesson with a **100% refund** and **no reliability impact for either side**. Until then nothing changes: the booking stays `confirmed`, no refund is queued, no cancellation history is written, and a normal `POST /api/bookings/:id/cancel` (by either side, any reason — including `weather`) still follows the normal rules and closes the pending request. PickleCoach does not verify the weather.
+
+- **Window**: `confirmed` bookings only, from 24 h before `scheduled_at` until the lesson starts. Requests expire at `scheduled_at`.
+- **Limit**: one request per participant per booking (whatever its outcome); one pending request at a time.
+- **Auth**: Required (booking student or coach; verified email).
+
+| Endpoint | Who | Effect |
+|---|---|---|
+| `POST /api/bookings/:id/weather-cancellation` | either participant | Body `{ "note"?: string (≤255) }`. Creates a `pending` request → **201** `{ weather_cancellation }`. Notifies the other participant (`weather_cancellation_requested`). |
+| `POST /api/bookings/:id/weather-cancellation/:requestId/accept` | the other participant | Runs the normal locked pre-lesson cancel with `reason: weather`, `cancelled_by` = requester's role, `penalty_amount: 0`, `affects_reliability: false`, and a full refund (captured → `booking_cancel_refund` action; uncaptured → void). No late-cancel coach payout. Same response shape as `POST /api/bookings/:id/cancel`. Notifies the requester (`weather_cancellation_accepted`) instead of `booking_cancelled`. |
+| `POST /api/bookings/:id/weather-cancellation/:requestId/decline` | the other participant | Request → `declined`; lesson stays on. Notifies the requester (`weather_cancellation_declined`). |
+| `POST /api/bookings/:id/weather-cancellation/:requestId/withdraw` | the requester | Request → `withdrawn` (still counts as their one request). |
+
+**Error codes** (400 unless noted): `weather_request_not_confirmed`, `weather_request_too_early`, `weather_request_lesson_started`, `weather_request_already_pending`, `weather_request_already_used`, `weather_request_not_found` (404 from decline/withdraw), `weather_request_own` (accept/decline your own request), `weather_request_not_own` (403, withdraw someone else's), `weather_request_{declined|withdrawn|expired|closed|accepted}` (no longer open).
+
+**`GET /api/bookings/:id`** adds `weather_cancellation` (viewer-relative):
+
+```json
+{
+  "opens_at": "ISO — 24h before scheduled_at",
+  "can_request": false,
+  "request_unavailable_code": "weather_request_too_early | … | null",
+  "request": null | {
+    "id": 7, "status": "pending|accepted|declined|withdrawn|expired|closed",
+    "requested_by": "student|coach", "requested_by_me": true, "note": "string|null",
+    "expires_at": "ISO", "created_at": "ISO", "responded_at": "ISO|null",
+    "cancellation_history_id": "number|null (set when accepted)",
+    "can_respond": false, "can_withdraw": true
+  }
+}
+```
+
+`request` is the most recent request; a stored `pending` row is reported as `expired` after the lesson starts or `closed` once the booking is no longer `confirmed`.
+
+**Booking lists** (`GET /api/coaches/me/bookings`, `GET /api/students/me/bookings`, admin list) add `pending_weather_request`: `{ "id": 7, "requested_by": "student|coach" }` while a request is open on a confirmed lesson that hasn't started, else `null`. The frontend shows **Action needed — Weather cancellation request** (nav dot, coach *Action needed* filter, list badge, dashboard reminder) to the participant who didn't ask.
+
 ### `POST /api/admin/bookings/:id/cancel`
 - **Auth**: Required (`admin`)
 - **Description**: Same rules and **same response shape** as **`POST /api/bookings/:id/cancel`**: only **`pending`** or **`confirmed`** bookings; `cancelled_by` is set to **`admin`**. Post-lesson issues are not cancelled here — use dispute resolution (**`PUT /api/disputes/:id/resolve`**), refunds, or other documented admin actions.
@@ -2132,7 +2174,7 @@ Use this section as the admin decision guide for incidents, payouts/refunds, dis
 
 **Schedule changes:** There is no reschedule API. To move a lesson, **cancel** the booking (`POST /api/bookings/:id/cancel`) and **book a new slot** (`POST /api/booking-intents` → authorize → `POST /api/bookings/confirm`). Cancellation reasons: excused (`weather`, `emergency`, `sickness`) vs unexcused (`travel_delay`, `schedule_conflict`, `forgot`, `other`) for reliability. Cancel notifies the other party with `cancelled_by`, `reason`, and optional `reason_notes`.
 
-**Notifications (email + in-app when configured):** booking accepted (`booking_confirmed`), declined (`booking_declined`), cancelled (`booking_cancelled`). **Pending expiry:** `booking_request_expired` (student, in-app + email) when the coach never responds and the authorization is voided. **Lesson reminders (MVP):** `pre_lesson_24h` — in-app + email; `pre_lesson_1h` — in-app only (no 1h email). Chat: in-app only `new_message` when the other participant sends a message. **Reviews:** `review_received` (coach, in-app only) when a student submits a review. **Refunds:** `refund_succeeded` (student, in-app + email) when Stripe confirms `amount_refunded` increased on the charge (not when a refund is merely queued). **Post-lesson attendance:** `student_no_show` (student, in-app + email) when coach or admin marks student no-show; `coach_no_show` (student and coach, in-app + email) when admin marks coach no-show. **Disputes:** `dispute_opened` (in-app only) to the other party, or both when admin opens; `dispute_resolved` (student and coach, in-app + email) when admin resolves. **Stripe Connect:** `stripe_payouts_disabled` / `stripe_payouts_enabled` (in-app + email) — sent to the coach **only when `stripe_ready` actually flips** (via `account.updated` webhook or a status sync); duplicate webhook deliveries stay silent.
+**Notifications (email + in-app when configured):** booking accepted (`booking_confirmed`), declined (`booking_declined`), cancelled (`booking_cancelled`). **Pending expiry:** `booking_request_expired` (student, in-app + email) when the coach never responds and the authorization is voided. **Lesson reminders (MVP):** `pre_lesson_24h` — in-app + email; `pre_lesson_1h` — in-app only (no 1h email). **Weather cancellation (in-app + email):** `weather_cancellation_requested` (to the other participant), `weather_cancellation_declined` and `weather_cancellation_accepted` (to the requester); see *Mutual weather cancellation*. Chat: in-app only `new_message` when the other participant sends a message. **Reviews:** `review_received` (coach, in-app only) when a student submits a review. **Refunds:** `refund_succeeded` (student, in-app + email) when Stripe confirms `amount_refunded` increased on the charge (not when a refund is merely queued). **Post-lesson attendance:** `student_no_show` (student, in-app + email) when coach or admin marks student no-show; `coach_no_show` (student and coach, in-app + email) when admin marks coach no-show. **Disputes:** `dispute_opened` (in-app only) to the other party, or both when admin opens; `dispute_resolved` (student and coach, in-app + email) when admin resolves. **Stripe Connect:** `stripe_payouts_disabled` / `stripe_payouts_enabled` (in-app + email) — sent to the coach **only when `stripe_ready` actually flips** (via `account.updated` webhook or a status sync); duplicate webhook deliveries stay silent.
 
 ---
 

@@ -178,7 +178,7 @@ async function ensureCoachStack(coach, templateIndex) {
     profile = await CoachProfile.create({
       user_id: coach.id,
       headline: `${coach.full_name} — Pickleball Coach`,
-      bio: 'Seeded for diverse booking endpoint tests.',
+      bio: 'Seeded for diverse booking endpoint tests with a complete coach profile.',
       experience_years: 3 + (coach.id % 5),
       skill_rating: 3.5,
       rating_system: 'DUPR',

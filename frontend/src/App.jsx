@@ -7,6 +7,7 @@ import {
   createRoutesFromElements,
 } from 'react-router-dom';
 import { AuthProvider, useAuth } from './auth/AuthContext.jsx';
+import { useGlobalScrollRestoration } from './hooks/useGlobalScrollRestoration.js';
 import { GuestOnly, RequireAuth, RequireRole, RequireStudentMode } from './auth/guards.jsx';
 import { homePathFor } from './auth/paths.js';
 import { AppShell } from './components/layout/AppShell.jsx';
@@ -51,12 +52,18 @@ import {
   AdminUsersPage,
 } from './pages/admin/index.js';
 
+function GlobalScrollRestoration() {
+  useGlobalScrollRestoration();
+  return null;
+}
+
 function ShellLayout() {
   return (
     <RequireAuth>
       <AppShell>
         <Outlet />
       </AppShell>
+      <GlobalScrollRestoration />
     </RequireAuth>
   );
 }

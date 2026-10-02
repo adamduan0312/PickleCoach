@@ -6,6 +6,7 @@ import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard.js';
 import { FormField } from '../../components/ui/FormField.jsx';
 import { PlaceAutocomplete } from '../../components/ui/PlaceAutocomplete.jsx';
 import { CertificationsInput } from '../../components/ui/CertificationsInput.jsx';
+import { ProfilePhotoField } from '../../components/ui/ProfilePhotoField.jsx';
 import { CharacterCounter } from '../../components/ui/CharacterLimit.jsx';
 import { CHAR_LIMITS } from '../../utils/charLimits.js';
 import { Alert } from '../../components/ui/States.jsx';
@@ -23,6 +24,11 @@ import {
   validateCoachProfileForm,
   validateSkillRatingForSystem,
 } from '../../domain/coachRating.js';
+import {
+  COACH_PROFILE_REQUIREMENT_HINTS,
+  coachProfileMissingFields,
+  incompleteProfileMessage,
+} from '../../domain/coachProfileCompleteness.js';
 
 /** Blank or duplicate certification rows alone don't count as unsaved changes. */
 function comparableForm(form) {
@@ -38,8 +44,10 @@ export function CoachProfileEditPage() {
   const [form, setForm] = useState(initialForm);
   const [fieldErrors, setFieldErrors] = useState({});
   const [busy, setBusy] = useState(false);
+  const [photoBusy, setPhotoBusy] = useState(false);
   const [error, setError] = useState(null);
   const [message, setMessage] = useState(null);
+  const [incompleteNotice, setIncompleteNotice] = useState(null);
   const statusRef = useRef(null);
 
   const isDirty = JSON.stringify(comparableForm(form)) !== JSON.stringify(comparableForm(initialForm));
@@ -47,7 +55,10 @@ export function CoachProfileEditPage() {
   const ratingCopy = ratingFieldCopy(form.rating_system);
 
   useEffect(() => {
-    if (isDirty) setMessage(null);
+    if (isDirty) {
+      setMessage(null);
+      setIncompleteNotice(null);
+    }
   }, [isDirty]);
 
   useEffect(() => {
@@ -101,6 +112,7 @@ export function CoachProfileEditPage() {
     e.preventDefault();
     setError(null);
     setMessage(null);
+    setIncompleteNotice(null);
     const clientErrors = validateCoachProfileForm(form);
     if (Object.keys(clientErrors).length) {
       setFieldErrors(clientErrors);
@@ -123,6 +135,8 @@ export function CoachProfileEditPage() {
       setInitialForm(saved);
       setFieldErrors({});
       setMessage('Profile saved.');
+      const stillMissing = coachProfileMissingFields(fresh?.coachProfile);
+      setIncompleteNotice(stillMissing.length ? incompleteProfileMessage(stillMissing) : null);
     } catch (err) {
       const { fields, general } = coachProfileApiFieldErrors(err);
       setFieldErrors(fields);
@@ -137,9 +151,26 @@ export function CoachProfileEditPage() {
       <h1>{creating ? 'Create coach profile' : 'Edit coach profile'}</h1>
       {readiness.coachUiPhase === 'hidden' ? <Alert tone="error">Coach access is not available on this account.</Alert> : null}
       <form className="card stack" onSubmit={onSubmit} noValidate style={{ maxWidth: 640 }}>
-        <FormField label="Headline" name="headline" value={form.headline} onChange={update} maxLength={CHAR_LIMITS.coachHeadline} error={fieldErrors.headline} />
+        <ProfilePhotoField
+          id="coach-profile-photo"
+          note="This photo is used across your account and saves as soon as you upload it."
+          disabled={busy}
+          onBusyChange={setPhotoBusy}
+        />
+        <p className="small muted profile-required-note">
+          * Required before students can see your profile. You can save a draft and finish later.
+        </p>
+        <FormField
+          label="Headline *"
+          name="headline"
+          value={form.headline}
+          onChange={update}
+          maxLength={CHAR_LIMITS.coachHeadline}
+          hint={COACH_PROFILE_REQUIREMENT_HINTS.headline}
+          error={fieldErrors.headline}
+        />
         <CharacterCounter value={form.headline} max={CHAR_LIMITS.coachHeadline} className="tight-top" />
-        <FormField label="Bio" name="bio" error={fieldErrors.bio}>
+        <FormField label="Bio *" name="bio" hint={COACH_PROFILE_REQUIREMENT_HINTS.bio} error={fieldErrors.bio}>
           <textarea
             id="bio"
             name="bio"
@@ -194,7 +225,7 @@ export function CoachProfileEditPage() {
           />
         </FormField>
         <FormField
-          label="Location (Based in)"
+          label="Location (Based in) *"
           name="location"
           hint="Choose a city and state or ZIP code. This appears publicly as “Based in” and is separate from your teaching locations."
           error={fieldErrors.location}
@@ -212,10 +243,11 @@ export function CoachProfileEditPage() {
           <div ref={statusRef} className="stack" aria-live="polite">
             <Alert tone="error">{error}</Alert>
             <Alert tone="success">{message}</Alert>
+            <Alert tone="warning">{incompleteNotice}</Alert>
           </div>
         ) : null}
         <div className="row">
-          <button className="btn" type="submit" disabled={busy}>
+          <button className="btn" type="submit" disabled={busy || photoBusy}>
             {busy ? 'Saving…' : creating ? 'Save profile' : 'Save changes'}
           </button>
           {!creating && user?.id ? (

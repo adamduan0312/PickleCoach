@@ -89,8 +89,8 @@ async function suiteConnectStatus(models) {
   await models.UserRole.create({ user_id: user.id, role: 'coach' });
   await CoachProfile.create({
     user_id: user.id,
-    headline: 'Phase2',
-    bio: 'audit',
+    headline: 'Phase 2 audit coach',
+    bio: 'Audit coach for phase 2 money and auth checks, with a complete profile.',
     experience_years: 1,
     skill_rating: 3,
     rating_system: 'DUPR',

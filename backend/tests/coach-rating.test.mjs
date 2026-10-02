@@ -156,6 +156,11 @@ describe('coach profile Joi schemas', () => {
       assert.ok(joi(schema, { experience_years: -1 }).error);
       assert.equal(joi(schema, { experience_years: 100, headline: 'x'.repeat(255) }).error, undefined);
     });
+    it('experience accepts null (not provided) and an explicit 0', () => {
+      assert.equal(joi(schema, { experience_years: null }).error, undefined);
+      assert.equal(joi(schema, { experience_years: null }).value.experience_years, null);
+      assert.equal(joi(schema, { experience_years: 0 }).value.experience_years, 0);
+    });
     it('limits bio to 1,000 characters after trimming, with a field message', () => {
       assert.equal(joi(schema, { bio: 'x'.repeat(1000) }).error, undefined);
       assert.equal(joi(schema, { bio: `  ${'x'.repeat(1000)}\n` }).value.bio, 'x'.repeat(1000));
@@ -205,6 +210,12 @@ describe('coach profile Joi schemas', () => {
     assert.match(src, /const rating = resolveCoachRating\(validated, profile\);\s*if \(!rating\.ok\) return rating;\s*const basedIn = await resolveCoachLocation\(validated, profile\);\s*if \(!basedIn\.ok\) return basedIn;\s*await profile\.update/);
     assert.equal((src.match(/if \(!result\.ok\) return coachProfileValidationError/g) || []).length, 2);
     assert.doesNotMatch(src, /'self'/);
+  });
+
+  it('create stores a blank experience as NULL (not provided), not 0', () => {
+    const src = readFileSync(new URL('../controllers/coachController.js', import.meta.url), 'utf8');
+    assert.match(src, /experience_years: experience_years \?\? null,/);
+    assert.doesNotMatch(src, /experience_years \?\? 0/);
   });
 });
 
