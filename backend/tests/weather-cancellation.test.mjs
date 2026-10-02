@@ -106,7 +106,8 @@ describe('weather notification copy', () => {
   it('request: consequences for each recipient', () => {
     const toCoach = buildWeatherCancellationRequestedNotificationContent({ ...base, audience: 'coach', note: 'Storms' });
     assert.equal(toCoach.headline, 'Riley asked to cancel for weather');
-    assert.match(toCoach.summary, /student gets a full refund\. You won’t be paid for it, and neither of you is penalized/);
+    assert.match(toCoach.summary, /student gets a full refund\. You won’t be paid for it\./);
+    assert.doesNotMatch(toCoach.summary, /penaliz|reliab/i);
     assert.equal(toCoach.note_line, '“Storms”');
     const toStudent = buildWeatherCancellationRequestedNotificationContent({ ...base, audience: 'student' });
     assert.equal(toStudent.headline, 'Sam asked to cancel for weather');
@@ -120,6 +121,7 @@ describe('weather notification copy', () => {
     const accepted = buildWeatherCancellationAcceptedNotificationContent({ ...base, audience: 'student', refund_amount: '60.00' });
     assert.equal(accepted.headline, 'Sam agreed to cancel for weather');
     assert.match(accepted.summary, /full refund of \$60\.00/);
+    assert.doesNotMatch(accepted.summary, /penaliz|reliab/i);
   });
 
   it('emails exist for all three types', () => {

@@ -36,24 +36,21 @@ export function formatSelfReliabilityPercent(score) {
 }
 
 /**
- * Plain-language recent activity rows for the current role.
- * Same categories for both roles; only the non-late cancel counter source differs.
+ * Plain-language recent activity rows (same for both roles).
+ * Scored-cancellation counts are deliberately left out: they would reveal which cancel
+ * reasons count toward reliability.
  * Omits zero-count rows (except recent booking activity, which always shows).
  * @param {object|null|undefined} reliability — /me/reliability DTO
- * @param {'student'|'coach'} role
+ * @param {'student'|'coach'} _role
  * @returns {Array<{ key: string, label: string, count: number, detail?: string }>}
  */
-export function reliabilityActivityRows(reliability, role) {
+export function reliabilityActivityRows(reliability, _role) {
   if (!reliability || typeof reliability !== 'object') return [];
 
   const total = asCount(reliability.total_bookings);
-  const late = asCount(reliability.late_cancels);
   const noShows = asCount(reliability.no_shows);
   const misconduct = asCount(reliability.misconduct_penalties);
   const incomplete = asCount(reliability.lesson_not_completed_penalties);
-  const otherCancels = role === 'student'
-    ? asCount(reliability.student_cancels_non_late)
-    : asCount(reliability.coach_cancels);
 
   /** @type {Array<{ key: string, label: string, count: number, detail?: string }>} */
   const rows = [
@@ -62,12 +59,6 @@ export function reliabilityActivityRows(reliability, role) {
       label: 'Recent booking activity',
       count: total,
       detail: RECENT_BOOKING_ACTIVITY_DETAIL,
-    },
-    { key: 'late_cancels', label: 'Late cancellations', count: late },
-    {
-      key: role === 'student' ? 'student_cancels_non_late' : 'coach_cancels',
-      label: 'Other cancellations',
-      count: otherCancels,
     },
     { key: 'no_shows', label: 'No-shows', count: noShows },
     { key: 'misconduct_penalties', label: 'Conduct issues', count: misconduct },

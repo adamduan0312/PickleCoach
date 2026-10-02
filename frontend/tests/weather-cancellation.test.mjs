@@ -90,7 +90,8 @@ test('respond: the other person sees a prominent card with their own consequence
   assert.equal(coach.prominent, true);
   assert.equal(coach.requestId, 7);
   assert.equal(coach.title, 'Sam Student asked to cancel for weather');
-  assert.match(coach.body, /If you agree.*the student gets a full refund and you aren’t paid.*neither of you is penalized/);
+  assert.match(coach.body, /If you agree.*the student gets a full refund and you aren’t paid/);
+  assert.doesNotMatch(coach.body, /penaliz|reliab/i);
   assert.equal(coach.note, 'Lightning');
 
   const student = weatherCancellationView(
@@ -128,7 +129,7 @@ test('cancel dialog suggests the weather request only for a late student who can
   assert.equal(cancelWeatherAlternativeHint('weather', booking({ hours: 30, block: { can_request: true } }), { audience: 'student', now: NOW }), null);
 });
 
-test('agreed weather cancellation: outcome and history say both agreed, full refund, no penalty', () => {
+test('agreed weather cancellation: outcome and history say both agreed and full refund', () => {
   const cancelled = {
     status: 'cancelled',
     cancelled_by: 'student',
@@ -136,7 +137,7 @@ test('agreed weather cancellation: outcome and history say both agreed, full ref
   };
   assert.equal(isMutualWeatherCancellation(cancelled), true);
   assert.match(cancelledOutcomeCopy(cancelled, { audience: 'student' }), /You and your coach agreed to cancel for weather\. You get a full refund/);
-  assert.match(cancelledOutcomeCopy(cancelled, { audience: 'coach' }), /student gets a full refund, and neither of you is penalized/);
+  assert.equal(cancelledOutcomeCopy(cancelled, { audience: 'coach' }), 'You and the student agreed to cancel for weather. The student gets a full refund.');
   assert.doesNotMatch(cancelledOutcomeCopy(cancelled, { audience: 'coach' }), /cancellation timing rules/);
   assert.equal(cancellationHistoryEventLabel({ cancelled_by: 'student' }, { audience: 'coach', mutualWeather: true }), 'Cancelled for weather — you both agreed');
 

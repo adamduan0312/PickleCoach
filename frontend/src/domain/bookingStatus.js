@@ -934,10 +934,10 @@ export function cancelledOutcomeCopy(booking, { audience, payment } = {}) {
   if (!booking || booking.status !== 'cancelled') return null;
   if (isMutualWeatherCancellation(booking)) {
     if (audience === 'coach') {
-      return 'You and the student agreed to cancel for weather. The student gets a full refund, and neither of you is penalized.';
+      return 'You and the student agreed to cancel for weather. The student gets a full refund.';
     }
     if (audience === 'student') {
-      return 'You and your coach agreed to cancel for weather. You get a full refund, and neither of you is penalized.';
+      return 'You and your coach agreed to cancel for weather. You get a full refund.';
     }
     return 'Cancelled for weather — both participants agreed. Full refund, no reliability impact.';
   }

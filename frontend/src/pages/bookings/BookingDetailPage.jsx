@@ -58,7 +58,6 @@ import {
 } from '../../domain/bookingStatus.js';
 import {
   cancelReasonSharedHint,
-  cancelReliabilityConsequenceCopy,
   cancelWeatherAlternativeHint,
   cancellationPolicyLines,
   cancellationPolicySummary,
@@ -1244,8 +1243,8 @@ function WeatherCancellationSection({ view, audience, busy, onRequest, onAccept,
             onClick={() => {
               const ok = window.confirm(
                 audience === 'coach'
-                  ? 'Cancel this lesson for weather? The student gets a full refund and you aren’t paid. Neither of you is penalized.'
-                  : 'Cancel this lesson for weather? You get a full refund. Neither of you is penalized.',
+                  ? 'Cancel this lesson for weather? The student gets a full refund and you aren’t paid.'
+                  : 'Cancel this lesson for weather? You get a full refund.',
               );
               if (ok) onAccept(view.requestId);
             }}
@@ -1308,9 +1307,6 @@ function CancelForm({ onSubmit, busy, consequence, booking, audience, now }) {
         <div className="alert warning" role="status">
           <strong>If you cancel</strong>
           <div className="small" style={{ marginTop: 4 }}>{consequence}</div>
-          {reason ? (
-            <div className="small" style={{ marginTop: 4 }}>{cancelReliabilityConsequenceCopy(reason, booking, now)}</div>
-          ) : null}
           {weatherHint ? (
             <div className="small" style={{ marginTop: 4 }}><strong>{weatherHint}</strong></div>
           ) : null}
@@ -1363,9 +1359,6 @@ function DeclineForm({ onSubmit, busy }) {
         payment authorization will be released. A short message helps the student understand why you
         couldn&apos;t accept.
       </p>
-      <div className="alert info" role="status">
-        <strong>Declining does not affect your reliability score.</strong>
-      </div>
       <FormField label="Message to student — required" name="message_to_student" required>
         <>
           <p className="small muted" style={{ margin: '0 0 6px' }}>

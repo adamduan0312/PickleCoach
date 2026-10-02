@@ -30,32 +30,26 @@ describe('reliabilitySelfServe', () => {
       coach_cancels: 0,
       student_cancels_non_late: 2,
     }, 'student');
-    assert.deepEqual(rows.map((r) => r.key), [
-      'total_bookings',
-      'late_cancels',
-      'student_cancels_non_late',
-    ]);
+    assert.deepEqual(rows.map((r) => r.key), ['total_bookings']);
     assert.equal(rows[0].label, 'Recent booking activity');
     assert.match(rows[0].detail, /last 90 days/i);
     assert.match(rows[0].detail, /completed, cancelled, and no-show/i);
   });
 
-  it('coach activity uses coach cancel counters and shows non-zero events', () => {
-    const rows = reliabilityActivityRows({
-      total_bookings: 20,
-      late_cancels: 2,
-      no_shows: 1,
-      misconduct_penalties: 0,
-      lesson_not_completed_penalties: 0,
-      coach_cancels: 3,
-      student_cancels_non_late: 9,
-    }, 'coach');
-    assert.deepEqual(rows.map((r) => r.key), [
-      'total_bookings',
-      'late_cancels',
-      'coach_cancels',
-      'no_shows',
-    ]);
+  it('never shows scored-cancellation counts (they would reveal which reasons count)', () => {
+    for (const role of ['student', 'coach']) {
+      const rows = reliabilityActivityRows({
+        total_bookings: 20,
+        late_cancels: 2,
+        no_shows: 1,
+        misconduct_penalties: 1,
+        lesson_not_completed_penalties: 0,
+        coach_cancels: 3,
+        student_cancels_non_late: 9,
+      }, role);
+      assert.deepEqual(rows.map((r) => r.key), ['total_bookings', 'no_shows', 'misconduct_penalties']);
+      assert.ok(rows.every((r) => !/cancel/i.test(r.label)));
+    }
   });
 
   it('education copy is identical for student and coach', () => {

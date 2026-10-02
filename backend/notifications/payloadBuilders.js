@@ -94,12 +94,12 @@ function otherPartyName(payload, fallbackForAudience) {
   return name || fallbackForAudience[isCoachRecipient ? 'coach' : 'student'];
 }
 
-/** To the other participant: accept (full refund, no penalty) or decline before the lesson starts. */
+/** To the other participant: accept (full refund) or decline before the lesson starts. */
 export const buildWeatherCancellationRequestedNotificationContent = (payload = {}) => {
   const requester = otherPartyName(payload, { coach: 'Your student', student: 'Your coach' });
   const summary = payload.audience === 'coach'
-    ? 'If you agree, the lesson is cancelled and the student gets a full refund. You won’t be paid for it, and neither of you is penalized. Respond before the lesson starts.'
-    : 'If you agree, the lesson is cancelled and you get a full refund. Neither of you is penalized. Respond before the lesson starts.';
+    ? 'If you agree, the lesson is cancelled and the student gets a full refund. You won’t be paid for it. Respond before the lesson starts.'
+    : 'If you agree, the lesson is cancelled and you get a full refund. Respond before the lesson starts.';
   return {
     headline: `${requester} asked to cancel for weather`,
     summary,
@@ -127,8 +127,8 @@ export const buildWeatherCancellationAcceptedNotificationContent = (payload = {}
   return {
     headline: `${responder} agreed to cancel for weather`,
     summary: payload.audience === 'coach'
-      ? 'The lesson is cancelled and the student gets a full refund. Neither of you is penalized.'
-      : `The lesson is cancelled and you’ll get a full refund${amount}. Neither of you is penalized.`,
+      ? 'The lesson is cancelled and the student gets a full refund.'
+      : `The lesson is cancelled and you’ll get a full refund${amount}.`,
     preview: payload.lesson_title || 'Lesson',
   };
 };

@@ -1,46 +1,38 @@
 /**
  * Cancellation policy copy shown at decision points (checkout, accept, booking detail, cancel).
  *
- * Money follows who cancels and when (backend paymentEngine.computeCancellationSplitCents);
- * reliability follows the reason, and only once the coach has accepted
- * (backend reliabilityPenaltyService + runPreLessonCancel). Keep both in sync.
+ * Money follows who cancels and when (backend paymentEngine.computeCancellationSplitCents).
+ * Reliability consequences of cancelling or declining are deliberately not shown to students or
+ * coaches, so the reason they pick can't be tuned to the score.
  */
 import { formatBookingWhenInZone, formatRemainingUntil } from '../utils/datetime.js';
 
 export const FULL_REFUND_CUTOFF_HOURS = 24;
 
-/** Mirrors NON_PENALIZED_REASONS in backend/services/reliabilityPenaltyService.js. */
-export const RELIABILITY_EXCUSED_REASONS = Object.freeze(['weather', 'sickness', 'emergency']);
-
-export const RELIABILITY_POLICY_LINE =
-  'Once a lesson is accepted, cancelling for weather, sickness, or an emergency doesn’t affect your reliability score. Other reasons may affect it, especially within 24 hours.';
-
 export const STUDENT_WEATHER_POLICY_LINE =
-  'Bad weather within 24 hours of the lesson? Ask your coach to cancel for weather. If they agree, you get a full refund and neither of you is penalized.';
+  'Bad weather within 24 hours of the lesson? Ask your coach to cancel for weather. If they agree, you get a full refund.';
 
 export const COACH_WEATHER_POLICY_LINE =
-  'Bad weather within 24 hours of the lesson? You or the student can ask to cancel for weather. If the other person agrees, the student gets a full refund, you aren’t paid, and neither of you is penalized.';
+  'Bad weather within 24 hours of the lesson? You or the student can ask to cancel for weather. If the other person agrees, the student gets a full refund and you aren’t paid.';
 
 export function studentCancellationPolicyLines() {
   return [
-    'Until your coach accepts, you can cancel for free — your card is only authorized and your reliability score isn’t affected.',
+    'Until your coach accepts, you can cancel for free — your card is only authorized.',
     'After your coach accepts, cancel at least 24 hours before the lesson for a full refund.',
     'Cancellations less than 24 hours before the lesson receive a 50% refund.',
     STUDENT_WEATHER_POLICY_LINE,
     'If your coach cancels, you get a full refund.',
     'If you don’t show up, your payment isn’t automatically refunded and your reliability score is affected.',
-    RELIABILITY_POLICY_LINE,
   ];
 }
 
 export function coachCancellationPolicyLines() {
   return [
-    'Declining a request doesn’t affect your reliability score.',
+    'If you decline a request, the student’s card authorization is released and they aren’t charged.',
     'If you cancel an accepted lesson, the student gets a full refund and you aren’t paid for it.',
     'If the student cancels less than 24 hours before the lesson, they get 50% back and you’re paid your share of the rest.',
     COACH_WEATHER_POLICY_LINE,
     'If the student doesn’t show up, mark Student no-show after the lesson. Their payment isn’t automatically refunded.',
-    RELIABILITY_POLICY_LINE,
   ];
 }
 
@@ -85,14 +77,12 @@ export function cancellationPolicySummary(booking, { audience = 'student', now =
     if (booking.status === 'pending') {
       return {
         headline: 'Before you accept',
-        body: 'If you accept and later cancel, the student gets a full refund and you aren’t paid. Declining now doesn’t affect your reliability score.',
+        body: 'If you accept and later cancel, the student gets a full refund and you aren’t paid.',
       };
     }
     return {
       headline: 'If you need to cancel',
-      body: late
-        ? 'The student gets a full refund and you aren’t paid. The lesson is less than 24 hours away, so a cancellation may weigh more on your reliability score.'
-        : `The student gets a full refund and you aren’t paid. A cancellation may affect your reliability score — more so after ${when}, when the lesson is less than 24 hours away.`,
+      body: 'The student gets a full refund and you aren’t paid.',
     };
   }
 
@@ -100,8 +90,8 @@ export function cancellationPolicySummary(booking, { audience = 'student', now =
     return {
       headline: 'Free to cancel — you haven’t been charged',
       body: late
-        ? 'Cancelling before your coach accepts doesn’t affect your reliability score. Once they accept, cancellations receive a 50% refund because the lesson is less than 24 hours away.'
-        : `Cancelling before your coach accepts doesn’t affect your reliability score. Once they accept, you can still cancel for a full refund until ${when}. After that, cancellations receive a 50% refund.`,
+        ? 'Once your coach accepts, cancellations receive a 50% refund because the lesson is less than 24 hours away.'
+        : `Once your coach accepts, you can still cancel for a full refund until ${when}. After that, cancellations receive a 50% refund.`,
     };
   }
 
@@ -117,24 +107,6 @@ export function cancellationPolicySummary(booking, { audience = 'student', now =
     headline: `Full refund until ${when}`,
     body: `${formatRemainingUntil(deadline, new Date(now))} left. After that, cancellations receive a 50% refund.`,
   };
-}
-
-const EXCUSED_REASON_COPY = {
-  weather: 'Cancelling for weather doesn’t affect your reliability score.',
-  sickness: 'Cancelling because of sickness doesn’t affect your reliability score.',
-  emergency: 'Cancelling for an emergency doesn’t affect your reliability score.',
-};
-
-/** Reliability line for the cancel dialog; updates with the selected reason. */
-export function cancelReliabilityConsequenceCopy(reason, booking, now = Date.now()) {
-  if (booking?.status === 'pending') {
-    return 'Your coach hasn’t accepted yet, so cancelling doesn’t affect your reliability score.';
-  }
-  if (RELIABILITY_EXCUSED_REASONS.includes(reason)) return EXCUSED_REASON_COPY[reason];
-  if (isWithinLateCancelWindow(booking, now)) {
-    return 'This may affect your reliability score. Cancellations less than 24 hours before the lesson count more.';
-  }
-  return 'This may affect your reliability score.';
 }
 
 /** Student picked Weather inside 24h while a mutual request is still possible: point to it. */
@@ -197,7 +169,7 @@ export function weatherCancellationView(booking, { audience = 'student', now = D
       prominent: true,
       requestId: req.id,
       title: `${other} asked to cancel for weather`,
-      body: `If you agree, the lesson is cancelled, ${refundForViewer}, and neither of you is penalized. If you’d rather play, keep the lesson. Respond before the lesson starts (${startLabel}).`,
+      body: `If you agree, the lesson is cancelled and ${refundForViewer}. If you’d rather play, keep the lesson. Respond before the lesson starts (${startLabel}).`,
       note: req.note || null,
     };
   }
@@ -207,7 +179,7 @@ export function weatherCancellationView(booking, { audience = 'student', now = D
       prominent: true,
       requestId: req.id,
       title: 'Weather cancellation requested',
-      body: `Waiting for ${audience === 'coach' ? 'the student' : 'your coach'} to respond. If they agree, ${refundForViewer}, and neither of you is penalized. The request expires when the lesson starts (${startLabel}).`,
+      body: `Waiting for ${audience === 'coach' ? 'the student' : 'your coach'} to respond. If they agree, ${refundForViewer}. The request expires when the lesson starts (${startLabel}).`,
       note: req.note || null,
     };
   }
@@ -227,7 +199,7 @@ export function weatherCancellationView(booking, { audience = 'student', now = D
       kind: 'available',
       prominent: false,
       title: 'Bad weather?',
-      body: `Ask ${audience === 'coach' ? 'the student' : 'your coach'} to cancel for weather. If they agree, ${refundForViewer}, and neither of you is penalized. If not, the lesson stays on.`,
+      body: `Ask ${audience === 'coach' ? 'the student' : 'your coach'} to cancel for weather. If they agree, ${refundForViewer}. If not, the lesson stays on.`,
     };
   }
   return null;
@@ -245,5 +217,5 @@ export function rescheduleHint(booking, audience) {
 /** Cancel reasons are self-reported; say who sees them. */
 export function cancelReasonSharedHint(audience) {
   const other = audience === 'coach' ? 'student' : 'coach';
-  return `Choose the reason that honestly describes what happened. It’s shared with your ${other}.`;
+  return `Select the reason that best describes your cancellation. It’s shared with your ${other}.`;
 }

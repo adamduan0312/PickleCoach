@@ -2,11 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
-  RELIABILITY_EXCUSED_REASONS,
-  RELIABILITY_POLICY_LINE,
   cancelReasonSharedHint,
-  cancelReliabilityConsequenceCopy,
   cancellationPolicySummary,
+  cancelWeatherAlternativeHint,
   coachCancellationPolicyLines,
   fullRefundDeadlineAt,
   isWithinLateCancelWindow,
@@ -20,14 +18,9 @@ const NOW = Date.parse('2026-10-01T12:00:00Z');
 const TZ = 'America/New_York';
 const at = (hoursFromNow) => new Date(NOW + hoursFromNow * HOUR).toISOString();
 
-const backendPenaltySrc = readFileSync(new URL('../../backend/services/reliabilityPenaltyService.js', import.meta.url), 'utf8');
 const detailSrc = readFileSync(new URL('../src/pages/bookings/BookingDetailPage.jsx', import.meta.url), 'utf8');
-
-test('excused reasons mirror the backend reliability classification', () => {
-  const block = backendPenaltySrc.match(/NON_PENALIZED_REASONS = \[([\s\S]*?)\]/)[1];
-  const backend = [...block.matchAll(/'([a-z_]+)'/g)].map((m) => m[1]).sort();
-  assert.deepEqual([...RELIABILITY_EXCUSED_REASONS].sort(), backend);
-});
+const policySrc = readFileSync(new URL('../src/domain/cancellationPolicy.js', import.meta.url), 'utf8');
+const RELIABILITY_WORDING = /reliab|penaliz/i;
 
 test('student policy (checkout) covers every rule, without "may" hedging on the 50%', () => {
   const lines = studentCancellationPolicyLines();
@@ -39,15 +32,16 @@ test('student policy (checkout) covers every rule, without "may" hedging on the 
   assert.match(text, /If your coach cancels, you get a full refund/);
   assert.match(text, /don’t show up.*isn’t automatically refunded/);
   assert.doesNotMatch(text, /may receive a 50%/);
-  assert.ok(lines.includes(RELIABILITY_POLICY_LINE));
+  const cancelLines = lines.filter((l) => !/don’t show up/.test(l));
+  assert.ok(cancelLines.every((l) => !RELIABILITY_WORDING.test(l)), 'cancellation rules never mention reliability');
 });
 
-test('coach policy: decline free, cancel = full refund + no pay, reliability line', () => {
+test('coach policy: decline releases the authorization, cancel = full refund + no pay, no reliability wording', () => {
   const text = coachCancellationPolicyLines().join('\n');
-  assert.match(text, /Declining a request doesn’t affect your reliability score/);
+  assert.match(text, /decline a request, the student’s card authorization is released/);
   assert.match(text, /cancel an accepted lesson, the student gets a full refund and you aren’t paid/);
   assert.match(text, /mark Student no-show/);
-  assert.match(text, /Once a lesson is accepted, cancelling for weather, sickness, or an emergency doesn’t affect your reliability score\. Other reasons may affect it, especially within 24 hours\./);
+  assert.doesNotMatch(text, RELIABILITY_WORDING);
 });
 
 test('full-refund deadline is 24h before the lesson', () => {
@@ -71,7 +65,7 @@ test('student booking detail: concrete deadline before it passes, 50% after', ()
   const pending = cancellationPolicySummary({ status: 'pending', scheduled_at: at(30) }, { audience: 'student', now: NOW, tz: TZ });
   assert.match(pending.headline, /Free to cancel/);
   assert.match(pending.body, /full refund until .*After that, cancellations receive a 50% refund/);
-  assert.match(pending.body, /^Cancelling before your coach accepts doesn’t affect your reliability score\./);
+  for (const s of [early, late, pending]) assert.doesNotMatch(`${s.headline} ${s.body}`, RELIABILITY_WORDING);
 
   assert.equal(cancellationPolicySummary({ status: 'confirmed', scheduled_at: at(-1) }, { now: NOW, tz: TZ }), null);
   assert.equal(cancellationPolicySummary({ status: 'completed', scheduled_at: at(30) }, { now: NOW, tz: TZ }), null);
@@ -80,30 +74,27 @@ test('student booking detail: concrete deadline before it passes, 50% after', ()
 test('coach booking detail: before accepting, and when cancelling', () => {
   const pending = cancellationPolicySummary({ status: 'pending', scheduled_at: at(30) }, { audience: 'coach', now: NOW, tz: TZ });
   assert.equal(pending.headline, 'Before you accept');
-  assert.match(pending.body, /student gets a full refund and you aren’t paid.*Declining now doesn’t affect your reliability/);
+  assert.equal(pending.body, 'If you accept and later cancel, the student gets a full refund and you aren’t paid.');
 
-  const confirmed = cancellationPolicySummary({ status: 'confirmed', scheduled_at: at(30) }, { audience: 'coach', now: NOW, tz: TZ });
-  assert.equal(confirmed.headline, 'If you need to cancel');
-  assert.match(confirmed.body, /more so after .*less than 24 hours away/);
+  for (const hours of [30, 2]) {
+    const confirmed = cancellationPolicySummary({ status: 'confirmed', scheduled_at: at(hours) }, { audience: 'coach', now: NOW, tz: TZ });
+    assert.equal(confirmed.headline, 'If you need to cancel');
+    assert.equal(confirmed.body, 'The student gets a full refund and you aren’t paid.');
+  }
 });
 
-test('cancel dialog reliability line follows the selected reason and timing', () => {
-  const far = { status: 'confirmed', scheduled_at: at(30) };
-  const near = { status: 'confirmed', scheduled_at: at(2) };
-  assert.equal(cancelReliabilityConsequenceCopy('weather', near, NOW), 'Cancelling for weather doesn’t affect your reliability score.');
-  assert.match(cancelReliabilityConsequenceCopy('sickness', near, NOW), /doesn’t affect/);
-  assert.match(cancelReliabilityConsequenceCopy('emergency', near, NOW), /doesn’t affect/);
-  assert.equal(cancelReliabilityConsequenceCopy('schedule_conflict', far, NOW), 'This may affect your reliability score.');
-  assert.match(cancelReliabilityConsequenceCopy('forgot', near, NOW), /less than 24 hours before the lesson count more/);
-  const pendingNear = { status: 'pending', scheduled_at: at(2) };
-  for (const reason of ['forgot', 'schedule_conflict', 'weather']) {
-    assert.equal(
-      cancelReliabilityConsequenceCopy(reason, pendingNear, NOW),
-      'Your coach hasn’t accepted yet, so cancelling doesn’t affect your reliability score.',
-    );
-  }
-  assert.match(cancelReasonSharedHint('student'), /honestly.*shared with your coach/);
+test('cancel and decline forms say nothing about reliability, whatever reason is picked', () => {
+  assert.equal(cancelReasonSharedHint('student'), 'Select the reason that best describes your cancellation. It’s shared with your coach.');
   assert.match(cancelReasonSharedHint('coach'), /shared with your student/);
+  for (const reason of ['weather', 'sickness', 'emergency', 'forgot', 'schedule_conflict']) {
+    const hint = cancelWeatherAlternativeHint(reason, { status: 'confirmed', scheduled_at: at(2), weather_cancellation: { can_request: true } }, { audience: 'student', now: NOW });
+    assert.doesNotMatch(hint || '', RELIABILITY_WORDING);
+  }
+  assert.doesNotMatch(policySrc, /doesn’t affect your reliability|may affect your reliability|penalized/);
+  const cancelForm = detailSrc.slice(detailSrc.indexOf('function CancelForm'), detailSrc.indexOf('function DeclineForm'));
+  const declineForm = detailSrc.slice(detailSrc.indexOf('function DeclineForm'), detailSrc.indexOf('function DeclineForm') + 3000);
+  assert.doesNotMatch(cancelForm, RELIABILITY_WORDING);
+  assert.doesNotMatch(declineForm, RELIABILITY_WORDING);
 });
 
 test('cancel money copy states exact outcomes', () => {
@@ -116,11 +107,10 @@ test('cancel money copy states exact outcomes', () => {
   assert.equal(coach, 'The student gets a full refund and you aren’t paid for this lesson.');
 });
 
-test('booking detail shows the policy section and a reason-aware cancel form', () => {
+test('booking detail shows the policy section and a cancel form that requires a reason', () => {
   assert.match(detailSrc, /<CancellationPolicySection booking=\{booking\}/);
   assert.match(detailSrc, /<option value="" disabled>Select a reason<\/option>/);
   assert.match(detailSrc, /disabled=\{busy \|\| !reason\}/);
-  assert.match(detailSrc, /cancelReliabilityConsequenceCopy\(reason, booking, now\)/);
   assert.match(detailSrc, /If you cancel after accepting, the student gets a full refund and you aren’t paid\./);
 });
 
