@@ -46,7 +46,7 @@ test('coach policy: decline free, cancel = full refund + no pay, reliability lin
   assert.match(text, /Declining a request doesn’t affect your reliability score/);
   assert.match(text, /cancel an accepted lesson, the student gets a full refund and you aren’t paid/);
   assert.match(text, /mark Student no-show/);
-  assert.match(text, /Weather, sickness, and emergencies don’t affect your reliability score\. Other cancellation reasons may affect it, especially within 24 hours\./);
+  assert.match(text, /Once a lesson is accepted, cancelling for weather, sickness, or an emergency doesn’t affect your reliability score\. Other reasons may affect it, especially within 24 hours\./);
 });
 
 test('full-refund deadline is 24h before the lesson', () => {
@@ -70,6 +70,7 @@ test('student booking detail: concrete deadline before it passes, 50% after', ()
   const pending = cancellationPolicySummary({ status: 'pending', scheduled_at: at(30) }, { audience: 'student', now: NOW, tz: TZ });
   assert.match(pending.headline, /Free to cancel/);
   assert.match(pending.body, /full refund until .*After that, cancellations receive a 50% refund/);
+  assert.match(pending.body, /^Cancelling before your coach accepts doesn’t affect your reliability score\./);
 
   assert.equal(cancellationPolicySummary({ status: 'confirmed', scheduled_at: at(-1) }, { now: NOW, tz: TZ }), null);
   assert.equal(cancellationPolicySummary({ status: 'completed', scheduled_at: at(30) }, { now: NOW, tz: TZ }), null);
@@ -93,6 +94,13 @@ test('cancel dialog reliability line follows the selected reason and timing', ()
   assert.match(cancelReliabilityConsequenceCopy('emergency', near, NOW), /doesn’t affect/);
   assert.equal(cancelReliabilityConsequenceCopy('schedule_conflict', far, NOW), 'This may affect your reliability score.');
   assert.match(cancelReliabilityConsequenceCopy('forgot', near, NOW), /less than 24 hours before the lesson count more/);
+  const pendingNear = { status: 'pending', scheduled_at: at(2) };
+  for (const reason of ['forgot', 'schedule_conflict', 'weather']) {
+    assert.equal(
+      cancelReliabilityConsequenceCopy(reason, pendingNear, NOW),
+      'Your coach hasn’t accepted yet, so cancelling doesn’t affect your reliability score.',
+    );
+  }
   assert.match(cancelReasonSharedHint('student'), /honestly.*shared with your coach/);
   assert.match(cancelReasonSharedHint('coach'), /shared with your student/);
 });

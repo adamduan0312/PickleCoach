@@ -2,7 +2,8 @@
  * Cancellation policy copy shown at decision points (checkout, accept, booking detail, cancel).
  *
  * Money follows who cancels and when (backend paymentEngine.computeCancellationSplitCents);
- * reliability follows the reason (backend reliabilityPenaltyService). Keep both in sync.
+ * reliability follows the reason, and only once the coach has accepted
+ * (backend reliabilityPenaltyService + runPreLessonCancel). Keep both in sync.
  */
 import { formatBookingWhenInZone, formatRemainingUntil } from '../utils/datetime.js';
 
@@ -12,7 +13,7 @@ export const FULL_REFUND_CUTOFF_HOURS = 24;
 export const RELIABILITY_EXCUSED_REASONS = Object.freeze(['weather', 'sickness', 'emergency']);
 
 export const RELIABILITY_POLICY_LINE =
-  'Weather, sickness, and emergencies don’t affect your reliability score. Other cancellation reasons may affect it, especially within 24 hours.';
+  'Once a lesson is accepted, cancelling for weather, sickness, or an emergency doesn’t affect your reliability score. Other reasons may affect it, especially within 24 hours.';
 
 export const STUDENT_WEATHER_POLICY_LINE =
   'Bad weather within 24 hours of the lesson? Ask your coach to cancel for weather. If they agree, you get a full refund and neither of you is penalized.';
@@ -22,7 +23,7 @@ export const COACH_WEATHER_POLICY_LINE =
 
 export function studentCancellationPolicyLines() {
   return [
-    'Until your coach accepts, you can cancel for free — your card is only authorized.',
+    'Until your coach accepts, you can cancel for free — your card is only authorized and your reliability score isn’t affected.',
     'After your coach accepts, cancel at least 24 hours before the lesson for a full refund.',
     'Cancellations less than 24 hours before the lesson receive a 50% refund.',
     STUDENT_WEATHER_POLICY_LINE,
@@ -99,8 +100,8 @@ export function cancellationPolicySummary(booking, { audience = 'student', now =
     return {
       headline: 'Free to cancel — you haven’t been charged',
       body: late
-        ? 'Once your coach accepts, cancellations receive a 50% refund because the lesson is less than 24 hours away.'
-        : `Once your coach accepts, you can still cancel for a full refund until ${when}. After that, cancellations receive a 50% refund.`,
+        ? 'Cancelling before your coach accepts doesn’t affect your reliability score. Once they accept, cancellations receive a 50% refund because the lesson is less than 24 hours away.'
+        : `Cancelling before your coach accepts doesn’t affect your reliability score. Once they accept, you can still cancel for a full refund until ${when}. After that, cancellations receive a 50% refund.`,
     };
   }
 
@@ -126,6 +127,9 @@ const EXCUSED_REASON_COPY = {
 
 /** Reliability line for the cancel dialog; updates with the selected reason. */
 export function cancelReliabilityConsequenceCopy(reason, booking, now = Date.now()) {
+  if (booking?.status === 'pending') {
+    return 'Your coach hasn’t accepted yet, so cancelling doesn’t affect your reliability score.';
+  }
   if (RELIABILITY_EXCUSED_REASONS.includes(reason)) return EXCUSED_REASON_COPY[reason];
   if (isWithinLateCancelWindow(booking, now)) {
     return 'This may affect your reliability score. Cancellations less than 24 hours before the lesson count more.';

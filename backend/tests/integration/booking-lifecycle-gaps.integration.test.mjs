@@ -214,7 +214,7 @@ describeHttp('HTTP integration: booking lifecycle gaps', () => {
     assert.equal(history.cancelled_by, 'system');
   });
 
-  it('coach cancel of pending booking voids authorization', async () => {
+  it('coach cannot cancel a pending booking — must decline instead', async () => {
     if (fixture?.cleanup) await fixture.cleanup();
     fixture = await createBookingJourneyFixture();
     const { baseUrl } = server;
@@ -231,20 +231,16 @@ describeHttp('HTTP integration: booking lifecycle gaps', () => {
       token: coachToken,
       body: CANCEL_BODY,
     });
-    assert.equal(cancelRes.status, 200, cancelRes.text);
+    assert.equal(cancelRes.status, 400, cancelRes.text);
+    assert.equal(cancelRes.json?.code, 'pending_coach_use_decline');
 
     const booking = await Booking.findByPk(bookingId);
     const payment = await Payment.findOne({ where: { booking_id: bookingId }, order: [['id', 'DESC']] });
-    assert.equal(booking.status, 'cancelled');
-    assert.equal(booking.cancelled_by, 'coach');
-    assert.equal(payment.payment_status, 'pending_void');
-    assert.equal(payment.escrow_status, 'released');
-
+    assert.equal(booking.status, 'pending');
+    assert.equal(payment.payment_status, 'authorized');
     const pi = await stripeDouble.getPaymentIntent(paymentIntentId);
-    assert.equal(pi.status, 'canceled');
-
-    const history = await CancellationHistory.findOne({ where: { booking_id: bookingId } });
-    assert.equal(history.cancelled_by, 'coach');
+    assert.notEqual(pi.status, 'canceled');
+    assert.equal(await CancellationHistory.count({ where: { booking_id: bookingId } }), 0);
   });
 
   it('coach cancel of confirmed booking queues full cancel refund', async () => {

@@ -973,7 +973,7 @@ export async function runPreLessonCancel(req, res, mutualWeather = null) {
     }
     const actorRole = isCoach ? 'coach' : isStudent ? 'student' : 'admin';
     let cancelledBy = actorRole;
-    const willAffectReliability = mutualWeather || cancelledBy === 'admin' ? false : affectsReliability(reason);
+    let willAffectReliability = false;
 
     let cancellationHistory;
     let weatherRequest = null;
@@ -1039,7 +1039,19 @@ export async function runPreLessonCancel(req, res, mutualWeather = null) {
         throw err;
       }
 
+      if (booking.status === 'pending' && actorRole === 'coach') {
+        const err = new Error('This request is still waiting for your answer. Decline it instead of cancelling.');
+        err.statusCode = 400;
+        err.code = 'pending_coach_use_decline';
+        err.booking_status = booking.status;
+        throw err;
+      }
+
       assertPreLessonCancelAllowed(booking.scheduled_at, new Date());
+
+      // Reliability starts once the coach accepts; backing out of a pending request is free for everyone.
+      willAffectReliability =
+        !mutualWeather && cancelledBy !== 'admin' && booking.status === 'confirmed' && affectsReliability(reason);
 
       if (mutualWeather) {
         weatherRequest = await WeatherCancellationRequest.findOne({

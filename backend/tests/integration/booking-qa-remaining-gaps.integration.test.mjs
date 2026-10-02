@@ -363,6 +363,11 @@ describeHttp('HTTP integration: booking QA remaining gaps', () => {
       assert.equal(payment.payment_status, 'pending_void');
       assert.equal(pi.status, 'canceled');
       assert.equal(cancelRes.json?.data?.cancellation?.cancellation_type, 'non_late');
+      assert.equal(
+        cancelRes.json?.data?.cancellation?.affects_reliability,
+        false,
+        'cancelling before the coach accepts never affects reliability, even for unexcused reasons',
+      );
       const refundActions = await PaymentAction.findAll({
         where: { booking_id: bookingId, action_type: 'booking_cancel_refund' },
       });
@@ -404,6 +409,7 @@ describeHttp('HTTP integration: booking QA remaining gaps', () => {
     const early = await cancelConfirmedAtOffsetHours(48, 'qa_cancel_early');
     assert.equal(early.cancellationType, 'non_late');
     assert.equal(early.refundCents, early.totalChargeCents, '≥24h must full-refund');
+    assert.equal(early.cancelRes.json?.data?.cancellation?.affects_reliability, true);
 
     const late = await cancelConfirmedAtOffsetHours(12, 'qa_cancel_late');
     assert.equal(late.cancellationType, 'late');
