@@ -174,7 +174,7 @@ function otherPartyName(booking, audience) {
  * `prominent` cards (a response is needed / waiting / just declined) sit at the top of the page.
  *
  * @returns {null | {
- *   kind: 'respond'|'waiting'|'declined'|'available'|'opens_later',
+ *   kind: 'respond'|'waiting'|'declined'|'available',
  *   prominent: boolean, title: string, body: string, note?: string|null, requestId?: number
  * }}
  */
@@ -221,20 +221,13 @@ export function weatherCancellationView(booking, { audience = 'student', now = D
         : 'You declined the weather cancellation. The lesson is still on.',
     };
   }
-  if (block.can_request) {
+  // More than 24h out a normal Weather cancel already refunds in full, so there is nothing to ask for.
+  if (block.can_request && isWithinLateCancelWindow(booking, now)) {
     return {
       kind: 'available',
       prominent: false,
       title: 'Bad weather?',
       body: `Ask ${audience === 'coach' ? 'the student' : 'your coach'} to cancel for weather. If they agree, ${refundForViewer}, and neither of you is penalized. If not, the lesson stays on.`,
-    };
-  }
-  if (block.request_unavailable_code === 'weather_request_too_early' && block.opens_at) {
-    return {
-      kind: 'opens_later',
-      prominent: false,
-      title: 'Bad weather?',
-      body: `Weather cancellation requests open 24 hours before the lesson (${formatBookingWhenInZone(block.opens_at, tz)}).`,
     };
   }
   return null;

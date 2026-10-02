@@ -72,11 +72,13 @@ test('available: explains both outcomes per audience', () => {
   assert.match(coach.body, /Ask the student.*the student gets a full refund and you aren’t paid/);
 });
 
-test('opens later: shows when requests open; hidden for pending, started, or cancelled bookings', () => {
-  const far = booking({ hours: 30, block: { request_unavailable_code: 'weather_request_too_early' } });
-  const view = weatherCancellationView(far, { audience: 'student', now: NOW, tz: TZ });
-  assert.equal(view.kind, 'opens_later');
-  assert.match(view.body, /open 24 hours before the lesson \(.*2:00 PM/);
+test('no weather request card more than 24h out, for pending, started, or cancelled bookings', () => {
+  for (const audience of ['student', 'coach']) {
+    const far = booking({ hours: 30, block: { request_unavailable_code: 'weather_request_too_early' } });
+    assert.equal(weatherCancellationView(far, { audience, now: NOW, tz: TZ }), null);
+    const staleFlag = booking({ hours: 30, block: { can_request: true } });
+    assert.equal(weatherCancellationView(staleFlag, { audience, now: NOW, tz: TZ }), null, 'client also enforces the 24h window');
+  }
   assert.equal(weatherCancellationView(booking({ status: 'pending', block: { can_request: true } }), { now: NOW }), null);
   assert.equal(weatherCancellationView(booking({ hours: -1, block: { can_request: true } }), { now: NOW }), null);
   assert.equal(weatherCancellationView(booking({ status: 'cancelled', block: { can_request: true } }), { now: NOW }), null);
