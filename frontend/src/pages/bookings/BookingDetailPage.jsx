@@ -63,6 +63,7 @@ import {
   cancellationPolicyLines,
   cancellationPolicySummary,
   isMutualWeatherCancellation,
+  rescheduleHint,
   weatherCancellationView,
 } from '../../domain/cancellationPolicy.js';
 import {
@@ -721,10 +722,8 @@ export function BookingDetailPage({ admin = false }) {
           onSubmit={(body) => run(() => disputesApi.create(body))}
         />
       ) : null}
-      {['pending', 'confirmed'].includes(booking.status) ? (
-        <p className="small muted">
-          There is no reschedule option yet. To change the time, cancel this booking and book a new slot.
-        </p>
+      {rescheduleHint(booking, isCoach ? 'coach' : 'student') ? (
+        <p className="small muted">{rescheduleHint(booking, isCoach ? 'coach' : 'student')}</p>
       ) : null}
       {isStudent && isMutualWeatherCancellation(booking) && booking.coach_id ? (
         <Link className="btn secondary" to={`/coaches/${booking.coach_id}`}>Book a new time</Link>

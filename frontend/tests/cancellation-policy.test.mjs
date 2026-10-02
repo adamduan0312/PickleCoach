@@ -10,6 +10,7 @@ import {
   coachCancellationPolicyLines,
   fullRefundDeadlineAt,
   isWithinLateCancelWindow,
+  rescheduleHint,
   studentCancellationPolicyLines,
 } from '../src/domain/cancellationPolicy.js';
 import { cancelMoneyConsequenceCopy, checkoutCancellationNoShowPolicyLines } from '../src/domain/bookingStatus.js';
@@ -121,4 +122,17 @@ test('booking detail shows the policy section and a reason-aware cancel form', (
   assert.match(detailSrc, /disabled=\{busy \|\| !reason\}/);
   assert.match(detailSrc, /cancelReliabilityConsequenceCopy\(reason, booking, now\)/);
   assert.match(detailSrc, /If you cancel after accepting, the student gets a full refund and you aren’t paid\./);
+});
+
+test('reschedule hint: coaches decline pending requests; everyone else cancels and rebooks', () => {
+  const cancelAndRebook = 'There is no reschedule option yet. To change the time, cancel this booking and book a new slot.';
+  assert.equal(
+    rescheduleHint({ status: 'pending' }, 'coach'),
+    'Need a different time? Decline this request and ask the student to book a new slot.',
+  );
+  assert.equal(rescheduleHint({ status: 'pending' }, 'student'), cancelAndRebook);
+  assert.equal(rescheduleHint({ status: 'confirmed' }, 'student'), cancelAndRebook);
+  assert.equal(rescheduleHint({ status: 'confirmed' }, 'coach'), cancelAndRebook);
+  assert.equal(rescheduleHint({ status: 'completed' }, 'coach'), null);
+  assert.match(detailSrc, /rescheduleHint\(booking, isCoach \? 'coach' : 'student'\)/);
 });

@@ -240,6 +240,15 @@ export function weatherCancellationView(booking, { audience = 'student', now = D
   return null;
 }
 
+/** No reschedule yet; coaches can't cancel a pending request, so they decline it instead. */
+export function rescheduleHint(booking, audience) {
+  if (!['pending', 'confirmed'].includes(booking?.status)) return null;
+  if (audience === 'coach' && booking.status === 'pending') {
+    return 'Need a different time? Decline this request and ask the student to book a new slot.';
+  }
+  return 'There is no reschedule option yet. To change the time, cancel this booking and book a new slot.';
+}
+
 /** Cancel reasons are self-reported; say who sees them. */
 export function cancelReasonSharedHint(audience) {
   const other = audience === 'coach' ? 'student' : 'coach';
