@@ -28,7 +28,9 @@ import {
   Notification,
   User,
   UserRole,
+  UserReliability,
 } from '../../models/index.js';
+import { updateUserReliability } from '../../services/reliabilityService.js';
 import * as stripeService from '../../services/stripeService.js';
 import * as paymentService from '../../services/paymentService.js';
 import { expireStalePendingBookings } from '../../workers/pendingBookingExpiryWorker.js';
@@ -273,7 +275,56 @@ describeHttp('HTTP integration: booking lifecycle gaps', () => {
       where: { booking_id: bookingId, action_type: 'booking_cancel_refund', status: 'pending' },
     });
     assert.equal(actions.length, 1, 'coach cancel of captured booking should queue exactly one refund action');
-    assert.ok(Number(actions[0].refund_cents) > 0);
+    assert.equal(
+      Number(actions[0].refund_cents),
+      Math.round(Number(payment.total_charge_to_student) * 100),
+      'coach cancel refunds the student in full',
+    );
+    assert.notEqual(booking.payout_status, 'pending', 'no coach payout on coach cancel');
+
+    const history = await CancellationHistory.findOne({ where: { booking_id: bookingId } });
+    assert.equal(history.reason, 'schedule_conflict');
+    assert.equal(history.affects_reliability, true, 'non-weather coach cancel of a confirmed booking counts');
+    await updateUserReliability(fixture.coach.id, 'coach');
+    const coachRel = await UserReliability.findOne({ where: { user_id: fixture.coach.id, role: 'coach' } });
+    assert.equal(coachRel.coach_cancels_non_late_recent, 1);
+    assert.ok(Number(coachRel.reliability_score) < 100, 'coach score drops for a non-weather cancel');
+  });
+
+  it('coach Weather cancel of confirmed booking: full refund, no reliability impact', async () => {
+    if (fixture?.cleanup) await fixture.cleanup();
+    fixture = await createBookingJourneyFixture();
+    const { baseUrl } = server;
+    const { studentToken, coachToken } = await loginPair(baseUrl, fixture);
+
+    const { bookingId } = await createCapturedConfirmedBooking(
+      baseUrl,
+      fixture,
+      studentToken,
+      coachToken,
+      'gap_coach_cancel_confirmed_weather',
+    );
+
+    const cancelRes = await api(baseUrl, 'POST', `/api/bookings/${bookingId}/cancel`, {
+      token: coachToken,
+      body: { reason: 'weather' },
+    });
+    assert.equal(cancelRes.status, 200, cancelRes.text);
+
+    const booking = await Booking.findByPk(bookingId);
+    const payment = await Payment.findOne({ where: { booking_id: bookingId }, order: [['id', 'DESC']] });
+    assert.equal(booking.status, 'cancelled');
+    assert.equal(booking.cancelled_by, 'coach');
+    assert.notEqual(booking.payout_status, 'pending', 'no coach payout on coach cancel');
+    const [action] = await PaymentAction.findAll({ where: { booking_id: bookingId, action_type: 'booking_cancel_refund' } });
+    assert.equal(Number(action.refund_cents), Math.round(Number(payment.total_charge_to_student) * 100));
+
+    const history = await CancellationHistory.findOne({ where: { booking_id: bookingId } });
+    assert.equal(history.affects_reliability, false);
+    await updateUserReliability(fixture.coach.id, 'coach');
+    const coachRel = await UserReliability.findOne({ where: { user_id: fixture.coach.id, role: 'coach' } });
+    assert.equal(coachRel?.coach_cancels_non_late_recent ?? 0, 0);
+    assert.equal(Number(coachRel?.reliability_score ?? 100), 100);
   });
 
   it('coach complete after lesson end sets completed + pending payout (escrow still held)', async () => {
