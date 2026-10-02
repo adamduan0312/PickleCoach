@@ -152,6 +152,52 @@ export function mapNominatimResults(raw, ctx = {}) {
   return scored.map(({ label, lat, lng, type }) => ({ label, lat, lng, type }));
 }
 
+/** Google Plus Code, full ("76RX3PGM+5JF") or short ("3PGM+5JF"); Nominatim cannot read them. */
+const PLUS_CODE_RE = /(^|[\s,])[23456789CFGHJMPQRVWX]{4,8}\+[23456789CFGHJMPQRVWX]{0,3}(?=$|[\s,])/gi;
+
+const words = (s) => s.toLowerCase().split(/\s+/).filter(Boolean);
+
+/**
+ * Clean pasted location text before geocoding: drop Plus Codes and comma parts that repeat
+ * earlier ones ("…, Davie, FL 33328, Davie, FL, 33328"). Nominatim returns nothing for either.
+ * A part is dropped when it equals an earlier part, or its words all appear in one earlier part
+ * other than the first (the first is usually the street, which may share words with the city).
+ * @param {string} query
+ * @returns {string}
+ */
+export function normalizeGeocodeQuery(query) {
+  const stripped = String(query || '').replace(PLUS_CODE_RE, '$1');
+  const kept = [];
+  for (const raw of stripped.split(',')) {
+    const part = raw.trim().replace(/\s+/g, ' ');
+    if (!part) continue;
+    const w = words(part);
+    const repeats = kept.some((prev, i) => {
+      if (prev.toLowerCase() === part.toLowerCase()) return true;
+      if (i === 0) return false;
+      const prevWords = new Set(words(prev));
+      return w.every((x) => prevWords.has(x));
+    });
+    if (!repeats) kept.push(part);
+  }
+  return kept.join(', ');
+}
+
+/**
+ * "3801 S Pine Island Rd, Davie, FL 33328" → "3801 S Pine Island Rd, 33328"; null when there is
+ * no house-numbered street + ZIP to fall back to, or nothing would change.
+ * @param {string} q normalized query
+ * @returns {string|null}
+ */
+export function addressStreetZipFallback(q) {
+  const [street, ...rest] = q.split(',').map((s) => s.trim());
+  if (!/^\d+\s+\S/.test(street || '')) return null;
+  const zip = rest.join(' ').match(/\b(\d{5})(?:-\d{4})?\b/);
+  if (!zip) return null;
+  const fallback = `${street}, ${zip[1]}`;
+  return fallback === q ? null : fallback;
+}
+
 /**
  * Parse free-text into a Nominatim strategy.
  * @param {string} query
@@ -277,7 +323,7 @@ async function nominatimFetch(params, signal) {
  * @returns {Promise<{ raw: object[], preferPostcode: boolean }>}
  */
 async function geocodeRawHits(query, opts = {}) {
-  const q = String(query || '').trim();
+  const q = normalizeGeocodeQuery(query);
   if (!q) return { raw: [], preferPostcode: false };
 
   const limit = Math.min(Math.max(Number(opts.limit) || 5, 1), 10);
@@ -306,9 +352,18 @@ async function geocodeRawHits(query, opts = {}) {
     }, opts.signal);
   }
 
-  // Address miss is already free-form; nothing else to try.
+  // Address miss → street + ZIP only (city/neighborhood names in OSM often differ from mailing ones).
   if ((!Array.isArray(raw) || raw.length === 0) && parsed.kind === 'address') {
-    /* keep empty */
+    const fallback = addressStreetZipFallback(q);
+    if (fallback) {
+      raw = await nominatimFetch({
+        q: fallback,
+        format: 'json',
+        addressdetails: '1',
+        countrycodes: 'us',
+        limit: String(limit),
+      }, opts.signal);
+    }
   }
 
   // ZIP structured miss → free-form ZIP.

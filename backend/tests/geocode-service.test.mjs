@@ -9,6 +9,8 @@ import {
   parseGeocodeQuery,
   settlementName,
   isCountyOnlyHit,
+  normalizeGeocodeQuery,
+  addressStreetZipFallback,
 } from '../services/geocodeService.js';
 
 describe('geocodeService Nominatim mapping', () => {
@@ -136,5 +138,44 @@ describe('parseGeocodeQuery', () => {
 
     const b = parseGeocodeQuery('334 Furman Street Brooklyn NY');
     assert.equal(b.kind, 'address');
+  });
+});
+
+describe('normalizeGeocodeQuery', () => {
+  it('strips a leading Plus Code and repeated city/state/ZIP parts', () => {
+    assert.equal(
+      normalizeGeocodeQuery('3PGM+5JF, 3801 S Pine Island Rd, Davie, FL 33328, Davie, FL, 33328'),
+      '3801 S Pine Island Rd, Davie, FL 33328',
+    );
+  });
+
+  it('strips full and space-separated Plus Codes', () => {
+    assert.equal(normalizeGeocodeQuery('76RX3PGM+5JF Davie, FL'), 'Davie, FL');
+    assert.equal(normalizeGeocodeQuery('3PGM+5JF 3801 S Pine Island Rd, 33328'), '3801 S Pine Island Rd, 33328');
+  });
+
+  it('keeps a city that shares a word with the street', () => {
+    assert.equal(normalizeGeocodeQuery('100 Davie Rd, Davie, FL'), '100 Davie Rd, Davie, FL');
+  });
+
+  it('leaves ordinary queries alone', () => {
+    assert.equal(normalizeGeocodeQuery('33328'), '33328');
+    assert.equal(normalizeGeocodeQuery('  Davie,   FL '), 'Davie, FL');
+    assert.equal(normalizeGeocodeQuery('Holiday Park'), 'Holiday Park');
+  });
+});
+
+describe('addressStreetZipFallback', () => {
+  it('reduces a full address to street + ZIP', () => {
+    assert.equal(
+      addressStreetZipFallback('3801 S Pine Island Rd, Davie, FL 33328'),
+      '3801 S Pine Island Rd, 33328',
+    );
+  });
+
+  it('returns null without a house number, without a ZIP, or when unchanged', () => {
+    assert.equal(addressStreetZipFallback('S Pine Island Rd, Davie, FL 33328'), null);
+    assert.equal(addressStreetZipFallback('3801 S Pine Island Rd, Davie, FL'), null);
+    assert.equal(addressStreetZipFallback('3801 S Pine Island Rd, 33328'), null);
   });
 });

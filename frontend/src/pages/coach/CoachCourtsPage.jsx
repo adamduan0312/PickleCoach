@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { coachesApi, courtsApi, geoApi, asList } from '../../api/index.js';
 import { useAsync } from '../../hooks/useAsync.js';
 import { Alert, EmptyState, ErrorState, LoadingState } from '../../components/ui/States.jsx';
@@ -7,12 +7,14 @@ import { CHAR_LIMITS } from '../../utils/charLimits.js';
 import { courtLabel, formatCourtAddressLines, formatMiles } from '../../utils/format.js';
 import {
   COURT_DISCOVERY_PENDING_NOTE,
+  classifyCourtSearch,
   isCourtAlreadyLinked,
   isCourtDiscoveryPending,
   linkedCourtIdSet,
+  splitPastedCourtAddress,
 } from '../../utils/coachCourts.js';
 
-/** Discovery radius for Courts near me / text+geo search — does not limit where a coach may teach. */
+/** Discovery radius for location searches — does not limit where a coach may teach. */
 const SEARCH_RADIUS_OPTIONS = [
   { value: '5', label: '5 miles' },
   { value: '10', label: '10 miles' },
@@ -42,14 +44,19 @@ export function CoachCourtsPage() {
   }, []);
 
   const [searchQ, setSearchQ] = useState('');
+  const [searchMode, setSearchMode] = useState('court'); // 'court' | 'location'
+  const [modeChosen, setModeChosen] = useState(false); // user picked the mode; skip auto-detect
   const [searchBusy, setSearchBusy] = useState(false);
   const [searchError, setSearchError] = useState(null);
   const [searchResults, setSearchResults] = useState(null);
-  const [nearMe, setNearMe] = useState(null); // { lat, lng } | null
+  // What the results are for: { kind: 'court', query } | { kind: 'location', label, detail, radius }
+  const [resultsFor, setResultsFor] = useState(null);
+  const [origin, setOrigin] = useState(null); // { lat, lng, label, detail } | null
   const [discoveryPending, setDiscoveryPending] = useState(false);
   const [searchRadius, setSearchRadius] = useState('25');
 
   const [showCreate, setShowCreate] = useState(false);
+  const createSectionRef = useRef(null);
   const [form, setForm] = useState({
     name: '',
     address_line1: '',
@@ -78,87 +85,124 @@ export function CoachCourtsPage() {
     setData(asList(res.data));
   }
 
-  async function runSearch(e) {
-    e?.preventDefault?.();
-    const q = searchQ.trim();
+  useEffect(() => {
+    if (showCreate) createSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [showCreate]);
+
+  /** Runs a search with shared busy/error handling. */
+  async function withSearch(fn) {
     setSearchError(null);
     setMessage(null);
-    if (!q && !nearMe) {
-      setSearchError('Enter a court name, ZIP, city, or address — or use Courts near me.');
-      return;
-    }
     setSearchBusy(true);
     try {
-      const params = {};
-      if (q) params.q = q;
-      if (nearMe) {
-        params.lat = nearMe.lat;
-        params.lng = nearMe.lng;
-        params.radius = Number(searchRadius) || 25;
-      }
-      const res = await courtsApi.search(params);
-      setSearchResults(asList(res.data));
-      setDiscoveryPending(isCourtDiscoveryPending(res));
+      await fn();
     } catch (ex) {
       setSearchError(ex.message);
-      setSearchResults([]);
+      setSearchResults(null);
+      setResultsFor(null);
+      setDiscoveryPending(false);
     } finally {
       setSearchBusy(false);
     }
   }
 
-  async function searchNearCoords(coords, { q = searchQ.trim(), radius = searchRadius } = {}) {
-    const params = {
-      lat: coords.lat,
-      lng: coords.lng,
-      radius: Number(radius) || 25,
-    };
-    if (q) params.q = q;
-    const res = await courtsApi.search(params);
+  async function searchCourtFields(q) {
+    const res = await courtsApi.search({ q });
+    setOrigin(null);
     setSearchResults(asList(res.data));
+    setResultsFor({ kind: 'court', query: q });
+    setDiscoveryPending(false);
+  }
+
+  async function searchNearOrigin(place, radius = searchRadius) {
+    const miles = Number(radius) || 25;
+    const res = await courtsApi.search({ lat: place.lat, lng: place.lng, radius: miles });
+    setOrigin(place);
+    setSearchResults(asList(res.data));
+    setResultsFor({ kind: 'location', label: place.label, detail: place.detail, radius: miles });
     setDiscoveryPending(isCourtDiscoveryPending(res));
   }
 
-  async function useNearby() {
+  async function searchNearPlace(q) {
+    const res = await geoApi.search({ q, limit: 1 });
+    const best = Array.isArray(res.data?.results) ? res.data.results[0] : null;
+    if (!best) {
+      throw new Error('We couldn’t find that location. Try a ZIP, a city and state (e.g. Davie, FL), or a street address.');
+    }
+    await searchNearOrigin({ lat: best.lat, lng: best.lng, label: q, detail: best.label });
+  }
+
+  function runSearchAs(mode, q) {
+    setSearchMode(mode);
+    return withSearch(() => (mode === 'location' ? searchNearPlace(q) : searchCourtFields(q)));
+  }
+
+  function runSearch(e) {
+    e?.preventDefault?.();
+    const q = searchQ.trim();
+    if (!q) {
+      setSearchError(searchMode === 'location'
+        ? 'Enter a ZIP, city and state, or address — or use Courts near me.'
+        : 'Enter a court name, street, city, or ZIP.');
+      return undefined;
+    }
+    const mode = modeChosen ? searchMode : classifyCourtSearch(q);
+    return runSearchAs(mode, q);
+  }
+
+  function chooseMode(mode) {
+    setModeChosen(true);
+    setSearchMode(mode);
     setSearchError(null);
-    setMessage(null);
+    const q = searchQ.trim();
+    if (q) runSearchAs(mode, q);
+  }
+
+  function useNearby() {
     if (!navigator.geolocation) {
       setSearchError('This browser does not support location.');
       return;
     }
-    setSearchBusy(true);
-    try {
-      const pos = await new Promise((resolve, reject) => {
-        navigator.geolocation.getCurrentPosition(resolve, reject, {
-          enableHighAccuracy: false,
-          timeout: 15000,
-          maximumAge: 60_000,
+    setSearchMode('location');
+    withSearch(async () => {
+      let pos;
+      try {
+        pos = await new Promise((resolve, reject) => {
+          navigator.geolocation.getCurrentPosition(resolve, reject, {
+            enableHighAccuracy: false,
+            timeout: 15000,
+            maximumAge: 60_000,
+          });
         });
+      } catch {
+        throw new Error('Could not get your location. Search near a ZIP, city, or address instead.');
+      }
+      await searchNearOrigin({
+        lat: pos.coords.latitude,
+        lng: pos.coords.longitude,
+        label: 'your current location',
+        detail: null,
       });
-      const coords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-      setNearMe(coords);
-      await searchNearCoords(coords);
-    } catch {
-      setSearchError('Could not get your location. Search by name, ZIP, city, or address instead.');
-    } finally {
-      setSearchBusy(false);
-    }
+    });
   }
 
-  async function onRadiusChange(e) {
+  function onRadiusChange(e) {
     const next = e.target.value;
     setSearchRadius(next);
-    if (!nearMe) return;
+    if (origin && resultsFor?.kind === 'location') withSearch(() => searchNearOrigin(origin, next));
+  }
+
+  function clearSearch() {
+    setOrigin(null);
+    setSearchResults(null);
+    setResultsFor(null);
+    setDiscoveryPending(false);
     setSearchError(null);
-    setSearchBusy(true);
-    try {
-      await searchNearCoords(nearMe, { radius: next });
-    } catch (ex) {
-      setSearchError(ex.message);
-      setSearchResults([]);
-    } finally {
-      setSearchBusy(false);
-    }
+  }
+
+  function openCreate() {
+    setShowCreate(true);
+    setErr(null);
   }
 
   async function selectExisting(court) {
@@ -178,22 +222,47 @@ export function CoachCourtsPage() {
     }
   }
 
+  /** A whole address pasted into Street address (often with a Plus Code) fills the empty fields. */
+  function withPastedAddressSplit(f) {
+    const pasted = splitPastedCourtAddress(f.address_line1);
+    if (!pasted) return f;
+    return {
+      ...f,
+      address_line1: pasted.address_line1,
+      city: f.city.trim() || pasted.city,
+      state: f.state.trim() || pasted.state,
+      postal_code: f.postal_code.trim() || pasted.postal_code,
+    };
+  }
+
+  function onStreetBlur() {
+    const f = withPastedAddressSplit(form);
+    if (f === form) return;
+    setForm(f);
+    setResolved(null);
+    setDupState(null);
+  }
+
   async function confirmAddress(e) {
     e.preventDefault();
     setErr(null);
     setDupState(null);
     setResolved(null);
-    const q = [form.address_line1, form.city, form.state, form.postal_code].filter(Boolean).join(', ');
-    if (!form.name.trim() || !form.address_line1.trim() || !form.city.trim() || !form.state.trim() || !form.postal_code.trim()) {
+
+    const f = withPastedAddressSplit(form);
+    if (f !== form) setForm(f);
+
+    if (!f.name.trim() || !f.address_line1.trim() || !f.city.trim() || !f.state.trim() || !f.postal_code.trim()) {
       setErr('Fill in name and full address before confirming location.');
       return;
     }
+    const q = [f.address_line1, f.city, f.state, f.postal_code].map((s) => s.trim()).join(', ');
     setGeoBusy(true);
     try {
       const res = await geoApi.search({ q, limit: 5 });
       const results = Array.isArray(res.data?.results) ? res.data.results : [];
       if (!results.length) {
-        setErr('Could not resolve that address. Check spelling or try a fuller street address.');
+        setErr(`Could not find “${q}”. Check the street number and name, city, state, and ZIP.`);
         return;
       }
       const best = results[0];
@@ -201,11 +270,11 @@ export function CoachCourtsPage() {
       setResolved(next);
 
       const check = await courtsApi.duplicateCheck({
-        name: form.name.trim(),
-        address_line1: form.address_line1.trim(),
-        city: form.city.trim(),
-        state: String(form.state).toUpperCase(),
-        postal_code: form.postal_code.trim(),
+        name: f.name.trim(),
+        address_line1: f.address_line1.trim(),
+        city: f.city.trim(),
+        state: String(f.state).toUpperCase(),
+        postal_code: f.postal_code.trim(),
         country: 'US',
         latitude: best.lat,
         longitude: best.lng,
@@ -300,8 +369,8 @@ export function CoachCourtsPage() {
     <div className="page">
       <h1>Courts</h1>
       <p className="muted">
-        Search PickleCoach courts and link any court where you teach. Use Courts near me with a search radius
-        to browse nearby, or search by name/ZIP/city/address. Only add a new location when it is not already
+        Search PickleCoach courts and link any court where you teach. Look up a court by name, or browse courts
+        near a ZIP, city, address, or your current location. Only add a new location when it is not already
         listed (or when it is private/custom).
       </p>
       <Alert tone="error">{err}</Alert>
@@ -309,94 +378,126 @@ export function CoachCourtsPage() {
 
       <section className="card stack" style={{ maxWidth: 720, marginBottom: 16 }}>
         <h2>Find a court</h2>
+        <div className="row" role="group" aria-label="Search type" style={{ gap: 8, flexWrap: 'wrap' }}>
+          {[
+            { mode: 'court', label: 'Court name' },
+            { mode: 'location', label: 'Near a location' },
+          ].map(({ mode, label }) => (
+            <button
+              key={mode}
+              type="button"
+              className={searchMode === mode ? 'btn' : 'btn ghost'}
+              aria-pressed={searchMode === mode}
+              disabled={searchBusy}
+              onClick={() => chooseMode(mode)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
         <form onSubmit={runSearch} className="stack">
           <FormField
-            label="Search by court name, ZIP, city, or address"
+            label={searchMode === 'location'
+              ? 'Search courts near a ZIP, city, or address'
+              : 'Search by court name, street, city, ZIP…'}
             name="court_search"
             value={searchQ}
             onChange={(e) => setSearchQ(e.target.value)}
-            placeholder="e.g. Holiday Park or 33328"
+            placeholder={searchMode === 'location' ? 'e.g. 33328 or Davie, FL' : 'e.g. Holiday Park'}
           />
           <div className="row" style={{ flexWrap: 'wrap', gap: 8, alignItems: 'end' }}>
             <button className="btn" type="submit" disabled={searchBusy}>
               {searchBusy ? 'Searching…' : 'Search'}
             </button>
             <button className="btn secondary" type="button" onClick={useNearby} disabled={searchBusy}>
-              {searchBusy && nearMe ? 'Finding courts…' : 'Courts near me'}
+              Courts near me
             </button>
-            <div className="stack" style={{ gap: 4 }}>
-              <label htmlFor="court-search-radius" className="small muted">
-                Search radius
-              </label>
-              <select
-                id="court-search-radius"
-                value={searchRadius}
-                onChange={onRadiusChange}
-                disabled={searchBusy}
-                aria-describedby="court-search-radius-hint"
-              >
-                {SEARCH_RADIUS_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>{opt.label}</option>
-                ))}
-              </select>
-            </div>
-            {nearMe ? (
-              <button
-                className="btn ghost"
-                type="button"
-                onClick={() => { setNearMe(null); setSearchResults(null); setDiscoveryPending(false); }}
-              >
-                Clear nearby
+            {searchMode === 'location' ? (
+              <div className="stack" style={{ gap: 4 }}>
+                <label htmlFor="court-search-radius" className="small muted">
+                  Search radius
+                </label>
+                <select
+                  id="court-search-radius"
+                  value={searchRadius}
+                  onChange={onRadiusChange}
+                  disabled={searchBusy}
+                  aria-describedby="court-search-hint"
+                >
+                  {SEARCH_RADIUS_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
+              </div>
+            ) : null}
+            {searchResults ? (
+              <button className="btn ghost" type="button" onClick={clearSearch}>
+                Clear
               </button>
             ) : null}
           </div>
-          <p id="court-search-radius-hint" className="small muted">
-            {nearMe
-              ? `Showing public courts within about ${searchRadius} miles of your current location. Search radius is for discovery only — you can still link any court you teach at.`
-              : 'Radius applies after you use Courts near me (or with an active nearby location). Text search without nearby looks up the PickleCoach directory by name/address.'}
+          <p id="court-search-hint" className="small muted">
+            {searchMode === 'location'
+              ? 'Shows public courts within the search radius, closest first. The radius is for browsing only — you can link any court you teach at.'
+              : 'Matches court names, streets, cities, and ZIPs in the PickleCoach directory. A ZIP, city and state, or street address searches nearby instead.'}
           </p>
-          {discoveryPending ? <p className="small muted">{COURT_DISCOVERY_PENDING_NOTE}</p> : null}
           {searchError ? <div className="alert error">{searchError}</div> : null}
         </form>
 
-        {searchResults ? (
-          searchResults.length === 0 ? (
-            <EmptyState
-              title="No matching courts in PickleCoach"
-              detail={
-                nearMe
-                  ? 'Try a larger search radius, another name, or add a location manually if this court is not in the directory yet.'
-                  : 'Try another search, Courts near me, or add a new location if this court is not in the directory yet.'
-              }
-            />
-          ) : (
-            <div className="stack">
-              <p className="small muted">{searchResults.length} match{searchResults.length === 1 ? '' : 'es'}</p>
-              {searchResults.map((court) => (
-                <div key={court.id} className="card spread">
-                  <div>
-                    <strong>{court.name}</strong>
-                    <CourtAddressBlock court={court} />
-                    {court.distance_miles != null ? (
-                      <div className="small muted">{formatMiles(court.distance_miles)}</div>
-                    ) : null}
-                  </div>
-                  <CourtSelectAction court={court} />
+        {searchResults && resultsFor ? (
+          <div className="stack">
+            <div className="spread" style={{ flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+              <div>
+                <strong>
+                  {resultsFor.kind === 'location'
+                    ? `Courts within ${resultsFor.radius} miles of ${resultsFor.label}`
+                    : `Courts matching “${resultsFor.query}”`}
+                </strong>
+                <div className="small muted">
+                  {searchResults.length} court{searchResults.length === 1 ? '' : 's'}
+                  {resultsFor.kind === 'location' && resultsFor.detail ? ` · centered on ${resultsFor.detail}` : ''}
+                  {resultsFor.kind === 'court' ? ' · matched on name or address, not distance' : ''}
                 </div>
-              ))}
+              </div>
+              {!showCreate ? (
+                <button className="btn ghost" type="button" onClick={openCreate}>
+                  Can&apos;t find your court? Add a new location
+                </button>
+              ) : null}
             </div>
-          )
-        ) : null}
-
-        {!showCreate ? (
-          <button className="btn ghost" type="button" onClick={() => { setShowCreate(true); setErr(null); }}>
+            {discoveryPending ? <p className="small muted">{COURT_DISCOVERY_PENDING_NOTE}</p> : null}
+            {searchResults.length === 0 ? (
+              <EmptyState
+                title="No matching courts in PickleCoach"
+                detail={
+                  resultsFor.kind === 'location'
+                    ? 'Try a larger search radius, or add the location if this court is not in the directory yet.'
+                    : 'Try another name, search near a location, or add the location if this court is not in the directory yet.'
+                }
+              />
+            ) : null}
+            {searchResults.map((court) => (
+              <div key={court.id} className="card spread">
+                <div>
+                  <strong>{court.name}</strong>
+                  <CourtAddressBlock court={court} />
+                  {court.distance_miles != null ? (
+                    <div className="small muted">{formatMiles(court.distance_miles)}</div>
+                  ) : null}
+                </div>
+                <CourtSelectAction court={court} />
+              </div>
+            ))}
+          </div>
+        ) : !showCreate ? (
+          <button className="btn ghost" type="button" onClick={openCreate}>
             Can&apos;t find your court? Add a new location
           </button>
         ) : null}
       </section>
 
       {showCreate ? (
-        <section className="card stack" style={{ maxWidth: 720, marginBottom: 16 }}>
+        <section ref={createSectionRef} className="card stack" style={{ maxWidth: 720, marginBottom: 16, scrollMarginTop: 16 }}>
           <div className="spread">
             <h2>Add a new location</h2>
             <button className="btn ghost" type="button" onClick={() => { setShowCreate(false); setDupState(null); setResolved(null); }}>
@@ -405,7 +506,16 @@ export function CoachCourtsPage() {
           </div>
           <form className="stack" onSubmit={confirmAddress}>
             <FormField label="Name" name="name" value={form.name} onChange={update} required maxLength={CHAR_LIMITS.courtName} />
-            <FormField label="Street address" name="address_line1" value={form.address_line1} onChange={update} required maxLength={CHAR_LIMITS.courtAddress} />
+            <FormField
+              label="Street address"
+              name="address_line1"
+              value={form.address_line1}
+              onChange={update}
+              onBlur={onStreetBlur}
+              required
+              maxLength={CHAR_LIMITS.courtAddress}
+              hint="You can paste a full address — we’ll split it into the fields below."
+            />
             <FormField label="City" name="city" value={form.city} onChange={update} required maxLength={CHAR_LIMITS.courtCity} />
             <FormField label="State (2-letter)" name="state" value={form.state} onChange={update} required maxLength={2} />
             <FormField label="ZIP" name="postal_code" value={form.postal_code} onChange={update} required />

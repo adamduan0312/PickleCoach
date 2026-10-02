@@ -677,7 +677,7 @@ Authorization: Bearer <token>
 
 ### `GET /api/geo/search`
 - **Auth**: Required (student, coach, or admin) — same roles as marketplace Discover.
-- **Description**: Convert a free-text **ZIP code, city, or address** into latitude/longitude for Discover radius search. Geocoding runs **server-side** (default: OpenStreetMap Nominatim). The query is **not** persisted. Provider API keys (if any) stay on the server.
+- **Description**: Convert a free-text **ZIP code, city, or address** into latitude/longitude for Discover radius search. Geocoding runs **server-side** (default: OpenStreetMap Nominatim). Pasted text is cleaned first: Google Plus Codes (e.g. `3PGM+5JF`) and repeated comma parts (`…, Davie, FL 33328, Davie, FL, 33328`) are dropped; a missed street address is retried as street + ZIP. The query is **not** persisted. Provider API keys (if any) stay on the server.
 - **Query Parameters**:
   - `q` (required) – search text, 2–200 characters
   - `limit` (optional) – max results, 1–10, default 5
