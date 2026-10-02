@@ -26,6 +26,7 @@ import { certificationsFromStored } from './coachCertifications.js';
 import {
   serializePublicReviewCard,
 } from './reviewDto.js';
+import { serializeCoachPhotoList } from './coachPhotos.js';
 
 const int = (v) => {
   const x = Math.round(Number(v));
@@ -324,6 +325,9 @@ export function serializeCoachPublicUser(coachInstance, { includeCoachCourts = f
   if (Array.isArray(json.reviewsReceived)) {
     // Marketplace coach card — trimmed cards (no booking blob).
     out.reviewsReceived = json.reviewsReceived.map(serializePublicReviewCard);
+  }
+  if (Array.isArray(json.coachPhotos)) {
+    out.photos = serializeCoachPhotoList(json.coachPhotos);
   }
 
   return out;

@@ -1327,6 +1327,215 @@ table.data th { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0
 .coach-teaching-pin-icon {
   display: block;
 }
+
+/* "On the court" gallery — featured cover + side tiles (desktop), swipe carousel (mobile) */
+.coach-gallery-grid {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+  height: 360px;
+}
+.coach-gallery-grid.count-1 { grid-template-columns: 1fr; }
+.coach-gallery-grid.count-2 .coach-gallery-tile:not(.featured) { grid-row: 1 / span 2; }
+.coach-gallery-tile,
+.coach-gallery-slide {
+  position: relative;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  overflow: hidden;
+  cursor: zoom-in;
+  background: var(--pc-green-soft);
+}
+.coach-gallery-tile.featured { grid-row: 1 / span 2; }
+.coach-gallery-tile img,
+.coach-gallery-slide img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 0.25s ease;
+}
+.coach-gallery-tile:hover img { transform: scale(1.02); }
+.coach-gallery-tile:focus-visible,
+.coach-gallery-slide:focus-visible {
+  outline: 3px solid var(--pc-green);
+  outline-offset: 2px;
+}
+.coach-gallery-more {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(21, 32, 23, 0.55);
+  color: #fff;
+  font-size: 1.4rem;
+  font-weight: 700;
+}
+.coach-gallery-carousel { display: none; }
+.coach-gallery-track {
+  display: flex;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none;
+  border-radius: 10px;
+}
+.coach-gallery-track::-webkit-scrollbar { display: none; }
+.coach-gallery-slide {
+  flex: 0 0 100%;
+  aspect-ratio: 4 / 3;
+  scroll-snap-align: start;
+  border-radius: 0;
+}
+.coach-gallery-dots {
+  display: flex;
+  justify-content: center;
+  gap: 0.4rem;
+  margin-top: 0.6rem;
+}
+.coach-gallery-dot {
+  width: 8px;
+  height: 8px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--pc-line);
+  cursor: pointer;
+}
+.coach-gallery-dot.active { background: var(--pc-green); }
+@media (max-width: 640px) {
+  .coach-gallery-grid { display: none; }
+  .coach-gallery-carousel { display: block; }
+}
+
+.photo-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: 3rem 3.5rem;
+  background: rgba(10, 16, 12, 0.94);
+}
+.photo-lightbox-img {
+  max-width: 100%;
+  max-height: calc(100vh - 7rem);
+  object-fit: contain;
+  border-radius: 6px;
+  user-select: none;
+}
+.photo-lightbox-close,
+.photo-lightbox-nav {
+  position: absolute;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  line-height: 1;
+}
+.photo-lightbox-close:hover,
+.photo-lightbox-nav:hover { background: rgba(255, 255, 255, 0.26); }
+.photo-lightbox-close {
+  top: 1rem;
+  right: 1rem;
+  width: 40px;
+  height: 40px;
+  font-size: 1.6rem;
+}
+.photo-lightbox-nav {
+  top: 50%;
+  transform: translateY(-50%);
+  width: 44px;
+  height: 44px;
+  font-size: 2rem;
+}
+.photo-lightbox-nav.prev { left: 0.75rem; }
+.photo-lightbox-nav.next { right: 0.75rem; }
+.photo-lightbox-count {
+  position: absolute;
+  bottom: 1rem;
+  left: 0;
+  right: 0;
+  margin: 0;
+  text-align: center;
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 0.9rem;
+}
+@media (max-width: 640px) {
+  .photo-lightbox { padding: 3.5rem 0.5rem; }
+  .photo-lightbox-nav { display: none; }
+}
+
+/* Coach photo management (Edit coach profile) */
+.coach-photos-manager h2 { margin: 0 0 0.25rem; font-size: 1.15rem; }
+.coach-photos-manager-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+}
+.coach-photos-manager-head p { margin: 0; }
+.coach-photos-count { white-space: nowrap; }
+.coach-photos-grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 0.75rem;
+}
+.coach-photo-tile {
+  border: 1px solid var(--pc-line);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--pc-card);
+  cursor: grab;
+}
+.coach-photo-tile.dragging { opacity: 0.45; }
+.coach-photo-tile.drop-target { outline: 2px dashed var(--pc-green); outline-offset: 2px; }
+.coach-photo-thumb {
+  position: relative;
+  aspect-ratio: 4 / 3;
+  background: var(--pc-green-soft);
+}
+.coach-photo-thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+}
+.coach-photo-cover-badge {
+  position: absolute;
+  top: 0.5rem;
+  left: 0.5rem;
+}
+.coach-photo-actions {
+  display: grid;
+  gap: 0.4rem;
+  padding: 0.5rem;
+  min-height: 4.5rem;
+  align-content: start;
+}
+.coach-photo-move {
+  display: flex;
+  gap: 0.35rem;
+}
+.coach-photo-btn {
+  padding: 0.3rem 0.55rem;
+  font-size: 0.82rem;
+}
+.coach-photo-btn.delete {
+  margin-left: auto;
+  color: var(--pc-danger);
+}
+.coach-photos-tip,
+.coach-photos-empty { margin: 0; }
+
 .coach-booking-flow {
   display: grid;
   gap: 1.25rem;

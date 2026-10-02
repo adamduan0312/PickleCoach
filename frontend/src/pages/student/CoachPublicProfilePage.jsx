@@ -33,6 +33,8 @@ import { timezoneLabel } from '../../domain/timezones.js';
 import { GROUP_LESSON_NOTE, isGroupLesson, lessonTypeLabel } from '../../domain/lessonOffering.js';
 import { certificationList, formatExperienceYears } from '../../domain/coachRating.js';
 import { ownProfileLessonPreview } from '../../domain/coachSetup.js';
+import { GALLERY_TITLE } from '../../domain/coachPhotos.js';
+import { CoachPhotoGallery } from '../../components/coach/CoachPhotoGallery.jsx';
 
 function courtTeachingLabel(court) {
   const name = court?.name || 'Court';
@@ -148,6 +150,7 @@ export function CoachPublicProfilePage() {
 
   const coach = data.coach;
   const profile = coach.coachProfile || {};
+  const photos = Array.isArray(coach.photos) ? coach.photos : [];
   const skillLine = formatSkillRatingLine(profile.skill_rating, profile.rating_system);
   const certifications = certificationList(profile.certifications);
   const experienceLine = formatExperienceYears(profile.experience_years);
@@ -253,6 +256,18 @@ export function CoachPublicProfilePage() {
           <ul className="coach-certifications">
             {certifications.map((c) => <li key={c}>{c}</li>)}
           </ul>
+        </section>
+      ) : null}
+
+      {photos.length > 0 ? (
+        <CoachPhotoGallery photos={photos} coachName={coach.full_name} />
+      ) : isOwnProfile ? (
+        <section className="card coach-profile-section coach-gallery-empty">
+          <h2>{GALLERY_TITLE}</h2>
+          <p className="muted small" style={{ margin: 0 }}>
+            Students don’t see this section yet. <Link to="/coach/profile#coaching-photos">Add coaching photos</Link> to
+            show yourself in action.
+          </p>
         </section>
       ) : null}
 

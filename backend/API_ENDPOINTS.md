@@ -786,6 +786,7 @@ Authorization: Bearer <token>
       "availabilities": [],
       "lessons": [],
       "reviewsReceived": [],
+      "photos": [{ "id": 7, "url": "/uploads/coach-photos/2-….jpg", "is_cover": true }],
       "reliability": {
         "reliability_score": 85.5,
         "last_updated": "2026-03-16T18:42:26.000Z"
@@ -1238,6 +1239,21 @@ Authorization: Bearer <token>
   ```
 - **Steps**: `profile`, `stripe` (`stripe_ready`), `lesson`, `court`, `availability` (≥1 row). `listed` is true only when `missing` is empty.
 - **Profile step = complete profile**: a saved profile can be a draft. `steps.profile` is true only when `headline` is ≥10 characters, `bio` is ≥50 characters (both trimmed), and `location` ("Based in", geocoder-validated on save) is set. `profile_exists` reports whether a profile row exists at all (this is what unlocks Stripe onboarding); `profile_missing_fields` lists the incomplete required fields in `headline`, `bio`, `location` order. Discovery (`GET /api/coaches`) applies the same completeness rule in SQL.
+
+### Coach photos ("On the court" gallery)
+- **Auth**: Required. **Roles**: Coach (own photos only).
+- **Storage**: `coach_photos` table (`coach_id`, `url`, `position`), separate from `users.avatar_url`. Files live under `/uploads/coach-photos/`. The **cover is always the first photo by `position`**; responses mark it with `is_cover: true`.
+- **Limits**: max **8** photos per coach; JPG, PNG or WebP; **5 MB** per file.
+- **Not a listing requirement**: photos don't affect `GET /api/coaches/me/marketplace-status`, profile completeness or Discover eligibility.
+- **Public**: `GET /api/coaches/:id` includes `photos: [{ id, url, is_cover }]` in display order (cover first). Changes are visible immediately.
+
+| Method | Path | Body | Notes |
+| --- | --- | --- | --- |
+| `GET` | `/api/coaches/me/photos` | — | `{ photos, max_photos }` |
+| `POST` | `/api/coaches/me/photos` | `multipart/form-data`, one or more `photos` files | Appended after existing photos. **201** with the full list. **400** `coach_photo_limit` (with `remaining`, `max_photos`) if the batch would exceed 8; nothing is saved. **400** for wrong type/size. |
+| `PUT` | `/api/coaches/me/photos/order` | `{ "photo_ids": [3, 1, 2] }` | Must list every one of the coach's photos exactly once (**400** `coach_photo_order_invalid` otherwise). First id becomes the cover. |
+| `PUT` | `/api/coaches/me/photos/:photoId/cover` | — | Moves the photo to the front. **404** if it isn't the caller's. |
+| `DELETE` | `/api/coaches/me/photos/:photoId` | — | Removes the row and file; remaining photos are renumbered (the next photo becomes the cover). **404** if it isn't the caller's. |
 
 ### `POST /api/coaches/me/stripe-connect/onboard`
 - **Auth**: Required

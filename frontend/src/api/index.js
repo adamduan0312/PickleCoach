@@ -48,6 +48,15 @@ export const coachesApi = {
   myReviews: (params) => apiRequest(`/coaches/me/reviews${qs(params)}`),
   myReliability: () => apiRequest('/coaches/me/reliability'),
   marketplaceStatus: () => apiRequest('/coaches/me/marketplace-status'),
+  myPhotos: () => apiRequest('/coaches/me/photos'),
+  uploadPhotos: (files) => {
+    const body = new FormData();
+    for (const file of files) body.append('photos', file);
+    return apiRequest('/coaches/me/photos', { method: 'POST', body });
+  },
+  reorderPhotos: (photoIds) => apiRequest('/coaches/me/photos/order', { method: 'PUT', body: { photo_ids: photoIds } }),
+  setCoverPhoto: (photoId) => apiRequest(`/coaches/me/photos/${photoId}/cover`, { method: 'PUT', body: {} }),
+  deletePhoto: (photoId) => apiRequest(`/coaches/me/photos/${photoId}`, { method: 'DELETE' }),
   stripeOnboard: () => apiRequest('/coaches/me/stripe-connect/onboard', { method: 'POST', body: {} }),
   stripeStatus: () => apiRequest('/coaches/me/stripe-connect/status'),
 };

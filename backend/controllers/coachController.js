@@ -2,6 +2,7 @@ import {
   User,
   UserRole,
   CoachProfile,
+  CoachPhoto,
   CoachAvailability,
   Lesson,
   Booking,
@@ -194,6 +195,7 @@ export const getCoachById = async (req, res) => {
         { model: CoachAvailability, as: 'availabilities' },
         { model: Lesson, as: 'lessons', where: { is_active: true, deleted_at: null }, required: false },
         { model: Review, as: 'reviewsReceived', required: false, limit: 10, order: [['created_at', 'DESC']], include: [{ model: User, as: 'student', attributes: ['id', 'full_name', 'avatar_url'] }] },
+        { model: CoachPhoto, as: 'coachPhotos', required: false, attributes: ['id', 'url', 'position'] },
         {
           model: UserReliability,
           as: 'reliabilities',

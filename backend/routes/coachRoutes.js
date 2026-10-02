@@ -18,8 +18,11 @@ import {
   getBookingsQuerySchema,
   getCoachLessonsQuerySchema,
   getReviewsQuerySchema,
+  reorderCoachPhotosSchema,
 } from '../config/validation.js';
 import * as reviewController from '../controllers/reviewController.js';
+import * as coachPhotoController from '../controllers/coachPhotoController.js';
+import { handleCoachPhotoUpload } from '../middleware/coachPhotoUpload.js';
 
 const router = express.Router();
 
@@ -69,6 +72,18 @@ router.get(
 // Must be declared before `/:id` route to avoid matching `reliability` as an `:id` param.
 router.get('/me/reliability', authenticate, authorize('coach'), reliabilityController.getCoachReliabilityForMe);
 router.get('/me/marketplace-status', authenticate, authorize('coach', 'admin'), coachController.getMyMarketplaceStatus);
+/** "On the court" gallery — owner-only; public read is `photos` on GET /:id. */
+router.get('/me/photos', authenticate, authorize('coach'), coachPhotoController.getMyCoachPhotos);
+router.post('/me/photos', authenticate, authorize('coach'), handleCoachPhotoUpload, coachPhotoController.uploadMyCoachPhotos);
+router.put(
+  '/me/photos/order',
+  authenticate,
+  authorize('coach'),
+  validateRequest(reorderCoachPhotosSchema),
+  coachPhotoController.reorderMyCoachPhotos,
+);
+router.put('/me/photos/:photoId/cover', authenticate, authorize('coach'), coachPhotoController.setMyCoachCoverPhoto);
+router.delete('/me/photos/:photoId', authenticate, authorize('coach'), coachPhotoController.deleteMyCoachPhoto);
 router.get('/:id/reliability', authenticate, authorize('student', 'coach', 'admin'), reliabilityController.getCoachReliabilityForStudent);
 router.get('/:id/courts', validateQuery(getCoachCourtsQuerySchema), courtController.getCoachCourtsById);
 /** Marketplace: another coach's public lesson offerings (active + eligible coach only). */

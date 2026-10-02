@@ -7,6 +7,7 @@ import { FormField } from '../../components/ui/FormField.jsx';
 import { PlaceAutocomplete } from '../../components/ui/PlaceAutocomplete.jsx';
 import { CertificationsInput } from '../../components/ui/CertificationsInput.jsx';
 import { ProfilePhotoField } from '../../components/ui/ProfilePhotoField.jsx';
+import { CoachPhotosManager } from '../../components/coach/CoachPhotosManager.jsx';
 import { CharacterCounter } from '../../components/ui/CharacterLimit.jsx';
 import { CHAR_LIMITS } from '../../utils/charLimits.js';
 import { Alert } from '../../components/ui/States.jsx';
@@ -255,6 +256,11 @@ export function CoachProfileEditPage() {
           ) : null}
         </div>
       </form>
+      {!creating ? (
+        <div style={{ maxWidth: 640, marginTop: 16 }}>
+          <CoachPhotosManager />
+        </div>
+      ) : null}
     </div>
   );
 }

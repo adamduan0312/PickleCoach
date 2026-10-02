@@ -476,6 +476,11 @@ export const createCoachProfileSchema = Joi.object(coachProfileFields);
 
 export const updateCoachProfileSchema = Joi.object(coachProfileFields);
 
+/** PUT /api/coaches/me/photos/order — full gallery order; the first id becomes the cover. */
+export const reorderCoachPhotosSchema = Joi.object({
+  photo_ids: Joi.array().items(Joi.number().integer().positive()).min(1).max(50).required(),
+});
+
 const WEEKDAY_NAMES = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
 
 const AVAILABILITY_DATE_LABELS = { start_date: 'Start date', end_date: 'End date' };
