@@ -378,14 +378,13 @@ Authorization: Bearer <token>
       "reliability": {
         "reliability_score": 95.5,
         "total_bookings": 12,
-        "late_cancels": 0,
         "no_shows": 0,
         "misconduct_penalties": 0,
       }
     }
   }
   ```
-- **Reliability** (optional): When a matching `user_reliability` row exists, **`reliability`** (coach role) and/or **`reliability_student`** (student role) include only a **lightweight summary** for session/profile state (`reliability_score`, `total_bookings`, `late_cancels`, `no_shows`, `misconduct_penalties`). **Coach-facing detail** (more counters, `score_source`, no engine internals): **`GET /api/coaches/me/reliability`**. **Student self** (curated detail, same style as coach `/me`): **`GET /api/students/me/reliability`**. **Admin audit** (decay breakdowns, diagnostics, legacy aliases): **`GET /api/admin/users/:id/reliability`**.
+- **Reliability** (optional): When a matching `user_reliability` row exists, **`reliability`** (coach role) and/or **`reliability_student`** (student role) include only a **lightweight summary** for session/profile state (`reliability_score`, `total_bookings`, `no_shows`, `misconduct_penalties`). Cancellation counts are deliberately omitted from every self-facing response so which cancel reasons count toward reliability stays undisclosed. **Coach-facing detail** (more counters, `score_source`, no engine internals): **`GET /api/coaches/me/reliability`**. **Student self** (curated detail, same style as coach `/me`): **`GET /api/students/me/reliability`**. **Admin audit** (decay breakdowns, diagnostics, legacy aliases): **`GET /api/admin/users/:id/reliability`**.
 - **Notes**: `email_verified_at` supports verification UX. `coachProfile` is whitelisted public coach fields (or `null`). **`roles`** are **effective** (after admin governance filter when locked). **`role_state`** documents lock source and allow-list.
 - **Error responses**: `401` (missing or invalid token), `500` (server error).
 
@@ -821,11 +820,12 @@ Authorization: Bearer <token>
 
 | Endpoint | Audience | Purpose |
 |----------|----------|---------|
-| **`GET /api/auth/profile`** | Authenticated user | Session/profile; optional **`reliability`** / **`reliability_student`** = **summary only** (`reliability_score`, `total_bookings`, `late_cancels`, `no_shows`, `misconduct_penalties`). |
-| **`GET /api/coaches/me/reliability`** | Coach | **Detail view**: adds `score_source`, lesson-not-completed count, coach/student non-late cancel counts, etc. **Omits** persistence/engine internals (decayed totals, baselines, smoothing, badges, …). |
-| **`GET /api/admin/users/:id/reliability`** | Admin | **Full audit**: decay triplets, reconstructed score, `legacy_aliases`, scoring parameters. |
+| **`GET /api/auth/profile`** | Authenticated user | Session/profile; optional **`reliability`** / **`reliability_student`** = **summary only** (`reliability_score`, `total_bookings`, `no_shows`, `misconduct_penalties`). |
+| **`GET /api/coaches/me/reliability`** | Coach | **Detail view**: adds `score_source` and lesson-not-completed count. **Omits** cancellation counts and persistence/engine internals (decayed totals, baselines, smoothing, badges, …). |
+| **`GET /api/admin/users/:id/reliability`** | Admin | **Full audit**: decay triplets (including cancellation buckets), reconstructed score, `legacy_aliases`, scoring parameters. |
 
-- **Counters** (recent-window, scoring impact): **late_cancels**, **no_shows**, behavior dispute penalties, **`coach_cancels`**, **`student_cancels_non_late`**, **`total_bookings`**. **`score_source`**: `computed` vs `admin_override`.
+- **Counters** (recent-window): **`total_bookings`**, **`no_shows`**, behavior dispute penalties. **`score_source`**: `computed` vs `admin_override`.
+- **No cancellation breakdown**: late / non-late cancellation counts are not returned to the user themselves (same for **`GET /api/students/me/reliability`** and **`GET /api/auth/profile`**), so which cancel reasons count toward reliability stays undisclosed. Admin endpoints keep them.
 - **`policy_notes.late_student_cancel`**: Coach-facing help text for student late-cancel compensation (50% refund; retained amount split coach + platform commission). Display in cancellation/payments help UI.
 - **Related**: Coach booking inbox is **`GET /api/coaches/me/bookings`** (see Bookings section).
 - **Response** (Status: 200):
@@ -838,12 +838,9 @@ Authorization: Bearer <token>
         "reliability_score": 85.5,
         "score_source": "computed",
         "total_bookings": 10,
-        "late_cancels": 0,
         "no_shows": 0,
         "misconduct_penalties": 1,
         "lesson_not_completed_penalties": 0,
-        "coach_cancels": 1,
-        "student_cancels_non_late": 0,
         "last_updated": "2026-03-16T18:42:26.000Z"
       },
       "policy_notes": {
@@ -1300,12 +1297,9 @@ Authorization: Bearer <token>
         "reliability_score": 96.0,
         "score_source": "computed",
         "total_bookings": 8,
-        "late_cancels": 0,
         "misconduct_penalties": 0,
         "lesson_not_completed_penalties": 0,
         "no_shows": 0,
-        "coach_cancels": 0,
-        "student_cancels_non_late": 2,
         "last_updated": "2026-03-16T18:42:26.000Z"
       }
     }
@@ -1907,7 +1901,6 @@ The sections below document the **authorize-first write flow** first, then **bey
         "booking_id": 1,
         "cancelled_by": "student",
         "cancellation_type": "late",
-        "affects_reliability": true,
         "reason": "forgot",
         "reason_notes": null,
         "refund_amount": "40.50",
@@ -1925,7 +1918,7 @@ The sections below document the **authorize-first write flow** first, then **bey
   }
   ```
   - **`cancellation_type`**: `"late"` when cancel occurs **&lt; 24 hours** before `scheduled_at`; otherwise `"non_late"`. Independent of `penalty_reason` (timing vs financial rule).
-  - **`affects_reliability`**: `true` when this cancellation **is included in reliability calculations** for the cancelling party (`false` for excused reasons `weather` / `emergency` / `sickness`, and always `false` for admin cancel and for cancels of **`pending`** bookings). It means the cancel **qualifies** to affect reliability — **not** that the score was definitely reduced, or by any specific amount. Actual score movement depends on booking history, smoothing (`RELIABILITY_SMOOTHING_K`), decay window, and penalty weights; a single event on a lightly used account may produce a very small change. **`GET /api/bookings/:id`** history rows still omit this field; only the cancel response includes it.
+  - **`affects_reliability`** (**admin cancel route only** — omitted from participant cancel and weather-accept responses so the reliability classification of reasons stays undisclosed): `true` when this cancellation **is included in reliability calculations** for the cancelling party (`false` for excused reasons `weather` / `emergency` / `sickness`, and always `false` for admin cancel and for cancels of **`pending`** bookings). It means the cancel **qualifies** to affect reliability — **not** that the score was definitely reduced, or by any specific amount. Actual score movement depends on booking history, smoothing (`RELIABILITY_SMOOTHING_K`), decay window, and penalty weights; a single event on a lightly used account may produce a very small change. **`GET /api/bookings/:id`** history rows still omit this field; only the cancel response includes it.
 
 ### Mutual weather cancellation
 

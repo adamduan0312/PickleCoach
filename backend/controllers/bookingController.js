@@ -1338,6 +1338,7 @@ export async function runPreLessonCancel(req, res, mutualWeather = null) {
 
     const cancellationPayload = buildCancellationApiPayload(cancellationHistory, {
       isLateCancel,
+      includeReliability: isAdmin && isAdminRoute,
     });
 
     return successResponse(

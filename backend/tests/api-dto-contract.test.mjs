@@ -496,6 +496,9 @@ test('serializeStudentReliabilityDetail mirrors coach style without engine inter
   assert.equal(out.reliability_score, 88.5);
   assert.equal(out.total_bookings, 12);
   assert.equal(out.smoothing_k, undefined);
+  assert.equal(out.late_cancels, undefined);
+  assert.equal(out.coach_cancels, undefined);
+  assert.equal(out.student_cancels_non_late, undefined);
 });
 
 test('serializeBookingResponse preserves mutation extras', () => {

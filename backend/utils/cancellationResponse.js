@@ -15,13 +15,13 @@ export function cancellationTypeFromIsLate(isLateCancel) {
 /**
  * Build `data.cancellation` for POST .../cancel responses.
  *
- * `affects_reliability` means the cancel qualifies for reliability scoring — not a guaranteed
- * score deduction or a specific point amount (see API_ENDPOINTS cancel response docs).
+ * `affects_reliability` is only included for admin callers (`includeReliability`): which reasons
+ * count toward reliability is deliberately not disclosed to students or coaches.
  *
  * @param {object} cancellationHistory — Sequelize model or plain row
- * @param {{ isLateCancel: boolean }} options
+ * @param {{ isLateCancel: boolean, includeReliability?: boolean }} options
  */
-export function buildCancellationApiPayload(cancellationHistory, { isLateCancel }) {
+export function buildCancellationApiPayload(cancellationHistory, { isLateCancel, includeReliability = false }) {
   if (!cancellationHistory) return null;
 
   const plain = cancellationHistory.toJSON
@@ -33,7 +33,7 @@ export function buildCancellationApiPayload(cancellationHistory, { isLateCancel 
     booking_id: plain.booking_id,
     cancelled_by: plain.cancelled_by,
     cancellation_type: cancellationTypeFromIsLate(isLateCancel),
-    affects_reliability: Boolean(plain.affects_reliability),
+    ...(includeReliability ? { affects_reliability: Boolean(plain.affects_reliability) } : {}),
     reason: plain.reason ?? null,
     reason_notes: plain.reason_notes ?? null,
     refund_amount: plain.refund_amount,

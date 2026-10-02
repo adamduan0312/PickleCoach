@@ -34,10 +34,10 @@ describe('buildCancellationApiPayload', () => {
     cancelled_at: '2026-06-24T12:00:00.000Z',
   };
 
-  it('student late captured: late type, financial penalty, reliability flag', () => {
+  it('student late captured: late type, financial penalty, no reliability flag for participants', () => {
     const payload = buildCancellationApiPayload(baseRow, { isLateCancel: true });
     assert.equal(payload.cancellation_type, 'late');
-    assert.equal(payload.affects_reliability, true);
+    assert.equal('affects_reliability' in payload, false);
     assert.equal(payload.penalty_reason, 'Late cancellation');
     assert.equal(payload.refund_amount, '59.40');
     assert.equal(payload.penalty_amount, '59.40');
@@ -59,7 +59,7 @@ describe('buildCancellationApiPayload', () => {
     assert.equal(payload.penalty_amount, '0.00');
   });
 
-  it('student non-late excused: non_late, no reliability impact', () => {
+  it('student non-late excused: non_late, classification not disclosed', () => {
     const payload = buildCancellationApiPayload(
       {
         ...baseRow,
@@ -72,8 +72,17 @@ describe('buildCancellationApiPayload', () => {
       { isLateCancel: false },
     );
     assert.equal(payload.cancellation_type, 'non_late');
-    assert.equal(payload.affects_reliability, false);
+    assert.equal('affects_reliability' in payload, false);
     assert.equal(payload.penalty_reason, null);
+  });
+
+  it('admin callers still receive affects_reliability', () => {
+    assert.equal(buildCancellationApiPayload(baseRow, { isLateCancel: true, includeReliability: true }).affects_reliability, true);
+    assert.equal(
+      buildCancellationApiPayload({ ...baseRow, affects_reliability: false }, { isLateCancel: false, includeReliability: true })
+        .affects_reliability,
+      false,
+    );
   });
 
   it('late uncaptured void: late type with zero financials', () => {
@@ -104,5 +113,10 @@ describe('cancelBooking response wiring', () => {
     const cancelSection = src.slice(src.indexOf('export const cancelBooking'), src.indexOf('export const adminPreLessonCancelBooking'));
     assert.match(cancelSection, /buildCancellationApiPayload\(cancellationHistory/);
     assert.doesNotMatch(cancelSection, /sanitizeResponse\(cancellationHistory\)/);
+  });
+
+  it('only discloses affects_reliability on the admin cancel route', () => {
+    const src = readFileSync(join(__dirname, '../controllers/bookingController.js'), 'utf8');
+    assert.match(src, /includeReliability: isAdmin && isAdminRoute/);
   });
 });

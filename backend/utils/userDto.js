@@ -46,25 +46,30 @@ function mapUserRoles(user, plain) {
  * Minimal reliability surface for auth + admin user APIs (no scoring-engine parameters).
  * Coach-facing detail (more fields, still no engine internals): **`GET /api/coaches/me/reliability`**
  * via **`serializeCoachReliabilityDetail`**. Full audit payload: **`GET /api/admin/users/:id/reliability`**.
+ *
+ * Cancellation counts are only included for admin callers (`includeCancellationBreakdown`):
+ * which cancellations count toward reliability is not disclosed to the user themselves.
  * @param {object} row — UserReliability instance or plain row
+ * @param {{ includeCancellationBreakdown?: boolean }} [options]
  */
-export function serializeReliabilitySummary(row) {
+export function serializeReliabilitySummary(row, { includeCancellationBreakdown = false } = {}) {
   if (!row) return null;
   const r = typeof row.toJSON === 'function' ? row.toJSON() : { ...row };
   return {
     reliability_score: dec(r.reliability_score) ?? 100,
     total_bookings: int(r.total_bookings_recent),
-    late_cancels: int(r.late_cancels_recent),
+    ...(includeCancellationBreakdown ? { late_cancels: int(r.late_cancels_recent) } : {}),
     no_shows: int(r.no_shows_recent),
     misconduct_penalties: int(r.misconduct_penalties_recent),
   };
 }
 
 /**
- * GET /api/coaches/me/reliability — coach-facing reliability detail (no DB/engine internals).
- * @param {object} payload — coach `user_reliability` plain object after `attachLegacyReliabilityAliases` (recent-window counters on aliased keys).
+ * Self-facing reliability detail shared by coach and student `/me/reliability`.
+ * Omits cancellation counts so the reliability classification of cancel reasons stays undisclosed.
+ * @param {object} payload — `user_reliability` plain object after `attachLegacyReliabilityAliases` (recent-window counters on aliased keys).
  */
-export function serializeCoachReliabilityDetail(payload) {
+function serializeSelfReliabilityDetail(payload) {
   if (!payload || typeof payload !== 'object') return null;
   const p = payload;
   const lastUpdated =
@@ -79,43 +84,21 @@ export function serializeCoachReliabilityDetail(payload) {
     reliability_score: dec(p.reliability_score) ?? 100,
     score_source: scoreSrc,
     total_bookings: int(p.total_bookings),
-    late_cancels: int(p.late_cancels),
     no_shows: int(p.no_shows),
     misconduct_penalties: int(p.misconduct_penalties),
     lesson_not_completed_penalties: int(p.lesson_not_completed_penalties),
-    coach_cancels: int(p.coach_cancels),
-    student_cancels_non_late: int(p.student_cancels_non_late),
     last_updated: lastUpdated,
   };
 }
 
-/**
- * GET /api/students/me/reliability — student-facing detail (no DB/engine internals).
- * Mirrors coach `/me/reliability` using legacy alias keys from `attachLegacyReliabilityAliases`.
- */
+/** GET /api/coaches/me/reliability — coach-facing reliability detail (no DB/engine internals). */
+export function serializeCoachReliabilityDetail(payload) {
+  return serializeSelfReliabilityDetail(payload);
+}
+
+/** GET /api/students/me/reliability — student-facing reliability detail (no DB/engine internals). */
 export function serializeStudentReliabilityDetail(payload) {
-  if (!payload || typeof payload !== 'object') return null;
-  const p = payload;
-  const lastUpdated =
-    p.last_updated != null && p.last_updated !== ''
-      ? new Date(p.last_updated).toISOString()
-      : null;
-  const scoreSrc =
-    typeof p.score_source === 'string' && p.score_source.trim() !== ''
-      ? p.score_source
-      : 'computed';
-  return {
-    reliability_score: dec(p.reliability_score) ?? 100,
-    score_source: scoreSrc,
-    total_bookings: int(p.total_bookings),
-    late_cancels: int(p.late_cancels),
-    no_shows: int(p.no_shows),
-    misconduct_penalties: int(p.misconduct_penalties),
-    lesson_not_completed_penalties: int(p.lesson_not_completed_penalties),
-    coach_cancels: int(p.coach_cancels),
-    student_cancels_non_late: int(p.student_cancels_non_late),
-    last_updated: lastUpdated,
-  };
+  return serializeSelfReliabilityDetail(payload);
 }
 
 /** Whitelisted coach_profiles fields for API consumers */
@@ -464,10 +447,10 @@ export function serializeAdminUserDetail(user) {
   };
 
   if (effective.includes('coach') && coachRel) {
-    payload.reliability = serializeReliabilitySummary(coachRel);
+    payload.reliability = serializeReliabilitySummary(coachRel, { includeCancellationBreakdown: true });
   }
   if (effective.includes('student') && studentRel) {
-    payload.reliability_student = serializeReliabilitySummary(studentRel);
+    payload.reliability_student = serializeReliabilitySummary(studentRel, { includeCancellationBreakdown: true });
   }
 
   return payload;
