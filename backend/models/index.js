@@ -34,6 +34,7 @@ const PromoCodeModule = await import('./PromoCode.js');
 const NotificationModule = await import('./Notification.js');
 const WeatherCancellationRequestModule = await import('./WeatherCancellationRequest.js');
 const CoachPhotoModule = await import('./CoachPhoto.js');
+const OsmCourtImportAttemptModule = await import('./OsmCourtImportAttempt.js');
 
 // Extract default exports
 const User = UserModule.default;
@@ -66,6 +67,7 @@ const PromoCode = PromoCodeModule.default;
 const Notification = NotificationModule.default;
 const WeatherCancellationRequest = WeatherCancellationRequestModule.default;
 const CoachPhoto = CoachPhotoModule.default;
+const OsmCourtImportAttempt = OsmCourtImportAttemptModule.default;
 
 // Initialize User model (it uses initModel pattern)
 User.initModel(sequelize);
@@ -232,4 +234,5 @@ export {
   Notification,
   WeatherCancellationRequest,
   CoachPhoto,
+  OsmCourtImportAttempt,
 };

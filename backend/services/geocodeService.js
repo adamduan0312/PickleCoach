@@ -553,7 +553,7 @@ export function structuredAddressFromNominatimHit(hit) {
  *
  * @param {number} lat
  * @param {number} lng
- * @param {{ signal?: AbortSignal }} [opts]
+ * @param {{ signal?: AbortSignal, timeoutMs?: number }} [opts] — `timeoutMs` starts after the rate-limit wait.
  * @returns {Promise<{ address_line1: string|null, city: string|null, state: string|null, postal_code: string|null, country: string, label: string, latitude: number|null, longitude: number|null }|null>}
  */
 export async function reverseGeocode(lat, lng, opts = {}) {
@@ -562,6 +562,7 @@ export async function reverseGeocode(lat, lng, opts = {}) {
   if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
 
   await respectNominatimRateLimit();
+  const signal = opts.signal ?? (opts.timeoutMs ? AbortSignal.timeout(opts.timeoutMs) : undefined);
   const params = new URLSearchParams({
     lat: String(latitude),
     lon: String(longitude),
@@ -579,10 +580,14 @@ export async function reverseGeocode(lat, lng, opts = {}) {
         Accept: 'application/json',
         'User-Agent': USER_AGENT,
       },
-      signal: opts.signal,
+      signal,
     });
   } catch (err) {
     if (err?.name === 'AbortError') throw err;
+    if (err?.name === 'TimeoutError') {
+      logger.warn(`Reverse geocode timed out after ${opts.timeoutMs}ms`);
+      return null;
+    }
     logger.warn('Reverse geocode network error:', err.message);
     return null;
   }

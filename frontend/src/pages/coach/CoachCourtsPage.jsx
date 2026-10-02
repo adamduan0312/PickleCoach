@@ -5,7 +5,12 @@ import { Alert, EmptyState, ErrorState, LoadingState } from '../../components/ui
 import { FormField } from '../../components/ui/FormField.jsx';
 import { CHAR_LIMITS } from '../../utils/charLimits.js';
 import { courtLabel, formatCourtAddressLines, formatMiles } from '../../utils/format.js';
-import { isCourtAlreadyLinked, linkedCourtIdSet } from '../../utils/coachCourts.js';
+import {
+  COURT_DISCOVERY_PENDING_NOTE,
+  isCourtAlreadyLinked,
+  isCourtDiscoveryPending,
+  linkedCourtIdSet,
+} from '../../utils/coachCourts.js';
 
 /** Discovery radius for Courts near me / text+geo search — does not limit where a coach may teach. */
 const SEARCH_RADIUS_OPTIONS = [
@@ -41,6 +46,7 @@ export function CoachCourtsPage() {
   const [searchError, setSearchError] = useState(null);
   const [searchResults, setSearchResults] = useState(null);
   const [nearMe, setNearMe] = useState(null); // { lat, lng } | null
+  const [discoveryPending, setDiscoveryPending] = useState(false);
   const [searchRadius, setSearchRadius] = useState('25');
 
   const [showCreate, setShowCreate] = useState(false);
@@ -92,6 +98,7 @@ export function CoachCourtsPage() {
       }
       const res = await courtsApi.search(params);
       setSearchResults(asList(res.data));
+      setDiscoveryPending(isCourtDiscoveryPending(res));
     } catch (ex) {
       setSearchError(ex.message);
       setSearchResults([]);
@@ -109,6 +116,7 @@ export function CoachCourtsPage() {
     if (q) params.q = q;
     const res = await courtsApi.search(params);
     setSearchResults(asList(res.data));
+    setDiscoveryPending(isCourtDiscoveryPending(res));
   }
 
   async function useNearby() {
@@ -336,7 +344,7 @@ export function CoachCourtsPage() {
               <button
                 className="btn ghost"
                 type="button"
-                onClick={() => { setNearMe(null); setSearchResults(null); }}
+                onClick={() => { setNearMe(null); setSearchResults(null); setDiscoveryPending(false); }}
               >
                 Clear nearby
               </button>
@@ -347,6 +355,7 @@ export function CoachCourtsPage() {
               ? `Showing public courts within about ${searchRadius} miles of your current location. Search radius is for discovery only — you can still link any court you teach at.`
               : 'Radius applies after you use Courts near me (or with an active nearby location). Text search without nearby looks up the PickleCoach directory by name/address.'}
           </p>
+          {discoveryPending ? <p className="small muted">{COURT_DISCOVERY_PENDING_NOTE}</p> : null}
           {searchError ? <div className="alert error">{searchError}</div> : null}
         </form>
 

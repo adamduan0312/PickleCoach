@@ -1,4 +1,4 @@
-import { CourtLocation } from '../models/index.js';
+import { CourtLocation, OsmCourtImportAttempt } from '../models/index.js';
 import { Op } from 'sequelize';
 import { logger } from '../config/logger.js';
 import { reverseGeocode } from './geocodeService.js';
@@ -37,6 +37,63 @@ export const REVERSE_GEOCODE_MAX_DISTANCE_MILES = Math.max(
   0.1,
   Number.parseFloat(process.env.COURT_IMPORT_REVERSE_MAX_DISTANCE_MILES || '1') || 1,
 );
+
+/** Per-endpoint Overpass request timeout (the query itself allows the server 25s). */
+export const OVERPASS_TIMEOUT_MS = Math.max(
+  1000,
+  Number.parseInt(process.env.COURT_OVERPASS_TIMEOUT_MS || '20000', 10) || 20000,
+);
+
+/** Per-lookup Nominatim reverse-geocode timeout, excluding the shared rate-limit wait. */
+export const REVERSE_GEOCODE_TIMEOUT_MS = Math.max(
+  500,
+  Number.parseInt(process.env.COURT_REVERSE_GEOCODE_TIMEOUT_MS || '8000', 10) || 8000,
+);
+
+/** Days before an OSM feature that could not be imported is looked up again. */
+export const OSM_IMPORT_RETRY_AFTER_DAYS = Math.max(
+  1,
+  Number.parseInt(process.env.COURT_OSM_RETRY_AFTER_DAYS || '30', 10) || 30,
+);
+
+const osmKey = (osmType, osmId) => `${osmType}/${osmId}`;
+
+/**
+ * DB-backed record of OSM features that could not be imported. Failures to read or write are
+ * logged and ignored — discovery must keep working without it.
+ */
+export const dbOsmImportAttemptStore = {
+  async recentlyFailedKeys(candidates, now = new Date()) {
+    if (!candidates.length) return new Set();
+    const since = new Date(now.getTime() - OSM_IMPORT_RETRY_AFTER_DAYS * 86400000);
+    try {
+      const rows = await OsmCourtImportAttempt.findAll({
+        where: {
+          attempted_at: { [Op.gte]: since },
+          [Op.or]: candidates.map((c) => ({ osm_type: c.osmType, osm_id: c.osmId })),
+        },
+        attributes: ['osm_type', 'osm_id'],
+        raw: true,
+      });
+      return new Set(rows.map((r) => osmKey(r.osm_type, r.osm_id)));
+    } catch (err) {
+      logger.warn(`OSM import attempt lookup failed: ${err.message}`);
+      return new Set();
+    }
+  },
+  async recordFailure(candidate, outcome, now = new Date()) {
+    try {
+      await OsmCourtImportAttempt.upsert({
+        osm_type: candidate.osmType,
+        osm_id: candidate.osmId,
+        outcome,
+        attempted_at: now,
+      });
+    } catch (err) {
+      logger.warn(`OSM import attempt record failed for ${osmKey(candidate.osmType, candidate.osmId)}: ${err.message}`);
+    }
+  },
+};
 
 /**
  * Calculate distance between two lat/lng points using Haversine formula
@@ -237,18 +294,21 @@ export async function resolveImportAddress({
       complete: true,
       usedReverse: false,
       reverseRejectedDistant: false,
+      reverseAnswered: false,
       reverseBudget,
     };
   }
 
   let reverse = null;
   let reverseRejectedDistant = false;
+  let reverseAnswered = false;
   let budget = reverseBudget;
   if (budget > 0 && latitude != null && longitude != null) {
     try {
-      const raw = await reverseGeocodeFn(latitude, longitude);
       budget -= 1;
+      const raw = await reverseGeocodeFn(latitude, longitude, { timeoutMs: REVERSE_GEOCODE_TIMEOUT_MS });
       if (raw) {
+        reverseAnswered = true;
         if (isReverseGeocodePlausible(latitude, longitude, raw, reverseMaxDistanceMiles)) {
           reverse = raw;
         } else {
@@ -275,6 +335,7 @@ export async function resolveImportAddress({
     complete: isHumanReadableCourtAddress(merged),
     usedReverse: Boolean(reverse),
     reverseRejectedDistant,
+    reverseAnswered,
     reverseBudget: budget,
   };
 }
@@ -306,14 +367,17 @@ export async function fetchOverpass(query) {
           'User-Agent': 'PickleCoach/1.0 (court-discover-nearby; https://picklecoach.local)',
         },
         body: `data=${encodeURIComponent(query)}`,
+        signal: AbortSignal.timeout(OVERPASS_TIMEOUT_MS),
       });
       const text = await response.text();
       if (!response.ok) {
         lastError = new Error(`Overpass ${endpoint} HTTP ${response.status}`);
+        logger.warn(lastError.message);
         continue;
       }
       if (text.trim().startsWith('<')) {
         lastError = new Error(`Overpass ${endpoint} returned HTML (rate-limited or blocked)`);
+        logger.warn(lastError.message);
         continue;
       }
       return JSON.parse(text);
@@ -347,8 +411,10 @@ export function buildPickleballOverpassQuery(latitude, longitude, radiusMiles) {
  * Hard invariant: never create (or leave unaddressed) OSM rows with placeholder addresses.
  * Incomplete OSM tags → reverse geocode → if still incomplete → SKIP import.
  * Existing incomplete OSM rows are enriched on rediscovery when a valid address can be resolved.
+ * Features whose reverse geocode answered but still gave no usable address are recorded and
+ * skipped for OSM_IMPORT_RETRY_AFTER_DAYS (timeouts / network errors are not recorded).
  *
- * @returns {{ imported: object[], enriched: object[], skippedIncomplete: number }}
+ * @returns {{ imported: object[], enriched: object[], skippedIncomplete: number, skippedRecentlyFailed: number }}
  */
 export async function importFromOpenStreetMap(
   latitude,
@@ -359,6 +425,7 @@ export async function importFromOpenStreetMap(
     maxImports = DISCOVER_MAX_IMPORTS,
     maxReverseGeocodes = DISCOVER_MAX_REVERSE_GEOCODES,
     reverseGeocodeFn = reverseGeocode,
+    attemptStore = dbOsmImportAttemptStore,
   } = {},
 ) {
   const data = await fetchOverpassFn(buildPickleballOverpassQuery(latitude, longitude, radiusMiles));
@@ -384,6 +451,8 @@ export async function importFromOpenStreetMap(
   const importedCourts = [];
   const enrichedCourts = [];
   let skippedIncomplete = 0;
+  let skippedRecentlyFailed = 0;
+  const recentlyFailed = await attemptStore.recentlyFailedKeys(toImport);
 
   for (const candidate of toImport) {
     const name = displayNameFromOsmTags(candidate.tags, candidate.element);
@@ -401,6 +470,22 @@ export async function importFromOpenStreetMap(
       continue;
     }
 
+    if (recentlyFailed.has(osmKey(candidate.osmType, candidate.osmId))) {
+      skippedRecentlyFailed += 1;
+      continue;
+    }
+
+    if (!existingByOsm) {
+      const skipProximity = await shouldSkipOsmCandidate({
+        name,
+        latitude: candidate.latitude,
+        longitude: candidate.longitude,
+        osmType: candidate.osmType,
+        osmId: candidate.osmId,
+      });
+      if (skipProximity) continue;
+    }
+
     const resolved = await resolveImportAddress({
       tags: candidate.tags,
       element: candidate.element,
@@ -410,6 +495,9 @@ export async function importFromOpenStreetMap(
       reverseGeocodeFn,
     });
     reverseBudget = resolved.reverseBudget;
+    if (!resolved.complete && resolved.reverseAnswered) {
+      await attemptStore.recordFailure(candidate, 'incomplete_address');
+    }
 
     if (existingByOsm) {
       // Incomplete existing OSM row: fill missing fields only when we now have a valid address.
@@ -426,15 +514,6 @@ export async function importFromOpenStreetMap(
       }
       continue;
     }
-
-    const skipProximity = await shouldSkipOsmCandidate({
-      name,
-      latitude: candidate.latitude,
-      longitude: candidate.longitude,
-      osmType: candidate.osmType,
-      osmId: candidate.osmId,
-    });
-    if (skipProximity) continue;
 
     if (!resolved.complete) {
       skippedIncomplete += 1;
@@ -462,7 +541,7 @@ export async function importFromOpenStreetMap(
     }
   }
 
-  return { imported: importedCourts, enriched: enrichedCourts, skippedIncomplete };
+  return { imported: importedCourts, enriched: enrichedCourts, skippedIncomplete, skippedRecentlyFailed };
 }
 
 /** Fill only placeholder/missing address fields on an existing row. */
@@ -508,7 +587,7 @@ function isGoodPostal(zip) {
 
 /**
  * Discover OSM pickleball courts near a point and import any not already in court_locations.
- * Called for every geographic GET /api/courts without `q` (local courts do not block this).
+ * Runs in the background for geographic GET /api/courts without `q` (see courtDiscoveryScheduler).
  *
  * @returns {Promise<object[]>} newly created rows only (enriched existing rows are applied in-place)
  */
@@ -518,7 +597,8 @@ export async function discoverCourtsNearby(latitude, longitude, radiusMiles = 10
   );
   const result = await importFromOpenStreetMap(latitude, longitude, radiusMiles, opts);
   logger.info(
-    `OSM discovery: imported=${result.imported.length} enriched=${result.enriched.length} skippedIncomplete=${result.skippedIncomplete}`,
+    `OSM discovery: imported=${result.imported.length} enriched=${result.enriched.length} `
+    + `skippedIncomplete=${result.skippedIncomplete} skippedRecentlyFailed=${result.skippedRecentlyFailed}`,
   );
   return result.imported;
 }

@@ -27,3 +27,15 @@ export function isCourtAlreadyLinked(linkedIds, court) {
   const n = Number(court.id);
   return Number.isFinite(n) && linkedIds.has(n);
 }
+
+export const COURT_DISCOVERY_PENDING_NOTE =
+  'Still checking OpenStreetMap for more courts in this area — search again in a minute to see any new ones.';
+
+/**
+ * Nearby search responses carry `discovery.status` while background OSM import runs.
+ * @param {{ discovery?: { status?: string } } | null | undefined} res
+ */
+export function isCourtDiscoveryPending(res) {
+  const status = res?.discovery?.status;
+  return status === 'started' || status === 'running';
+}

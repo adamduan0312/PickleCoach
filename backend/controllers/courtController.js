@@ -9,6 +9,7 @@ import { publicCourtDirectoryWhere } from '../utils/courtPublicDirectory.js';
 import { findPublicActiveCoach } from '../utils/userLifecycle.js';
 import { serializeCourtForPublicViewer } from '../utils/courtAddressVisibility.js';
 import { distanceMiles as courtDupDistanceMiles, rankCourtDuplicateCandidates, filterCourtsForDuplicateCheck } from '../utils/courtDuplicateMatch.js';
+import { courtDiscovery } from '../services/courtDiscoveryScheduler.js';
 
 /** Safety cap when listing all courts with no pagination (DoS prevention). */
 const MAX_LIST_ALL_COURTS = 10000;
@@ -214,29 +215,17 @@ export const searchCourts = async (req, res) => {
       return mapGeoResults(rows);
     };
 
-    let ordered = await loadLocalGeoCourts();
+    const ordered = await loadLocalGeoCourts();
 
-    // Geographic nearby discovery: always attempt OSM when there is no text `q`.
-    // Existing local courts must NOT skip Overpass. Text search stays DB-only.
+    // Geographic nearby search (no text `q`): respond with local courts now and run OSM discovery
+    // in the background, even when local courts exist, so later searches include new imports.
+    // Text search stays DB-only.
     if (!q) {
-      try {
-        const { discoverCourtsNearby } = await import('../services/courtImportService.js');
-        const importedCourts = await discoverCourtsNearby(latitude, longitude, radiusMiles);
-        ordered = await loadLocalGeoCourts();
-        const msg = importedCourts.length > 0
-          ? `Courts retrieved successfully (${importedCourts.length} imported)`
-          : 'Courts retrieved successfully';
-        return res.json(createResponse(ordered, msg));
-      } catch (importError) {
-        logger.error('Court nearby OSM discovery failed:', importError);
-        // Keep local results (possibly empty) — never 500 solely because Overpass failed.
-        return res.json(createResponse(
-          ordered,
-          ordered.length > 0
-            ? 'Courts retrieved successfully (external discovery unavailable)'
-            : 'Courts retrieved successfully (external discovery unavailable)',
-        ));
-      }
+      const { status } = courtDiscovery.schedule(latitude, longitude, radiusMiles);
+      return res.json({
+        ...createResponse(ordered, 'Courts retrieved successfully'),
+        discovery: { status },
+      });
     }
 
     return res.json(createResponse(ordered, 'Courts retrieved successfully'));

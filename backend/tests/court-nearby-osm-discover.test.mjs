@@ -3,26 +3,52 @@
  * Hard invariant: incomplete addresses are never inserted into court_locations.
  */
 import assert from 'node:assert/strict';
-import { describe, it, afterEach, mock } from 'node:test';
-import { CourtLocation } from '../models/index.js';
+import { describe, it, beforeEach, afterEach, mock } from 'node:test';
+import { CourtLocation, OsmCourtImportAttempt } from '../models/index.js';
 import {
   shouldSkipOsmCandidate,
   importFromOpenStreetMap,
   discoverCourtsNearby,
+  dbOsmImportAttemptStore,
   DISCOVER_MAX_IMPORTS,
+  OSM_IMPORT_RETRY_AFTER_DAYS,
 } from '../services/courtImportService.js';
 import { searchCourts } from '../controllers/courtController.js';
+import { courtDiscovery } from '../services/courtDiscoveryScheduler.js';
 
 const origFindAll = CourtLocation.findAll;
 const origFindOne = CourtLocation.findOne;
 const origCreate = CourtLocation.create;
+const origAttemptFindAll = OsmCourtImportAttempt.findAll;
+const origAttemptUpsert = OsmCourtImportAttempt.upsert;
+const origSchedule = courtDiscovery.schedule;
+
+beforeEach(() => {
+  OsmCourtImportAttempt.findAll = async () => [];
+  OsmCourtImportAttempt.upsert = async () => {};
+});
 
 afterEach(() => {
   CourtLocation.findAll = origFindAll;
   CourtLocation.findOne = origFindOne;
   CourtLocation.create = origCreate;
+  OsmCourtImportAttempt.findAll = origAttemptFindAll;
+  OsmCourtImportAttempt.upsert = origAttemptUpsert;
+  courtDiscovery.schedule = origSchedule;
   mock.restoreAll();
 });
+
+function memoryAttemptStore(failedKeys = []) {
+  const failed = new Set(failedKeys);
+  const recorded = [];
+  return {
+    recorded,
+    async recentlyFailedKeys() { return failed; },
+    async recordFailure(candidate, outcome) {
+      recorded.push({ key: `${candidate.osmType}/${candidate.osmId}`, outcome });
+    },
+  };
+}
 
 const COMPLETE_ADDR = {
   'addr:housenumber': '100',
@@ -504,154 +530,215 @@ describe('importFromOpenStreetMap / discoverCourtsNearby', () => {
   });
 });
 
-describe('searchCourts geographic discovery gate', () => {
-  it('does not call discover when q is present', async () => {
-    let discoverCalled = false;
+describe('OSM import attempt tracking', () => {
+  function captureCreates() {
+    const created = [];
+    CourtLocation.findOne = async () => null;
     CourtLocation.findAll = async () => [];
-    const origFetch = globalThis.fetch;
-    globalThis.fetch = async () => {
-      discoverCalled = true;
-      throw new Error('should not fetch when q is set');
+    CourtLocation.create = async (row) => {
+      const court = { id: created.length + 1, ...row };
+      created.push(court);
+      return court;
     };
-    try {
-      const req = { validated: { lat: 40.7, lng: -74.0, radius: 10, q: 'Holiday' } };
-      const res = { json(p) { this.payload = p; } };
-      await searchCourts(req, res);
-      assert.equal(discoverCalled, false);
-      assert.equal(res.payload?.success, true);
-    } finally {
-      globalThis.fetch = origFetch;
-    }
+    return created;
+  }
+
+  it('skips recently failed OSM features without spending reverse-geocode budget', async () => {
+    const created = captureCreates();
+    let reverseCalls = 0;
+    const attemptStore = memoryAttemptStore(['way/31']);
+    const result = await importFromOpenStreetMap(26.13, -80.13, 10, {
+      maxReverseGeocodes: 5,
+      reverseGeocodeFn: async (...args) => { reverseCalls += 1; return goodReverse(...args); },
+      attemptStore,
+      fetchOverpassFn: async () => ({
+        elements: [osmEl({ id: 31, lat: 26.13, lon: -80.13, name: 'Failed Before' })],
+      }),
+    });
+    assert.equal(reverseCalls, 0);
+    assert.equal(result.skippedRecentlyFailed, 1);
+    assert.equal(result.imported.length, 0);
+    assert.equal(created.length, 0);
+    assert.deepEqual(attemptStore.recorded, []);
   });
 
-  it('returns local courts when Overpass fails (non-empty local)', async () => {
-    CourtLocation.findAll = async () => ([
-      {
-        id: 7,
-        name: 'Local Only',
-        address_line1: '1 St',
-        city: 'NY',
-        state: 'NY',
-        postal_code: '10001',
-        country: 'US',
-        latitude: 40.7128,
-        longitude: -74.006,
-        is_private: false,
-        get() { return this; },
-      },
-    ]);
+  it('records a failure when reverse geocode answers with an unusable address', async () => {
+    captureCreates();
+    const attemptStore = memoryAttemptStore();
+    await importFromOpenStreetMap(26.13, -80.13, 10, {
+      maxReverseGeocodes: 1,
+      reverseGeocodeFn: distantReverse,
+      attemptStore,
+      fetchOverpassFn: async () => ({
+        elements: [osmEl({ id: 32, lat: 26.13, lon: -80.13, name: 'Mismatch' })],
+      }),
+    });
+    assert.deepEqual(attemptStore.recorded, [{ key: 'way/32', outcome: 'incomplete_address' }]);
+  });
+
+  it('does not record a failure when reverse geocode errored, timed out, or budget ran out', async () => {
+    captureCreates();
+    const attemptStore = memoryAttemptStore();
+    const result = await importFromOpenStreetMap(26.13, -80.13, 10, {
+      maxReverseGeocodes: 1,
+      reverseGeocodeFn: async () => null,
+      attemptStore,
+      fetchOverpassFn: async () => ({
+        elements: [
+          osmEl({ id: 33, lat: 26.13, lon: -80.13, name: 'Lookup Failed' }),
+          osmEl({ id: 34, lat: 26.2, lon: -80.2, name: 'No Budget Left' }),
+        ],
+      }),
+    });
+    assert.equal(result.skippedIncomplete, 2);
+    assert.deepEqual(attemptStore.recorded, []);
+  });
+
+  it('does not record a failure for a successful import', async () => {
+    const created = captureCreates();
+    const attemptStore = memoryAttemptStore();
+    await importFromOpenStreetMap(26.13, -80.13, 10, {
+      maxReverseGeocodes: 1,
+      reverseGeocodeFn: goodReverse,
+      attemptStore,
+      fetchOverpassFn: async () => ({
+        elements: [osmEl({ id: 35, lat: 26.13, lon: -80.13, name: 'Good' })],
+      }),
+    });
+    assert.equal(created.length, 1);
+    assert.deepEqual(attemptStore.recorded, []);
+  });
+
+  it('proximity-skipped candidates do not consume reverse-geocode budget', async () => {
+    const created = [];
+    const manual = {
+      id: 9,
+      name: 'Holiday Park',
+      osm_type: null,
+      osm_id: null,
+      latitude: 26.1331,
+      longitude: -80.1324,
+    };
+    CourtLocation.findOne = async () => null;
+    CourtLocation.findAll = async () => [manual];
+    CourtLocation.create = async (row) => {
+      const court = { id: created.length + 10, ...row };
+      created.push(court);
+      return court;
+    };
+    let reverseCalls = 0;
+    const result = await importFromOpenStreetMap(26.1331, -80.1324, 10, {
+      maxReverseGeocodes: 1,
+      reverseGeocodeFn: async (...args) => { reverseCalls += 1; return goodReverse(...args); },
+      attemptStore: memoryAttemptStore(),
+      fetchOverpassFn: async () => ({
+        elements: [
+          osmEl({ id: 36, lat: 26.13315, lon: -80.13245, name: 'Holiday Park Pitch' }),
+          osmEl({ id: 37, lat: 26.2, lon: -80.2, name: 'Elsewhere' }),
+        ],
+      }),
+    });
+    assert.equal(reverseCalls, 1);
+    assert.equal(result.imported.length, 1);
+    assert.equal(created[0].osm_id, 37);
+  });
+
+  it('db store queries only attempts inside the retry window and returns osm keys', async () => {
+    let query;
+    OsmCourtImportAttempt.findAll = async (q) => {
+      query = q;
+      return [{ osm_type: 'way', osm_id: 41 }];
+    };
+    const now = new Date('2026-10-01T12:00:00Z');
+    const keys = await dbOsmImportAttemptStore.recentlyFailedKeys(
+      [{ osmType: 'way', osmId: 41 }, { osmType: 'node', osmId: 42 }],
+      now,
+    );
+    assert.deepEqual([...keys], ['way/41']);
+    const since = Object.getOwnPropertySymbols(query.where.attempted_at)
+      .map((s) => query.where.attempted_at[s])[0];
+    assert.equal(now.getTime() - since.getTime(), OSM_IMPORT_RETRY_AFTER_DAYS * 86400000);
+  });
+
+  it('db store failures never break discovery', async () => {
+    OsmCourtImportAttempt.findAll = async () => { throw new Error('no such table'); };
+    OsmCourtImportAttempt.upsert = async () => { throw new Error('no such table'); };
+    const keys = await dbOsmImportAttemptStore.recentlyFailedKeys([{ osmType: 'way', osmId: 1 }]);
+    assert.equal(keys.size, 0);
+    await dbOsmImportAttemptStore.recordFailure({ osmType: 'way', osmId: 1 }, 'incomplete_address');
+  });
+});
+
+describe('searchCourts geographic discovery (non-blocking)', () => {
+  const localCourt = {
+    id: 7,
+    name: 'Local Only',
+    address_line1: '1 St',
+    city: 'NY',
+    state: 'NY',
+    postal_code: '10001',
+    country: 'US',
+    latitude: 40.7128,
+    longitude: -74.006,
+    is_private: false,
+    get() { return this; },
+  };
+
+  function stubSchedule(status = 'started') {
+    const calls = [];
+    courtDiscovery.schedule = (...args) => {
+      calls.push(args);
+      return { status };
+    };
+    return calls;
+  }
+
+  it('does not schedule discovery when q is present', async () => {
+    const calls = stubSchedule();
+    CourtLocation.findAll = async () => [];
+    const req = { validated: { lat: 40.7, lng: -74.0, radius: 10, q: 'Holiday' } };
+    const res = { json(p) { this.payload = p; } };
+    await searchCourts(req, res);
+    assert.equal(calls.length, 0);
+    assert.equal(res.payload?.success, true);
+    assert.equal(res.payload?.discovery, undefined);
+  });
+
+  it('returns local courts immediately and schedules background discovery', async () => {
+    const calls = stubSchedule('started');
+    CourtLocation.findAll = async () => [localCourt];
     const origFetch = globalThis.fetch;
-    globalThis.fetch = async () => { throw new Error('overpass down'); };
+    globalThis.fetch = async () => { throw new Error('search must not call external APIs'); };
     try {
       const req = { validated: { lat: 40.7128, lng: -74.006, radius: 10 } };
       const res = { json(p) { this.payload = p; } };
       await searchCourts(req, res);
+      assert.deepEqual(calls, [[40.7128, -74.006, 10]]);
       assert.equal(res.payload?.data?.length, 1);
       assert.equal(res.payload?.data?.[0]?.name, 'Local Only');
-      assert.match(res.payload.message, /external discovery unavailable/);
+      assert.equal(res.payload?.message, 'Courts retrieved successfully');
+      assert.deepEqual(res.payload?.discovery, { status: 'started' });
     } finally {
       globalThis.fetch = origFetch;
     }
   });
 
-  it('returns empty array gracefully when zero local and Overpass fails', async () => {
+  it('returns an empty list (not an error) when there are no local courts yet', async () => {
+    stubSchedule('running');
     CourtLocation.findAll = async () => [];
-    const origFetch = globalThis.fetch;
-    globalThis.fetch = async () => { throw new Error('overpass down'); };
-    try {
-      const req = { validated: { lat: 25.0, lng: -70.0, radius: 10 } };
-      const res = { json(p) { this.payload = p; } };
-      await searchCourts(req, res);
-      assert.deepEqual(res.payload?.data, []);
-      assert.match(res.payload.message, /external discovery unavailable/);
-    } finally {
-      globalThis.fetch = origFetch;
-    }
+    const req = { validated: { lat: 25.0, lng: -70.0, radius: 10 } };
+    const res = { json(p) { this.payload = p; } };
+    await searchCourts(req, res);
+    assert.deepEqual(res.payload?.data, []);
+    assert.deepEqual(res.payload?.discovery, { status: 'running' });
   });
 
-  it('attempts discovery even when local courts already exist', async () => {
-    let fetchCalls = 0;
-    const seed = {
-      id: 1,
-      name: 'Seed',
-      address_line1: '1 Main St',
-      city: 'Fort Lauderdale',
-      state: 'FL',
-      postal_code: '33304',
-      country: 'US',
-      latitude: 26.13,
-      longitude: -80.13,
-      is_private: false,
-      osm_type: null,
-      osm_id: null,
-      get() { return this; },
-    };
-    const importedRow = {
-      id: 2,
-      name: 'Imported',
-      address_line1: '100 Test Road',
-      city: 'Fort Lauderdale',
-      state: 'FL',
-      postal_code: '33304',
-      country: 'US',
-      latitude: 26.20,
-      longitude: -80.20,
-      is_private: false,
-      osm_type: 'way',
-      osm_id: 55,
-      get() { return this; },
-    };
-    let phase = 'initial';
-    CourtLocation.findAll = async () => {
-      if (phase === 'afterImport') return [seed, importedRow];
-      return [seed];
-    };
-    CourtLocation.findOne = async () => null;
-    CourtLocation.create = async (row) => {
-      phase = 'afterImport';
-      Object.assign(importedRow, row, { id: 2, get() { return this; } });
-      return importedRow;
-    };
-
-    const origFetch = globalThis.fetch;
-    globalThis.fetch = async (url) => {
-      fetchCalls += 1;
-      const u = String(url);
-      if (u.includes('nominatim') && u.includes('reverse')) {
-        const body = {
-          address: {
-            house_number: '100',
-            road: 'Test Road',
-            city: 'Fort Lauderdale',
-            state: 'Florida',
-            postcode: '33304',
-          },
-          display_name: '100 Test Road, Fort Lauderdale, Florida',
-        };
-        return {
-          ok: true,
-          async json() { return body; },
-          async text() { return JSON.stringify(body); },
-        };
-      }
-      const body = {
-        elements: [osmElComplete({ id: 55, lat: 26.20, lon: -80.20, name: 'Imported' })],
-      };
-      return {
-        ok: true,
-        async text() { return JSON.stringify(body); },
-        async json() { return body; },
-      };
-    };
-    try {
-      const req = { validated: { lat: 26.13, lng: -80.13, radius: 25 } };
-      const res = { json(p) { this.payload = p; } };
-      await searchCourts(req, res);
-      assert.ok(fetchCalls >= 1, 'Overpass must run even with existing local courts');
-      assert.match(String(res.payload?.message || ''), /imported|successfully/);
-      assert.ok((res.payload?.data?.length || 0) >= 2, 'combined local + imported');
-    } finally {
-      globalThis.fetch = origFetch;
-    }
+  it('reports recent when the area was discovered lately', async () => {
+    stubSchedule('recent');
+    CourtLocation.findAll = async () => [localCourt];
+    const req = { validated: { lat: 40.7128, lng: -74.006, radius: 10 } };
+    const res = { json(p) { this.payload = p; } };
+    await searchCourts(req, res);
+    assert.deepEqual(res.payload?.discovery, { status: 'recent' });
   });
 });

@@ -8,6 +8,7 @@ import { Op } from 'sequelize';
 import { CourtLocation, CoachCourtLocation, CoachProfile, User } from '../models/index.js';
 import { searchCourts, getCourt, getCoachCourtsById, getMyCoachCourts } from '../controllers/courtController.js';
 import { publicCourtDirectoryWhere } from '../utils/courtPublicDirectory.js';
+import { courtDiscovery } from '../services/courtDiscoveryScheduler.js';
 
 const origFindAll = CourtLocation.findAll;
 const origFindAndCountAll = CourtLocation.findAndCountAll;
@@ -101,11 +102,8 @@ describe('GET /api/courts (searchCourts) uses public directory where', () => {
         },
       ];
     };
-    // Geo search always attempts OSM discovery; fail soft so this unit test stays offline.
-    const origFetch = globalThis.fetch;
-    globalThis.fetch = async () => {
-      throw new Error('network disabled in unit test');
-    };
+    const origSchedule = courtDiscovery.schedule;
+    courtDiscovery.schedule = () => ({ status: 'recent' });
     try {
       const req = { validated: { lat: 40.7128, lng: -74.006, radius: 10 } };
       const res = { json(payload) {
@@ -117,9 +115,8 @@ describe('GET /api/courts (searchCourts) uses public directory where', () => {
       assert.ok(whereArg.latitude);
       assert.ok(whereArg.longitude);
       assert.equal(res.payload?.data?.length, 1);
-      assert.match(String(res.payload?.message || ''), /external discovery unavailable|successfully/);
     } finally {
-      globalThis.fetch = origFetch;
+      courtDiscovery.schedule = origSchedule;
     }
   });
 });
