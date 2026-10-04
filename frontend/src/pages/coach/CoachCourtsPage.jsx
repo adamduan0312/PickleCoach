@@ -143,7 +143,7 @@ export function CoachCourtsPage() {
     if (!q) {
       setSearchError(searchMode === 'location'
         ? 'Enter a ZIP, city and state, or address — or use Courts near me.'
-        : 'Enter a court name, street, city, or ZIP.');
+        : 'Enter a court name or address.');
       return undefined;
     }
     const mode = modeChosen ? searchMode : classifyCourtSearch(q);
@@ -378,69 +378,64 @@ export function CoachCourtsPage() {
 
       <section className="card stack" style={{ maxWidth: 720, marginBottom: 16 }}>
         <h2>Find a court</h2>
-        <div className="row" role="group" aria-label="Search type" style={{ gap: 8, flexWrap: 'wrap' }}>
-          {[
-            { mode: 'court', label: 'Court name' },
-            { mode: 'location', label: 'Near a location' },
-          ].map(({ mode, label }) => (
-            <button
-              key={mode}
-              type="button"
-              className={searchMode === mode ? 'btn' : 'btn ghost'}
-              aria-pressed={searchMode === mode}
-              disabled={searchBusy}
-              onClick={() => chooseMode(mode)}
-            >
-              {label}
-            </button>
-          ))}
+        <div className="row" style={{ gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+          <span id="court-search-by" className="small muted">Search by:</span>
+          <div className="row" role="group" aria-labelledby="court-search-by" style={{ gap: 8 }}>
+            {[
+              { mode: 'court', label: 'Court name' },
+              { mode: 'location', label: 'Location' },
+            ].map(({ mode, label }) => (
+              <button
+                key={mode}
+                type="button"
+                className={searchMode === mode ? 'btn' : 'btn ghost'}
+                aria-pressed={searchMode === mode}
+                disabled={searchBusy}
+                onClick={() => chooseMode(mode)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
         <form onSubmit={runSearch} className="stack">
           <FormField
             label={searchMode === 'location'
-              ? 'Search courts near a ZIP, city, or address'
-              : 'Search by court name, street, city, ZIP…'}
+              ? 'Find courts within a radius of a ZIP code, city, or address.'
+              : 'Search the court directory by name or address.'}
             name="court_search"
             value={searchQ}
             onChange={(e) => setSearchQ(e.target.value)}
             placeholder={searchMode === 'location' ? 'e.g. 33328 or Davie, FL' : 'e.g. Holiday Park'}
           />
-          <div className="row" style={{ flexWrap: 'wrap', gap: 8, alignItems: 'end' }}>
+          <div className="row" style={{ flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
             <button className="btn" type="submit" disabled={searchBusy}>
               {searchBusy ? 'Searching…' : 'Search'}
             </button>
-            <button className="btn secondary" type="button" onClick={useNearby} disabled={searchBusy}>
-              Courts near me
-            </button>
-            {searchMode === 'location' ? (
-              <div className="stack" style={{ gap: 4 }}>
-                <label htmlFor="court-search-radius" className="small muted">
-                  Search radius
-                </label>
-                <select
-                  id="court-search-radius"
-                  value={searchRadius}
-                  onChange={onRadiusChange}
-                  disabled={searchBusy}
-                  aria-describedby="court-search-hint"
-                >
-                  {SEARCH_RADIUS_OPTIONS.map((opt) => (
-                    <option key={opt.value} value={opt.value}>{opt.label}</option>
-                  ))}
-                </select>
-              </div>
-            ) : null}
             {searchResults ? (
               <button className="btn ghost" type="button" onClick={clearSearch}>
                 Clear
               </button>
             ) : null}
           </div>
-          <p id="court-search-hint" className="small muted">
-            {searchMode === 'location'
-              ? 'Shows public courts within the search radius, closest first. The radius is for browsing only — you can link any court you teach at.'
-              : 'Matches court names, streets, cities, and ZIPs in the PickleCoach directory. A ZIP, city and state, or street address searches nearby instead.'}
-          </p>
+          {searchMode === 'location' ? (
+            <div className="row" style={{ flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+              <select
+                id="court-search-radius"
+                aria-label="Search radius"
+                value={searchRadius}
+                onChange={onRadiusChange}
+                disabled={searchBusy}
+              >
+                {SEARCH_RADIUS_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
+              <button className="btn secondary" type="button" onClick={useNearby} disabled={searchBusy}>
+                Courts near me
+              </button>
+            </div>
+          ) : null}
           {searchError ? <div className="alert error">{searchError}</div> : null}
         </form>
 
