@@ -1,5 +1,5 @@
 import { CourtLocation, CoachCourtLocation, CoachProfile } from '../models/index.js';
-import { Op } from 'sequelize';
+import { Op, literal } from 'sequelize';
 import { successResponse, errorResponse, createErrorResponse, createResponse, paginatedResponse } from '../utils/response.js';
 import { getPagination, getPagingData } from '../utils/pagination.js';
 import { logger } from '../config/logger.js';
@@ -199,17 +199,27 @@ export const searchCourts = async (req, res) => {
       textWhere ? { [Op.and]: [geoParts, textWhere] } : geoParts,
     );
 
-    const mapGeoResults = (rows) => sortCourtsByDistanceFrom(rows, latitude, longitude).map((c) => {
+    // The bounding box is a square; drop its corners so results really are within the radius.
+    const mapGeoResults = (rows) => sortCourtsByDistanceFrom(rows, latitude, longitude).flatMap((c) => {
       const plain = c.get ? c.get({ plain: true }) : { ...c };
       const d = distanceMiles(latitude, longitude, plain.latitude, plain.longitude);
+      if (d != null && d > radiusMiles) return [];
       if (d != null) plain.distance_miles = Math.round(d * 10) / 10;
-      return plain;
+      return [plain];
     });
+
+    // Order by approximate distance before the row cap so the closest courts are the ones kept.
+    const cosLat = Math.cos(latitude * Math.PI / 180);
+    const approxDistanceSq = literal(
+      `POW(latitude - ${Number(latitude).toFixed(7)}, 2)`
+      + ` + POW((longitude - ${Number(longitude).toFixed(7)}) * ${cosLat.toFixed(7)}, 2)`,
+    );
 
     const loadLocalGeoCourts = async () => {
       const rows = await CourtLocation.findAll({
         where,
         attributes: PUBLIC_COURT_LIST_ATTRIBUTES,
+        order: [[approxDistanceSq, 'ASC']],
         limit: GEO_COURT_RESULT_LIMIT,
       });
       return mapGeoResults(rows);

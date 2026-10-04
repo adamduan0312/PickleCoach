@@ -2,9 +2,11 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   classifyCourtSearch,
+  cleanLocationQuery,
   isCourtAlreadyLinked,
   isCourtDiscoveryPending,
   linkedCourtIdSet,
+  placeFromDirectoryMatches,
   splitPastedCourtAddress,
 } from '../src/utils/coachCourts.js';
 
@@ -27,9 +29,58 @@ describe('classifyCourtSearch', () => {
   });
 
   it('treats court names (even with a state) as court searches', () => {
-    for (const q of ['Tropical Park', 'Holiday Park', 'Holiday Park FL', 'Bamford Pickleball Courts, FL', 'Davie', '10 Pin Park', '', '   ']) {
+    for (const q of [
+      'Tropical Park',
+      'Holiday Park',
+      'Holiday Park FL',
+      'Bamford Pickleball Courts, FL',
+      'Weston Regional Pickleball Court',
+      'Pine Island Park Courts',
+      '10 Pin Park',
+      'Court #3',
+      '',
+      '   ',
+    ]) {
       assert.equal(classifyCourtSearch(q), 'court', q);
     }
+  });
+
+  it('leaves bare names (possible city or court) to the directory check', () => {
+    for (const q of ['Davie', 'Weston', 'fort lauderdale', 'Pine Island', 'Tropical']) {
+      assert.equal(classifyCourtSearch(q), 'place_or_court', q);
+    }
+    assert.equal(classifyCourtSearch('One Two Three Four'), 'court');
+  });
+});
+
+describe('cleanLocationQuery', () => {
+  it('drops Plus Codes and repeated parts for the results header', () => {
+    assert.equal(
+      cleanLocationQuery('3PGM+5JF, 3801 S Pine Island Rd, Davie, FL 33328, Davie, FL'),
+      '3801 S Pine Island Rd, Davie, FL 33328',
+    );
+    assert.equal(cleanLocationQuery('33328'), '33328');
+    assert.equal(cleanLocationQuery('Davie,  FL'), 'Davie, FL');
+  });
+});
+
+describe('placeFromDirectoryMatches', () => {
+  const courts = [
+    { name: 'Weston Regional Park', city: 'Weston', state: 'FL' },
+    { name: 'Vista Park', city: 'Weston', state: 'FL' },
+    { name: 'Weston Commons', city: 'Weston', state: 'MA' },
+    { name: 'Pine Island Park Courts', city: 'Davie', state: 'FL' },
+  ];
+
+  it('recognizes a city listed on directory courts and picks its most common state', () => {
+    assert.deepEqual(placeFromDirectoryMatches('weston', courts), { city: 'Weston', state: 'FL' });
+    assert.deepEqual(placeFromDirectoryMatches(' Davie ', courts), { city: 'Davie', state: 'FL' });
+  });
+
+  it('does not treat a court-name match as a place', () => {
+    assert.equal(placeFromDirectoryMatches('Pine Island', courts), null);
+    assert.equal(placeFromDirectoryMatches('Tropical', courts), null);
+    assert.equal(placeFromDirectoryMatches('Weston', []), null);
   });
 });
 

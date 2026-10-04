@@ -8,9 +8,11 @@ import { courtLabel, formatCourtAddressLines, formatMiles } from '../../utils/fo
 import {
   COURT_DISCOVERY_PENDING_NOTE,
   classifyCourtSearch,
+  cleanLocationQuery,
   isCourtAlreadyLinked,
   isCourtDiscoveryPending,
   linkedCourtIdSet,
+  placeFromDirectoryMatches,
   splitPastedCourtAddress,
 } from '../../utils/coachCourts.js';
 
@@ -44,12 +46,10 @@ export function CoachCourtsPage() {
   }, []);
 
   const [searchQ, setSearchQ] = useState('');
-  const [searchMode, setSearchMode] = useState('court'); // 'court' | 'location'
-  const [modeChosen, setModeChosen] = useState(false); // user picked the mode; skip auto-detect
   const [searchBusy, setSearchBusy] = useState(false);
   const [searchError, setSearchError] = useState(null);
   const [searchResults, setSearchResults] = useState(null);
-  // What the results are for: { kind: 'court', query } | { kind: 'location', label, detail, radius }
+  // What the results are for: { kind: 'court', query, canSearchNear } | { kind: 'location', label, detail, radius }
   const [resultsFor, setResultsFor] = useState(null);
   const [origin, setOrigin] = useState(null); // { lat, lng, label, detail } | null
   const [discoveryPending, setDiscoveryPending] = useState(false);
@@ -106,12 +106,33 @@ export function CoachCourtsPage() {
     }
   }
 
+  function showDirectoryResults(q, courts, { canSearchNear = false } = {}) {
+    setOrigin(null);
+    setSearchResults(courts);
+    setResultsFor({ kind: 'court', query: q, canSearchNear });
+    setDiscoveryPending(false);
+  }
+
   async function searchCourtFields(q) {
     const res = await courtsApi.search({ q });
-    setOrigin(null);
-    setSearchResults(asList(res.data));
-    setResultsFor({ kind: 'court', query: q });
-    setDiscoveryPending(false);
+    showDirectoryResults(q, asList(res.data));
+  }
+
+  /** Bare names: a city in the directory ("Weston") searches nearby; anything else is a name search. */
+  async function searchPlaceOrCourt(q) {
+    const res = await courtsApi.search({ q });
+    const courts = asList(res.data);
+    const place = placeFromDirectoryMatches(q, courts);
+    if (place) {
+      const label = `${place.city}, ${place.state}`;
+      try {
+        await searchNearPlace(label, label);
+        return;
+      } catch {
+        // Geocoder unavailable: the directory matches below are still useful.
+      }
+    }
+    showDirectoryResults(q, courts, { canSearchNear: courts.length === 0 });
   }
 
   async function searchNearOrigin(place, radius = searchRadius) {
@@ -123,39 +144,28 @@ export function CoachCourtsPage() {
     setDiscoveryPending(isCourtDiscoveryPending(res));
   }
 
-  async function searchNearPlace(q) {
+  async function searchNearPlace(q, label = q) {
     const res = await geoApi.search({ q, limit: 1 });
     const best = Array.isArray(res.data?.results) ? res.data.results[0] : null;
     if (!best) {
       throw new Error('We couldn’t find that location. Try a ZIP, a city and state (e.g. Davie, FL), or a street address.');
     }
-    await searchNearOrigin({ lat: best.lat, lng: best.lng, label: q, detail: best.label });
-  }
-
-  function runSearchAs(mode, q) {
-    setSearchMode(mode);
-    return withSearch(() => (mode === 'location' ? searchNearPlace(q) : searchCourtFields(q)));
+    await searchNearOrigin({ lat: best.lat, lng: best.lng, label, detail: best.label === label ? null : best.label });
   }
 
   function runSearch(e) {
     e?.preventDefault?.();
     const q = searchQ.trim();
     if (!q) {
-      setSearchError(searchMode === 'location'
-        ? 'Enter a ZIP, city and state, or address — or use Courts near me.'
-        : 'Enter a court name or address.');
+      setSearchError('Enter a court name, city, ZIP code, or address.');
       return undefined;
     }
-    const mode = modeChosen ? searchMode : classifyCourtSearch(q);
-    return runSearchAs(mode, q);
-  }
-
-  function chooseMode(mode) {
-    setModeChosen(true);
-    setSearchMode(mode);
-    setSearchError(null);
-    const q = searchQ.trim();
-    if (q) runSearchAs(mode, q);
+    const kind = classifyCourtSearch(q);
+    return withSearch(() => {
+      if (kind === 'location') return searchNearPlace(q, cleanLocationQuery(q) || q);
+      if (kind === 'place_or_court') return searchPlaceOrCourt(q);
+      return searchCourtFields(q);
+    });
   }
 
   function useNearby() {
@@ -163,7 +173,6 @@ export function CoachCourtsPage() {
       setSearchError('This browser does not support location.');
       return;
     }
-    setSearchMode('location');
     withSearch(async () => {
       let pos;
       try {
@@ -175,7 +184,7 @@ export function CoachCourtsPage() {
           });
         });
       } catch {
-        throw new Error('Could not get your location. Search near a ZIP, city, or address instead.');
+        throw new Error('Could not get your location. Search for a city, ZIP code, or address instead.');
       }
       await searchNearOrigin({
         lat: pos.coords.latitude,
@@ -369,73 +378,49 @@ export function CoachCourtsPage() {
     <div className="page">
       <h1>Courts</h1>
       <p className="muted">
-        Search PickleCoach courts and link any court where you teach. Look up a court by name, or browse courts
-        near a ZIP, city, address, or your current location. Only add a new location when it is not already
-        listed (or when it is private/custom).
+        Find the courts where you teach and link them to your profile. Only add a new location when it is not
+        already listed (or when it is private/custom).
       </p>
       <Alert tone="error">{err}</Alert>
       <Alert tone="success">{message}</Alert>
 
       <section className="card stack" style={{ maxWidth: 720, marginBottom: 16 }}>
         <h2>Find a court</h2>
-        <div className="row" style={{ gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-          <span id="court-search-by" className="small muted">Search by:</span>
-          <div className="row" role="group" aria-labelledby="court-search-by" style={{ gap: 8 }}>
-            {[
-              { mode: 'court', label: 'Court name' },
-              { mode: 'location', label: 'Location' },
-            ].map(({ mode, label }) => (
-              <button
-                key={mode}
-                type="button"
-                className={searchMode === mode ? 'btn' : 'btn ghost'}
-                aria-pressed={searchMode === mode}
-                disabled={searchBusy}
-                onClick={() => chooseMode(mode)}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-        </div>
         <form onSubmit={runSearch} className="stack">
-          <FormField
-            label={searchMode === 'location'
-              ? 'Find courts within a radius of a ZIP code, city, or address.'
-              : 'Search the court directory by name or address.'}
-            name="court_search"
-            value={searchQ}
-            onChange={(e) => setSearchQ(e.target.value)}
-            placeholder={searchMode === 'location' ? 'e.g. 33328 or Davie, FL' : 'e.g. Holiday Park'}
-          />
-          <div className="row" style={{ flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+          <div className="row" style={{ gap: 8, alignItems: 'end' }}>
+            <div style={{ flex: 1 }}>
+              <FormField
+                label="Search by court name, city, ZIP code, or address."
+                name="court_search"
+                value={searchQ}
+                onChange={(e) => setSearchQ(e.target.value)}
+                placeholder="e.g. Holiday Park, Weston, or 33328"
+              />
+            </div>
             <button className="btn" type="submit" disabled={searchBusy}>
               {searchBusy ? 'Searching…' : 'Search'}
             </button>
+          </div>
+          <div className="row" style={{ flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+            <button className="btn secondary" type="button" onClick={useNearby} disabled={searchBusy}>
+              Use my current location
+            </button>
+            {resultsFor?.kind === 'location' ? (
+              <label className="row small" style={{ gap: 6, alignItems: 'center' }}>
+                Radius:
+                <select aria-label="Search radius" value={searchRadius} onChange={onRadiusChange} disabled={searchBusy}>
+                  {SEARCH_RADIUS_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
             {searchResults ? (
               <button className="btn ghost" type="button" onClick={clearSearch}>
                 Clear
               </button>
             ) : null}
           </div>
-          {searchMode === 'location' ? (
-            <div className="row" style={{ flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
-              <select
-                id="court-search-radius"
-                aria-label="Search radius"
-                value={searchRadius}
-                onChange={onRadiusChange}
-                disabled={searchBusy}
-              >
-                {SEARCH_RADIUS_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>{opt.label}</option>
-                ))}
-              </select>
-              <button className="btn secondary" type="button" onClick={useNearby} disabled={searchBusy}>
-                Courts near me
-              </button>
-            </div>
-          ) : null}
           {searchError ? <div className="alert error">{searchError}</div> : null}
         </form>
 
@@ -451,8 +436,17 @@ export function CoachCourtsPage() {
                 <div className="small muted">
                   {searchResults.length} court{searchResults.length === 1 ? '' : 's'}
                   {resultsFor.kind === 'location' && resultsFor.detail ? ` · centered on ${resultsFor.detail}` : ''}
-                  {resultsFor.kind === 'court' ? ' · matched on name or address, not distance' : ''}
                 </div>
+                {resultsFor.kind === 'court' && resultsFor.canSearchNear ? (
+                  <button
+                    className="btn ghost small"
+                    type="button"
+                    disabled={searchBusy}
+                    onClick={() => withSearch(() => searchNearPlace(resultsFor.query))}
+                  >
+                    Search for courts near “{resultsFor.query}” instead
+                  </button>
+                ) : null}
               </div>
               {!showCreate ? (
                 <button className="btn ghost" type="button" onClick={openCreate}>
@@ -467,7 +461,7 @@ export function CoachCourtsPage() {
                 detail={
                   resultsFor.kind === 'location'
                     ? 'Try a larger search radius, or add the location if this court is not in the directory yet.'
-                    : 'Try another name, search near a location, or add the location if this court is not in the directory yet.'
+                    : 'Try another name, a city, ZIP code, or address, or add the location if this court is not in the directory yet.'
                 }
               />
             ) : null}

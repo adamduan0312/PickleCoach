@@ -56,6 +56,12 @@ function dedupeAddressParts(parts) {
   return kept;
 }
 
+/** Readable label for a location query: no Plus Codes or repeated address parts. */
+export function cleanLocationQuery(text) {
+  const parts = stripPlusCodes(text).split(',').map((p) => p.trim().replace(/\s+/g, ' ')).filter(Boolean);
+  return dedupeAddressParts(parts).join(', ');
+}
+
 /**
  * Split a whole address pasted into the street field ("3PGM+5JF, 3801 S Pine Island Rd, Davie,
  * FL 33328") into form fields. Returns null when there is nothing to split.
@@ -91,11 +97,13 @@ export function splitPastedCourtAddress(text) {
 }
 
 /**
- * Whether Find a court text names a place (ZIP, "City, ST", street address) to search near, or a
- * court to match by name/address fields. Pattern-only, so court-name searches never wait on
- * geocoding.
+ * How to run Find a court text. Pattern-only, so court-name searches never wait on geocoding.
+ * - 'location': ZIP, "City, ST", or street address → radius search around it.
+ * - 'court': clearly a court/facility (venue words, digits, punctuation) → directory text search.
+ * - 'place_or_court': a bare name like "Weston" or "Pine Island" → directory text search, then
+ *   treated as a place only if directory courts have that city (see placeFromDirectoryMatches).
  * @param {string} query
- * @returns {'location' | 'court'}
+ * @returns {'location' | 'court' | 'place_or_court'}
  */
 export function classifyCourtSearch(query) {
   const q = stripPlusCodes(query).replace(/\s+/g, ' ');
@@ -109,7 +117,34 @@ export function classifyCourtSearch(query) {
   if (cityState && US_STATE_CODES.has(cityState[2].toUpperCase()) && !VENUE_WORD_RE.test(cityState[1])) {
     return 'location';
   }
+  if (/^[A-Za-z][A-Za-z .'-]*$/.test(q) && q.split(' ').length <= 3 && !VENUE_WORD_RE.test(q)) {
+    return 'place_or_court';
+  }
   return 'court';
+}
+
+/**
+ * A bare query ("weston") is a place when directory courts list it as their city. Returns the
+ * city as stored plus its most common state, or null.
+ * @param {string} query
+ * @param {Array<{ city?: string, state?: string }>} courts directory text-search results
+ * @returns {{ city: string, state: string } | null}
+ */
+export function placeFromDirectoryMatches(query, courts) {
+  const want = String(query || '').trim().replace(/\s+/g, ' ').toLowerCase();
+  if (!want) return null;
+  const byState = new Map();
+  let city = null;
+  for (const c of courts || []) {
+    if (String(c?.city || '').trim().replace(/\s+/g, ' ').toLowerCase() !== want) continue;
+    const state = String(c.state || '').trim().toUpperCase();
+    if (!US_STATE_CODES.has(state)) continue;
+    city = city || String(c.city).trim();
+    byState.set(state, (byState.get(state) || 0) + 1);
+  }
+  if (!city) return null;
+  const [state] = [...byState.entries()].sort((a, b) => b[1] - a[1])[0];
+  return { city, state };
 }
 
 export const COURT_DISCOVERY_PENDING_NOTE =

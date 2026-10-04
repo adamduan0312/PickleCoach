@@ -733,6 +733,29 @@ describe('searchCourts geographic discovery (non-blocking)', () => {
     assert.deepEqual(res.payload?.discovery, { status: 'running' });
   });
 
+  it('keeps only courts within the radius and orders the query by distance before the cap', async () => {
+    stubSchedule('recent');
+    let findAllOpts;
+    const corner = {
+      ...localCourt,
+      id: 8,
+      name: 'Box Corner',
+      latitude: 40.7128 + 0.14,
+      longitude: -74.006 + 0.18,
+    };
+    CourtLocation.findAll = async (opts) => {
+      findAllOpts = opts;
+      return [corner, localCourt];
+    };
+    const req = { validated: { lat: 40.7128, lng: -74.006, radius: 10 } };
+    const res = { json(p) { this.payload = p; } };
+    await searchCourts(req, res);
+    assert.deepEqual(res.payload.data.map((c) => c.name), ['Local Only']);
+    assert.equal(findAllOpts.limit, 100);
+    assert.equal(findAllOpts.order?.[0]?.[1], 'ASC');
+    assert.match(String(findAllOpts.order?.[0]?.[0]?.val), /POW\(latitude - 40\.7128000, 2\)/);
+  });
+
   it('reports recent when the area was discovered lately', async () => {
     stubSchedule('recent');
     CourtLocation.findAll = async () => [localCourt];
