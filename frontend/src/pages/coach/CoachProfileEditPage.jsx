@@ -253,14 +253,19 @@ export function CoachProfileEditPage() {
           </button>
           {!creating && user?.id ? (
             <Link className="btn secondary" to={`/coaches/${user.id}`}>View public profile</Link>
-          ) : null}
+          ) : (
+            <>
+              <button className="btn secondary" type="button" disabled aria-describedby="view-profile-hint">
+                View public profile
+              </button>
+              <span id="view-profile-hint" className="small muted">Available after you save your profile.</span>
+            </>
+          )}
         </div>
       </form>
-      {!creating ? (
-        <div style={{ maxWidth: 640, marginTop: 16 }}>
-          <CoachPhotosManager />
-        </div>
-      ) : null}
+      <div style={{ maxWidth: 640, marginTop: 16 }}>
+        <CoachPhotosManager />
+      </div>
     </div>
   );
 }

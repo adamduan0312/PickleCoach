@@ -299,7 +299,10 @@ test('coach profile page: system before rating, dynamic copy, field errors, unsa
   assert.equal((src.match(/navigate\(/g) || []).length, 1);
   assert.ok(src.indexOf("<Alert tone=\"success\">") > src.indexOf('<PlaceAutocomplete'), 'confirmation sits near Save');
   assert.match(src, /<Alert tone="success">\{message\}<\/Alert>/);
-  assert.equal((src.match(/View public profile/g) || []).length, 1, 'only the persistent button, not in the save message');
+  assert.equal((src.match(/View public profile<\/Link>/g) || []).length, 1, 'only the persistent button, not in the save message');
+  assert.doesNotMatch(src, /setMessage\([^)]*View public profile/);
+  // While creating, the button is shown disabled until there is a profile to view.
+  assert.match(src, /disabled aria-describedby="view-profile-hint">\s*View public profile\s*<\/button>/);
   // Persistent link once a profile exists (not while creating); a normal Link, so the unsaved-changes guard applies.
   assert.match(src, /\{busy \? 'Saving…' : creating \? 'Save profile' : 'Save changes'\}/);
   assert.match(src, /\{!creating && user\?\.id \? \(\s*<Link className="btn secondary" to=\{`\/coaches\/\$\{user\.id\}`\}>View public profile<\/Link>/);
