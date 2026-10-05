@@ -4,6 +4,7 @@ import { coachesApi, lessonsApi, asList } from '../../api/index.js';
 import { useAsync } from '../../hooks/useAsync.js';
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard.js';
 import { EmptyState, ErrorState, LoadingState, Alert } from '../../components/ui/States.jsx';
+import { SetupNextStep } from '../../components/coach/CoachOnboarding.jsx';
 import { FormField } from '../../components/ui/FormField.jsx';
 import { CharacterCounter } from '../../components/ui/CharacterLimit.jsx';
 import { formatMoney } from '../../utils/format.js';
@@ -284,6 +285,7 @@ export function CoachLessonsPage() {
         </button>
       </div>
       <Alert tone="success">{message}</Alert>
+      <SetupNextStep step="lesson" refreshKey={message} />
       <Alert tone="error">{err}</Alert>
       {loading ? <LoadingState /> : null}
       {error ? <ErrorState error={error} /> : null}

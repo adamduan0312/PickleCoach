@@ -1046,6 +1046,58 @@ table.data th { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0
 }
 .coach-photo-tip p { margin: 0.25rem 0 0.5rem; }
 
+.coach-onboarding { margin-bottom: 16px; }
+.coach-onboarding-title { margin: 0.25rem 0; }
+.coach-onboarding-progress { display: grid; gap: 0.35rem; margin: 0.75rem 0 0.5rem; max-width: 360px; }
+.coach-onboarding-bar {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--pc-line);
+  overflow: hidden;
+}
+.coach-onboarding-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--pc-green);
+  border-radius: inherit;
+  transition: width 0.3s ease;
+}
+.coach-onboarding-steps { list-style: none; padding: 0; margin: 0.5rem 0; display: grid; gap: 0.25rem; }
+.coach-onboarding-steps li {
+  display: grid;
+  grid-template-columns: 1.75rem 1fr auto;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.45rem 0.6rem;
+  border-radius: 8px;
+}
+.coach-onboarding-steps li.current { background: var(--pc-info-soft); }
+.coach-onboarding-steps li.done a { color: var(--pc-green-dark); }
+.coach-onboarding-steps li.disabled { color: #888; }
+.coach-onboarding-num {
+  width: 1.6rem;
+  height: 1.6rem;
+  border-radius: 50%;
+  display: inline-grid;
+  place-items: center;
+  font-size: 0.8rem;
+  font-weight: 600;
+  border: 1px solid var(--pc-line);
+}
+.coach-onboarding-steps li.done .coach-onboarding-num { background: var(--pc-green-soft); border-color: transparent; color: var(--pc-green-dark); }
+.coach-onboarding-steps li.current .coach-onboarding-num { background: #fff; border-color: currentColor; }
+.coach-onboarding-status.done { color: var(--pc-green-dark); font-weight: 600; font-size: 0.9rem; }
+.coach-onboarding-next {
+  border-top: 1px solid var(--pc-line);
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+}
+.coach-onboarding-next h3 { margin: 0 0 0.25rem; }
+.coach-continue { border-left: 4px solid var(--pc-green); }
+.coach-continue-done { margin: 0; color: var(--pc-green-dark); font-weight: 600; }
+.coach-optional-photo { display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; margin-bottom: 16px; }
+.coach-optional-photo p { margin: 0.25rem 0 0; }
+
 .hamburger { display: none; }
 
 @media (max-width: 840px) {

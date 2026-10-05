@@ -12,6 +12,7 @@ import { coachDashboardReminders } from '../../domain/dashboardReminders.js';
 import { bookingLessonTitle } from '../../domain/lessonOffering.js';
 import { formatListWhenInZone, formatListWhenWithZone } from '../../utils/datetime.js';
 import { coachSetupView } from '../../domain/coachSetup.js';
+import { CoachOnboardingCard } from '../../components/coach/CoachOnboarding.jsx';
 
 function respondByWhen(booking, tz) {
   const iso = coachAcceptanceDeadlineAt(booking);
@@ -34,7 +35,7 @@ export function CoachDashboardPage() {
   const { data: market, error: marketError, loading: marketLoading } = useAsync(async () => {
     const statusRes = await coachesApi.marketplaceStatus();
     return statusRes.data;
-  }, [user?.id, readiness.coachUiPhase]);
+  }, [user?.id, readiness.coachUiPhase], { keepData: true });
 
   const { data: bookingsData, error: bookingsError, loading: bookingsLoading } = useAsync(async () => {
     const bookingsRes = await coachesApi.myBookings();
@@ -54,7 +55,7 @@ export function CoachDashboardPage() {
     [bookingsData?.bookings],
   );
 
-  const loading = marketLoading || bookingsLoading;
+  const loading = (marketLoading && !market) || bookingsLoading;
   // Without a profile the next step is known even if marketplace status fails to load.
   const setupSteps = market?.steps || (readiness.coachUiPhase === 'start_setup' ? { profile: false } : null);
   const setup = setupSteps
@@ -64,6 +65,31 @@ export function CoachDashboardPage() {
       profileMissingFields: market?.profile_missing_fields,
     })
     : null;
+  const listed = Boolean(market?.listed);
+
+  const onboarding = setup ? (
+    <>
+      <CoachOnboardingCard
+        listed={listed}
+        setup={setup}
+        userId={user?.id}
+        onRefresh={() => { refreshProfile(); refreshStripeStatus(); }}
+      />
+      {!user?.avatar_url ? (
+        <div className="card coach-optional-photo">
+          <div>
+            <span className="small muted coach-next-step-label">Optional</span>
+            <p>
+              <strong>Add a profile photo</strong>
+              <br />
+              <span className="small">Help students recognize you before booking.</span>
+            </p>
+          </div>
+          <Link className="btn secondary" to="/coach/profile">Add photo →</Link>
+        </div>
+      ) : null}
+    </>
+  ) : null;
 
   return (
     <div className="page">
@@ -80,69 +106,13 @@ export function CoachDashboardPage() {
           {user?.id ? <Link to={`/coaches/${user.id}`}>View public profile</Link> : null}
         </Alert>
       ) : null}
+      {!listed ? onboarding : null}
       <HowBookingsWorkGuide userId={user?.id} role="coach" />
       {!bookingsLoading && !bookingsError ? <DashboardReminders items={reminders} /> : null}
-      {setup?.next ? (
-        <div className="card coach-next-step" style={{ marginBottom: 16 }}>
-          <span className="small muted coach-next-step-label">Next step</span>
-          <h2>{setup.next.title}</h2>
-          <p>{setup.next.detail}</p>
-          <Link className="btn" to={setup.next.to}>{setup.next.cta}</Link>
-        </div>
-      ) : null}
       {loading ? <LoadingState /> : null}
       {marketError ? <ErrorState error={marketError} /> : null}
       {bookingsError ? <ErrorState error={bookingsError} /> : null}
-      {market ? (
-        <div className="card" style={{ marginBottom: 16 }}>
-          <div className="spread">
-            <h2>Marketplace status</h2>
-            <StatusBadge
-              status={market.listed ? 'listed' : 'unlisted'}
-              label={market.listed ? 'Listed for students' : 'Not listed yet'}
-              tone={market.listed ? 'success' : 'warning'}
-            />
-          </div>
-          {!market.listed ? (
-            <p className="small muted">
-              Complete every step below to appear in Discover. Students can’t find you until you’re listed.
-            </p>
-          ) : (
-            <p className="small muted">You’re visible to students in Discover.</p>
-          )}
-          <ul className="checklist">
-            {(setup?.checklist || []).map((item) => (
-              <li key={item.key} className={item.done ? 'done' : item.disabled ? 'disabled' : ''}>
-                <span aria-hidden="true">{item.done ? '✓' : '○'}</span>{' '}
-                {item.disabled ? (
-                  <span aria-disabled="true">
-                    {item.label} <span className="small muted">— {item.hint}</span>
-                  </span>
-                ) : (
-                  <Link to={item.to}>
-                    {item.label}
-                    <span className="visually-hidden">{item.done ? ' (done)' : ' (not done)'}</span>
-                  </Link>
-                )}
-              </li>
-            ))}
-          </ul>
-          {!user?.avatar_url ? (
-            <div className="coach-photo-tip">
-              <span className="small muted coach-next-step-label">Optional</span>
-              <p>
-                <strong>Add a profile photo</strong>
-                <br />
-                <span className="small">Help students recognize you before booking.</span>
-              </p>
-              <Link className="btn secondary" to="/coach/profile">Add photo</Link>
-            </div>
-          ) : null}
-          <div className="row">
-            <button type="button" className="btn ghost" onClick={() => { refreshProfile(); refreshStripeStatus(); }}>Refresh</button>
-          </div>
-        </div>
-      ) : null}
+      {listed ? onboarding : null}
       <div className="card">
         <h2>Incoming requests</h2>
         {bookingsData && bookingsData.pending.length === 0 ? (

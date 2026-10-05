@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { coachesApi, courtsApi, geoApi, asList } from '../../api/index.js';
 import { useAsync } from '../../hooks/useAsync.js';
 import { Alert, EmptyState, ErrorState, LoadingState } from '../../components/ui/States.jsx';
+import { SetupNextStep } from '../../components/coach/CoachOnboarding.jsx';
 import { FormField } from '../../components/ui/FormField.jsx';
 import { CHAR_LIMITS } from '../../utils/charLimits.js';
 import { courtLabel, formatCourtAddressLines, formatMiles } from '../../utils/format.js';
@@ -383,6 +384,7 @@ export function CoachCourtsPage() {
       </p>
       <Alert tone="error">{err}</Alert>
       <Alert tone="success">{message}</Alert>
+      <SetupNextStep step="court" refreshKey={message} />
 
       <section className="card stack" style={{ maxWidth: 720, marginBottom: 16 }}>
         <h2>Find a court</h2>

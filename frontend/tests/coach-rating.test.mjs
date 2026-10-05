@@ -291,12 +291,13 @@ test('coach profile page: system before rating, dynamic copy, field errors, unsa
     assert.match(src, new RegExp(`error=\\{fieldErrors\\.${f}\\}`), f);
   }
   assert.match(src, /<CharacterCounter value=\{form\.headline\} max=\{CHAR_LIMITS\.coachHeadline\}/);
-  assert.match(src, /const \{ allowNavigation \} = useUnsavedChangesGuard\(isDirty\);/);
-  // Create → dashboard with a one-time flash; edit → stay, reset the saved baseline, confirm near Save.
-  assert.match(src, /if \(creating\) \{\s*await coachesApi\.createProfile\(body\);\s*await refreshProfile\(\);\s*allowNavigation\(\);\s*navigate\('\/coach', \{ state: \{ flash: 'Profile created\.' \} \}\);/);
-  assert.match(src, /await coachesApi\.updateMyProfile\(body\);\s*const fresh = await refreshProfile\(\);\s*const saved = coachProfileToForm\(fresh\?\.coachProfile\);\s*setForm\(saved\);\s*setInitialForm\(saved\);/);
-  assert.match(src, /setMessage\('Profile saved\.'\);/);
-  assert.equal((src.match(/navigate\(/g) || []).length, 1);
+  assert.match(src, /useUnsavedChangesGuard\(isDirty\);/);
+  // Create and edit both stay on the page (reset the saved baseline, confirm near Save) so the
+  // onboarding "Next step" can point straight to Lessons instead of bouncing to the dashboard.
+  assert.match(src, /if \(creating\) await coachesApi\.createProfile\(body\);\s*else await coachesApi\.updateMyProfile\(body\);\s*const fresh = await refreshProfile\(\);\s*const saved = coachProfileToForm\(fresh\?\.coachProfile\);\s*setForm\(saved\);\s*setInitialForm\(saved\);/);
+  assert.match(src, /setMessage\(creating \? 'Profile created\.' : 'Profile saved\.'\);/);
+  assert.doesNotMatch(src, /navigate\(/);
+  assert.match(src, /<SetupNextStep step="profile" refreshKey=\{message\} \/>/);
   assert.ok(src.indexOf("<Alert tone=\"success\">") > src.indexOf('<PlaceAutocomplete'), 'confirmation sits near Save');
   assert.match(src, /<Alert tone="success">\{message\}<\/Alert>/);
   assert.equal((src.match(/View public profile<\/Link>/g) || []).length, 1, 'only the persistent button, not in the save message');

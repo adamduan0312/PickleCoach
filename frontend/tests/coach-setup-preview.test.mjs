@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { coachSetupView, missingSetupSteps, ownProfileLessonPreview } from '../src/domain/coachSetup.js';
+import { coachSetupView, missingSetupSteps, ownProfileLessonPreview, setupContinuation } from '../src/domain/coachSetup.js';
 
 const read = (rel) => readFileSync(new URL(rel, import.meta.url), 'utf8');
 
@@ -88,20 +88,62 @@ test('payout step reuses readiness phases; listed coach has no next step', () =>
   assert.ok(all.checklist.every((i) => i.done && !i.disabled));
 });
 
-test('dashboard: one reusable Next step card + clickable checklist, no separate button row', () => {
+test('setup view counts progress; continuation appears once a page’s own step is done', () => {
+  const view = coachSetupView({ ...NONE, profile: true, court: true });
+  assert.equal(view.doneCount, 2);
+  assert.equal(view.total, 5);
+
+  assert.equal(setupContinuation('lesson', { ...NONE, profile: true }), null);
+  const afterProfile = setupContinuation('profile', { ...NONE, profile: true }, { coachUiPhase: 'connect_stripe' });
+  assert.equal(afterProfile.doneLabel, 'Profile complete');
+  assert.deepEqual([afterProfile.next.title, afterProfile.next.cta, afterProfile.next.to], ['Add your first lesson', 'Go to Lessons', '/coach/lessons']);
+  const afterLesson = setupContinuation('lesson', { ...NONE, profile: true, lesson: true });
+  assert.equal(afterLesson.doneLabel, 'Lesson complete');
+  assert.equal(afterLesson.next.title, 'Add a teaching court');
+  // Earlier gaps still win: payouts done first points back to the lesson.
+  assert.equal(setupContinuation('stripe', { ...NONE, profile: true, stripe: true }).next.title, 'Add your first lesson');
+  const all = { profile: true, lesson: true, court: true, availability: true, stripe: true };
+  assert.deepEqual(setupContinuation('availability', all), { doneLabel: 'Availability complete', next: null });
+});
+
+test('dashboard: one "Get listed on Discover" card replaces Next step + Marketplace status', () => {
   const src = read('../src/pages/coach/CoachDashboardPage.jsx');
   assert.match(src, /coachSetupView\(setupSteps, \{\s*coachUiPhase: readiness\.coachUiPhase,/);
   assert.match(src, /profileExists: market\?\.profile_exists \?\? readiness\.coachUiPhase !== 'start_setup'/);
   assert.match(src, /profileMissingFields: market\?\.profile_missing_fields/);
-  assert.match(src, /\{setup\?\.next \? \(/);
-  assert.match(src, /<Link className="btn" to=\{setup\.next\.to\}>\{setup\.next\.cta\}<\/Link>/);
-  assert.match(src, /<Link to=\{item\.to\}>/);
-  assert.doesNotMatch(src, /coachUiPhase === 'start_setup' \? \(/);
-  assert.doesNotMatch(src, /STEP_LABELS/);
-  for (const label of ['>Profile<', '>Lessons<', '>Courts<', '>Availability<', '>Payouts<']) {
-    assert.ok(!src.includes(label), `button row removed: ${label}`);
+  assert.match(src, /<CoachOnboardingCard\s+listed=\{listed\}/);
+  assert.doesNotMatch(src, /Marketplace status/);
+  assert.doesNotMatch(src, /coach-next-step"/);
+  // Unlisted: onboarding first on the page; listed: short confirmation further down.
+  assert.ok(src.indexOf('{!listed ? onboarding : null}') < src.indexOf('<HowBookingsWorkGuide'));
+  assert.ok(src.indexOf('{listed ? onboarding : null}') > src.indexOf('<DashboardReminders'));
+
+  const card = read('../src/components/coach/CoachOnboarding.jsx');
+  assert.match(card, />Get listed on Discover</);
+  assert.match(card, /Complete these \{total\} steps so students can find and book you\./);
+  assert.match(card, /<strong>\{doneCount\} of \{total\}<\/strong> complete/);
+  assert.match(card, /role="progressbar"/);
+  assert.match(card, /<h3>Next: \{next\.title\}<\/h3>/);
+  assert.match(card, /<Link className="btn" to=\{next\.to\}>\{next\.cta\} →<\/Link>/);
+  assert.match(card, /<Link to=\{item\.to\}>/);
+  assert.match(card, /You’re ready to be discovered! ✓/);
+  assert.match(card, /Your coach profile can now appear in Discover\./);
+  assert.match(card, />Refresh<\/button>/);
+});
+
+test('each setup page offers the next step once its own step is done', () => {
+  for (const [file, step] of [
+    ['CoachProfileEditPage.jsx', 'profile'],
+    ['CoachLessonsPage.jsx', 'lesson'],
+    ['CoachCourtsPage.jsx', 'court'],
+    ['CoachAvailabilityPage.jsx', 'availability'],
+    ['StripeConnectPage.jsx', 'stripe'],
+  ]) {
+    const src = read(`../src/pages/coach/${file}`);
+    assert.match(src, new RegExp(`<SetupNextStep step="${step}"`), file);
   }
-  assert.match(src, />Refresh<\/button>/);
+  const card = read('../src/components/coach/CoachOnboarding.jsx');
+  assert.match(card, /if \(!status \|\| listedAtLoad\) return null;/, 'already-listed coaches are not nagged');
 });
 
 test('own profile, listed (or status unknown): normal marketplace lessons, no preview', () => {

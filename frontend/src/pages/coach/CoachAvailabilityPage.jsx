@@ -3,6 +3,7 @@ import { coachesApi, asList } from '../../api/index.js';
 import { useAsync } from '../../hooks/useAsync.js';
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard.js';
 import { Alert, EmptyState, ErrorState, LoadingState } from '../../components/ui/States.jsx';
+import { SetupNextStep } from '../../components/coach/CoachOnboarding.jsx';
 import { FormField } from '../../components/ui/FormField.jsx';
 import { WEEKDAYS } from '../../utils/datetime.js';
 import { useAuth } from '../../auth/AuthContext.jsx';
@@ -234,6 +235,7 @@ export function CoachAvailabilityPage() {
         see these times converted to their own time zone and can book up to 60 days ahead.
       </p>
       <Alert tone="success">{message}</Alert>
+      <SetupNextStep step="availability" refreshKey={message} />
       <form className="card stack" onSubmit={submitAdd} noValidate style={{ marginBottom: 16 }}>
         <strong>Add availability</strong>
         <Alert tone="error">{addErr}</Alert>

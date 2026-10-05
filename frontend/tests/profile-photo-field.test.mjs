@@ -58,7 +58,9 @@ test('dashboard: optional, non-blocking photo nudge with neutral copy', () => {
   assert.match(dashboard, /\{!user\?\.avatar_url \? \(/);
   assert.match(dashboard, /<strong>Add a profile photo<\/strong>/);
   assert.match(dashboard, /Help students recognize you before booking\./);
-  assert.match(dashboard, /<Link className="btn secondary" to="\/coach\/profile">Add photo<\/Link>/);
+  assert.match(dashboard, /<Link className="btn secondary" to="\/coach\/profile">Add photo →<\/Link>/);
+  // Its own card, outside the required onboarding checklist.
+  assert.match(dashboard, /\{!user\?\.avatar_url \? \(\s*<div className="card coach-optional-photo">/);
   assert.doesNotMatch(dashboard, /more (profile )?views|more bookings/i);
 });
 

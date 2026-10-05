@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { coachesApi } from '../../api/index.js';
 import { useAuth } from '../../auth/AuthContext.jsx';
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard.js';
@@ -8,6 +8,7 @@ import { PlaceAutocomplete } from '../../components/ui/PlaceAutocomplete.jsx';
 import { CertificationsInput } from '../../components/ui/CertificationsInput.jsx';
 import { ProfilePhotoField } from '../../components/ui/ProfilePhotoField.jsx';
 import { CoachPhotosManager } from '../../components/coach/CoachPhotosManager.jsx';
+import { SetupNextStep } from '../../components/coach/CoachOnboarding.jsx';
 import { CharacterCounter } from '../../components/ui/CharacterLimit.jsx';
 import { CHAR_LIMITS } from '../../utils/charLimits.js';
 import { Alert } from '../../components/ui/States.jsx';
@@ -40,7 +41,6 @@ export function CoachProfileEditPage() {
   const { user, refreshProfile, readiness } = useAuth();
   const existing = user?.coachProfile;
   const creating = !existing;
-  const navigate = useNavigate();
   const [initialForm, setInitialForm] = useState(() => coachProfileToForm(existing));
   const [form, setForm] = useState(initialForm);
   const [fieldErrors, setFieldErrors] = useState({});
@@ -52,7 +52,7 @@ export function CoachProfileEditPage() {
   const statusRef = useRef(null);
 
   const isDirty = JSON.stringify(comparableForm(form)) !== JSON.stringify(comparableForm(initialForm));
-  const { allowNavigation } = useUnsavedChangesGuard(isDirty);
+  useUnsavedChangesGuard(isDirty);
   const ratingCopy = ratingFieldCopy(form.rating_system);
 
   useEffect(() => {
@@ -122,20 +122,14 @@ export function CoachProfileEditPage() {
     setBusy(true);
     const body = coachProfileFormToPayload(form);
     try {
-      if (creating) {
-        await coachesApi.createProfile(body);
-        await refreshProfile();
-        allowNavigation();
-        navigate('/coach', { state: { flash: 'Profile created.' } });
-        return;
-      }
-      await coachesApi.updateMyProfile(body);
+      if (creating) await coachesApi.createProfile(body);
+      else await coachesApi.updateMyProfile(body);
       const fresh = await refreshProfile();
       const saved = coachProfileToForm(fresh?.coachProfile);
       setForm(saved);
       setInitialForm(saved);
       setFieldErrors({});
-      setMessage('Profile saved.');
+      setMessage(creating ? 'Profile created.' : 'Profile saved.');
       const stillMissing = coachProfileMissingFields(fresh?.coachProfile);
       setIncompleteNotice(stillMissing.length ? incompleteProfileMessage(stillMissing) : null);
     } catch (err) {
@@ -247,6 +241,7 @@ export function CoachProfileEditPage() {
             <Alert tone="warning">{incompleteNotice}</Alert>
           </div>
         ) : null}
+        <SetupNextStep step="profile" refreshKey={message} />
         <div className="row">
           <button className="btn" type="submit" disabled={busy || photoBusy}>
             {busy ? 'Saving…' : creating ? 'Save profile' : 'Save changes'}

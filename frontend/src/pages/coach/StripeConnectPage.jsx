@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { coachesApi } from '../../api/index.js';
 import { useAuth } from '../../auth/AuthContext.jsx';
 import { Alert, LoadingState } from '../../components/ui/States.jsx';
+import { SetupNextStep } from '../../components/coach/CoachOnboarding.jsx';
 import { useAsync } from '../../hooks/useAsync.js';
 
 function payoutReadinessCopy(data) {
@@ -68,6 +69,7 @@ export function StripeConnectPage() {
       {loading ? <LoadingState /> : null}
       {error ? <Alert tone="error">{error.message}</Alert> : null}
       <Alert tone="error">{err}</Alert>
+      {data ? <SetupNextStep step="stripe" refreshKey={data.stripe_ready ? 'ready' : 'not-ready'} /> : null}
       {data && readiness ? (
         <div className="card stack">
           <Alert tone={readiness.tone}>

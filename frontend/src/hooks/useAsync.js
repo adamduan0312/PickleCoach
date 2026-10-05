@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 
-export function useAsync(loader, deps = []) {
+/** `keepData`: leave the previous result on screen while a dependency change reloads it. */
+export function useAsync(loader, deps = [], { keepData = false } = {}) {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -9,7 +10,7 @@ export function useAsync(loader, deps = []) {
     let cancelled = false;
     setLoading(true);
     setError(null);
-    setData(null);
+    if (!keepData) setData(null);
     Promise.resolve()
       .then(loader)
       .then((result) => {

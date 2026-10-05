@@ -20,6 +20,14 @@ const CHECKLIST_LABELS = {
   stripe: 'Payouts',
 };
 
+const STEP_DONE_LABELS = {
+  profile: 'Profile complete',
+  lesson: 'Lesson complete',
+  court: 'Court complete',
+  availability: 'Availability complete',
+  stripe: 'Payouts complete',
+};
+
 export const PAYOUTS_NEED_PROFILE = 'Create your profile first';
 
 /** `missing` keys from GET /coaches/me/marketplace-status → [{ key, label, to }] in COACH_SETUP_ORDER. */
@@ -79,7 +87,18 @@ export function coachSetupView(steps, { coachUiPhase, profileExists, profileMiss
   const next = first
     ? { key: first.key, to: first.to, ...nextStepCopy(first.key, { coachUiPhase, profileExists: exists, profileMissingFields }) }
     : null;
-  return { checklist, next };
+  const doneCount = checklist.filter((item) => item.done).length;
+  return { checklist, next, doneCount, total: checklist.length };
+}
+
+/**
+ * What a setup page shows once its own step is done: "Lesson complete" plus the next step
+ * (or null `next` when everything is done). Null while the page's step is still incomplete.
+ */
+export function setupContinuation(step, steps, options = {}) {
+  if (!steps?.[step]) return null;
+  const { next } = coachSetupView(steps, options);
+  return { doneLabel: STEP_DONE_LABELS[step], next };
 }
 
 /**
