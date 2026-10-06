@@ -41,32 +41,29 @@ test('Coach Profile: photo sits at the top of the form, before Headline, and sta
   assert.doesNotMatch(read('../src/domain/coachRating.js'), /avatar/);
 });
 
-test('photo is not a marketplace or profile-completeness requirement', () => {
+test('profile photo is a listing step, not part of profile completeness; the gallery is neither', () => {
   assert.doesNotMatch(read('../src/domain/coachProfileCompleteness.js'), /avatar|photo/i);
-  assert.doesNotMatch(read('../src/domain/coachSetup.js'), /avatar|photo/i);
   assert.doesNotMatch(read('../../backend/utils/coachProfileCompleteness.js'), /avatar|photo/i);
+  assert.match(read('../src/domain/coachSetup.js'), /photo: \{ label: 'Profile photo', to: '\/coach\/profile'/);
   const eligibility = read('../../backend/services/coachMarketplaceEligibility.js');
   const rules = eligibility.slice(
     eligibility.indexOf('export async function getCoachMarketplaceEligibility'),
     eligibility.indexOf('export function marketplaceDiscoveryIncludes'),
   );
-  assert.ok(rules.length > 0);
-  assert.doesNotMatch(rules, /avatar/);
+  assert.match(rules, /photo: hasProfilePhoto\(user\)/);
+  assert.doesNotMatch(rules, /CoachPhoto/, 'gallery photos are not counted');
 });
 
-test('dashboard: optional, non-blocking photo nudge with neutral copy', () => {
-  assert.match(dashboard, /\{!user\?\.avatar_url \? \(/);
-  assert.match(dashboard, /<strong>Add a profile photo<\/strong>/);
-  assert.match(dashboard, /Help students recognize you before booking\./);
-  assert.match(dashboard, /<Link className="btn secondary" to="\/coach\/profile">Add photo →<\/Link>/);
-  // Its own card, outside the required onboarding checklist.
-  assert.match(dashboard, /\{!user\?\.avatar_url \? \(\s*<div className="card coach-optional-photo">/);
+test('dashboard: optional coaching-gallery nudge (profile photo is now in the required checklist)', () => {
+  assert.match(dashboard, /\{galleryCount === 0 \? \(\s*<div className="card coach-optional-photo">/);
+  assert.match(dashboard, /<strong>Add coaching photos<\/strong>/);
+  assert.match(dashboard, /<Link className="btn secondary" to="\/coach\/profile#coaching-photos">Add photos →<\/Link>/);
+  assert.doesNotMatch(dashboard, /Add a profile photo/);
   assert.doesNotMatch(dashboard, /more (profile )?views|more bookings/i);
 });
 
-test('owner preview: "Add a photo" only when no photo is set', () => {
-  assert.match(publicProfile, /\{!coach\.avatar_url \? \(/);
-  assert.match(publicProfile, /<Link to="\/coach\/profile">Add a photo<\/Link> — Add a profile photo that students will see across PickleCoach\./);
+test('owner preview: a missing profile photo is listed with the other setup steps, not as a separate tip', () => {
   const banner = publicProfile.slice(publicProfile.indexOf('coach-preview-banner'), publicProfile.indexOf('coach-profile-hero'));
-  assert.ok(banner.includes('Add a photo'), 'inside the owner preview banner');
+  assert.match(banner, /Finish setup:/);
+  assert.doesNotMatch(banner, /Add a photo/);
 });

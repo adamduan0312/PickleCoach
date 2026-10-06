@@ -48,7 +48,14 @@ export const MARKETPLACE_STEP_KEYS = Object.freeze([
   'lesson',
   'court',
   'availability',
+  'photo',
 ]);
+
+/** Profile photo (users.avatar_url) — required for listing; the coaching gallery is not. */
+export function hasProfilePhoto(user) {
+  const url = user?.avatar_url;
+  return typeof url === 'string' && url.trim().length > 0;
+}
 
 /**
  * Stripe Connect "ready to receive funds" — matches frontend
@@ -116,6 +123,7 @@ export async function syncCoachStripeReadyFromAccount(coachProfile, account) {
  *   lesson?: boolean,
  *   court?: boolean,
  *   availability?: boolean,
+ *   photo?: boolean,
  * }} flags
  */
 export function computeMarketplaceEligibilityFromSteps(flags = {}) {
@@ -125,6 +133,7 @@ export function computeMarketplaceEligibilityFromSteps(flags = {}) {
     lesson: Boolean(flags.lesson),
     court: Boolean(flags.court),
     availability: Boolean(flags.availability),
+    photo: Boolean(flags.photo),
   };
   const missing = MARKETPLACE_STEP_KEYS.filter((key) => !steps[key]);
   return {
@@ -183,9 +192,18 @@ export async function getCoachMarketplaceEligibility(coachId) {
       lesson: lessonCount > 0,
       court: courtCount > 0,
       availability: availabilityCount > 0,
+      photo: hasProfilePhoto(user),
     }),
     profile_exists: hasProfile,
     profile_missing_fields: profileMissingFields,
+  };
+}
+
+/** Coach `users` row `where` for discovery: active account with a profile photo. */
+export function marketplaceDiscoveryUserWhere() {
+  return {
+    ...PUBLIC_ACTIVE_USER_WHERE,
+    avatar_url: { [Op.and]: [{ [Op.ne]: null }, { [Op.ne]: '' }] },
   };
 }
 
@@ -271,7 +289,7 @@ export function marketplaceEligibleCoachIncludeForLessonBrowse() {
     model: User,
     as: 'coach',
     attributes: ['id', 'full_name', 'avatar_url'],
-    where: { ...PUBLIC_ACTIVE_USER_WHERE },
+    where: marketplaceDiscoveryUserWhere(),
     required: true,
     include: [
       {

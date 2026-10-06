@@ -186,11 +186,6 @@ export function CoachPublicProfilePage() {
               ))}
             </p>
           ) : null}
-          {!coach.avatar_url ? (
-            <p>
-              <Link to="/coach/profile">Add a photo</Link> — Add a profile photo that students will see across PickleCoach.
-            </p>
-          ) : null}
         </div>
       ) : null}
       <section className="card coach-profile-hero">

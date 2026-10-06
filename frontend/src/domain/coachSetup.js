@@ -7,10 +7,11 @@ export const COACH_SETUP_STEPS = {
   lesson: { label: 'Lessons', to: '/coach/lessons' },
   court: { label: 'Courts', to: '/coach/courts' },
   availability: { label: 'Availability', to: '/coach/availability' },
+  photo: { label: 'Profile photo', to: '/coach/profile', anchor: 'coach-profile-photo-label' },
 };
 
-/** Dashboard order: payouts last, since it needs a profile and is the most involved step. */
-export const COACH_SETUP_ORDER = ['profile', 'lesson', 'court', 'availability', 'stripe'];
+/** Dashboard order: payouts after the teaching steps; the profile photo (trust/identity) last. */
+export const COACH_SETUP_ORDER = ['profile', 'lesson', 'court', 'availability', 'stripe', 'photo'];
 
 const CHECKLIST_LABELS = {
   profile: 'Coach profile',
@@ -18,6 +19,7 @@ const CHECKLIST_LABELS = {
   court: 'Teaching court',
   availability: 'Availability',
   stripe: 'Payouts',
+  photo: 'Profile photo',
 };
 
 const STEP_DONE_LABELS = {
@@ -26,6 +28,7 @@ const STEP_DONE_LABELS = {
   court: 'Court complete',
   availability: 'Availability complete',
   stripe: 'Payouts complete',
+  photo: 'Profile photo added',
 };
 
 export const PAYOUTS_NEED_PROFILE = 'Create your profile first';
@@ -58,6 +61,8 @@ function nextStepCopy(key, { coachUiPhase, profileExists, profileMissingFields }
       return coachUiPhase === 'complete_stripe'
         ? { title: 'Finish payout setup', detail: 'Your Stripe account is linked but onboarding isn’t complete.', cta: 'Continue payout setup' }
         : { title: 'Set up payouts', detail: 'Connect Stripe so you can get paid for lessons.', cta: 'Connect payouts' };
+    case 'photo':
+      return { title: 'Add a profile photo', detail: 'Students see it before booking, so they know who they’re meeting.', cta: 'Add photo' };
     default:
       return null;
   }
@@ -85,7 +90,12 @@ export function coachSetupView(steps, { coachUiPhase, profileExists, profileMiss
   });
   const first = checklist.find((item) => !item.done);
   const next = first
-    ? { key: first.key, to: first.to, ...nextStepCopy(first.key, { coachUiPhase, profileExists: exists, profileMissingFields }) }
+    ? {
+      key: first.key,
+      to: first.to,
+      anchor: COACH_SETUP_STEPS[first.key].anchor || null,
+      ...nextStepCopy(first.key, { coachUiPhase, profileExists: exists, profileMissingFields }),
+    }
     : null;
   const doneCount = checklist.filter((item) => item.done).length;
   return { checklist, next, doneCount, total: checklist.length };

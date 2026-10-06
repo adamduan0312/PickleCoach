@@ -12,6 +12,7 @@ import {
   isStripeAccountReady,
   marketplaceDiscoveryProfileWhereBase,
   marketplaceDiscoveryIncludes,
+  marketplaceDiscoveryUserWhere,
   marketplaceEligibleCoachIncludeForLessonBrowse,
 } from '../services/coachMarketplaceEligibility.js';
 import { COACH_BIO_MIN, COACH_HEADLINE_MIN } from '../utils/coachProfileCompleteness.js';
@@ -54,9 +55,23 @@ describe('computeMarketplaceEligibilityFromSteps', () => {
       lesson: true,
       court: true,
       availability: true,
+      photo: true,
     });
     assert.equal(out.listed, true);
     assert.deepEqual(out.missing, []);
+  });
+
+  it('a missing profile photo alone blocks listing', () => {
+    const out = computeMarketplaceEligibilityFromSteps({
+      profile: true,
+      stripe: true,
+      lesson: true,
+      court: true,
+      availability: true,
+      photo: false,
+    });
+    assert.equal(out.listed, false);
+    assert.deepEqual(out.missing, ['photo']);
   });
 
   it('reports missing stripe and availability without being listed', () => {
@@ -66,6 +81,7 @@ describe('computeMarketplaceEligibilityFromSteps', () => {
       lesson: true,
       court: true,
       availability: false,
+      photo: true,
     });
     assert.equal(out.listed, false);
     assert.deepEqual(out.missing, ['stripe', 'availability']);
@@ -82,7 +98,7 @@ describe('getCoachMarketplaceEligibility profile step', () => {
     stripe_ready: true,
   };
 
-  function stub(profile) {
+  function stub(profile, { avatarUrl = '/uploads/avatars/7.jpg' } = {}) {
     Object.assign(originals, {
       findByPk: User.findByPk,
       findOne: CoachProfile.findOne,
@@ -94,6 +110,7 @@ describe('getCoachMarketplaceEligibility profile step', () => {
       id: 7,
       is_active: true,
       deleted_at: null,
+      avatar_url: avatarUrl,
       role_governance_locked: false,
       admin_allowed_roles: null,
       userRoles: [{ role: 'coach' }],
@@ -129,6 +146,15 @@ describe('getCoachMarketplaceEligibility profile step', () => {
     assert.deepEqual(out.missing, ['profile']);
     assert.equal(out.profile_exists, true);
     assert.deepEqual(out.profile_missing_fields, ['headline', 'bio', 'location']);
+  });
+
+  it('complete profile without a profile photo: profile step done, photo step missing', async () => {
+    stub(COMPLETE, { avatarUrl: null });
+    const out = await getCoachMarketplaceEligibility(7);
+    assert.equal(out.steps.profile, true);
+    assert.equal(out.steps.photo, false);
+    assert.equal(out.listed, false);
+    assert.deepEqual(out.missing, ['photo']);
   });
 
   it('no profile: profile_exists false and every required field missing', async () => {
@@ -211,9 +237,18 @@ describe('discovery filters (DB-only)', () => {
     const profile = coachInc.include.find((i) => i.as === 'coachProfile');
     assert.equal(profile.where.stripe_ready, true);
     assert.equal(profile.where[Op.and][0].attribute.args[0].args[0].col, 'coach->coachProfile.headline');
+    assert.deepEqual(coachInc.where, marketplaceDiscoveryUserWhere());
+  });
+
+  it('discovery user where requires an active account with a profile photo', () => {
+    const where = marketplaceDiscoveryUserWhere();
+    assert.equal(where.is_active, true);
+    assert.equal(where.deleted_at, null);
+    assert.deepEqual(where.avatar_url[Op.and], [{ [Op.ne]: null }, { [Op.ne]: '' }]);
   });
 
   it('getCoaches uses marketplace helpers and never calls Stripe', () => {
+    assert.match(getCoachesSection, /const where = marketplaceDiscoveryUserWhere\(\);/);
     assert.match(getCoachesSection, /marketplaceDiscoveryProfileWhereBase/);
     assert.match(getCoachesSection, /marketplaceDiscoveryIncludes/);
     assert.doesNotMatch(getCoachesSection, /stripe\.accounts/);

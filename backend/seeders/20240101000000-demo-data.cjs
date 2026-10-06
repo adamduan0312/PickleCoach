@@ -1,6 +1,7 @@
 'use strict';
 
 const bcrypt = require('bcryptjs');
+const { SEED_COACH_AVATAR_URL } = require('../utils/seedCoachAvatar.cjs');
 
 /**
  * Seed file for development environment
@@ -92,6 +93,7 @@ module.exports = {
           phone: `555-${1000 + i}`,
           timezone: 'America/New_York',
           is_active: true,
+          avatar_url: SEED_COACH_AVATAR_URL,
         });
         await UserRole.create({ user_id: user.id, role: 'coach' });
 

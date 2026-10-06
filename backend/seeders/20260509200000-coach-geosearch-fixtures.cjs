@@ -1,6 +1,7 @@
 'use strict';
 
 const bcrypt = require('bcryptjs');
+const { SEED_COACH_AVATAR_URL } = require('../utils/seedCoachAvatar.cjs');
 
 /**
  * Additive GeoSearch fixtures for GET /coaches?lat=&lng=&radius=
@@ -208,6 +209,7 @@ module.exports = {
           timezone: 'America/Los_Angeles',
           is_active: true,
           email_verified_at: verifiedAt,
+          avatar_url: SEED_COACH_AVATAR_URL,
         });
         await UserRole.create({ user_id: user.id, role: 'coach' });
       } else {
@@ -219,6 +221,7 @@ module.exports = {
           is_active: true,
           deleted_at: null,
           email_verified_at: user.email_verified_at || verifiedAt,
+          avatar_url: user.avatar_url || SEED_COACH_AVATAR_URL,
         });
       }
 

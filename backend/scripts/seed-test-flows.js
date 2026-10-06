@@ -46,6 +46,7 @@ if (env !== 'development') {
 
 import bcrypt from 'bcryptjs';
 import { Op } from 'sequelize';
+import { SEED_COACH_AVATAR_URL } from '../utils/seedCoachAvatar.cjs';
 import {
   sequelize,
   User,
@@ -181,6 +182,7 @@ async function ensureOrphanCoachProfiles() {
 
   let created = 0;
   for (const coach of coaches) {
+    if (!coach.avatar_url) await coach.update({ avatar_url: SEED_COACH_AVATAR_URL });
     if (coach.coachProfile) continue;
     await CoachProfile.create({
       user_id: coach.id,
@@ -227,6 +229,7 @@ async function createUsers() {
     timezone: 'America/New_York',
     is_active: true,
     email_verified_at: verifiedAt,
+    avatar_url: SEED_COACH_AVATAR_URL,
   });
   await UserRole.create({ user_id: coach.id, role: 'coach' });
 

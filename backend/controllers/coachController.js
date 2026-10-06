@@ -29,6 +29,7 @@ import { serializeAvailability } from '../utils/availabilityDto.js';
 import {
   marketplaceDiscoveryIncludes,
   marketplaceDiscoveryProfileWhereBase,
+  marketplaceDiscoveryUserWhere,
   getCoachMarketplaceEligibility,
   syncCoachStripeReadyFromAccount,
 } from '../services/coachMarketplaceEligibility.js';
@@ -63,8 +64,8 @@ export const getCoaches = async (req, res) => {
       : { limit: MAX_LIST_ALL_COACHES, offset: 0 };
     const isGeoSearch = lat != null && lng != null;
 
-    // Public discovery: Active accounts only (exclude Suspended + Deleted)
-    const where = { ...PUBLIC_ACTIVE_USER_WHERE };
+    // Public discovery: Active accounts (exclude Suspended + Deleted) with a profile photo
+    const where = marketplaceDiscoveryUserWhere();
 
     // Marketplace eligibility (DB-only): stripe_ready + later includes for lesson/court/availability
     const profileWhereParts = [{ ...marketplaceDiscoveryProfileWhereBase() }];

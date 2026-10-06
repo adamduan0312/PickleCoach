@@ -241,7 +241,7 @@ export function CoachProfileEditPage() {
             <Alert tone="warning">{incompleteNotice}</Alert>
           </div>
         ) : null}
-        <SetupNextStep step="profile" refreshKey={message} />
+        <SetupNextStep step="profile" refreshKey={`${message ?? ''}|${user?.avatar_url ?? ''}`} />
         <div className="row">
           <button className="btn" type="submit" disabled={busy || photoBusy}>
             {busy ? 'Saving…' : creating ? 'Save profile' : 'Save changes'}

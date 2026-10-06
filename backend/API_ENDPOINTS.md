@@ -1230,21 +1230,22 @@ Authorization: Bearer <token>
         "stripe": false,
         "lesson": true,
         "court": true,
-        "availability": false
+        "availability": false,
+        "photo": true
       },
       "profile_exists": true,
       "profile_missing_fields": []
     }
   }
   ```
-- **Steps**: `profile`, `stripe` (`stripe_ready`), `lesson`, `court`, `availability` (≥1 row). `listed` is true only when `missing` is empty.
+- **Steps**: `profile`, `stripe` (`stripe_ready`), `lesson`, `court`, `availability` (≥1 row), `photo` (non-empty `users.avatar_url` — the profile photo, not the coaching gallery). `listed` is true only when `missing` is empty. Discovery (`GET /api/coaches`) applies the same photo rule in SQL.
 - **Profile step = complete profile**: a saved profile can be a draft. `steps.profile` is true only when `headline` is ≥10 characters, `bio` is ≥50 characters (both trimmed), and `location` ("Based in", geocoder-validated on save) is set. `profile_exists` reports whether a profile row exists at all (this is what unlocks Stripe onboarding); `profile_missing_fields` lists the incomplete required fields in `headline`, `bio`, `location` order. Discovery (`GET /api/coaches`) applies the same completeness rule in SQL.
 
 ### Coach photos ("On the court" gallery)
 - **Auth**: Required. **Roles**: Coach (own photos only).
 - **Storage**: `coach_photos` table (`coach_id`, `url`, `position`), separate from `users.avatar_url`. Files live under `/uploads/coach-photos/`. The **cover is always the first photo by `position`**; responses mark it with `is_cover: true`.
 - **Limits**: max **8** photos per coach; JPG, PNG or WebP; **5 MB** per file.
-- **Not a listing requirement**: photos don't affect `GET /api/coaches/me/marketplace-status`, profile completeness or Discover eligibility.
+- **Not a listing requirement**: gallery photos don't affect `GET /api/coaches/me/marketplace-status`, profile completeness or Discover eligibility. (The separate profile photo, `users.avatar_url`, is the `photo` listing step.)
 - **Public**: `GET /api/coaches/:id` includes `photos: [{ id, url, is_cover }]` in display order (cover first). Changes are visible immediately.
 
 | Method | Path | Body | Notes |

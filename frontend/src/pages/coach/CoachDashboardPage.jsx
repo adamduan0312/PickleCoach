@@ -50,6 +50,11 @@ export function CoachDashboardPage() {
     };
   }, [user?.id]);
 
+  const { data: galleryCount } = useAsync(async () => {
+    const res = await coachesApi.myPhotos();
+    return (res.data?.photos || []).length;
+  }, [user?.id]);
+
   const reminders = useMemo(
     () => coachDashboardReminders(bookingsData?.bookings || []),
     [bookingsData?.bookings],
@@ -75,17 +80,17 @@ export function CoachDashboardPage() {
         userId={user?.id}
         onRefresh={() => { refreshProfile(); refreshStripeStatus(); }}
       />
-      {!user?.avatar_url ? (
+      {galleryCount === 0 ? (
         <div className="card coach-optional-photo">
           <div>
             <span className="small muted coach-next-step-label">Optional</span>
             <p>
-              <strong>Add a profile photo</strong>
+              <strong>Add coaching photos</strong>
               <br />
-              <span className="small">Help students recognize you before booking.</span>
+              <span className="small">Show students what your lessons look like, on the court and in action.</span>
             </p>
           </div>
-          <Link className="btn secondary" to="/coach/profile">Add photo →</Link>
+          <Link className="btn secondary" to="/coach/profile#coaching-photos">Add photos →</Link>
         </div>
       ) : null}
     </>

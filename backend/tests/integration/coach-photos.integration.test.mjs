@@ -86,8 +86,23 @@ describeHttp('HTTP integration: coach photo gallery', () => {
     }
   });
 
-  it('photos are optional for listing', async () => {
+  it('coaching photos are optional for listing; the profile photo is required', async () => {
+    assert.equal(await CoachPhoto.count({ where: { coach_id: fixture.coach.id } }), 0);
     assert.equal((await getCoachMarketplaceEligibility(fixture.coach.id)).listed, true);
+
+    const coach = await User.findByPk(fixture.coach.id);
+    const avatar = coach.avatar_url;
+    await coach.update({ avatar_url: null });
+    try {
+      const out = await getCoachMarketplaceEligibility(fixture.coach.id);
+      assert.equal(out.listed, false);
+      assert.deepEqual(out.missing, ['photo']);
+      const discover = await api(server.baseUrl, 'GET', '/api/coaches', { token: studentToken });
+      assert.equal(discover.status, 200, discover.text);
+      assert.ok(!discover.json.data.some((c) => c.id === fixture.coach.id), 'hidden from Discover without a profile photo');
+    } finally {
+      await coach.update({ avatar_url: avatar });
+    }
   });
 
   it('upload → ordered gallery with the first photo as cover; public profile embeds it', async () => {

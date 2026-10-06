@@ -96,6 +96,7 @@ export async function createBookingJourneyFixture({ studentCount = 1 } = {}) {
     is_active: true,
     email_verified_at: new Date(),
     timezone: 'America/New_York',
+    avatar_url: '/uploads/avatars/http-int-coach.jpg',
   });
   await UserRole.create({ user_id: coach.id, role: 'coach' });
 

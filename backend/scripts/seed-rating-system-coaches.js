@@ -19,6 +19,7 @@ import {
   CoachAvailability,
 } from '../models/index.js';
 import { getCoachMarketplaceEligibility } from '../services/coachMarketplaceEligibility.js';
+import { SEED_COACH_AVATAR_URL } from '../utils/seedCoachAvatar.cjs';
 
 const env = process.env.NODE_ENV || 'development';
 dotenv.config({ path: `.env.${env}` });
@@ -163,6 +164,7 @@ async function ensureCoach(spec, passwordHash) {
       timezone: 'America/Los_Angeles',
       is_active: true,
       email_verified_at: new Date(),
+      avatar_url: SEED_COACH_AVATAR_URL,
     });
     await UserRole.create({ user_id: user.id, role: 'coach' });
   } else {
@@ -171,6 +173,7 @@ async function ensureCoach(spec, passwordHash) {
       is_active: true,
       deleted_at: null,
       email_verified_at: user.email_verified_at || new Date(),
+      avatar_url: user.avatar_url || SEED_COACH_AVATAR_URL,
     });
     if (!(await UserRole.findOne({ where: { user_id: user.id, role: 'coach' } }))) {
       await UserRole.create({ user_id: user.id, role: 'coach' });

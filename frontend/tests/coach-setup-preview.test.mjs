@@ -5,7 +5,7 @@ import { coachSetupView, missingSetupSteps, ownProfileLessonPreview, setupContin
 
 const read = (rel) => readFileSync(new URL(rel, import.meta.url), 'utf8');
 
-const NONE = { profile: false, lesson: false, court: false, availability: false, stripe: false };
+const NONE = { profile: false, lesson: false, court: false, availability: false, stripe: false, photo: false };
 
 test('missingSetupSteps uses the dashboard order (payouts last) and links each step', () => {
   assert.deepEqual(missingSetupSteps(['stripe', 'availability']), [
@@ -32,9 +32,9 @@ test('own profile, not listed: preview own active lessons with what is missing',
 
 test('new coach: next step is the profile; payouts disabled until a profile exists', () => {
   const { checklist, next } = coachSetupView(NONE, { coachUiPhase: 'start_setup' });
-  assert.deepEqual(checklist.map((i) => i.label), ['Coach profile', 'First lesson', 'Teaching court', 'Availability', 'Payouts']);
+  assert.deepEqual(checklist.map((i) => i.label), ['Coach profile', 'First lesson', 'Teaching court', 'Availability', 'Payouts', 'Profile photo']);
   assert.ok(checklist.every((i) => !i.done));
-  assert.deepEqual(checklist.map((i) => i.disabled), [false, false, false, false, true]);
+  assert.deepEqual(checklist.map((i) => i.disabled), [false, false, false, false, true, false]);
   assert.equal(checklist[4].hint, 'Create your profile first');
   assert.deepEqual(
     { title: next.title, detail: next.detail, cta: next.cta, to: next.to },
@@ -80,7 +80,7 @@ test('next step walks profile → lesson → court → availability → payouts'
 });
 
 test('payout step reuses readiness phases; listed coach has no next step', () => {
-  const almost = { profile: true, lesson: true, court: true, availability: true, stripe: false };
+  const almost = { profile: true, lesson: true, court: true, availability: true, stripe: false, photo: true };
   assert.equal(coachSetupView(almost, { coachUiPhase: 'complete_stripe' }).next.title, 'Finish payout setup');
   assert.equal(coachSetupView(almost, { coachUiPhase: 'connect_stripe' }).next.title, 'Set up payouts');
   const all = coachSetupView({ ...almost, stripe: true }, { coachUiPhase: 'ready' });
@@ -88,10 +88,28 @@ test('payout step reuses readiness phases; listed coach has no next step', () =>
   assert.ok(all.checklist.every((i) => i.done && !i.disabled));
 });
 
+test('profile photo is the 6th listing step; it scrolls to the photo field on the profile page', () => {
+  const noPhoto = { profile: true, lesson: true, court: true, availability: true, stripe: true, photo: false };
+  const { next, doneCount, total } = coachSetupView(noPhoto, { coachUiPhase: 'ready' });
+  assert.deepEqual([doneCount, total], [5, 6]);
+  assert.deepEqual(
+    [next.key, next.title, next.cta, next.to, next.anchor],
+    ['photo', 'Add a profile photo', 'Add photo', '/coach/profile', 'coach-profile-photo-label'],
+  );
+  assert.equal(next.detail, 'Students see it before booking, so they know who they’re meeting.');
+  // Other steps don't carry an anchor; earlier gaps still come first.
+  assert.equal(coachSetupView({ ...NONE, profile: true }).next.anchor, null);
+  assert.deepEqual(missingSetupSteps(['photo']).map((s) => s.label), ['Profile photo']);
+
+  const card = read('../src/components/coach/CoachOnboarding.jsx');
+  assert.match(card, /view\.next\.anchor && view\.next\.to === location\.pathname/);
+  assert.match(card, /document\.getElementById\(view\.next\.anchor\)\?\.scrollIntoView/);
+});
+
 test('setup view counts progress; continuation appears once a page’s own step is done', () => {
   const view = coachSetupView({ ...NONE, profile: true, court: true });
   assert.equal(view.doneCount, 2);
-  assert.equal(view.total, 5);
+  assert.equal(view.total, 6);
 
   assert.equal(setupContinuation('lesson', { ...NONE, profile: true }), null);
   const afterProfile = setupContinuation('profile', { ...NONE, profile: true }, { coachUiPhase: 'connect_stripe' });
@@ -102,8 +120,9 @@ test('setup view counts progress; continuation appears once a page’s own step 
   assert.equal(afterLesson.next.title, 'Add a teaching court');
   // Earlier gaps still win: payouts done first points back to the lesson.
   assert.equal(setupContinuation('stripe', { ...NONE, profile: true, stripe: true }).next.title, 'Add your first lesson');
-  const all = { profile: true, lesson: true, court: true, availability: true, stripe: true };
+  const all = { profile: true, lesson: true, court: true, availability: true, stripe: true, photo: true };
   assert.deepEqual(setupContinuation('availability', all), { doneLabel: 'Availability complete', next: null });
+  assert.equal(setupContinuation('availability', { ...all, photo: false }).next.title, 'Add a profile photo');
 });
 
 test('dashboard: one "Get listed on Discover" card replaces Next step + Marketplace status', () => {

@@ -28,6 +28,7 @@ import {
   DisputeType,
 } from '../models/index.js';
 import { ACTIVE_DISPUTE_TYPE_CODES } from '../utils/disputeTypeCatalog.js';
+import { SEED_COACH_AVATAR_URL } from '../utils/seedCoachAvatar.cjs';
 
 const env = process.env.NODE_ENV || 'development';
 dotenv.config({ path: `.env.${env}` });
@@ -173,6 +174,7 @@ async function findDemoStudents(limit) {
 }
 
 async function ensureCoachStack(coach, templateIndex) {
+  if (!coach.avatar_url) await coach.update({ avatar_url: SEED_COACH_AVATAR_URL });
   let profile = coach.coachProfile;
   if (!profile) {
     profile = await CoachProfile.create({
