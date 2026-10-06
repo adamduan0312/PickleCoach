@@ -55,23 +55,10 @@ describe('computeMarketplaceEligibilityFromSteps', () => {
       lesson: true,
       court: true,
       availability: true,
-      photo: true,
     });
     assert.equal(out.listed, true);
     assert.deepEqual(out.missing, []);
-  });
-
-  it('a missing profile photo alone blocks listing', () => {
-    const out = computeMarketplaceEligibilityFromSteps({
-      profile: true,
-      stripe: true,
-      lesson: true,
-      court: true,
-      availability: true,
-      photo: false,
-    });
-    assert.equal(out.listed, false);
-    assert.deepEqual(out.missing, ['photo']);
+    assert.deepEqual(Object.keys(out.steps), ['profile', 'stripe', 'lesson', 'court', 'availability']);
   });
 
   it('reports missing stripe and availability without being listed', () => {
@@ -81,7 +68,6 @@ describe('computeMarketplaceEligibilityFromSteps', () => {
       lesson: true,
       court: true,
       availability: false,
-      photo: true,
     });
     assert.equal(out.listed, false);
     assert.deepEqual(out.missing, ['stripe', 'availability']);
@@ -148,13 +134,20 @@ describe('getCoachMarketplaceEligibility profile step', () => {
     assert.deepEqual(out.profile_missing_fields, ['headline', 'bio', 'location']);
   });
 
-  it('complete profile without a profile photo: profile step done, photo step missing', async () => {
+  it('complete fields without a profile photo: the profile step stays incomplete', async () => {
     stub(COMPLETE, { avatarUrl: null });
     const out = await getCoachMarketplaceEligibility(7);
-    assert.equal(out.steps.profile, true);
-    assert.equal(out.steps.photo, false);
+    assert.equal(out.steps.profile, false);
     assert.equal(out.listed, false);
-    assert.deepEqual(out.missing, ['photo']);
+    assert.deepEqual(out.missing, ['profile']);
+    assert.equal(out.profile_exists, true);
+    assert.deepEqual(out.profile_missing_fields, ['photo']);
+  });
+
+  it('missing photo and fields are reported together, photo first', async () => {
+    stub({ ...COMPLETE, bio: '' }, { avatarUrl: '  ' });
+    const out = await getCoachMarketplaceEligibility(7);
+    assert.deepEqual(out.profile_missing_fields, ['photo', 'bio']);
   });
 
   it('no profile: profile_exists false and every required field missing', async () => {

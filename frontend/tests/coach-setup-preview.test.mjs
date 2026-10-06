@@ -5,7 +5,7 @@ import { coachSetupView, missingSetupSteps, ownProfileLessonPreview, setupContin
 
 const read = (rel) => readFileSync(new URL(rel, import.meta.url), 'utf8');
 
-const NONE = { profile: false, lesson: false, court: false, availability: false, stripe: false, photo: false };
+const NONE = { profile: false, lesson: false, court: false, availability: false, stripe: false };
 
 test('missingSetupSteps uses the dashboard order (payouts last) and links each step', () => {
   assert.deepEqual(missingSetupSteps(['stripe', 'availability']), [
@@ -32,14 +32,34 @@ test('own profile, not listed: preview own active lessons with what is missing',
 
 test('new coach: next step is the profile; payouts disabled until a profile exists', () => {
   const { checklist, next } = coachSetupView(NONE, { coachUiPhase: 'start_setup' });
-  assert.deepEqual(checklist.map((i) => i.label), ['Coach profile', 'First lesson', 'Teaching court', 'Availability', 'Payouts', 'Profile photo']);
+  assert.deepEqual(checklist.map((i) => i.label), ['Coach profile', 'First lesson', 'Teaching court', 'Availability', 'Payouts']);
+  assert.equal(checklist[0].description, 'Add your photo and tell students about yourself.');
+  assert.ok(checklist.every((i) => i.description));
   assert.ok(checklist.every((i) => !i.done));
-  assert.deepEqual(checklist.map((i) => i.disabled), [false, false, false, false, true, false]);
+  assert.deepEqual(checklist.map((i) => i.disabled), [false, false, false, false, true]);
   assert.equal(checklist[4].hint, 'Create your profile first');
   assert.deepEqual(
     { title: next.title, detail: next.detail, cta: next.cta, to: next.to },
-    { title: 'Create your coach profile', detail: 'Build the basic profile students see before booking.', cta: 'Start setup', to: '/coach/profile' },
+    { title: 'Create your coach profile', detail: 'Add your photo and tell students about yourself.', cta: 'Start setup', to: '/coach/profile' },
   );
+});
+
+test('profile photo is part of step 1: a complete profile without a photo is still incomplete', () => {
+  const { checklist, next, total } = coachSetupView(NONE, { profileExists: true, profileMissingFields: ['photo'] });
+  assert.equal(total, 5);
+  assert.equal(checklist[0].done, false);
+  assert.deepEqual([next.key, next.title], ['profile', 'Complete your coach profile']);
+  assert.equal(next.detail, 'Add a profile photo to make your profile ready for students.');
+  // No "Profile complete" banner on the profile page until the photo is added too.
+  assert.equal(setupContinuation('profile', NONE), null);
+  assert.equal(
+    coachSetupView(NONE, { profileExists: true, profileMissingFields: ['photo', 'bio'] }).next.detail,
+    'Add a profile photo and bio to make your profile ready for students.',
+  );
+  assert.deepEqual(missingSetupSteps(['photo']), []);
+  const card = read('../src/components/coach/CoachOnboarding.jsx');
+  assert.doesNotMatch(card, /anchor|scrollIntoView/);
+  assert.match(card, /\{item\.description\}/);
 });
 
 test('draft profile: checklist stays ○, next step asks to complete it, payouts unlocked', () => {
@@ -62,7 +82,7 @@ test('draft profile: checklist stays ○, next step asks to complete it, payouts
   const onlyBio = coachSetupView(NONE, { profileExists: true, profileMissingFields: ['bio'] }).next;
   assert.equal(onlyBio.detail, 'Add a bio to make your profile ready for students.');
   // Status without field detail still gets sensible copy.
-  assert.match(coachSetupView(NONE, { profileExists: true }).next.detail, /headline, bio, and location/);
+  assert.match(coachSetupView(NONE, { profileExists: true }).next.detail, /profile photo, headline, bio, and location/);
 });
 
 test('next step walks profile → lesson → court → availability → payouts', () => {
@@ -80,7 +100,7 @@ test('next step walks profile → lesson → court → availability → payouts'
 });
 
 test('payout step reuses readiness phases; listed coach has no next step', () => {
-  const almost = { profile: true, lesson: true, court: true, availability: true, stripe: false, photo: true };
+  const almost = { profile: true, lesson: true, court: true, availability: true, stripe: false };
   assert.equal(coachSetupView(almost, { coachUiPhase: 'complete_stripe' }).next.title, 'Finish payout setup');
   assert.equal(coachSetupView(almost, { coachUiPhase: 'connect_stripe' }).next.title, 'Set up payouts');
   const all = coachSetupView({ ...almost, stripe: true }, { coachUiPhase: 'ready' });
@@ -88,28 +108,10 @@ test('payout step reuses readiness phases; listed coach has no next step', () =>
   assert.ok(all.checklist.every((i) => i.done && !i.disabled));
 });
 
-test('profile photo is the 6th listing step; it scrolls to the photo field on the profile page', () => {
-  const noPhoto = { profile: true, lesson: true, court: true, availability: true, stripe: true, photo: false };
-  const { next, doneCount, total } = coachSetupView(noPhoto, { coachUiPhase: 'ready' });
-  assert.deepEqual([doneCount, total], [5, 6]);
-  assert.deepEqual(
-    [next.key, next.title, next.cta, next.to, next.anchor],
-    ['photo', 'Add a profile photo', 'Add photo', '/coach/profile', 'coach-profile-photo-label'],
-  );
-  assert.equal(next.detail, 'Students see it before booking, so they know who they’re meeting.');
-  // Other steps don't carry an anchor; earlier gaps still come first.
-  assert.equal(coachSetupView({ ...NONE, profile: true }).next.anchor, null);
-  assert.deepEqual(missingSetupSteps(['photo']).map((s) => s.label), ['Profile photo']);
-
-  const card = read('../src/components/coach/CoachOnboarding.jsx');
-  assert.match(card, /view\.next\.anchor && view\.next\.to === location\.pathname/);
-  assert.match(card, /document\.getElementById\(view\.next\.anchor\)\?\.scrollIntoView/);
-});
-
 test('setup view counts progress; continuation appears once a page’s own step is done', () => {
   const view = coachSetupView({ ...NONE, profile: true, court: true });
   assert.equal(view.doneCount, 2);
-  assert.equal(view.total, 6);
+  assert.equal(view.total, 5);
 
   assert.equal(setupContinuation('lesson', { ...NONE, profile: true }), null);
   const afterProfile = setupContinuation('profile', { ...NONE, profile: true }, { coachUiPhase: 'connect_stripe' });
@@ -120,9 +122,8 @@ test('setup view counts progress; continuation appears once a page’s own step 
   assert.equal(afterLesson.next.title, 'Add a teaching court');
   // Earlier gaps still win: payouts done first points back to the lesson.
   assert.equal(setupContinuation('stripe', { ...NONE, profile: true, stripe: true }).next.title, 'Add your first lesson');
-  const all = { profile: true, lesson: true, court: true, availability: true, stripe: true, photo: true };
+  const all = { profile: true, lesson: true, court: true, availability: true, stripe: true };
   assert.deepEqual(setupContinuation('availability', all), { doneLabel: 'Availability complete', next: null });
-  assert.equal(setupContinuation('availability', { ...all, photo: false }).next.title, 'Add a profile photo');
 });
 
 test('dashboard: one "Get listed on Discover" card replaces Next step + Marketplace status', () => {

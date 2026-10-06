@@ -37,20 +37,19 @@ test('Coach Profile: photo sits at the top of the form, before Headline, and sta
   const photo = coachProfile.indexOf('<ProfilePhotoField');
   const headline = coachProfile.indexOf('label="Headline *"');
   assert.ok(form < photo && photo < headline);
-  assert.match(coachProfile, /This photo is used across your account/);
+  assert.match(coachProfile, /Students see this before booking\./);
   assert.doesNotMatch(read('../src/domain/coachRating.js'), /avatar/);
 });
 
-test('profile photo is a listing step, not part of profile completeness; the gallery is neither', () => {
-  assert.doesNotMatch(read('../src/domain/coachProfileCompleteness.js'), /avatar|photo/i);
-  assert.doesNotMatch(read('../../backend/utils/coachProfileCompleteness.js'), /avatar|photo/i);
-  assert.match(read('../src/domain/coachSetup.js'), /photo: \{ label: 'Profile photo', to: '\/coach\/profile'/);
+test('profile photo is part of the Coach profile step (no separate step); the gallery is not required', () => {
+  assert.doesNotMatch(read('../src/domain/coachSetup.js'), /photo: \{/);
   const eligibility = read('../../backend/services/coachMarketplaceEligibility.js');
+  assert.doesNotMatch(eligibility, /hasProfilePhoto|photo: /);
   const rules = eligibility.slice(
     eligibility.indexOf('export async function getCoachMarketplaceEligibility'),
     eligibility.indexOf('export function marketplaceDiscoveryIncludes'),
   );
-  assert.match(rules, /photo: hasProfilePhoto\(user\)/);
+  assert.match(rules, /coachProfileStepMissing\(profile, user\?\.avatar_url\)/);
   assert.doesNotMatch(rules, /CoachPhoto/, 'gallery photos are not counted');
 });
 

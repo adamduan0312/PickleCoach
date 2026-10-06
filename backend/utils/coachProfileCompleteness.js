@@ -2,8 +2,8 @@
  * Coach profile completeness — mirrors frontend/src/domain/coachProfileCompleteness.js (parity is tested).
  *
  * A profile row can exist as a draft. It only satisfies the marketplace "profile" step once
- * headline, bio, and "Based in" location are filled in. Location is geocoder-validated on save,
- * so any stored value counts.
+ * headline, bio, and "Based in" location are filled in and the coach has a profile photo.
+ * Location is geocoder-validated on save, so any stored value counts.
  */
 
 export const COACH_HEADLINE_MIN = 10;
@@ -31,4 +31,17 @@ export function coachProfileMissingFields(profile) {
 
 export function isCoachProfileComplete(profile) {
   return Boolean(profile) && coachProfileMissingFields(profile).length === 0;
+}
+
+/** Everything the "Coach profile" step needs: the profile photo (users.avatar_url) plus the profile fields. */
+export const COACH_PROFILE_STEP_FIELDS = Object.freeze(['photo', ...COACH_PROFILE_REQUIRED_FIELDS]);
+
+/**
+ * Gaps in the "Coach profile" step, in COACH_PROFILE_STEP_FIELDS order.
+ * @param {object|null|undefined} profile — coach_profiles row (null when none saved yet)
+ * @param {string|null|undefined} avatarUrl — users.avatar_url
+ */
+export function coachProfileStepMissing(profile, avatarUrl) {
+  const photo = trimmedLength(avatarUrl) > 0 ? [] : ['photo'];
+  return [...photo, ...coachProfileMissingFields(profile)];
 }

@@ -89,8 +89,9 @@ test('gallery is separate from the avatar and not a listing requirement', () => 
   assert.match(manager, /coachesApi\.setCoverPhoto\(/);
   assert.match(manager, /coachesApi\.deletePhoto\(/);
   assert.equal((manager.match(/type="submit"/g) || []).length, 0, 'manager buttons never submit the profile form');
-  assert.doesNotMatch(read('../src/domain/coachProfileCompleteness.js'), /photo/i);
-  assert.doesNotMatch(read('../../backend/utils/coachProfileCompleteness.js'), /photo/i);
+  for (const rel of ['../src/domain/coachProfileCompleteness.js', '../../backend/utils/coachProfileCompleteness.js']) {
+    assert.doesNotMatch(read(rel), /gallery|coach_photos|CoachPhoto/i);
+  }
   assert.doesNotMatch(read('../../backend/services/coachMarketplaceEligibility.js'), /CoachPhoto|coach_photos/);
 });
 

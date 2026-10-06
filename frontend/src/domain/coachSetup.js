@@ -1,4 +1,4 @@
-import { COACH_PROFILE_REQUIRED_FIELDS, incompleteProfileMessage } from './coachProfileCompleteness.js';
+import { COACH_PROFILE_STEP_FIELDS, incompleteProfileMessage } from './coachProfileCompleteness.js';
 
 /** Marketplace setup steps a coach must finish before students can see their lessons. */
 export const COACH_SETUP_STEPS = {
@@ -7,11 +7,10 @@ export const COACH_SETUP_STEPS = {
   lesson: { label: 'Lessons', to: '/coach/lessons' },
   court: { label: 'Courts', to: '/coach/courts' },
   availability: { label: 'Availability', to: '/coach/availability' },
-  photo: { label: 'Profile photo', to: '/coach/profile', anchor: 'coach-profile-photo-label' },
 };
 
-/** Dashboard order: payouts after the teaching steps; the profile photo (trust/identity) last. */
-export const COACH_SETUP_ORDER = ['profile', 'lesson', 'court', 'availability', 'stripe', 'photo'];
+/** Dashboard order: payouts after the teaching steps. */
+export const COACH_SETUP_ORDER = ['profile', 'lesson', 'court', 'availability', 'stripe'];
 
 const CHECKLIST_LABELS = {
   profile: 'Coach profile',
@@ -19,7 +18,14 @@ const CHECKLIST_LABELS = {
   court: 'Teaching court',
   availability: 'Availability',
   stripe: 'Payouts',
-  photo: 'Profile photo',
+};
+
+const CHECKLIST_DESCRIPTIONS = {
+  profile: 'Add your photo and tell students about yourself.',
+  lesson: 'Create a lesson students can book.',
+  court: 'Tell students where your lessons take place.',
+  availability: 'Add weekly times students can pick from.',
+  stripe: 'Connect Stripe so you can get paid.',
 };
 
 const STEP_DONE_LABELS = {
@@ -28,7 +34,6 @@ const STEP_DONE_LABELS = {
   court: 'Court complete',
   availability: 'Availability complete',
   stripe: 'Payouts complete',
-  photo: 'Profile photo added',
 };
 
 export const PAYOUTS_NEED_PROFILE = 'Create your profile first';
@@ -47,10 +52,10 @@ function nextStepCopy(key, { coachUiPhase, profileExists, profileMissingFields }
       return profileExists
         ? {
           title: 'Complete your coach profile',
-          detail: incompleteProfileMessage(profileMissingFields?.length ? profileMissingFields : COACH_PROFILE_REQUIRED_FIELDS),
+          detail: incompleteProfileMessage(profileMissingFields?.length ? profileMissingFields : COACH_PROFILE_STEP_FIELDS),
           cta: 'Complete profile',
         }
-        : { title: 'Create your coach profile', detail: 'Build the basic profile students see before booking.', cta: 'Start setup' };
+        : { title: 'Create your coach profile', detail: 'Add your photo and tell students about yourself.', cta: 'Start setup' };
     case 'lesson':
       return { title: 'Add your first lesson', detail: 'Lessons are what students book with you.', cta: 'Go to Lessons' };
     case 'court':
@@ -61,8 +66,6 @@ function nextStepCopy(key, { coachUiPhase, profileExists, profileMissingFields }
       return coachUiPhase === 'complete_stripe'
         ? { title: 'Finish payout setup', detail: 'Your Stripe account is linked but onboarding isn’t complete.', cta: 'Continue payout setup' }
         : { title: 'Set up payouts', detail: 'Connect Stripe so you can get paid for lessons.', cta: 'Connect payouts' };
-    case 'photo':
-      return { title: 'Add a profile photo', detail: 'Students see it before booking, so they know who they’re meeting.', cta: 'Add photo' };
     default:
       return null;
   }
@@ -70,9 +73,9 @@ function nextStepCopy(key, { coachUiPhase, profileExists, profileMissingFields }
 
 /**
  * Dashboard setup view from marketplace-status `steps` ({ profile: bool, ... }).
- * `steps.profile` means the profile is complete; `profileExists` (a saved draft is enough)
- * is what unlocks payouts. `next` is the first incomplete step in COACH_SETUP_ORDER
- * (null once everything is done).
+ * `steps.profile` means the profile is complete (photo included); `profileExists` (a saved
+ * draft is enough) is what unlocks payouts. `next` is the first incomplete step in
+ * COACH_SETUP_ORDER (null once everything is done).
  */
 export function coachSetupView(steps, { coachUiPhase, profileExists, profileMissingFields } = {}) {
   const s = steps || {};
@@ -82,6 +85,7 @@ export function coachSetupView(steps, { coachUiPhase, profileExists, profileMiss
     return {
       key,
       label: CHECKLIST_LABELS[key],
+      description: CHECKLIST_DESCRIPTIONS[key],
       to: COACH_SETUP_STEPS[key].to,
       done: Boolean(s[key]),
       disabled,
@@ -93,7 +97,6 @@ export function coachSetupView(steps, { coachUiPhase, profileExists, profileMiss
     ? {
       key: first.key,
       to: first.to,
-      anchor: COACH_SETUP_STEPS[first.key].anchor || null,
       ...nextStepCopy(first.key, { coachUiPhase, profileExists: exists, profileMissingFields }),
     }
     : null;

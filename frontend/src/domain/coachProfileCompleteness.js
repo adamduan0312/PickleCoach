@@ -28,15 +28,28 @@ export function isCoachProfileComplete(profile) {
   return Boolean(profile) && coachProfileMissingFields(profile).length === 0;
 }
 
+/** The "Coach profile" setup step: the profile photo (users.avatar_url) plus the required fields. */
+export const COACH_PROFILE_STEP_FIELDS = Object.freeze(['photo', ...COACH_PROFILE_REQUIRED_FIELDS]);
+
+/** @returns {string[]} what the profile step still needs, in COACH_PROFILE_STEP_FIELDS order */
+export function coachProfileStepMissing(profile, avatarUrl) {
+  const photo = trimmedLength(avatarUrl) > 0 ? [] : ['photo'];
+  return [...photo, ...coachProfileMissingFields(profile)];
+}
+
+const FIELD_NAMES = { photo: 'profile photo', headline: 'headline', bio: 'bio', location: 'location' };
+
 /** Per-field requirement hint shown under the form inputs. */
 export const COACH_PROFILE_REQUIREMENT_HINTS = Object.freeze({
   headline: `At least ${COACH_HEADLINE_MIN} characters.`,
   bio: `At least ${COACH_BIO_MIN} characters.`,
 });
 
-/** ["bio"] → "a bio"; ["headline", "bio"] → "a headline and bio"; all three → "a headline, bio, and location". */
+/** ["bio"] → "a bio"; ["photo", "bio"] → "a profile photo and bio"; three → "a headline, bio, and location". */
 export function missingFieldsPhrase(fields) {
-  const names = COACH_PROFILE_REQUIRED_FIELDS.filter((f) => (fields || []).includes(f));
+  const names = COACH_PROFILE_STEP_FIELDS
+    .filter((f) => (fields || []).includes(f))
+    .map((f) => FIELD_NAMES[f]);
   if (names.length === 0) return '';
   if (names.length === 1) return `a ${names[0]}`;
   if (names.length === 2) return `a ${names[0]} and ${names[1]}`;

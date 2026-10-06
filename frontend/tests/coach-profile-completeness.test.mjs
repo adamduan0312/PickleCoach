@@ -37,6 +37,23 @@ test('frontend and backend completeness rules match', () => {
   }
 });
 
+test('profile step = profile photo + required fields, same on both sides', () => {
+  assert.deepEqual([...frontend.COACH_PROFILE_STEP_FIELDS], ['photo', 'headline', 'bio', 'location']);
+  assert.deepEqual([...frontend.COACH_PROFILE_STEP_FIELDS], [...backend.COACH_PROFILE_STEP_FIELDS]);
+  const STEP_CASES = [
+    [COMPLETE, '/uploads/avatars/7.jpg', []],
+    [COMPLETE, null, ['photo']],
+    [COMPLETE, '   ', ['photo']],
+    [{ ...COMPLETE, bio: '' }, '', ['photo', 'bio']],
+    [null, '/uploads/avatars/7.jpg', ['headline', 'bio', 'location']],
+    [null, undefined, ['photo', 'headline', 'bio', 'location']],
+  ];
+  for (const [profile, avatar, expected] of STEP_CASES) {
+    assert.deepEqual(frontend.coachProfileStepMissing(profile, avatar), expected);
+    assert.deepEqual(backend.coachProfileStepMissing(profile, avatar), expected);
+  }
+});
+
 test('minimums are 10 (headline) and 50 (bio)', () => {
   assert.equal(frontend.COACH_HEADLINE_MIN, 10);
   assert.equal(frontend.COACH_BIO_MIN, 50);
@@ -50,6 +67,12 @@ test('incomplete-profile copy lists only what is missing', () => {
   assert.equal(frontend.incompleteProfileMessage(['location', 'headline']), 'Add a headline and location to make your profile ready for students.');
   assert.equal(frontend.incompleteProfileMessage(['bio']), 'Add a bio to make your profile ready for students.');
   assert.equal(frontend.incompleteProfileMessage([]), null);
+  assert.equal(frontend.incompleteProfileMessage(['photo']), 'Add a profile photo to make your profile ready for students.');
+  assert.equal(frontend.incompleteProfileMessage(['bio', 'photo']), 'Add a profile photo and bio to make your profile ready for students.');
+  assert.equal(
+    frontend.incompleteProfileMessage(['photo', 'headline', 'bio', 'location']),
+    'Add a profile photo, headline, bio, and location to make your profile ready for students.',
+  );
 });
 
 test('profile form: required markers, minimum hints, draft save allowed with a not-ready notice', () => {
@@ -62,7 +85,9 @@ test('profile form: required markers, minimum hints, draft save allowed with a n
   assert.match(src, /\* Required before students can see your profile\. You can save a draft and finish later\./);
   assert.match(src, /hint=\{COACH_PROFILE_REQUIREMENT_HINTS\.headline\}/);
   assert.match(src, /hint=\{COACH_PROFILE_REQUIREMENT_HINTS\.bio\}/);
-  assert.match(src, /coachProfileMissingFields\(fresh\?\.coachProfile\)/);
+  assert.match(src, /label="Profile photo \*"/);
+  // Live: uploading the photo after saving updates the notice without another save.
+  assert.match(src, /coachProfileStepMissing\(existing, user\?\.avatar_url\)/);
   assert.match(src, /<Alert tone="warning">\{incompleteNotice\}<\/Alert>/);
 });
 

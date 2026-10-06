@@ -1074,6 +1074,8 @@ table.data th { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0
 .coach-onboarding-steps li.current { background: var(--pc-info-soft); }
 .coach-onboarding-steps li.done a { color: var(--pc-green-dark); }
 .coach-onboarding-steps li.disabled { color: #888; }
+.coach-onboarding-step { display: grid; gap: 0.1rem; min-width: 0; }
+.coach-onboarding-desc { line-height: 1.3; }
 .coach-onboarding-num {
   width: 1.6rem;
   height: 1.6rem;

@@ -28,7 +28,7 @@ import {
 } from '../../domain/coachRating.js';
 import {
   COACH_PROFILE_REQUIREMENT_HINTS,
-  coachProfileMissingFields,
+  coachProfileStepMissing,
   incompleteProfileMessage,
 } from '../../domain/coachProfileCompleteness.js';
 
@@ -48,18 +48,16 @@ export function CoachProfileEditPage() {
   const [photoBusy, setPhotoBusy] = useState(false);
   const [error, setError] = useState(null);
   const [message, setMessage] = useState(null);
-  const [incompleteNotice, setIncompleteNotice] = useState(null);
   const statusRef = useRef(null);
 
   const isDirty = JSON.stringify(comparableForm(form)) !== JSON.stringify(comparableForm(initialForm));
   useUnsavedChangesGuard(isDirty);
   const ratingCopy = ratingFieldCopy(form.rating_system);
+  const stepMissing = coachProfileStepMissing(existing, user?.avatar_url);
+  const incompleteNotice = message && stepMissing.length ? incompleteProfileMessage(stepMissing) : null;
 
   useEffect(() => {
-    if (isDirty) {
-      setMessage(null);
-      setIncompleteNotice(null);
-    }
+    if (isDirty) setMessage(null);
   }, [isDirty]);
 
   useEffect(() => {
@@ -113,7 +111,6 @@ export function CoachProfileEditPage() {
     e.preventDefault();
     setError(null);
     setMessage(null);
-    setIncompleteNotice(null);
     const clientErrors = validateCoachProfileForm(form);
     if (Object.keys(clientErrors).length) {
       setFieldErrors(clientErrors);
@@ -130,8 +127,6 @@ export function CoachProfileEditPage() {
       setInitialForm(saved);
       setFieldErrors({});
       setMessage(creating ? 'Profile created.' : 'Profile saved.');
-      const stillMissing = coachProfileMissingFields(fresh?.coachProfile);
-      setIncompleteNotice(stillMissing.length ? incompleteProfileMessage(stillMissing) : null);
     } catch (err) {
       const { fields, general } = coachProfileApiFieldErrors(err);
       setFieldErrors(fields);
@@ -148,7 +143,8 @@ export function CoachProfileEditPage() {
       <form className="card stack" onSubmit={onSubmit} noValidate style={{ maxWidth: 640 }}>
         <ProfilePhotoField
           id="coach-profile-photo"
-          note="This photo is used across your account and saves as soon as you upload it."
+          label="Profile photo *"
+          note="Students see this before booking. It’s used across your account and saves as soon as you upload it."
           disabled={busy}
           onBusyChange={setPhotoBusy}
         />

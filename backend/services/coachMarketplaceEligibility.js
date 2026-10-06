@@ -32,8 +32,7 @@ import { Op, col, fn, where as sequelizeWhere } from 'sequelize';
 import {
   COACH_BIO_MIN,
   COACH_HEADLINE_MIN,
-  COACH_PROFILE_REQUIRED_FIELDS,
-  coachProfileMissingFields,
+  coachProfileStepMissing,
 } from '../utils/coachProfileCompleteness.js';
 
 /** Mutable deps for unit tests (ESM named exports are read-only). */
@@ -48,14 +47,7 @@ export const MARKETPLACE_STEP_KEYS = Object.freeze([
   'lesson',
   'court',
   'availability',
-  'photo',
 ]);
-
-/** Profile photo (users.avatar_url) — required for listing; the coaching gallery is not. */
-export function hasProfilePhoto(user) {
-  const url = user?.avatar_url;
-  return typeof url === 'string' && url.trim().length > 0;
-}
 
 /**
  * Stripe Connect "ready to receive funds" — matches frontend
@@ -123,7 +115,6 @@ export async function syncCoachStripeReadyFromAccount(coachProfile, account) {
  *   lesson?: boolean,
  *   court?: boolean,
  *   availability?: boolean,
- *   photo?: boolean,
  * }} flags
  */
 export function computeMarketplaceEligibilityFromSteps(flags = {}) {
@@ -133,7 +124,6 @@ export function computeMarketplaceEligibilityFromSteps(flags = {}) {
     lesson: Boolean(flags.lesson),
     court: Boolean(flags.court),
     availability: Boolean(flags.availability),
-    photo: Boolean(flags.photo),
   };
   const missing = MARKETPLACE_STEP_KEYS.filter((key) => !steps[key]);
   return {
@@ -164,7 +154,8 @@ export async function getCoachMarketplaceEligibility(coachId) {
     where: { user_id: id, deleted_at: null },
   });
   const hasProfile = Boolean(profile) && activeCoach;
-  const profileMissingFields = profile ? coachProfileMissingFields(profile) : [...COACH_PROFILE_REQUIRED_FIELDS];
+  // The profile photo (users.avatar_url) is part of the profile step; gallery photos are not.
+  const profileMissingFields = coachProfileStepMissing(profile, user?.avatar_url);
 
   // Court step: any non-deleted linked court counts — do NOT filter is_private.
   // is_private only hides courts from GET /api/courts; coaches who teach only at
@@ -192,14 +183,13 @@ export async function getCoachMarketplaceEligibility(coachId) {
       lesson: lessonCount > 0,
       court: courtCount > 0,
       availability: availabilityCount > 0,
-      photo: hasProfilePhoto(user),
     }),
     profile_exists: hasProfile,
     profile_missing_fields: profileMissingFields,
   };
 }
 
-/** Coach `users` row `where` for discovery: active account with a profile photo. */
+/** Coach `users` row `where` for discovery: active account with a profile photo (part of the profile step). */
 export function marketplaceDiscoveryUserWhere() {
   return {
     ...PUBLIC_ACTIVE_USER_WHERE,

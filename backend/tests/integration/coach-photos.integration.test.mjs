@@ -96,7 +96,8 @@ describeHttp('HTTP integration: coach photo gallery', () => {
     try {
       const out = await getCoachMarketplaceEligibility(fixture.coach.id);
       assert.equal(out.listed, false);
-      assert.deepEqual(out.missing, ['photo']);
+      assert.deepEqual(out.missing, ['profile']);
+      assert.deepEqual(out.profile_missing_fields, ['photo']);
       const discover = await api(server.baseUrl, 'GET', '/api/coaches', { token: studentToken });
       assert.equal(discover.status, 200, discover.text);
       assert.ok(!discover.json.data.some((c) => c.id === fixture.coach.id), 'hidden from Discover without a profile photo');

@@ -297,7 +297,7 @@ test('coach profile page: system before rating, dynamic copy, field errors, unsa
   assert.match(src, /if \(creating\) await coachesApi\.createProfile\(body\);\s*else await coachesApi\.updateMyProfile\(body\);\s*const fresh = await refreshProfile\(\);\s*const saved = coachProfileToForm\(fresh\?\.coachProfile\);\s*setForm\(saved\);\s*setInitialForm\(saved\);/);
   assert.match(src, /setMessage\(creating \? 'Profile created\.' : 'Profile saved\.'\);/);
   assert.doesNotMatch(src, /navigate\(/);
-  // Re-checks after a save and after a profile photo upload (the photo is a listing step).
+  // Re-checks after a save and after a profile photo upload (the photo is part of the profile step).
   assert.match(src, /<SetupNextStep step="profile" refreshKey=\{`\$\{message \?\? ''\}\|\$\{user\?\.avatar_url \?\? ''\}`\} \/>/);
   assert.ok(src.indexOf("<Alert tone=\"success\">") > src.indexOf('<PlaceAutocomplete'), 'confirmation sits near Save');
   assert.match(src, /<Alert tone="success">\{message\}<\/Alert>/);

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { coachesApi } from '../../api/index.js';
 import { useAuth } from '../../auth/AuthContext.jsx';
 import { StatusBadge } from '../ui/States.jsx';
@@ -73,14 +73,17 @@ export function CoachOnboardingCard({ listed, setup, userId, onRefresh }) {
               className={`${item.done ? 'done' : ''}${isNext ? ' current' : ''}${item.disabled ? ' disabled' : ''}`}
             >
               <span className="coach-onboarding-num" aria-hidden="true">{i + 1}</span>
-              {item.disabled ? (
-                <span aria-disabled="true">{item.label}</span>
-              ) : (
-                <Link to={item.to}>
-                  {item.label}
-                  <span className="visually-hidden">{item.done ? ' (done)' : ' (not done)'}</span>
-                </Link>
-              )}
+              <span className="coach-onboarding-step">
+                {item.disabled ? (
+                  <span aria-disabled="true">{item.label}</span>
+                ) : (
+                  <Link to={item.to}>
+                    {item.label}
+                    <span className="visually-hidden">{item.done ? ' (done)' : ' (not done)'}</span>
+                  </Link>
+                )}
+                {item.description ? <span className="small muted coach-onboarding-desc">{item.description}</span> : null}
+              </span>
               {stepStatus(item, isNext)}
             </li>
           );
@@ -106,11 +109,9 @@ export function CoachOnboardingCard({ listed, setup, userId, onRefresh }) {
  * Shown on a setup page once that page's step is done, so the coach can go straight to the
  * next step instead of back to the dashboard. Hidden for coaches who were already listed
  * when the page opened. `refreshKey` changes (e.g. the page's success message) re-check status.
- * A next step on this same page (the profile photo) scrolls to it instead of linking.
  */
 export function SetupNextStep({ step, refreshKey }) {
   const { user, readiness } = useAuth();
-  const location = useLocation();
   const [status, setStatus] = useState(null);
   const [listedAtLoad, setListedAtLoad] = useState(null);
   const hasStatus = status !== null;
@@ -145,17 +146,7 @@ export function SetupNextStep({ step, refreshKey }) {
         <>
           <h2 className="coach-onboarding-title">Next: {view.next.title}</h2>
           <p className="small">{view.next.detail}</p>
-          {view.next.anchor && view.next.to === location.pathname ? (
-            <button
-              type="button"
-              className="btn"
-              onClick={() => document.getElementById(view.next.anchor)?.scrollIntoView({ behavior: 'smooth', block: 'center' })}
-            >
-              {view.next.cta} ↑
-            </button>
-          ) : (
-            <Link className="btn" to={view.next.to}>{view.next.cta} →</Link>
-          )}
+          <Link className="btn" to={view.next.to}>{view.next.cta} →</Link>
         </>
       ) : (
         <ReadyToBeDiscovered userId={user?.id} />

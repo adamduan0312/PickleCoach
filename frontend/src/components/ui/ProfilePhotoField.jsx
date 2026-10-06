@@ -13,7 +13,7 @@ export const PHOTO_LIMITS_HINT = 'JPG, PNG, or WebP · up to 2 MB';
  * checkout, and the public coach profile. Uploads and removals save immediately, independent
  * of any surrounding form's Save button.
  */
-export function ProfilePhotoField({ id = 'profile-photo', note, disabled = false, onBusyChange }) {
+export function ProfilePhotoField({ id = 'profile-photo', label = 'Profile photo', note, disabled = false, onBusyChange }) {
   const { user, refreshProfile } = useAuth();
   const inputRef = useRef(null);
   const [busy, setBusy] = useState(false);
@@ -48,7 +48,7 @@ export function ProfilePhotoField({ id = 'profile-photo', note, disabled = false
 
   return (
     <div className="field settings-photo-field">
-      <span className="settings-photo-label" id={labelId}>Profile photo</span>
+      <span className="settings-photo-label" id={labelId}>{label}</span>
       <div className="row settings-photo-row" aria-labelledby={labelId}>
         <Avatar name={user?.full_name} src={user?.avatar_url} size="lg" />
         <div className="stack settings-photo-actions">
