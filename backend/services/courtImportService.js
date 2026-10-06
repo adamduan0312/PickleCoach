@@ -38,10 +38,13 @@ export const REVERSE_GEOCODE_MAX_DISTANCE_MILES = Math.max(
   Number.parseFloat(process.env.COURT_IMPORT_REVERSE_MAX_DISTANCE_MILES || '1') || 1,
 );
 
-/** Per-endpoint Overpass request timeout (the query itself allows the server 25s). */
+/**
+ * Per-endpoint Overpass request timeout (the query itself allows the server 60s).
+ * Discovery runs in the background, and the per-court facility lookup can take ~25s.
+ */
 export const OVERPASS_TIMEOUT_MS = Math.max(
   1000,
-  Number.parseInt(process.env.COURT_OVERPASS_TIMEOUT_MS || '20000', 10) || 20000,
+  Number.parseInt(process.env.COURT_OVERPASS_TIMEOUT_MS || '60000', 10) || 60000,
 );
 
 /** Per-lookup Nominatim reverse-geocode timeout, excluding the shared rate-limit wait. */
@@ -115,8 +118,11 @@ export const calculateDistance = (lat1, lng1, lat2, lng2) => {
  *
  * Rules:
  * - Same osm_type + osm_id → duplicate (primary identity for OSM imports).
- * - Different OSM ids → never collapse solely due to proximity (distinct mapped features).
- * - Proximity / same-name near a court with no OSM id (manual) → still treated as duplicate.
+ * - Same name within 0.25 mi → duplicate, whatever the OSM ids.
+ * - Different OSM ids → otherwise never collapse solely due to proximity (distinct mapped features),
+ *   except a facility-derived name (`derivedName`), which is only a fallback: any court already
+ *   listed within 0.1 mi wins.
+ * - Proximity near a court with no OSM id (manual) → still treated as duplicate.
  */
 export async function shouldSkipOsmCandidate({
   name,
@@ -124,6 +130,7 @@ export async function shouldSkipOsmCandidate({
   longitude,
   osmType,
   osmId,
+  derivedName = false,
 }) {
   if (osmType != null && osmId != null) {
     const byOsm = await CourtLocation.findOne({
@@ -148,9 +155,22 @@ export async function shouldSkipOsmCandidate({
 
   for (const court of nearbyCourts) {
     if (court.latitude == null || court.longitude == null) continue;
+    const distance = calculateDistance(latitude, longitude, court.latitude, court.longitude);
 
-    // Distinct OSM features stay distinct even when mapped close together.
+    // Same name close by is the same listing to a coach, whatever the OSM ids
+    // (e.g. several unnamed pitches inside one park all named after the park).
     if (
+      name &&
+      court.name &&
+      distance < 0.25 &&
+      String(court.name).toLowerCase() === String(name).toLowerCase()
+    ) {
+      return true;
+    }
+
+    // Otherwise distinct OSM features stay distinct even when mapped close together.
+    if (
+      !derivedName &&
       osmType != null &&
       osmId != null &&
       court.osm_type != null &&
@@ -160,26 +180,67 @@ export async function shouldSkipOsmCandidate({
       continue;
     }
 
-    const distance = calculateDistance(latitude, longitude, court.latitude, court.longitude);
     if (distance < 0.1) return true;
-    if (
-      name &&
-      court.name &&
-      distance < 0.25 &&
-      String(court.name).toLowerCase() === String(name).toLowerCase()
-    ) {
-      return true;
-    }
   }
 
   return false;
 }
 
-function displayNameFromOsmTags(tags = {}, element = {}) {
-  const tagged = tags.name || tags['name:en'] || tags.operator || tags.brand;
-  if (tagged) return String(tagged).slice(0, 255);
-  const ref = element.id != null ? `${element.type || 'osm'}/${element.id}` : `${Date.now()}`;
-  return `Pickleball Court (${ref})`.slice(0, 255);
+/** Names older imports generated for unnamed OSM features, e.g. "Pickleball Court (way/123)". */
+const PLACEHOLDER_OSM_NAME = /^Pickleball Court \((node|way|relation|osm)\/\d+\)$/i;
+
+/** "Pickleball Courts", "Court 3", "Pickleball" — names that can't tell one listing from another. */
+const GENERIC_COURT_NAME = /^\s*(pickle\s*ball)?\s*(courts?|pitch(es)?)?\s*#?\d*\s*$/i;
+
+export function isPlaceholderOsmCourtName(name) {
+  return PLACEHOLDER_OSM_NAME.test(String(name ?? '').trim());
+}
+
+function meaningfulName(value) {
+  const s = value == null ? '' : String(value).trim();
+  if (!s || GENERIC_COURT_NAME.test(s) || isPlaceholderOsmCourtName(s)) return null;
+  return s.slice(0, 255);
+}
+
+/**
+ * Enclosing-facility kinds used to name an unnamed OSM court, most specific first.
+ * Each entry is [tag key, values].
+ */
+const FACILITY_KINDS = [
+  ['leisure', ['sports_centre']],
+  ['leisure', ['recreation_ground', 'stadium']],
+  ['leisure', ['park']],
+  ['landuse', ['recreation_ground']],
+  ['amenity', ['community_centre']],
+  ['club', null],
+  ['amenity', ['school', 'college', 'university']],
+];
+
+function facilityRank(tags = {}) {
+  const i = FACILITY_KINDS.findIndex(([key, values]) => tags[key] != null && (!values || values.includes(tags[key])));
+  return i === -1 ? null : i;
+}
+
+/** Best facility name from enclosing OSM areas (tags only), or null. */
+export function facilityNameFromAreas(areas = []) {
+  const ranked = areas
+    .map((tags) => ({ name: meaningfulName(tags?.name), rank: facilityRank(tags) }))
+    .filter((a) => a.name && a.rank != null)
+    .sort((a, b) => a.rank - b.rank);
+  return ranked[0]?.name ?? null;
+}
+
+/**
+ * Listing name for an OSM court: its own name tag, else the enclosing park/facility name.
+ * Null when neither is meaningful — such courts are withheld from the directory, never given
+ * a placeholder like "Pickleball Court (way/123)" or a generic "Pickleball Court".
+ * @returns {{ name: string, source: 'osm'|'facility' }|null}
+ */
+export function osmCourtName(tags = {}, facilityAreas = []) {
+  const own = meaningfulName(tags.name) || meaningfulName(tags['name:en']);
+  if (own) return { name: own, source: 'osm' };
+  const facility = facilityNameFromAreas(facilityAreas);
+  return facility ? { name: facility, source: 'facility' } : null;
 }
 
 /**
@@ -340,7 +401,7 @@ export async function resolveImportAddress({
   };
 }
 
-function normalizeOsmElement(element) {
+function normalizeOsmElement(element, facilityAreas = []) {
   const lat = element.lat ?? element.center?.lat;
   const lon = element.lon ?? element.center?.lon;
   if (lat == null || lon == null) return null;
@@ -351,8 +412,28 @@ function normalizeOsmElement(element) {
     latitude: parseFloat(lat),
     longitude: parseFloat(lon),
     tags: element.tags || {},
+    facilityAreas,
     element,
   };
+}
+
+/**
+ * Overpass output from buildPickleballOverpassQuery is a stream of court elements (which carry
+ * coordinates: `center` or `lat`), each followed by the tag-only facilities that enclose it.
+ * Pair each court with its facilities' tags.
+ * @returns {{ element: object, facilityAreas: object[] }[]}
+ */
+export function groupCourtsWithFacilities(elements = []) {
+  const courts = [];
+  for (const el of elements) {
+    if (!el) continue;
+    if (el.center || el.lat != null) {
+      courts.push({ element: el, facilityAreas: [] });
+    } else {
+      courts.at(-1)?.facilityAreas.push(el.tags || {});
+    }
+  }
+  return courts;
 }
 
 export async function fetchOverpass(query) {
@@ -390,19 +471,52 @@ export async function fetchOverpass(query) {
 }
 
 /**
+ * Overpass filters for named areas that can name an unnamed court (see FACILITY_KINDS).
+ * Depending on the server version, `is_in` yields areas or the closed ways/relations themselves.
+ */
+const FACILITY_AREA_FILTERS = [
+  '["leisure"~"^(sports_centre|recreation_ground|stadium|park)$"]',
+  '["landuse"="recreation_ground"]',
+  '["amenity"~"^(community_centre|school|college|university)$"]',
+  '["club"]',
+].flatMap((f) => ['area', 'way', 'rel'].map((t) => `${t}.a["name"]${f};`)).join(' ');
+
+/**
+ * Overpass body that outputs each court (with center) followed by the named facilities
+ * (parks, sports centres, schools…) its nodes fall inside. Parse with groupCourtsWithFacilities.
+ */
+function courtsWithFacilitiesQuery(courtsStatement) {
+  return `
+    [out:json][timeout:60];
+    ${courtsStatement}->.courts;
+    foreach.courts->.c(
+      .c out center tags;
+      (node.c; node(w.c);)->.n;
+      .n is_in->.a;
+      (${FACILITY_AREA_FILTERS});
+      out tags;
+    );
+  `;
+}
+
+/**
  * Build Overpass query for pickleball features within radiusMiles of center.
  * Does not invent sample courts. Result size is constrained after fetch by
  * distance-sorted DISCOVER_MAX_IMPORTS (not arbitrary Overpass order).
  */
 export function buildPickleballOverpassQuery(latitude, longitude, radiusMiles) {
   const radiusMeters = Math.round(radiusMiles * 1609.34);
-  return `
-    [out:json][timeout:25];
-    (
-      nwr["sport"="pickleball"](around:${radiusMeters},${latitude},${longitude});
-    );
-    out center tags;
-  `;
+  return courtsWithFacilitiesQuery(
+    `nwr["sport"="pickleball"](around:${radiusMeters},${latitude},${longitude})`,
+  );
+}
+
+/** Same output shape for specific OSM features, e.g. `{ way: [1, 2], node: [3] }`. */
+export function buildOsmFeaturesFacilityQuery(idsByType) {
+  const parts = Object.entries(idsByType)
+    .filter(([, ids]) => ids?.length)
+    .map(([type, ids]) => `${type}(id:${ids.join(',')});`);
+  return courtsWithFacilitiesQuery(`(${parts.join(' ')})`);
 }
 
 /**
@@ -413,8 +527,10 @@ export function buildPickleballOverpassQuery(latitude, longitude, radiusMiles) {
  * Existing incomplete OSM rows are enriched on rediscovery when a valid address can be resolved.
  * Features whose reverse geocode answered but still gave no usable address are recorded and
  * skipped for OSM_IMPORT_RETRY_AFTER_DAYS (timeouts / network errors are not recorded).
+ * Features with no meaningful name of their own or from an enclosing facility are not imported
+ * (see osmCourtName); coaches can still add those courts manually.
  *
- * @returns {{ imported: object[], enriched: object[], skippedIncomplete: number, skippedRecentlyFailed: number }}
+ * @returns {{ imported: object[], enriched: object[], skippedIncomplete: number, skippedRecentlyFailed: number, skippedUnnamed: number }}
  */
 export async function importFromOpenStreetMap(
   latitude,
@@ -432,8 +548,8 @@ export async function importFromOpenStreetMap(
   const elements = Array.isArray(data?.elements) ? data.elements : [];
 
   const candidates = [];
-  for (const element of elements) {
-    const normalized = normalizeOsmElement(element);
+  for (const { element, facilityAreas } of groupCourtsWithFacilities(elements)) {
+    const normalized = normalizeOsmElement(element, facilityAreas);
     if (!normalized) continue;
     const dist = calculateDistance(
       latitude,
@@ -452,10 +568,12 @@ export async function importFromOpenStreetMap(
   const enrichedCourts = [];
   let skippedIncomplete = 0;
   let skippedRecentlyFailed = 0;
+  let skippedUnnamed = 0;
   const recentlyFailed = await attemptStore.recentlyFailedKeys(toImport);
 
   for (const candidate of toImport) {
-    const name = displayNameFromOsmTags(candidate.tags, candidate.element);
+    const named = osmCourtName(candidate.tags, candidate.facilityAreas);
+    const name = named?.name ?? null;
 
     const existingByOsm = await CourtLocation.findOne({
       where: {
@@ -476,12 +594,18 @@ export async function importFromOpenStreetMap(
     }
 
     if (!existingByOsm) {
+      // Unnamed and not inside a named facility: withhold rather than list an indistinguishable court.
+      if (!name) {
+        skippedUnnamed += 1;
+        continue;
+      }
       const skipProximity = await shouldSkipOsmCandidate({
         name,
         latitude: candidate.latitude,
         longitude: candidate.longitude,
         osmType: candidate.osmType,
         osmId: candidate.osmId,
+        derivedName: named.source === 'facility',
       });
       if (skipProximity) continue;
     }
@@ -541,7 +665,7 @@ export async function importFromOpenStreetMap(
     }
   }
 
-  return { imported: importedCourts, enriched: enrichedCourts, skippedIncomplete, skippedRecentlyFailed };
+  return { imported: importedCourts, enriched: enrichedCourts, skippedIncomplete, skippedRecentlyFailed, skippedUnnamed };
 }
 
 /** Fill only placeholder/missing address fields on an existing row. */
@@ -598,7 +722,8 @@ export async function discoverCourtsNearby(latitude, longitude, radiusMiles = 10
   const result = await importFromOpenStreetMap(latitude, longitude, radiusMiles, opts);
   logger.info(
     `OSM discovery: imported=${result.imported.length} enriched=${result.enriched.length} `
-    + `skippedIncomplete=${result.skippedIncomplete} skippedRecentlyFailed=${result.skippedRecentlyFailed}`,
+    + `skippedIncomplete=${result.skippedIncomplete} skippedRecentlyFailed=${result.skippedRecentlyFailed} `
+    + `skippedUnnamed=${result.skippedUnnamed}`,
   );
   return result.imported;
 }

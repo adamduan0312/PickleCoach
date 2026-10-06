@@ -12,6 +12,11 @@ import {
   dbOsmImportAttemptStore,
   DISCOVER_MAX_IMPORTS,
   OSM_IMPORT_RETRY_AFTER_DAYS,
+  buildPickleballOverpassQuery,
+  buildOsmFeaturesFacilityQuery,
+  groupCourtsWithFacilities,
+  osmCourtName,
+  isPlaceholderOsmCourtName,
 } from '../services/courtImportService.js';
 import { searchCourts } from '../controllers/courtController.js';
 import { courtDiscovery } from '../services/courtDiscoveryScheduler.js';
@@ -351,7 +356,7 @@ describe('importFromOpenStreetMap / discoverCourtsNearby', () => {
         id: 1000 + i,
         lat: centerLat + i * 0.01,
         lon: centerLng,
-        name: `Court ${i}`,
+        name: `Park ${i}`,
       }));
     }
 
@@ -666,6 +671,126 @@ describe('OSM import attempt tracking', () => {
     const keys = await dbOsmImportAttemptStore.recentlyFailedKeys([{ osmType: 'way', osmId: 1 }]);
     assert.equal(keys.size, 0);
     await dbOsmImportAttemptStore.recordFailure({ osmType: 'way', osmId: 1 }, 'incomplete_address');
+  });
+});
+
+/** A tag-only enclosing facility, as Overpass outputs it after the court it contains. */
+function facility(name, tags = { leisure: 'park' }, type = 'way') {
+  return { type, id: Math.floor(Math.random() * 1e9), tags: { name, ...tags } };
+}
+
+describe('OSM court names: own name, else enclosing facility, else withheld', () => {
+  it('pairs each court with the facilities that follow it', () => {
+    const grouped = groupCourtsWithFacilities([
+      osmEl({ id: 1, lat: 26.1, lon: -80.3 }),
+      facility('Weston Regional Park'),
+      facility('Broward County', { boundary: 'administrative' }, 'area'),
+      osmEl({ id: 2, lat: 26.2, lon: -80.3 }),
+      { type: 'node', id: 3, lat: 26.3, lon: -80.3, tags: { sport: 'pickleball' } },
+      facility('Tequesta Trace Middle School', { amenity: 'school' }, 'area'),
+    ]);
+    assert.deepEqual(grouped.map((g) => [g.element.id, g.facilityAreas.map((t) => t.name)]), [
+      [1, ['Weston Regional Park', 'Broward County']],
+      [2, []],
+      [3, ['Tequesta Trace Middle School']],
+    ]);
+  });
+
+  it('prefers the court’s own name, then the most specific facility; generic names do not count', () => {
+    const park = { name: 'Indian Trace Park', leisure: 'park' };
+    const centre = { name: 'Weston Tennis Center', leisure: 'sports_centre' };
+    assert.deepEqual(osmCourtName({ name: 'Holiday Park Courts' }, [park]), { name: 'Holiday Park Courts', source: 'osm' });
+    assert.deepEqual(osmCourtName({}, [park]), { name: 'Indian Trace Park', source: 'facility' });
+    assert.deepEqual(osmCourtName({}, [park, centre]), { name: 'Weston Tennis Center', source: 'facility' });
+    for (const generic of ['Pickleball Court', 'Pickleball Courts', 'Court 3', 'pickleball', 'Pickleball Court (way/123)']) {
+      assert.deepEqual(osmCourtName({ name: generic }, [park]), { name: 'Indian Trace Park', source: 'facility' }, generic);
+      assert.equal(osmCourtName({ name: generic }, []), null, generic);
+    }
+    // Operator/brand are not court names; admin boundaries are not facilities.
+    assert.equal(osmCourtName({ operator: 'City of Miami' }, [{ name: 'Miami', boundary: 'administrative' }]), null);
+    assert.equal(isPlaceholderOsmCourtName('Pickleball Court (way/1215492783)'), true);
+    assert.equal(isPlaceholderOsmCourtName('Indian Trace Park'), false);
+  });
+
+  it('Overpass queries look up enclosing facilities for each court', () => {
+    for (const q of [buildPickleballOverpassQuery(26.1, -80.36, 10), buildOsmFeaturesFacilityQuery({ way: [1, 2] })]) {
+      assert.match(q, /foreach\.courts->\.c\(/);
+      assert.match(q, /\.c out center tags;/);
+      assert.match(q, /\.n is_in->\.a;/);
+      assert.match(q, /way\.a\["name"\]\["leisure"~"\^\(sports_centre\|recreation_ground\|stadium\|park\)\$"\];/);
+      assert.match(q, /area\.a\["name"\]\["amenity"~/);
+    }
+    assert.match(buildPickleballOverpassQuery(26.1, -80.36, 10), /nwr\["sport"="pickleball"\]\(around:16093,26\.1,-80\.36\)->\.courts;/);
+    assert.match(buildOsmFeaturesFacilityQuery({ way: [1, 2], node: [] }), /\(way\(id:1,2\);\)->\.courts;/);
+  });
+
+  /** In-memory court table so duplicate checks see rows created earlier in the same run. */
+  function memoryCourts(initial = []) {
+    const rows = [...initial];
+    CourtLocation.findOne = async ({ where }) => rows.find(
+      (r) => r.osm_type === where.osm_type && Number(r.osm_id) === Number(where.osm_id),
+    ) || null;
+    CourtLocation.findAll = async () => rows;
+    CourtLocation.create = async (row) => {
+      const court = { id: rows.length + 100, ...row };
+      rows.push(court);
+      return court;
+    };
+    return rows;
+  }
+
+  it('withholds an unnamed court outside any named facility (no reverse-geocode spent)', async () => {
+    const rows = memoryCourts();
+    let reverseCalls = 0;
+    const result = await importFromOpenStreetMap(26.07, -80.23, 10, {
+      maxReverseGeocodes: 5,
+      reverseGeocodeFn: async (...args) => { reverseCalls += 1; return goodReverse(...args); },
+      attemptStore: memoryAttemptStore(),
+      fetchOverpassFn: async () => ({
+        elements: [osmEl({ id: 1215492783, lat: 26.07, lon: -80.23 }), facility('Davie', { boundary: 'administrative' }, 'area')],
+      }),
+    });
+    assert.equal(result.imported.length, 0);
+    assert.equal(result.skippedUnnamed, 1);
+    assert.equal(reverseCalls, 0);
+    assert.equal(rows.length, 0);
+  });
+
+  it('names an unnamed court after its park, and several pitches in one park become one listing', async () => {
+    const rows = memoryCourts();
+    const result = await importFromOpenStreetMap(26.1, -80.36, 10, {
+      maxReverseGeocodes: 0,
+      attemptStore: memoryAttemptStore(),
+      fetchOverpassFn: async () => ({
+        elements: [
+          osmElComplete({ id: 1, lat: 26.1, lon: -80.36 }), facility('Weston Regional Park'),
+          osmElComplete({ id: 2, lat: 26.1001, lon: -80.36 }), facility('Weston Regional Park'),
+          osmElComplete({ id: 3, lat: 26.1002, lon: -80.36 }), facility('Weston Regional Park'),
+        ],
+      }),
+    });
+    assert.equal(result.imported.length, 1);
+    assert.deepEqual(rows.map((r) => [r.name, r.osm_id]), [['Weston Regional Park', 1]]);
+    assert.ok(rows.every((r) => !isPlaceholderOsmCourtName(r.name)));
+  });
+
+  it('a facility name never duplicates a court already listed right there', async () => {
+    const rows = memoryCourts([{
+      id: 280, name: 'Weston Regional Pickleball Court', osm_type: 'way', osm_id: 9, latitude: 26.1, longitude: -80.36,
+    }]);
+    const result = await importFromOpenStreetMap(26.1, -80.36, 10, {
+      maxReverseGeocodes: 0,
+      attemptStore: memoryAttemptStore(),
+      fetchOverpassFn: async () => ({
+        elements: [
+          osmElComplete({ id: 10, lat: 26.1005, lon: -80.36 }), facility('Weston Regional Park'),
+          // A separately named court nearby is still its own listing.
+          osmElComplete({ id: 11, lat: 26.1006, lon: -80.36, name: 'Weston Tennis Center' }),
+        ],
+      }),
+    });
+    assert.deepEqual(result.imported.map((c) => c.name), ['Weston Tennis Center']);
+    assert.equal(rows.length, 2);
   });
 });
 
