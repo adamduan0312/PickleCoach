@@ -174,7 +174,7 @@ describe('booking creation copies the snapshot only inside Booking.create', () =
       'court_state_at_booking: court.state,',
       'court_postal_code_at_booking: court.postal_code,',
       'court_country_at_booking: court.country,',
-      'court_is_private_at_booking: court.is_private,',
+      'court_is_private_at_booking: coachCourtIsPrivate(coachCourtLink, court),',
       'court_latitude_at_booking: court.latitude,',
       'court_longitude_at_booking: court.longitude,',
     ]) {

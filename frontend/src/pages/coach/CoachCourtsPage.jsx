@@ -5,7 +5,7 @@ import { Alert, EmptyState, ErrorState, LoadingState } from '../../components/ui
 import { SetupNextStep } from '../../components/coach/CoachOnboarding.jsx';
 import { FormField } from '../../components/ui/FormField.jsx';
 import { CHAR_LIMITS } from '../../utils/charLimits.js';
-import { courtLabel, formatCourtAddressLines, formatMiles } from '../../utils/format.js';
+import { courtLabel, formatCourtAddressLines, formatMiles, privateCourtArea } from '../../utils/format.js';
 import {
   COURT_DISCOVERY_FAILED_NOTE,
   COURT_DISCOVERY_PENDING_EMPTY,
@@ -70,7 +70,10 @@ export function CoachCourtsPage() {
   const [geoBusy, setGeoBusy] = useState(false);
   const [dupState, setDupState] = useState(null); // { high_confidence, possible } | null
   const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState(null);
+  // Errors render in the section that caused them.
+  const [addressErr, setAddressErr] = useState(null); // Add a new location: address / confirm step
+  const [saveErr, setSaveErr] = useState(null); // Add a new location: select / create step
+  const [listErr, setListErr] = useState(null); // Your teaching locations
   const [message, setMessage] = useState(null);
 
   function update(e) {
@@ -78,6 +81,7 @@ export function CoachCourtsPage() {
     setForm((f) => ({ ...f, [name]: type === 'checkbox' ? checked : value }));
     setResolved(null);
     setDupState(null);
+    setAddressErr(null);
   }
 
   async function reloadLinks() {
@@ -184,10 +188,13 @@ export function CoachCourtsPage() {
 
   function openCreate() {
     setShowCreate(true);
-    setErr(null);
+    setAddressErr(null);
+    setSaveErr(null);
   }
 
-  async function selectExisting(court) {
+  /** `fromSearch`: picked in Find a court results (else from the duplicate list under Add a new location). */
+  async function selectExisting(court, { fromSearch = false } = {}) {
+    const setErr = fromSearch ? setSearchError : setSaveErr;
     setBusy(true);
     setErr(null);
     setMessage(null);
@@ -227,7 +234,8 @@ export function CoachCourtsPage() {
 
   async function confirmAddress(e) {
     e.preventDefault();
-    setErr(null);
+    setAddressErr(null);
+    setSaveErr(null);
     setDupState(null);
     setResolved(null);
 
@@ -235,7 +243,7 @@ export function CoachCourtsPage() {
     if (f !== form) setForm(f);
 
     if (!f.name.trim() || !f.address_line1.trim() || !f.city.trim() || !f.state.trim() || !f.postal_code.trim()) {
-      setErr('Fill in name and full address before confirming location.');
+      setAddressErr('Fill in name and full address before confirming location.');
       return;
     }
     const q = [f.address_line1, f.city, f.state, f.postal_code].map((s) => s.trim()).join(', ');
@@ -244,7 +252,7 @@ export function CoachCourtsPage() {
       const res = await geoApi.search({ q, limit: 5 });
       const results = Array.isArray(res.data?.results) ? res.data.results : [];
       if (!results.length) {
-        setErr(`Could not find “${q}”. Check the street number and name, city, state, and ZIP.`);
+        setAddressErr('Could not find this address. Check the street number and name, city, state, and ZIP.');
         return;
       }
       const best = results[0];
@@ -263,7 +271,7 @@ export function CoachCourtsPage() {
       });
       setDupState(check.data || { high_confidence: [], possible: [] });
     } catch (ex) {
-      setErr(ex.message);
+      setAddressErr(ex.message);
     } finally {
       setGeoBusy(false);
     }
@@ -271,15 +279,15 @@ export function CoachCourtsPage() {
 
   async function createNew({ acknowledgePossible = false } = {}) {
     if (!resolved) {
-      setErr('Confirm the address location before creating.');
+      setSaveErr('Confirm the address location before creating.');
       return;
     }
     if (dupState?.high_confidence?.length) {
-      setErr('A very likely match already exists. Select that court instead of creating a new one.');
+      setSaveErr('A very likely match already exists. Select that court instead of creating a new one.');
       return;
     }
     setBusy(true);
-    setErr(null);
+    setSaveErr(null);
     try {
       await courtsApi.create({
         name: form.name.trim(),
@@ -310,21 +318,31 @@ export function CoachCourtsPage() {
     } catch (ex) {
       if (ex.code === 'COURT_DUPLICATE_HIGH' || ex.code === 'COURT_DUPLICATE_POSSIBLE') {
         setDupState(ex.payload?.data || { high_confidence: [], possible: [] });
-        setErr(ex.message);
-      } else {
-        setErr(ex.message);
       }
+      setSaveErr(ex.message);
     } finally {
       setBusy(false);
     }
   }
 
   async function unlink(courtId) {
+    setListErr(null);
     try {
       await coachesApi.removeCourt(courtId);
       await reloadLinks();
     } catch (ex) {
-      setErr(ex.message);
+      setListErr(ex.message);
+    }
+  }
+
+  async function setLinkPrivate(courtId, isPrivate) {
+    setListErr(null);
+    setMessage(null);
+    try {
+      await coachesApi.addCourt({ court_id: courtId, is_private: isPrivate });
+      await reloadLinks();
+    } catch (ex) {
+      setListErr(ex.message);
     }
   }
 
@@ -341,7 +359,7 @@ export function CoachCourtsPage() {
       );
     }
     return (
-      <button className="btn" type="button" disabled={busy} onClick={() => selectExisting(court)}>
+      <button className="btn" type="button" disabled={busy} onClick={() => selectExisting(court, { fromSearch: true })}>
         Select
       </button>
     );
@@ -354,7 +372,6 @@ export function CoachCourtsPage() {
         Find the courts where you teach and link them to your profile. Only add a new location when it is not
         already listed (or when it is private/custom).
       </p>
-      <Alert tone="error">{err}</Alert>
       <Alert tone="success">{message}</Alert>
       <SetupNextStep step="court" refreshKey={message} />
 
@@ -480,6 +497,7 @@ export function CoachCourtsPage() {
               <input type="checkbox" name="is_private" checked={form.is_private} onChange={update} />
               Private court (exact address hidden from public directory / students until booking rules allow)
             </label>
+            <Alert tone="error">{addressErr}</Alert>
             <button className="btn secondary" type="submit" disabled={geoBusy || busy}>
               {geoBusy ? 'Confirming address…' : 'Confirm address location'}
             </button>
@@ -490,6 +508,8 @@ export function CoachCourtsPage() {
               Resolved location: <strong>{resolved.label}</strong>
             </Alert>
           ) : null}
+
+          <Alert tone="error">{saveErr}</Alert>
 
           {high.length > 0 ? (
             <div className="stack">
@@ -562,19 +582,34 @@ export function CoachCourtsPage() {
       <h2>Your teaching locations</h2>
       {loading ? <LoadingState /> : null}
       {error ? <ErrorState error={error} /> : null}
+      <Alert tone="error">{listErr}</Alert>
       {!loading && (!data || data.length === 0) ? <EmptyState title="No courts linked" /> : null}
       <div className="stack">
         {(data || []).map((link) => {
           const court = link.court || link;
           const courtId = link.court_id || court.id;
+          const isPrivate = Boolean(link.is_private || court.is_private);
           return (
             <div key={link.id || courtId} className="card spread">
               <div>
                 <strong>{court.name || courtLabel(court)}</strong>
+                {isPrivate ? <div className="small"><strong>🔒 Private</strong></div> : null}
                 <CourtAddressBlock court={court} />
+                {isPrivate ? (
+                  <div className="small muted">
+                    Students see “Private location · {privateCourtArea(court) || 'your area'}” until booking rules allow the exact address.
+                  </div>
+                ) : null}
                 {link.coach_notes ? <div className="small muted">{link.coach_notes}</div> : null}
               </div>
-              <button className="btn ghost" type="button" onClick={() => unlink(courtId)}>Unlink</button>
+              <div className="row" style={{ gap: 8 }}>
+                {court.is_private ? null : (
+                  <button className="btn ghost" type="button" onClick={() => setLinkPrivate(courtId, !isPrivate)}>
+                    {isPrivate ? 'Show address publicly' : 'Mark private'}
+                  </button>
+                )}
+                <button className="btn ghost" type="button" onClick={() => unlink(courtId)}>Unlink</button>
+              </div>
             </div>
           );
         })}

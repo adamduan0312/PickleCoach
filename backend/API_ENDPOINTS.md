@@ -1096,7 +1096,7 @@ Authorization: Bearer <token>
 
 ### `GET /api/coaches/me/courts`
 - **Auth**: Required (coach only)
-- **Description**: List courts associated with the authenticated coach. Omit `page`/`limit` to return all matching rows (server-capped). Provide `page` or `limit` for paged mode.
+- **Description**: List courts associated with the authenticated coach. Each link includes **`is_private`** (this coach teaches here privately); the nested `court` is never redacted for its own coach. Omit `page`/`limit` to return all matching rows (server-capped). Provide `page` or `limit` for paged mode.
 - **Query Parameters**: Optional `page`, optional `limit`.
 - **Pagination contract**: Paged mode includes `pagination` (`page`, `limit`, `total`, `totalPages`). All-results mode returns only `data`.
 - **Response** (Status: 200):
@@ -1159,12 +1159,13 @@ Authorization: Bearer <token>
 
 ### `POST /api/coaches/me/courts`
 - **Auth**: Required (coach only; admins cannot add courts to their profile)
-- **Description**: Link an **existing** court to the coach's available courts. Does not create a new court; use `POST /api/courts` to create courts (coaches are auto-linked when they create). If the coach is **already linked** to that `court_id`, the request **`409`**s unless the body includes a **`coach_notes`** property — then the server **updates** `coach_court_locations.coach_notes` only and returns **`200`** (same `data` shape as create). **`coach_notes`** is optional free text the coach stores on the coach–court relationship (not shown on public `GET /api/coaches/:id/courts`).
+- **Description**: Link an **existing** court to the coach's available courts. Does not create a new court; use `POST /api/courts` to create courts (coaches are auto-linked when they create). If the coach is **already linked** to that `court_id`, the request **`409`**s unless the body includes **`coach_notes`** and/or **`is_private`** — then the server **updates** those link fields and returns **`200`** (same `data` shape as create). **`is_private`** (boolean, optional) marks **this coach’s** use of the court private: students see only `Private location · City, ST` (redacted DTO) on this coach’s profile and marketplace card, and the booking snapshot records it. Other coaches linked to the same court are unaffected. A court **added as private** (`court_locations.is_private`) is private for every linked coach; asking to make it public returns **`400`**. Non-boolean `is_private` → **`400`**. **`coach_notes`** is optional free text the coach stores on the coach–court relationship (not shown on public `GET /api/coaches/:id/courts`).
 - **Request Body**:
   ```json
   {
     "court_id": "number (required)",
-    "coach_notes": "string (optional)"
+    "coach_notes": "string (optional)",
+    "is_private": "boolean (optional)"
   }
   ```
 - **Response** (Status: **201** — new link):
@@ -1355,8 +1356,9 @@ Before confirmation (browse, intent, authorized/`pending`), students see `name`,
 
 | Field | Where | MVP behavior |
 |-------|--------|----------------|
-| `is_private` | `court_locations` | Coach sets at create (`POST /api/courts`). When `true`, the court is **hidden from public court discovery** only (`GET /api/courts`, `GET /api/courts/:id` — returns **`404`** on by-id lookup, same as missing). **`is_private` affects only public court discovery.** Once a court is linked to a coach, it remains available for coach profiles, marketplace eligibility, and booking regardless of its privacy setting. Coach-profile court lists (`GET /api/coaches/:id/courts`, `GET /api/coaches/me/courts`), booking payloads, and admin coach-court tools still expose the court row (exact address may be redacted for students — see above). |
+| `is_private` | `court_locations` | Set when a coach **creates** a new court as private (e.g. a residence); never changed on reuse. When `true`, the court is **hidden from public court discovery** only (`GET /api/courts`, `GET /api/courts/:id` — returns **`404`** on by-id lookup, same as missing). **`is_private` affects only public court discovery.** Once a court is linked to a coach, it remains available for coach profiles, marketplace eligibility, and booking regardless of its privacy setting. Coach-profile court lists (`GET /api/coaches/:id/courts`, `GET /api/coaches/me/courts`), booking payloads, and admin coach-court tools still expose the court row (exact address may be redacted for students — see above). |
 | `rate_modifier` | `coach_court_locations` | **Reserved** for future per-court pricing (`booking_price = lesson.price * rate_modifier`). Stored in DB; **not** exposed on coach/student APIs until pricing ships. Admin endpoints may include it for support. |
+| `is_private` | `coach_court_locations` | **Per-coach privacy** — drives student address redaction on `GET /api/coaches/:id/courts`, marketplace `courts[]`, and `court_is_private_at_booking`. Set via `POST /api/courts` (checkbox, applies to the creating coach’s link) or `POST /api/coaches/me/courts`. Effective privacy = link flag **or** the court’s own `is_private`. Existing links were backfilled from the court flag. |
 | `coach_notes` | `coach_court_locations` | Coach-specific notes on the coach–court relationship. **Only** via `POST /api/coaches/me/courts` (and returned on `GET /api/coaches/me/courts`). **`POST /api/courts` rejects `coach_notes` or legacy `notes`** — court creation is court entity only. |
 | `created_by_user_id` | `court_locations` | Internal ownership for delete authorization; not returned on public court endpoints. |
 

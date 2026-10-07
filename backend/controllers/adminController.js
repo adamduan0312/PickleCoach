@@ -264,6 +264,7 @@ function mapCoachCourtLinkForAdmin(link) {
     coach_id: link.coach_id,
     court_id: link.court_id,
     coach_notes: link.coach_notes != null ? link.coach_notes : null,
+    is_private: Boolean(link.is_private || court.is_private),
     created_at: link.created_at != null ? new Date(link.created_at).toISOString() : null,
     updated_at: link.updated_at != null ? new Date(link.updated_at).toISOString() : null,
     court: {

@@ -20,6 +20,7 @@ import {
 } from './roleGovernance.js';
 import {
   serializeCourtForPublicViewer,
+  courtForCoachLink,
 } from './courtAddressVisibility.js';
 import { serializePublicMarketplaceLesson } from './lessonDto.js';
 import { certificationsFromStored } from './coachCertifications.js';
@@ -234,7 +235,7 @@ export function serializeCoachListItem(coachInstance, { searchLat = null, search
         if (nearestMiles == null || d < nearestMiles) nearestMiles = d;
       }
 
-      const serialized = serializeCourtForPublicViewer(courtRaw, {
+      const serialized = serializeCourtForPublicViewer(courtForCoachLink(link, courtRaw), {
         searchLat: originLat,
         searchLng: originLng,
         includeId: false,
@@ -304,7 +305,7 @@ export function serializeCoachPublicUser(coachInstance, { includeCoachCourts = f
         coach_id: link.coach_id,
         court_id: link.court_id,
         court: court
-          ? serializeCourtForPublicViewer(court, {
+          ? serializeCourtForPublicViewer(courtForCoachLink(link, court), {
               includeId: true,
               idKey: 'id',
               latKey: 'latitude',

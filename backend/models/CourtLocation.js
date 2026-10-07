@@ -40,6 +40,10 @@ const CourtLocation = sequelize.define('court_locations', {
     type: DataTypes.DOUBLE,
     allowNull: true,
   },
+  /**
+   * Not listed in the public court directory (a location a coach added as private, e.g. a
+   * residence). Address redaction for students follows coach_court_locations.is_private.
+   */
   is_private: {
     type: DataTypes.BOOLEAN,
     defaultValue: false,

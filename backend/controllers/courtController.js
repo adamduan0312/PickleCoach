@@ -7,7 +7,7 @@ import { courtCreatePayloadRejectsCoachCourtFields } from '../utils/validateCour
 import { parseCoachCourtLinkCoachNotesFromBody } from '../utils/coachCourtLinkNotes.js';
 import { publicCourtDirectoryWhere } from '../utils/courtPublicDirectory.js';
 import { findPublicActiveCoach } from '../utils/userLifecycle.js';
-import { serializeCourtForPublicViewer } from '../utils/courtAddressVisibility.js';
+import { serializeCourtForPublicViewer, courtForCoachLink, coachCourtIsPrivate } from '../utils/courtAddressVisibility.js';
 import { distanceMiles as courtDupDistanceMiles, rankCourtDuplicateCandidates, filterCourtsForDuplicateCheck } from '../utils/courtDuplicateMatch.js';
 import { DISCOVERY_MAX_RADIUS_MILES, courtDiscovery } from '../services/courtDiscoveryScheduler.js';
 
@@ -38,6 +38,7 @@ const COACH_COURT_LINK_API_ATTRIBUTES = [
   'coach_id',
   'court_id',
   'coach_notes',
+  'is_private',
   'created_at',
   'updated_at',
 ];
@@ -47,6 +48,7 @@ const COACH_COURT_LINK_POST_COURT_RESPONSE_ATTRIBUTES = [
   'id',
   'coach_id',
   'court_id',
+  'is_private',
   'created_at',
   'updated_at',
 ];
@@ -501,12 +503,16 @@ export const createCourt = async (req, res) => {
         where: { coach_id: userId, court_id: court.id },
       });
       let linkWasCreated = false;
+      const linkIsPrivate = coachCourtIsPrivate({ is_private: is_private === true }, court);
 
-      if (!coachCourt) {
+      if (coachCourt) {
+        if (Boolean(coachCourt.is_private) !== linkIsPrivate) await coachCourt.update({ is_private: linkIsPrivate });
+      } else {
         try {
           coachCourt = await CoachCourtLocation.create({
             coach_id: userId,
             court_id: court.id,
+            is_private: linkIsPrivate,
           });
           linkWasCreated = true;
         } catch (linkErr) {
@@ -603,8 +609,7 @@ export const getCoachCourtsById = async (req, res) => {
     });
 
     const data = coachCourts.rows.map((link) => {
-      const court = link.court;
-      const serialized = serializeCourtForPublicViewer(court, {
+      const serialized = serializeCourtForPublicViewer(courtForCoachLink(link, link.court), {
         includeId: true,
         idKey: 'court_id',
         latKey: 'lat',
@@ -674,16 +679,22 @@ export const getMyCoachCourts = async (req, res) => {
  * POST /api/coaches/me/courts
  * Link an existing court to the coach's available courts.
  * To create new courts (public or private), use POST /api/courts instead; coaches are auto-linked when they create.
- * If already linked: body must include `coach_notes` to update coach_court_locations.coach_notes (200); otherwise 409.
+ * Optional `is_private` (boolean) marks this coach's use of the court private. A court added as
+ * private is private for every coach linked to it (400 when asking to make it public).
+ * If already linked: body must include `coach_notes` and/or `is_private` to update the link (200); otherwise 409.
  */
 export const addCoachCourt = async (req, res) => {
   try {
     const userId = req.user.id;
     const { court_id } = req.body;
     const { coachNotesProvided, coachNotes } = parseCoachCourtLinkCoachNotesFromBody(req.body);
+    const isPrivateProvided = req.body?.is_private !== undefined;
 
     if (!(req.user.roles || []).includes('coach')) {
       return res.status(403).json(createErrorResponse(`Only coaches can add courts to their profile. Your roles: ${(req.user.roles || []).join(', ') || 'none'}.`));
+    }
+    if (isPrivateProvided && typeof req.body.is_private !== 'boolean') {
+      return res.status(400).json(createErrorResponse('is_private must be true or false'));
     }
 
     const courtId = court_id != null ? parseInt(court_id, 10) : null;
@@ -697,6 +708,12 @@ export const addCoachCourt = async (req, res) => {
     if (!courtToAdd) {
       return res.status(404).json(createErrorResponse('Court not found'));
     }
+    if (isPrivateProvided && req.body.is_private === false && courtToAdd.is_private) {
+      return res.status(400).json(createErrorResponse(
+        'This location was added as a private court, so it can’t be shown publicly.',
+      ));
+    }
+    const linkIsPrivate = coachCourtIsPrivate({ is_private: req.body?.is_private === true }, courtToAdd);
 
     // Check if already linked
     const existing = await CoachCourtLocation.findOne({
@@ -707,10 +724,13 @@ export const addCoachCourt = async (req, res) => {
     });
 
     if (existing) {
-      if (!coachNotesProvided) {
+      if (!coachNotesProvided && !isPrivateProvided) {
         return res.status(409).json(createErrorResponse('Coach is already linked to this court'));
       }
-      await existing.update({ coach_notes: coachNotes });
+      await existing.update({
+        ...(coachNotesProvided ? { coach_notes: coachNotes } : {}),
+        ...(isPrivateProvided ? { is_private: linkIsPrivate } : {}),
+      });
       const court = await CourtLocation.findByPk(courtId, {
         attributes: PUBLIC_COURT_LIST_ATTRIBUTES,
       });
@@ -726,6 +746,7 @@ export const addCoachCourt = async (req, res) => {
       coach_id: userId,
       court_id: courtId,
       coach_notes: coachNotes,
+      is_private: linkIsPrivate,
     });
 
     const court = await CourtLocation.findByPk(courtId, {

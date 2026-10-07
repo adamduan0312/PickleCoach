@@ -14,6 +14,27 @@
  * controls when street address and coordinates are revealed on coach/booking DTOs.
  */
 
+/**
+ * Whether a coach teaches at a court privately. Privacy is per coach (coach_court_locations);
+ * a court added as private (court_locations.is_private, hidden from the directory) is private
+ * for every coach linked to it.
+ * @param {{ is_private?: boolean }|null|undefined} link
+ * @param {{ is_private?: boolean }|null|undefined} court
+ */
+export function coachCourtIsPrivate(link, court) {
+  return Boolean(link?.is_private || court?.is_private);
+}
+
+/**
+ * The court as a given coach presents it: `is_private` reflects that coach's link.
+ * Pass the result to serializeCourtForPublicViewer.
+ */
+export function courtForCoachLink(link, court) {
+  if (!court) return null;
+  const plain = court?.toJSON ? court.toJSON() : { ...court };
+  return { ...plain, is_private: coachCourtIsPrivate(link, plain) };
+}
+
 /** Booking statuses where students may see exact private-court location. */
 export const PRIVATE_COURT_ADDRESS_REVEAL_STATUSES = Object.freeze([
   'confirmed',
