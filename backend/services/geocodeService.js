@@ -29,17 +29,27 @@ const US_STATE_ALIASES = {
 const US_STATE_CODES = new Set(Object.values(US_STATE_ALIASES));
 
 let lastNominatimAt = 0;
+let nominatimQueue = Promise.resolve();
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function respectNominatimRateLimit() {
-  const elapsed = Date.now() - lastNominatimAt;
-  if (elapsed < 1100) {
-    await sleep(1100 - elapsed);
-  }
-  lastNominatimAt = Date.now();
+/** Waits for this caller's Nominatim slot; concurrent callers are queued so slots stay ≥1.1s apart. */
+function respectNominatimRateLimit() {
+  const slot = nominatimQueue.then(async () => {
+    const elapsed = Date.now() - lastNominatimAt;
+    if (elapsed < 1100) {
+      await sleep(1100 - elapsed);
+    }
+    lastNominatimAt = Date.now();
+  });
+  nominatimQueue = slot;
+  return slot;
+}
+
+function geocoderError(message, code = 'GEOCODE_UNAVAILABLE') {
+  return Object.assign(new Error(message), { code });
 }
 
 /**
@@ -630,6 +640,12 @@ export function structuredAddressFromNominatimHit(hit) {
  *
  * @param {number} lat
  * @param {number} lng
+ * Returns null when Nominatim answered with no result. Throws an error with `code`
+ * GEOCODE_RATE_LIMITED (HTTP 429) or GEOCODE_UNAVAILABLE (5xx, timeout, network error) when it
+ * could not answer, so callers can retry later instead of treating the location as unaddressable.
+ *
+ * @param {number} lat
+ * @param {number} lng
  * @param {{ signal?: AbortSignal, timeoutMs?: number }} [opts] — `timeoutMs` starts after the rate-limit wait.
  * @returns {Promise<{ address_line1: string|null, city: string|null, state: string|null, postal_code: string|null, country: string, label: string, latitude: number|null, longitude: number|null }|null>}
  */
@@ -662,13 +678,17 @@ export async function reverseGeocode(lat, lng, opts = {}) {
   } catch (err) {
     if (err?.name === 'AbortError') throw err;
     if (err?.name === 'TimeoutError') {
-      logger.warn(`Reverse geocode timed out after ${opts.timeoutMs}ms`);
-      return null;
+      throw geocoderError(`Reverse geocode timed out after ${opts.timeoutMs}ms`);
     }
-    logger.warn('Reverse geocode network error:', err.message);
-    return null;
+    throw geocoderError(`Reverse geocode network error: ${err.message}`);
   }
 
+  if (res.status === 429) {
+    throw geocoderError('Reverse geocode rate-limited (HTTP 429)', 'GEOCODE_RATE_LIMITED');
+  }
+  if (res.status >= 500) {
+    throw geocoderError(`Reverse geocode HTTP ${res.status}`);
+  }
   if (!res.ok) {
     logger.warn('Reverse geocode HTTP %s', res.status);
     return null;

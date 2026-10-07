@@ -225,6 +225,7 @@ function facilityRank(tags = {}) {
  */
 export function enclosingFacilities(areas = []) {
   return areas
+    .filter((a) => !a?.key?.startsWith('node/'))
     .map((a) => ({ key: a?.key, name: meaningfulName(a?.tags?.name), rank: facilityRank(a?.tags) }))
     .filter((a) => a.key && a.name && a.rank != null)
     .sort((a, b) => a.rank - b.rank)
@@ -232,8 +233,36 @@ export function enclosingFacilities(areas = []) {
     .map(({ key, name }) => ({ key, name }));
 }
 
+/** Max distance from a court to a park mapped only as a point (no outline) for the park to name it. */
+export const POINT_FACILITY_MAX_METERS = 120;
+
 /**
- * Listing name for an OSM court: its own name tag, else the enclosing park/facility name.
+ * Many parks (e.g. GNIS imports) are mapped as a single named node, which `is_in` can never match.
+ * Such a park names a court with no enclosing facility only if it is the one named park point within
+ * POINT_FACILITY_MAX_METERS and the court is not private. Parks with an outline are never used this
+ * way: a court outside a mapped outline is outside that park.
+ * @returns {{ key: string, name: string }|null}
+ */
+function pointFacility(tags = {}, areas = []) {
+  if (['private', 'no'].includes(tags.access)) return null;
+  const points = areas
+    .filter((a) => a?.key?.startsWith('node/') && facilityRank(a.tags) != null)
+    .map((a) => ({ key: a.key, name: meaningfulName(a.tags.name) }))
+    .filter((a) => a.name);
+  return new Set(points.map((p) => p.name)).size === 1 ? points[0] : null;
+}
+
+/** OSM facilities a court belongs to: enclosing areas, else a qualifying park point. */
+export function courtFacilities(tags = {}, areas = []) {
+  const enclosing = enclosingFacilities(areas);
+  if (enclosing.length) return enclosing;
+  const point = pointFacility(tags, areas);
+  return point ? [point] : [];
+}
+
+/**
+ * Listing name for an OSM court: its own name tag, else the enclosing park/facility name (or a
+ * qualifying park point, see pointFacility).
  * Null when neither is meaningful — such courts are withheld from the directory, never given
  * a placeholder like "Pickleball Court (way/123)" or a generic "Pickleball Court".
  * `facilityKey` identifies the OSM facility a derived name came from.
@@ -242,7 +271,7 @@ export function enclosingFacilities(areas = []) {
 export function osmCourtName(tags = {}, facilityAreas = []) {
   const own = meaningfulName(tags.name) || meaningfulName(tags['name:en']);
   if (own) return { name: own, source: 'osm', facilityKey: null };
-  const [facility] = enclosingFacilities(facilityAreas);
+  const [facility] = courtFacilities(tags, facilityAreas);
   return facility ? { name: facility.name, source: 'facility', facilityKey: facility.key } : null;
 }
 
@@ -374,6 +403,7 @@ export async function resolveImportAddress({
   let reverse = null;
   let reverseRejectedDistant = false;
   let reverseAnswered = false;
+  let reverseError = null;
   let budget = reverseBudget;
   if (budget > 0 && latitude != null && longitude != null) {
     try {
@@ -397,6 +427,7 @@ export async function resolveImportAddress({
         }
       }
     } catch (err) {
+      reverseError = err.code || 'GEOCODE_UNAVAILABLE';
       logger.warn(`Reverse geocode failed for ${latitude},${longitude}: ${err.message}`);
     }
   }
@@ -408,6 +439,7 @@ export async function resolveImportAddress({
     usedReverse: Boolean(reverse),
     reverseRejectedDistant,
     reverseAnswered,
+    reverseError,
     reverseBudget: budget,
   };
 }
@@ -429,7 +461,7 @@ function normalizeOsmElement(element, facilityAreas = []) {
 }
 
 /**
- * Overpass output from buildPickleballOverpassQuery is a stream of court elements (which carry
+ * Overpass output from buildOsmFeaturesFacilityQuery is a stream of court elements (which carry
  * coordinates: `center` or `lat`), each followed by the tag-only facilities that enclose it.
  * Pair each court with those facilities (OSM key + tags).
  * @returns {{ element: object, facilityAreas: { key: string, tags: object }[] }[]}
@@ -454,7 +486,19 @@ export function groupCourtsWithFacilities(elements = []) {
  * @param {string} query
  * @param {{ fetchFn?: typeof fetch, endpoints?: string[] }} [opts]
  */
-export async function fetchOverpass(query, { fetchFn = fetch, endpoints = OVERPASS_ENDPOINTS } = {}) {
+export function fetchOverpass(query, opts) {
+  const request = overpassQueue.then(() => fetchOverpassNow(query, opts));
+  overpassQueue = request.catch(() => {});
+  return request;
+}
+
+/**
+ * One Overpass request at a time per process: public servers give each IP only 2 query slots, and
+ * concurrent discovery runs (different users, different areas) otherwise starve each other.
+ */
+let overpassQueue = Promise.resolve();
+
+async function fetchOverpassNow(query, { fetchFn = fetch, endpoints = OVERPASS_ENDPOINTS } = {}) {
   let lastError;
   for (const endpoint of endpoints) {
     let response;
@@ -476,7 +520,10 @@ export async function fetchOverpass(query, { fetchFn = fetch, endpoints = OVERPA
       continue;
     }
     if (response.status === 429) {
-      const error = new Error(`Overpass ${endpoint} HTTP 429 (rate-limited)`);
+      const error = Object.assign(
+        new Error(`Overpass ${endpoint} HTTP 429 (rate-limited)`),
+        { code: 'OVERPASS_RATE_LIMITED' },
+      );
       logger.warn(error.message);
       throw error;
     }
@@ -518,7 +565,8 @@ const FACILITY_AREA_FILTERS = [
 
 /**
  * Overpass body that outputs each court (with center) followed by the named facilities
- * (parks, sports centres, schools…) its nodes fall inside. Parse with groupCourtsWithFacilities.
+ * (parks, sports centres, schools…) its nodes fall inside, and named park points nearby
+ * (see pointFacility). Parse with groupCourtsWithFacilities.
  */
 function courtsWithFacilitiesQuery(courtsStatement) {
   return `
@@ -528,22 +576,69 @@ function courtsWithFacilitiesQuery(courtsStatement) {
       .c out center tags;
       (node.c; node(w.c);)->.n;
       .n is_in->.a;
-      (${FACILITY_AREA_FILTERS});
+      (${FACILITY_AREA_FILTERS} node(around.c:${POINT_FACILITY_MAX_METERS})["name"]["leisure"~"^(sports_centre|recreation_ground|park)$"];);
       out tags;
     );
   `;
 }
 
+/** Courts per facility-lookup request; `is_in` costs roughly half a second per court on Overpass. */
+export const FACILITY_LOOKUP_CHUNK_SIZE = 25;
 /**
- * Build Overpass query for pickleball features within radiusMiles of center.
- * Does not invent sample courts. Result size is constrained after fetch by
- * distance-sorted DISCOVER_MAX_IMPORTS (not arbitrary Overpass order).
+ * Overpass allows 2 query slots per IP, each cooling down for about as long as its query ran, so
+ * back-to-back chunks get HTTP 429; busy servers also answer 504 for a while. Wait and retry the
+ * chunk (at most this many times per run) instead of failing the run.
+ */
+const FACILITY_LOOKUP_RETRY_WAIT_MS = 30000;
+const FACILITY_LOOKUP_MAX_RETRIES = 3;
+
+/**
+ * Step 1 of discovery: pickleball features (with center + tags only) in the bounding box of the
+ * search circle. A bbox filter is far cheaper than `around:` at city scale (Seattle, 25 mi: ~5s vs
+ * HTTP 504); callers drop features outside the circle. Facilities are looked up separately for
+ * the nearest candidates only (buildOsmFeaturesFacilityQuery).
  */
 export function buildPickleballOverpassQuery(latitude, longitude, radiusMiles) {
-  const radiusMeters = Math.round(radiusMiles * 1609.34);
-  return courtsWithFacilitiesQuery(
-    `nwr["sport"="pickleball"](around:${radiusMeters},${latitude},${longitude})`,
-  );
+  const dLat = radiusMiles / 69;
+  const dLng = radiusMiles / (69 * Math.max(Math.cos(latitude * Math.PI / 180), 0.01));
+  const bbox = [latitude - dLat, longitude - dLng, latitude + dLat, longitude + dLng]
+    .map((v) => v.toFixed(5))
+    .join(',');
+  return `[out:json][timeout:60];nwr["sport"="pickleball"](${bbox});out center tags;`;
+}
+
+/**
+ * Step 2 of discovery: enclosing named facilities for the given candidates, FACILITY_LOOKUP_CHUNK_SIZE
+ * courts per request, nearest first. Stops at the first failed request.
+ * @returns {Promise<{ areasByKey: Map<string, object[]>, lookedUp: number, failed: boolean }>}
+ */
+async function lookUpFacilities(candidates, fetchOverpassFn, retryWaitMs = FACILITY_LOOKUP_RETRY_WAIT_MS) {
+  const areasByKey = new Map();
+  let lookedUp = 0;
+  let waits = 0;
+  for (let i = 0; i < candidates.length; i += FACILITY_LOOKUP_CHUNK_SIZE) {
+    const chunk = candidates.slice(i, i + FACILITY_LOOKUP_CHUNK_SIZE);
+    const idsByType = {};
+    for (const c of chunk) (idsByType[c.osmType] ||= []).push(c.osmId);
+    try {
+      const data = await fetchOverpassFn(buildOsmFeaturesFacilityQuery(idsByType));
+      for (const { element, facilityAreas } of groupCourtsWithFacilities(data?.elements || [])) {
+        areasByKey.set(osmKey(element.type, element.id), facilityAreas);
+      }
+      lookedUp += chunk.length;
+    } catch (err) {
+      if (waits < FACILITY_LOOKUP_MAX_RETRIES) {
+        waits += 1;
+        logger.warn(`OSM facility lookup retrying after ${lookedUp} of ${candidates.length} courts: ${err.message}`);
+        await new Promise((resolve) => setTimeout(resolve, retryWaitMs));
+        i -= FACILITY_LOOKUP_CHUNK_SIZE;
+        continue;
+      }
+      logger.warn(`OSM facility lookup failed after ${lookedUp} of ${candidates.length} courts: ${err.message}`);
+      return { areasByKey, lookedUp, failed: true };
+    }
+  }
+  return { areasByKey, lookedUp, failed: false };
 }
 
 /** Same output shape for specific OSM features, e.g. `{ way: [1, 2], node: [3] }`. */
@@ -561,12 +656,14 @@ export function buildOsmFeaturesFacilityQuery(idsByType) {
  * Incomplete OSM tags → reverse geocode → if still incomplete → SKIP import.
  * Existing incomplete OSM rows are enriched on rediscovery when a valid address can be resolved.
  * Features whose reverse geocode answered but still gave no usable address are recorded and
- * skipped for OSM_IMPORT_RETRY_AFTER_DAYS (timeouts / network errors are not recorded).
+ * skipped for OSM_IMPORT_RETRY_AFTER_DAYS; other courts at the same facility are skipped without
+ * another lookup. A rate-limited or unavailable geocoder stops lookups for the run, and courts
+ * not checked (that, or the lookup budget ran out) are `deferred` — not recorded.
  * Features with no meaningful name of their own or from an enclosing facility are not imported
  * (see osmCourtName); coaches can still add those courts manually. Unnamed courts inside an OSM
  * facility that already has a listing are grouped into it (groupedSameFacility).
  *
- * @returns {{ imported: object[], enriched: object[], skippedIncomplete: number, skippedRecentlyFailed: number, skippedUnnamed: number, groupedSameFacility: number }}
+ * @returns {{ imported: object[], enriched: object[], skippedIncomplete: number, skippedRecentlyFailed: number, skippedUnnamed: number, groupedSameFacility: number, deferred: number, candidatesInRadius: number, facilityLookupFailed: boolean, geocoderError: string|null }}
  */
 export async function importFromOpenStreetMap(
   latitude,
@@ -578,14 +675,15 @@ export async function importFromOpenStreetMap(
     maxReverseGeocodes = DISCOVER_MAX_REVERSE_GEOCODES,
     reverseGeocodeFn = reverseGeocode,
     attemptStore = dbOsmImportAttemptStore,
+    overpassRetryWaitMs,
   } = {},
 ) {
   const data = await fetchOverpassFn(buildPickleballOverpassQuery(latitude, longitude, radiusMiles));
   const elements = Array.isArray(data?.elements) ? data.elements : [];
 
   const candidates = [];
-  for (const { element, facilityAreas } of groupCourtsWithFacilities(elements)) {
-    const normalized = normalizeOsmElement(element, facilityAreas);
+  for (const element of elements) {
+    const normalized = element && normalizeOsmElement(element);
     if (!normalized) continue;
     const dist = calculateDistance(
       latitude,
@@ -593,16 +691,23 @@ export async function importFromOpenStreetMap(
       normalized.latitude,
       normalized.longitude,
     );
+    if (!(dist <= radiusMiles)) continue;
     candidates.push({ ...normalized, distanceMiles: dist });
   }
 
-  candidates.sort((a, b) => (a.distanceMiles ?? 999) - (b.distanceMiles ?? 999));
-  for (const c of candidates) c.named = osmCourtName(c.tags, c.facilityAreas);
-  // Courts with their own name first, so a facility's unnamed pitches group under that listing.
+  candidates.sort((a, b) => a.distanceMiles - b.distanceMiles);
   const nearest = candidates.slice(0, maxImports);
+  const facilities = await lookUpFacilities(nearest, fetchOverpassFn, overpassRetryWaitMs);
+  // Courts whose facility lookup did not run are left for the next discovery run.
+  const lookedUp = nearest.slice(0, facilities.lookedUp);
+  for (const c of lookedUp) {
+    c.facilityAreas = facilities.areasByKey.get(osmKey(c.osmType, c.osmId)) || [];
+    c.named = osmCourtName(c.tags, c.facilityAreas);
+  }
+  // Courts with their own name first, so a facility's unnamed pitches group under that listing.
   const toImport = [
-    ...nearest.filter((c) => c.named?.source === 'osm'),
-    ...nearest.filter((c) => c.named?.source !== 'osm'),
+    ...lookedUp.filter((c) => c.named?.source === 'osm'),
+    ...lookedUp.filter((c) => c.named?.source !== 'osm'),
   ];
 
   let reverseBudget = maxReverseGeocodes;
@@ -612,13 +717,18 @@ export async function importFromOpenStreetMap(
   let skippedRecentlyFailed = 0;
   let skippedUnnamed = 0;
   let groupedSameFacility = 0;
+  let deferred = nearest.length - lookedUp.length;
+  // Set when Nominatim is rate-limiting or unavailable: no more lookups this run.
+  let geocoderError = null;
+  // Facilities whose reverse geocode answered without a usable address; their other courts share it.
+  const facilitiesWithoutAddress = new Set();
   const recentlyFailed = await attemptStore.recentlyFailedKeys(toImport);
 
   // OSM facilities (park, sports centre…) that already have a listing. An unnamed court named
   // after one of these is another pitch at that facility, so it joins the listing instead of
   // becoming a second "<Park name>". Grouping is by OSM facility identity, never by distance.
   const listedFacilities = new Set();
-  const markListed = (c) => enclosingFacilities(c.facilityAreas).forEach((f) => listedFacilities.add(f.key));
+  const markListed = (c) => courtFacilities(c.tags, c.facilityAreas).forEach((f) => listedFacilities.add(f.key));
   if (toImport.length) {
     const existingRows = await CourtLocation.findAll({
       where: {
@@ -678,17 +788,28 @@ export async function importFromOpenStreetMap(
       }
     }
 
+    const facilityKey = named?.source === 'facility' ? named.facilityKey : null;
+    const knownNoAddress = facilityKey && facilitiesWithoutAddress.has(facilityKey);
+    const budgetBefore = geocoderError || knownNoAddress ? 0 : reverseBudget;
     const resolved = await resolveImportAddress({
       tags: candidate.tags,
       element: candidate.element,
       latitude: candidate.latitude,
       longitude: candidate.longitude,
-      reverseBudget,
+      reverseBudget: budgetBefore,
       reverseGeocodeFn,
     });
-    reverseBudget = resolved.reverseBudget;
+    if (!geocoderError && !knownNoAddress) reverseBudget = resolved.reverseBudget;
+    if (resolved.reverseError) geocoderError = resolved.reverseError;
+    const lookupAnswered = !resolved.reverseError && resolved.reverseBudget < budgetBefore;
     if (!resolved.complete && resolved.reverseAnswered) {
       await attemptStore.recordFailure(candidate, 'incomplete_address');
+      if (facilityKey) facilitiesWithoutAddress.add(facilityKey);
+    }
+    // Not checked this run (lookup budget spent, or geocoder rate-limited/unavailable): retry next run.
+    if (!resolved.complete && !lookupAnswered && !knownNoAddress) {
+      deferred += 1;
+      continue;
     }
 
     if (existingByOsm) {
@@ -741,6 +862,10 @@ export async function importFromOpenStreetMap(
     skippedRecentlyFailed,
     skippedUnnamed,
     groupedSameFacility,
+    deferred,
+    candidatesInRadius: candidates.length,
+    facilityLookupFailed: facilities.failed,
+    geocoderError,
   };
 }
 
@@ -789,18 +914,29 @@ function isGoodPostal(zip) {
  * Discover OSM pickleball courts near a point and import any not already in court_locations.
  * Runs in the background for geographic GET /api/courts without `q` (see courtDiscoveryScheduler).
  *
+ * Throws after importing what it could when the run was partial (facility lookup failed, or the
+ * geocoder was rate-limited/unavailable), so the scheduler retries the area soon.
+ *
  * @returns {Promise<object[]>} newly created rows only (enriched existing rows are applied in-place)
  */
 export async function discoverCourtsNearby(latitude, longitude, radiusMiles = 10, opts = {}) {
-  logger.info(
-    `Discovering nearby courts via OSM: ${latitude}, ${longitude}, radius: ${radiusMiles} miles`,
-  );
+  const area = `${Number(latitude).toFixed(4)},${Number(longitude).toFixed(4)} r=${radiusMiles}mi`;
+  logger.info(`Discovering nearby courts via OSM: ${area}`);
   const result = await importFromOpenStreetMap(latitude, longitude, radiusMiles, opts);
   logger.info(
-    `OSM discovery: imported=${result.imported.length} enriched=${result.enriched.length} `
-    + `skippedIncomplete=${result.skippedIncomplete} skippedRecentlyFailed=${result.skippedRecentlyFailed} `
-    + `skippedUnnamed=${result.skippedUnnamed} groupedSameFacility=${result.groupedSameFacility}`,
+    `OSM discovery ${area}: candidates=${result.candidatesInRadius} imported=${result.imported.length} `
+    + `enriched=${result.enriched.length} grouped=${result.groupedSameFacility} `
+    + `withheldUnnamed=${result.skippedUnnamed} withheldIncompleteAddress=${result.skippedIncomplete} `
+    + `recentlyFailed=${result.skippedRecentlyFailed} deferred=${result.deferred}`
+    + (result.facilityLookupFailed ? ' facilityLookup=failed' : '')
+    + (result.geocoderError ? ` geocoder=${result.geocoderError}` : ''),
   );
+  if (result.facilityLookupFailed || result.geocoderError) {
+    throw new Error(
+      `OSM discovery ${area} incomplete: `
+      + (result.facilityLookupFailed ? 'facility lookup failed' : `geocoder ${result.geocoderError}`),
+    );
+  }
   return result.imported;
 }
 

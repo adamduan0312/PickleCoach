@@ -21,7 +21,7 @@ import { sequelize, CourtLocation, CoachCourtLocation, Booking } from '../models
 import {
   buildOsmFeaturesFacilityQuery,
   calculateDistance,
-  enclosingFacilities,
+  courtFacilities,
   fetchOverpass,
   groupCourtsWithFacilities,
   isPlaceholderOsmCourtName,
@@ -94,7 +94,7 @@ async function main() {
       continue;
     }
     const named = osmCourtName(osm.tags, osm.facilityAreas);
-    const facilities = enclosingFacilities(osm.facilityAreas);
+    const facilities = courtFacilities(osm.tags, osm.facilityAreas);
     if (named?.source === 'osm') {
       settled.push(court);
       facilities.forEach((f) => listedFacilities.add(f.key));

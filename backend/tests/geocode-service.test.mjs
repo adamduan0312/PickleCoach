@@ -2,8 +2,9 @@
  * Geocode service mapping / ranking / query parsing (no network).
  */
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
+import { describe, it, mock } from 'node:test';
 import {
+  reverseGeocode,
   formatGeocodeLabel,
   mapNominatimResults,
   parseGeocodeQuery,
@@ -205,5 +206,30 @@ describe('addressStreetZipFallback', () => {
     assert.equal(addressStreetZipFallback('S Pine Island Rd, Davie, FL 33328'), null);
     assert.equal(addressStreetZipFallback('3801 S Pine Island Rd, Davie, FL'), null);
     assert.equal(addressStreetZipFallback('3801 S Pine Island Rd, 33328'), null);
+  });
+});
+
+describe('reverseGeocode failure types', () => {
+  const withFetch = async (impl, fn) => {
+    const m = mock.method(globalThis, 'fetch', impl);
+    try { return await fn(); } finally { m.mock.restore(); }
+  };
+
+  it('throws GEOCODE_RATE_LIMITED on HTTP 429 and GEOCODE_UNAVAILABLE on 5xx / network errors', async () => {
+    await withFetch(async () => new Response('', { status: 429 }), () => assert.rejects(
+      reverseGeocode(33.7, -84.4), { code: 'GEOCODE_RATE_LIMITED' },
+    ));
+    await withFetch(async () => new Response('', { status: 503 }), () => assert.rejects(
+      reverseGeocode(33.7, -84.4), { code: 'GEOCODE_UNAVAILABLE' },
+    ));
+    await withFetch(async () => { throw new TypeError('fetch failed'); }, () => assert.rejects(
+      reverseGeocode(33.7, -84.4), { code: 'GEOCODE_UNAVAILABLE' },
+    ));
+  });
+
+  it('returns null when Nominatim answers with no result', async () => {
+    await withFetch(async () => Response.json({ error: 'Unable to geocode' }), async () => {
+      assert.equal(await reverseGeocode(33.7, -84.4), null);
+    });
   });
 });

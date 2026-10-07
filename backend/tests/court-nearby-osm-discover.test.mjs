@@ -18,6 +18,7 @@ import {
   osmCourtName,
   isPlaceholderOsmCourtName,
   fetchOverpass,
+  FACILITY_LOOKUP_CHUNK_SIZE,
 } from '../services/courtImportService.js';
 import { searchCourts } from '../controllers/courtController.js';
 import { courtDiscovery } from '../services/courtDiscoveryScheduler.js';
@@ -253,7 +254,7 @@ describe('importFromOpenStreetMap / discoverCourtsNearby', () => {
     assert.equal(created.length, 0);
   });
 
-  it('does not import when reverse budget is exhausted and OSM tags are incomplete', async () => {
+  it('defers (does not import or withhold) when reverse budget is exhausted and OSM tags are incomplete', async () => {
     const created = [];
     CourtLocation.findOne = async () => null;
     CourtLocation.findAll = async () => [];
@@ -270,7 +271,8 @@ describe('importFromOpenStreetMap / discoverCourtsNearby', () => {
       }),
     });
     assert.equal(result.imported.length, 0);
-    assert.equal(result.skippedIncomplete, 1);
+    assert.equal(result.skippedIncomplete, 0);
+    assert.equal(result.deferred, 1);
     assert.equal(created.length, 0);
   });
 
@@ -582,7 +584,7 @@ describe('OSM import attempt tracking', () => {
     assert.deepEqual(attemptStore.recorded, [{ key: 'way/32', outcome: 'incomplete_address' }]);
   });
 
-  it('does not record a failure when reverse geocode errored, timed out, or budget ran out', async () => {
+  it('does not record a failure when reverse geocode found nothing or budget ran out', async () => {
     captureCreates();
     const attemptStore = memoryAttemptStore();
     const result = await importFromOpenStreetMap(26.13, -80.13, 10, {
@@ -591,13 +593,63 @@ describe('OSM import attempt tracking', () => {
       attemptStore,
       fetchOverpassFn: async () => ({
         elements: [
-          osmEl({ id: 33, lat: 26.13, lon: -80.13, name: 'Lookup Failed' }),
+          osmEl({ id: 33, lat: 26.13, lon: -80.13, name: 'No Result' }),
           osmEl({ id: 34, lat: 26.2, lon: -80.2, name: 'No Budget Left' }),
         ],
       }),
     });
-    assert.equal(result.skippedIncomplete, 2);
+    assert.equal(result.skippedIncomplete, 1);
+    assert.equal(result.deferred, 1);
+    assert.equal(result.geocoderError, null);
     assert.deepEqual(attemptStore.recorded, []);
+  });
+
+  for (const code of ['GEOCODE_RATE_LIMITED', 'GEOCODE_UNAVAILABLE']) {
+    it(`${code}: stops reverse lookups for the run, defers the rest, records nothing`, async () => {
+      const created = captureCreates();
+      const attemptStore = memoryAttemptStore();
+      let reverseCalls = 0;
+      const result = await importFromOpenStreetMap(26.13, -80.13, 10, {
+        maxReverseGeocodes: 5,
+        reverseGeocodeFn: async () => {
+          reverseCalls += 1;
+          throw Object.assign(new Error('nope'), { code });
+        },
+        attemptStore,
+        fetchOverpassFn: async () => ({
+          elements: [
+            osmEl({ id: 51, lat: 26.13, lon: -80.13, name: 'First' }),
+            osmEl({ id: 52, lat: 26.14, lon: -80.14, name: 'Second' }),
+            osmElComplete({ id: 53, lat: 26.15, lon: -80.15, name: 'Has Address' }),
+          ],
+        }),
+      });
+      assert.equal(reverseCalls, 1);
+      assert.equal(result.deferred, 2);
+      assert.equal(result.skippedIncomplete, 0);
+      assert.equal(result.geocoderError, code);
+      assert.deepEqual(created.map((c) => c.osm_id), [53]);
+      assert.deepEqual(attemptStore.recorded, []);
+    });
+  }
+
+  it('discoverCourtsNearby throws after importing when the geocoder was rate-limited', async () => {
+    const created = captureCreates();
+    await assert.rejects(
+      discoverCourtsNearby(26.13, -80.13, 10, {
+        maxReverseGeocodes: 5,
+        reverseGeocodeFn: async () => { throw Object.assign(new Error('429'), { code: 'GEOCODE_RATE_LIMITED' }); },
+        attemptStore: memoryAttemptStore(),
+        fetchOverpassFn: async () => ({
+          elements: [
+            osmEl({ id: 54, lat: 26.13, lon: -80.13, name: 'Deferred' }),
+            osmElComplete({ id: 55, lat: 26.14, lon: -80.14, name: 'Imported' }),
+          ],
+        }),
+      }),
+      /incomplete: geocoder GEOCODE_RATE_LIMITED/,
+    );
+    assert.deepEqual(created.map((c) => c.osm_id), [55]);
   });
 
   it('does not record a failure for a successful import', async () => {
@@ -730,16 +782,118 @@ describe('OSM court names: own name, else enclosing facility, else withheld', ()
     assert.equal(isPlaceholderOsmCourtName('Indian Trace Park'), false);
   });
 
-  it('Overpass queries look up enclosing facilities for each court', () => {
-    for (const q of [buildPickleballOverpassQuery(26.1, -80.36, 10), buildOsmFeaturesFacilityQuery({ way: [1, 2] })]) {
-      assert.match(q, /foreach\.courts->\.c\(/);
-      assert.match(q, /\.c out center tags;/);
-      assert.match(q, /\.n is_in->\.a;/);
-      assert.match(q, /way\.a\["name"\]\["leisure"~"\^\(sports_centre\|recreation_ground\|stadium\|park\)\$"\];/);
-      assert.match(q, /area\.a\["name"\]\["amenity"~/);
-    }
-    assert.match(buildPickleballOverpassQuery(26.1, -80.36, 10), /nwr\["sport"="pickleball"\]\(around:16093,26\.1,-80\.36\)->\.courts;/);
-    assert.match(buildOsmFeaturesFacilityQuery({ way: [1, 2], node: [] }), /\(way\(id:1,2\);\)->\.courts;/);
+  it('a park mapped only as a point names a court only when unambiguous, unenclosed, and not private', () => {
+    const point = (id, name, tags = { leisure: 'park' }) => area(`node/${id}`, { name, ...tags });
+    const branham = point(358710333, 'Bessie Branham Park');
+    assert.deepEqual(osmCourtName({}, [branham]), { name: 'Bessie Branham Park', source: 'facility', facilityKey: 'node/358710333' });
+    // An enclosing facility always wins over a nearby point.
+    assert.equal(osmCourtName({}, [branham, area('way/9', { name: 'Grant Park', leisure: 'park' })]).name, 'Grant Park');
+    // Two different named parks nearby: ambiguous, withheld.
+    assert.equal(osmCourtName({}, [branham, point(2, 'Other Park')]), null);
+    // Private courts are not named after a public park next door.
+    assert.equal(osmCourtName({ access: 'private' }, [branham]), null);
+    // Non-facility points (restaurants, schools as points) never name a court.
+    assert.equal(osmCourtName({}, [point(3, 'Trader Vic’s', { amenity: 'restaurant' })]), null);  });
+
+  it('discovery query is a cheap bbox court list; facilities are looked up per court id', () => {
+    const courtsQuery = buildPickleballOverpassQuery(26.1, -80.36, 10);
+    assert.match(courtsQuery, /nwr\["sport"="pickleball"\]\(25\.95507,-80\.52138,26\.24493,-80\.19862\);out center tags;$/);
+    assert.doesNotMatch(courtsQuery, /around:|is_in/);
+    const q = buildOsmFeaturesFacilityQuery({ way: [1, 2], node: [] });
+    assert.match(q, /\(way\(id:1,2\);\)->\.courts;/);
+    assert.match(q, /foreach\.courts->\.c\(/);
+    assert.match(q, /\.c out center tags;/);
+    assert.match(q, /\.n is_in->\.a;/);
+    assert.match(q, /way\.a\["name"\]\["leisure"~"\^\(sports_centre\|recreation_ground\|stadium\|park\)\$"\];/);
+    assert.match(q, /area\.a\["name"\]\["amenity"~/);
+    assert.match(q, /node\(around\.c:120\)\["name"\]\["leisure"~"\^\(sports_centre\|recreation_ground\|park\)\$"\];/);
+  });
+
+  it('looks up facilities only for the nearest courts inside the radius, in chunks', async () => {
+    memoryCourts();
+    const queries = [];
+    // 30 courts inside 10 mi (nearest first by id), plus one in the bbox corner outside the circle.
+    const courts = Array.from({ length: 30 }, (_, i) => osmEl({ id: 1000 + i, lat: 26.1 + i * 0.001, lon: -80.36 }));
+    const corner = osmEl({ id: 2000, lat: 26.24, lon: -80.2 });
+    const result = await importFromOpenStreetMap(26.1, -80.36, 10, {
+      maxImports: 28,
+      maxReverseGeocodes: 0,
+      attemptStore: memoryAttemptStore(),
+      fetchOverpassFn: async (query) => {
+        queries.push(query);
+        return { elements: [...courts, corner] };
+      },
+    });
+    assert.equal(result.candidatesInRadius, 30);
+    assert.equal(queries.length, 3);
+    const ids = (query) => query.match(/way\(id:([\d,]+)\)/)[1].split(',').map(Number);
+    assert.deepEqual(ids(queries[1]), courts.slice(0, FACILITY_LOOKUP_CHUNK_SIZE).map((c) => c.id));
+    assert.deepEqual(ids(queries[2]), courts.slice(FACILITY_LOOKUP_CHUNK_SIZE, 28).map((c) => c.id));
+    assert.equal(result.skippedUnnamed, 28);
+    assert.equal(result.facilityLookupFailed, false);
+  });
+
+  it('a facility lookup that keeps failing after retries imports the looked-up courts, defers the rest, and fails the run', async () => {
+    const rows = memoryCourts();
+    const courts = Array.from({ length: 30 }, (_, i) => osmElComplete({ id: 3000 + i, lat: 26.1 + i * 0.001, lon: -80.36, name: `Court Park ${i}` }));
+    let calls = 0;
+    const fetchOverpassFn = async () => {
+      calls += 1;
+      if (calls >= 3) throw new Error('Overpass HTTP 504');
+      return { elements: courts };
+    };
+    const result = await importFromOpenStreetMap(26.1, -80.36, 10, {
+      maxReverseGeocodes: 0, attemptStore: memoryAttemptStore(), fetchOverpassFn, overpassRetryWaitMs: 1,
+    });
+    assert.equal(calls, 3 + 3);
+    assert.equal(result.facilityLookupFailed, true);
+    assert.equal(result.imported.length, FACILITY_LOOKUP_CHUNK_SIZE);
+    assert.equal(result.deferred, 30 - FACILITY_LOOKUP_CHUNK_SIZE);
+    rows.length = 0;
+    calls = 0;
+    await assert.rejects(
+      discoverCourtsNearby(26.1, -80.36, 10, { maxReverseGeocodes: 0, attemptStore: memoryAttemptStore(), fetchOverpassFn, overpassRetryWaitMs: 1 }),
+      /incomplete: facility lookup failed/,
+    );
+  });
+
+  it('waits out an Overpass 429 / 504 during facility lookup and retries the same chunk', async () => {
+    memoryCourts();
+    const courts = Array.from({ length: 30 }, (_, i) => osmElComplete({ id: 5000 + i, lat: 26.1 + i * 0.001, lon: -80.36, name: `Wait Park ${i}` }));
+    const queries = [];
+    const result = await importFromOpenStreetMap(26.1, -80.36, 10, {
+      maxReverseGeocodes: 0,
+      attemptStore: memoryAttemptStore(),
+      overpassRetryWaitMs: 1,
+      fetchOverpassFn: async (query) => {
+        queries.push(query);
+        if (queries.length === 3) throw Object.assign(new Error('429'), { code: 'OVERPASS_RATE_LIMITED' });
+        if (queries.length === 4) throw new Error('Overpass HTTP 504');
+        return { elements: courts };
+      },
+    });
+    assert.equal(queries.length, 5);
+    assert.equal(queries[4], queries[2]);
+    assert.equal(result.facilityLookupFailed, false);
+    assert.equal(result.imported.length, 30);
+  });
+
+  it('reuses a facility’s failed address lookup for its other courts (one lookup, one record)', async () => {
+    memoryCourts();
+    const attemptStore = memoryAttemptStore();
+    let reverseCalls = 0;
+    const park = facility('Grant Park', { leisure: 'park' }, 'way', 600);
+    const elements = [1, 2, 3].flatMap((i) => [osmEl({ id: 4000 + i, lat: 26.1, lon: -80.36 + i * 0.0001 }), park]);
+    const result = await importFromOpenStreetMap(26.1, -80.36, 10, {
+      maxReverseGeocodes: 20,
+      reverseGeocodeFn: async () => { reverseCalls += 1; return { city: 'Atlanta', state: 'GA', latitude: 26.1, longitude: -80.36 }; },
+      attemptStore,
+      fetchOverpassFn: async () => ({ elements }),
+    });
+    assert.equal(reverseCalls, 1);
+    assert.equal(result.skippedIncomplete, 3);
+    assert.equal(result.deferred, 0);
+    assert.deepEqual(attemptStore.recorded, [{ key: 'way/4001', outcome: 'incomplete_address' }]);
   });
 
   /** In-memory court table so duplicate checks see rows created earlier in the same run. */
@@ -959,6 +1113,25 @@ describe('fetchOverpass mirror fallback', () => {
     };
     return { hit, promise: fetchOverpass('q', { fetchFn, endpoints }) };
   };
+
+  it('runs one request at a time, even across concurrent callers and failures', async () => {
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const fetchFn = async (url) => {
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((r) => setTimeout(r, 5));
+      inFlight -= 1;
+      return url === 'https://fail.test' ? reply(429) : reply(200);
+    };
+    const results = await Promise.allSettled([
+      fetchOverpass('q1', { fetchFn, endpoints: ['https://ok.test'] }),
+      fetchOverpass('q2', { fetchFn, endpoints: ['https://fail.test'] }),
+      fetchOverpass('q3', { fetchFn, endpoints: ['https://ok.test'] }),
+    ]);
+    assert.deepEqual(results.map((r) => r.status), ['fulfilled', 'rejected', 'fulfilled']);
+    assert.equal(maxInFlight, 1);
+  });
   const named = (name) => Object.assign(new Error(name), { name });
 
   it('does not retry other mirrors after a timeout', async () => {
