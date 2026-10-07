@@ -7,12 +7,13 @@ import { FormField } from '../../components/ui/FormField.jsx';
 import { CHAR_LIMITS } from '../../utils/charLimits.js';
 import { courtLabel, formatCourtAddressLines, formatMiles } from '../../utils/format.js';
 import {
+  COURT_DISCOVERY_FAILED_NOTE,
   COURT_DISCOVERY_PENDING_EMPTY,
   COURT_DISCOVERY_PENDING_NOTE,
   classifyCourtSearch,
   cleanLocationQuery,
+  courtDiscoveryView,
   isCourtAlreadyLinked,
-  isCourtDiscoveryPending,
   linkedCourtIdSet,
   placeFromDirectoryMatches,
   recognizedPlaceFromGeocode,
@@ -56,7 +57,7 @@ export function CoachCourtsPage() {
   //   | { kind: 'location', label, detail, radius, nameQuery }
   const [resultsFor, setResultsFor] = useState(null);
   const [origin, setOrigin] = useState(null); // { lat, lng, label, detail, nameQuery } | null
-  const [discoveryPending, setDiscoveryPending] = useState(false);
+  const [discovery, setDiscovery] = useState(null); // 'pending' | 'failed' | null (checked / n.a.)
   const [searchRadius, setSearchRadius] = useState('25');
 
   const [showCreate, setShowCreate] = useState(false);
@@ -104,7 +105,7 @@ export function CoachCourtsPage() {
       setSearchError(ex.message);
       setSearchResults(null);
       setResultsFor(null);
-      setDiscoveryPending(false);
+      setDiscovery(null);
     } finally {
       setSearchBusy(false);
     }
@@ -114,7 +115,7 @@ export function CoachCourtsPage() {
     setOrigin(null);
     setSearchResults(courts);
     setResultsFor({ kind: 'court', query: q, unresolved, placeUnavailable });
-    setDiscoveryPending(false);
+    setDiscovery(null);
   }
 
   async function searchCourtFields(q) {
@@ -166,7 +167,7 @@ export function CoachCourtsPage() {
       radius: miles,
       nameQuery: place.nameQuery || null,
     });
-    setDiscoveryPending(isCourtDiscoveryPending(res));
+    setDiscovery(courtDiscoveryView(res));
   }
 
   async function searchNearPlace(q, label = q, { nameQuery = null } = {}) {
@@ -236,7 +237,7 @@ export function CoachCourtsPage() {
     setOrigin(null);
     setSearchResults(null);
     setResultsFor(null);
-    setDiscoveryPending(false);
+    setDiscovery(null);
     setSearchError(null);
   }
 
@@ -494,13 +495,22 @@ export function CoachCourtsPage() {
                 </button>
               ) : null}
             </div>
-            {discoveryPending && searchResults.length > 0 ? (
+            {discovery === 'pending' && searchResults.length > 0 ? (
               <p className="small muted">{COURT_DISCOVERY_PENDING_NOTE}</p>
             ) : null}
-            {searchResults.length === 0 && resultsFor.kind === 'location' && discoveryPending ? (
+            {discovery === 'failed' && searchResults.length > 0 ? (
+              <p className="small muted">{COURT_DISCOVERY_FAILED_NOTE}</p>
+            ) : null}
+            {searchResults.length === 0 && resultsFor.kind === 'location' && discovery === 'pending' ? (
               <EmptyState title="No courts found yet" detail={COURT_DISCOVERY_PENDING_EMPTY} />
             ) : null}
-            {searchResults.length === 0 && resultsFor.kind === 'location' && !discoveryPending ? (
+            {searchResults.length === 0 && resultsFor.kind === 'location' && discovery === 'failed' ? (
+              <EmptyState
+                title="We couldn’t check this area for new courts right now"
+                detail="Try again in a few minutes, or add the location if you know a court here."
+              />
+            ) : null}
+            {searchResults.length === 0 && resultsFor.kind === 'location' && !discovery ? (
               <EmptyState
                 title="No courts found in this area"
                 detail="Try a larger search radius, or add the location if this court is not in the directory yet."

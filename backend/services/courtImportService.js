@@ -447,11 +447,19 @@ export function groupCourtsWithFacilities(elements = []) {
   return courts;
 }
 
-export async function fetchOverpass(query) {
+/**
+ * POST an Overpass query, trying the next mirror only on connection errors, 5xx, or HTML error
+ * pages. A timeout means the query is too heavy and a 429 means we are being throttled; another
+ * mirror would just repeat the wait and add load, so both fail immediately.
+ * @param {string} query
+ * @param {{ fetchFn?: typeof fetch, endpoints?: string[] }} [opts]
+ */
+export async function fetchOverpass(query, { fetchFn = fetch, endpoints = OVERPASS_ENDPOINTS } = {}) {
   let lastError;
-  for (const endpoint of OVERPASS_ENDPOINTS) {
+  for (const endpoint of endpoints) {
+    let response;
     try {
-      const response = await fetch(endpoint, {
+      response = await fetchFn(endpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
@@ -461,22 +469,38 @@ export async function fetchOverpass(query) {
         body: `data=${encodeURIComponent(query)}`,
         signal: AbortSignal.timeout(OVERPASS_TIMEOUT_MS),
       });
-      const text = await response.text();
-      if (!response.ok) {
-        lastError = new Error(`Overpass ${endpoint} HTTP ${response.status}`);
-        logger.warn(lastError.message);
-        continue;
-      }
-      if (text.trim().startsWith('<')) {
-        lastError = new Error(`Overpass ${endpoint} returned HTML (rate-limited or blocked)`);
-        logger.warn(lastError.message);
-        continue;
-      }
-      return JSON.parse(text);
     } catch (error) {
-      lastError = error;
       logger.warn(`Overpass endpoint failed (${endpoint}): ${error.message}`);
+      if (error?.name === 'TimeoutError' || error?.name === 'AbortError') throw error;
+      lastError = error;
+      continue;
     }
+    if (response.status === 429) {
+      const error = new Error(`Overpass ${endpoint} HTTP 429 (rate-limited)`);
+      logger.warn(error.message);
+      throw error;
+    }
+    let text;
+    try {
+      text = await response.text();
+    } catch (error) {
+      logger.warn(`Overpass endpoint failed (${endpoint}): ${error.message}`);
+      if (error?.name === 'TimeoutError' || error?.name === 'AbortError') throw error;
+      lastError = error;
+      continue;
+    }
+    if (!response.ok) {
+      lastError = new Error(`Overpass ${endpoint} HTTP ${response.status}`);
+      logger.warn(lastError.message);
+      if (response.status < 500) throw lastError;
+      continue;
+    }
+    if (text.trim().startsWith('<')) {
+      lastError = new Error(`Overpass ${endpoint} returned HTML (rate-limited or blocked)`);
+      logger.warn(lastError.message);
+      continue;
+    }
+    return JSON.parse(text);
   }
   throw lastError || new Error('All Overpass endpoints failed');
 }

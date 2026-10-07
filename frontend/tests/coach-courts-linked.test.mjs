@@ -4,6 +4,7 @@ import {
   classifyCourtSearch,
   cleanLocationQuery,
   isCourtAlreadyLinked,
+  courtDiscoveryView,
   isCourtDiscoveryPending,
   linkedCourtIdSet,
   placeFromDirectoryMatches,
@@ -136,6 +137,15 @@ describe('isCourtDiscoveryPending', () => {
     assert.equal(isCourtDiscoveryPending({}), false);
     assert.equal(isCourtDiscoveryPending({ data: [], raw: { discovery: { status: 'started' } } }), true);
     assert.equal(isCourtDiscoveryPending({ data: [], raw: { discovery: { status: 'recent' } } }), false);
+  });
+
+  it('distinguishes still checking, failed, and checked', () => {
+    const view = (status) => courtDiscoveryView({ data: [], raw: { discovery: { status } } });
+    assert.equal(view('started'), 'pending');
+    assert.equal(view('running'), 'pending');
+    assert.equal(view('failed'), 'failed');
+    assert.equal(view('recent'), null);
+    assert.equal(courtDiscoveryView({ data: [] }), null);
   });
 });
 

@@ -171,6 +171,23 @@ export const COURT_DISCOVERY_PENDING_NOTE =
  * @param {{ raw?: { discovery?: { status?: string } }, discovery?: { status?: string } } | null | undefined} res
  */
 export function isCourtDiscoveryPending(res) {
-  const status = (res?.raw?.discovery || res?.discovery)?.status;
+  const status = courtDiscoveryStatus(res);
   return status === 'started' || status === 'running';
 }
+
+function courtDiscoveryStatus(res) {
+  return (res?.raw?.discovery || res?.discovery)?.status || null;
+}
+
+/**
+ * What the Courts page should say about background discovery for a nearby-search response:
+ * 'pending' (still checking), 'failed' (last check failed; retry later), or null (area checked).
+ * @returns {'pending'|'failed'|null}
+ */
+export function courtDiscoveryView(res) {
+  if (isCourtDiscoveryPending(res)) return 'pending';
+  return courtDiscoveryStatus(res) === 'failed' ? 'failed' : null;
+}
+
+export const COURT_DISCOVERY_FAILED_NOTE =
+  'We couldn’t check this area for new courts right now. Try again in a few minutes.';

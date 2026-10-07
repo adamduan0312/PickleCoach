@@ -9,7 +9,7 @@ import { publicCourtDirectoryWhere } from '../utils/courtPublicDirectory.js';
 import { findPublicActiveCoach } from '../utils/userLifecycle.js';
 import { serializeCourtForPublicViewer } from '../utils/courtAddressVisibility.js';
 import { distanceMiles as courtDupDistanceMiles, rankCourtDuplicateCandidates, filterCourtsForDuplicateCheck } from '../utils/courtDuplicateMatch.js';
-import { courtDiscovery } from '../services/courtDiscoveryScheduler.js';
+import { DISCOVERY_MAX_RADIUS_MILES, courtDiscovery } from '../services/courtDiscoveryScheduler.js';
 
 /** Safety cap when listing all courts with no pagination (DoS prevention). */
 const MAX_LIST_ALL_COURTS = 10000;
@@ -229,9 +229,10 @@ export const searchCourts = async (req, res) => {
 
     // Geographic nearby search (no text `q`): respond with local courts now and run OSM discovery
     // in the background, even when local courts exist, so later searches include new imports.
-    // Text search stays DB-only.
+    // Text search stays DB-only. Results use the requested radius; discovery is capped.
     if (!q) {
-      const { status } = courtDiscovery.schedule(latitude, longitude, radiusMiles);
+      const discoveryRadius = Math.min(radiusMiles, DISCOVERY_MAX_RADIUS_MILES);
+      const { status } = courtDiscovery.schedule(latitude, longitude, discoveryRadius);
       return res.json({
         ...createResponse(ordered, 'Courts retrieved successfully'),
         discovery: { status },

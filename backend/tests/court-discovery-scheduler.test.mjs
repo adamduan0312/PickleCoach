@@ -89,12 +89,24 @@ describe('createCourtDiscoveryScheduler', () => {
     });
     const r = scheduler.schedule(26.07, -80.25, 25);
     await assert.doesNotReject(r.promise);
-    assert.equal(scheduler.schedule(26.07, -80.25, 25).status, 'recent');
+    assert.equal(scheduler.schedule(26.07, -80.25, 25).status, 'failed', 'a failure is not reported as checked');
     advance(10 * 60000 + 1);
     const retry = scheduler.schedule(26.07, -80.25, 25);
     assert.equal(retry.status, 'started');
     await retry.promise;
     assert.equal(calls, 2);
+  });
+
+  it('reports a successful check over an overlapping earlier failure', async () => {
+    let fail = true;
+    const { scheduler } = setup({
+      discoverFn: async () => { if (fail) throw new Error('timeout'); },
+    });
+    await scheduler.schedule(26.07, -80.25, 10).promise;
+    assert.equal(scheduler.schedule(26.07, -80.25, 10).status, 'failed');
+    fail = false;
+    await scheduler.schedule(26.07, -80.25, 25).promise;
+    assert.equal(scheduler.schedule(26.07, -80.25, 10).status, 'recent');
   });
 
   it('also contains synchronous throws from discoverFn', async () => {

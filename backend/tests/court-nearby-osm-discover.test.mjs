@@ -17,6 +17,7 @@ import {
   groupCourtsWithFacilities,
   osmCourtName,
   isPlaceholderOsmCourtName,
+  fetchOverpass,
 } from '../services/courtImportService.js';
 import { searchCourts } from '../controllers/courtController.js';
 import { courtDiscovery } from '../services/courtDiscoveryScheduler.js';
@@ -891,6 +892,17 @@ describe('searchCourts geographic discovery (non-blocking)', () => {
     }
   });
 
+  it('caps the background discovery radius but not the result radius', async () => {
+    const calls = stubSchedule('failed');
+    CourtLocation.findAll = async () => [localCourt];
+    const req = { validated: { lat: 40.7128, lng: -74.006, radius: 100 } };
+    const res = { json(p) { this.payload = p; } };
+    await searchCourts(req, res);
+    assert.deepEqual(calls, [[40.7128, -74.006, 25]]);
+    assert.equal(res.payload?.data?.length, 1);
+    assert.deepEqual(res.payload?.discovery, { status: 'failed' });
+  });
+
   it('returns an empty list (not an error) when there are no local courts yet', async () => {
     stubSchedule('running');
     CourtLocation.findAll = async () => [];
@@ -931,5 +943,44 @@ describe('searchCourts geographic discovery (non-blocking)', () => {
     const res = { json(p) { this.payload = p; } };
     await searchCourts(req, res);
     assert.deepEqual(res.payload?.discovery, { status: 'recent' });
+  });
+});
+
+describe('fetchOverpass mirror fallback', () => {
+  const endpoints = ['https://a.test', 'https://b.test', 'https://c.test'];
+  const reply = (status, body = '{"elements":[]}') => ({ ok: status < 400, status, text: async () => body });
+  const run = (outcomes) => {
+    const hit = [];
+    const fetchFn = async (url) => {
+      hit.push(url);
+      const next = outcomes[hit.length - 1];
+      if (next instanceof Error) throw next;
+      return next;
+    };
+    return { hit, promise: fetchOverpass('q', { fetchFn, endpoints }) };
+  };
+  const named = (name) => Object.assign(new Error(name), { name });
+
+  it('does not retry other mirrors after a timeout', async () => {
+    const { hit, promise } = run([named('TimeoutError'), reply(200)]);
+    await assert.rejects(promise, { name: 'TimeoutError' });
+    assert.deepEqual(hit, ['https://a.test']);
+  });
+
+  it('does not retry other mirrors when rate-limited', async () => {
+    const { hit, promise } = run([reply(429), reply(200)]);
+    await assert.rejects(promise, /429/);
+    assert.deepEqual(hit, ['https://a.test']);
+  });
+
+  it('tries the next mirror on 5xx and connection failures', async () => {
+    const { hit, promise } = run([reply(504), new TypeError('fetch failed'), reply(200)]);
+    assert.deepEqual(await promise, { elements: [] });
+    assert.deepEqual(hit, endpoints);
+  });
+
+  it('fails after every mirror errors', async () => {
+    const { promise } = run([reply(502), reply(503), reply(500)]);
+    await assert.rejects(promise, /HTTP 500/);
   });
 });
