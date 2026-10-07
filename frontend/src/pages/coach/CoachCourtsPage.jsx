@@ -489,6 +489,9 @@ export function CoachCourtsPage() {
           {resolved ? (
             <Alert tone="info">
               Resolved location: <strong>{resolved.label}</strong>
+              <div className="small">
+                Please double-check that the address and resolved location are correct before adding this location.
+              </div>
             </Alert>
           ) : null}
 
