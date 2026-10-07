@@ -123,6 +123,7 @@ export const calculateDistance = (lat1, lng1, lat2, lng2) => {
  *   Courts inside the same OSM facility are grouped separately, by facility identity
  *   (see importFromOpenStreetMap), not here.
  * - Proximity near a court with no OSM id (manual) → still treated as duplicate.
+ * - Private courts (hidden from the directory) never count, so they cannot hide a public court.
  */
 export async function shouldSkipOsmCandidate({
   name,
@@ -154,6 +155,8 @@ export async function shouldSkipOsmCandidate({
 
   for (const court of nearbyCourts) {
     if (court.latitude == null || court.longitude == null) continue;
+    // A coach's private location is not a directory listing; it must not keep a public court out.
+    if (court.is_private) continue;
     const distance = calculateDistance(latitude, longitude, court.latitude, court.longitude);
 
     // Same name close by is the same listing to a coach, whatever the OSM ids.
