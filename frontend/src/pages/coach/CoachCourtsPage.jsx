@@ -490,7 +490,7 @@ export function CoachCourtsPage() {
             <Alert tone="info">
               Resolved location: <strong>{resolved.label}</strong>
               <div className="small">
-                Please double-check that the address and resolved location are correct before adding this location.
+                Please double-check that the location name, address, and resolved location are correct before adding this location.
               </div>
             </Alert>
           ) : null}
