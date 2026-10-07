@@ -1,59 +1,13 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
-  classifyCourtSearch,
   cleanLocationQuery,
   isCourtAlreadyLinked,
   courtDiscoveryView,
   isCourtDiscoveryPending,
   linkedCourtIdSet,
-  placeFromDirectoryMatches,
-  recognizedPlaceFromGeocode,
   splitPastedCourtAddress,
 } from '../src/utils/coachCourts.js';
-
-describe('classifyCourtSearch', () => {
-  it('treats ZIPs, city + state, and street addresses as locations', () => {
-    for (const q of [
-      '33328',
-      '33328-1234',
-      'Davie, FL',
-      'Davie FL',
-      'fort lauderdale, fl',
-      'Davie, FL 33328',
-      '3801 S Pine Island Rd',
-      '3801 S Pine Island Rd, Davie, FL 33328',
-      '3PGM+5JF, 3801 S Pine Island Rd, Davie, FL 33328',
-      '100 Main, Weston',
-    ]) {
-      assert.equal(classifyCourtSearch(q), 'location', q);
-    }
-  });
-
-  it('treats court names (even with a state) as court searches', () => {
-    for (const q of [
-      'Tropical Park',
-      'Holiday Park',
-      'Holiday Park FL',
-      'Bamford Pickleball Courts, FL',
-      'Weston Regional Pickleball Court',
-      'Pine Island Park Courts',
-      '10 Pin Park',
-      'Court #3',
-      '',
-      '   ',
-    ]) {
-      assert.equal(classifyCourtSearch(q), 'court', q);
-    }
-  });
-
-  it('leaves bare names (possible city or court) to the place check', () => {
-    for (const q of ['Austin', 'Davie', 'Weston', 'fort lauderdale', 'Pine Island', 'Tropical']) {
-      assert.equal(classifyCourtSearch(q), 'place_or_court', q);
-    }
-    assert.equal(classifyCourtSearch('One Two Three Four'), 'court');
-  });
-});
 
 describe('cleanLocationQuery', () => {
   it('drops Plus Codes and repeated parts for the results header', () => {
@@ -63,42 +17,6 @@ describe('cleanLocationQuery', () => {
     );
     assert.equal(cleanLocationQuery('33328'), '33328');
     assert.equal(cleanLocationQuery('Davie,  FL'), 'Davie, FL');
-  });
-});
-
-describe('recognizedPlaceFromGeocode', () => {
-  it('accepts a geocoded city/town whose name is what was typed', () => {
-    const austin = { lat: 30.27, lng: -97.74, place: 'Austin, TX' };
-    assert.equal(recognizedPlaceFromGeocode(' austin ', [austin]), austin);
-    const davie = { lat: 26.07, lng: -80.25, place: 'Davie, FL' };
-    assert.equal(recognizedPlaceFromGeocode('Davie', [{ lat: 35.9, lng: -80.5, place: null }, davie]), davie);
-  });
-
-  it('rejects non-places and places named differently', () => {
-    assert.equal(recognizedPlaceFromGeocode('Tropical', [{ lat: 26, lng: -98, place: 'Alton, TX' }]), null);
-    assert.equal(recognizedPlaceFromGeocode('Weston Regional', [{ lat: 26, lng: -80, place: null }]), null);
-    assert.equal(recognizedPlaceFromGeocode('Austin', []), null);
-    assert.equal(recognizedPlaceFromGeocode('Austin', undefined), null);
-  });
-});
-
-describe('placeFromDirectoryMatches', () => {
-  const courts = [
-    { name: 'Weston Regional Park', city: 'Weston', state: 'FL' },
-    { name: 'Vista Park', city: 'Weston', state: 'FL' },
-    { name: 'Weston Commons', city: 'Weston', state: 'MA' },
-    { name: 'Pine Island Park Courts', city: 'Davie', state: 'FL' },
-  ];
-
-  it('recognizes a city listed on directory courts and picks its most common state', () => {
-    assert.deepEqual(placeFromDirectoryMatches('weston', courts), { city: 'Weston', state: 'FL' });
-    assert.deepEqual(placeFromDirectoryMatches(' Davie ', courts), { city: 'Davie', state: 'FL' });
-  });
-
-  it('does not treat a court-name match as a place', () => {
-    assert.equal(placeFromDirectoryMatches('Pine Island', courts), null);
-    assert.equal(placeFromDirectoryMatches('Tropical', courts), null);
-    assert.equal(placeFromDirectoryMatches('Weston', []), null);
   });
 });
 

@@ -10,13 +10,10 @@ import {
   COURT_DISCOVERY_FAILED_NOTE,
   COURT_DISCOVERY_PENDING_EMPTY,
   COURT_DISCOVERY_PENDING_NOTE,
-  classifyCourtSearch,
   cleanLocationQuery,
   courtDiscoveryView,
   isCourtAlreadyLinked,
   linkedCourtIdSet,
-  placeFromDirectoryMatches,
-  recognizedPlaceFromGeocode,
   splitPastedCourtAddress,
 } from '../../utils/coachCourts.js';
 
@@ -53,10 +50,8 @@ export function CoachCourtsPage() {
   const [searchBusy, setSearchBusy] = useState(false);
   const [searchError, setSearchError] = useState(null);
   const [searchResults, setSearchResults] = useState(null);
-  // What the results are for: { kind: 'court', query, unresolved, placeUnavailable }
-  //   | { kind: 'location', label, detail, radius, nameQuery }
-  const [resultsFor, setResultsFor] = useState(null);
-  const [origin, setOrigin] = useState(null); // { lat, lng, label, detail, nameQuery } | null
+  const [resultsFor, setResultsFor] = useState(null); // { label, detail, radius } | null
+  const [origin, setOrigin] = useState(null); // { lat, lng, label, detail } | null
   const [discovery, setDiscovery] = useState(null); // 'pending' | 'failed' | null (checked / n.a.)
   const [searchRadius, setSearchRadius] = useState('25');
 
@@ -111,77 +106,28 @@ export function CoachCourtsPage() {
     }
   }
 
-  function showDirectoryResults(q, courts, { unresolved = false, placeUnavailable = false } = {}) {
-    setOrigin(null);
-    setSearchResults(courts);
-    setResultsFor({ kind: 'court', query: q, unresolved, placeUnavailable });
-    setDiscovery(null);
-  }
-
-  async function searchCourtFields(q) {
-    const res = await courtsApi.search({ q });
-    showDirectoryResults(q, asList(res.data));
-  }
-
-  /**
-   * Bare names: a recognized city ("Austin", "Weston") searches nearby — directory cities first,
-   * so "Weston" means Weston, FL when we list courts there — and offers a court-name search instead.
-   * Anything else is a name search. A geocoder outage is reported, never shown as "no courts".
-   */
-  async function searchPlaceOrCourt(q) {
-    const res = await courtsApi.search({ q });
-    const courts = asList(res.data);
-    const known = placeFromDirectoryMatches(q, courts);
-    let place;
-    try {
-      if (known) {
-        const label = `${known.city}, ${known.state}`;
-        await searchNearPlace(label, label, { nameQuery: q });
-        return;
-      }
-      const geo = await geoApi.search({ q, limit: 5 });
-      place = recognizedPlaceFromGeocode(q, geo.data?.results);
-    } catch {
-      if (courts.length > 0) {
-        showDirectoryResults(q, courts, { placeUnavailable: true });
-        return;
-      }
-      throw new Error(`We couldn’t check the location “${q}” right now. Try again, or search a ZIP code or a city and state (e.g. Weston, FL).`);
-    }
-    if (place) {
-      await searchNearOrigin({ lat: place.lat, lng: place.lng, label: place.place, detail: null, nameQuery: q });
-      return;
-    }
-    showDirectoryResults(q, courts, { unresolved: true });
-  }
-
   async function searchNearOrigin(place, radius = searchRadius) {
     const miles = Number(radius) || 25;
     const res = await courtsApi.search({ lat: place.lat, lng: place.lng, radius: miles });
     setOrigin(place);
     setSearchResults(asList(res.data));
-    setResultsFor({
-      kind: 'location',
-      label: place.label,
-      detail: place.detail,
-      radius: miles,
-      nameQuery: place.nameQuery || null,
-    });
+    setResultsFor({ label: place.label, detail: place.detail, radius: miles });
     setDiscovery(courtDiscoveryView(res));
   }
 
-  async function searchNearPlace(q, label = q, { nameQuery = null } = {}) {
-    const res = await geoApi.search({ q, limit: 1 });
+  /** Geocode the typed place; the header names what it resolved to ("Weston" → Weston, FL). */
+  async function searchNearPlace(q) {
+    const res = await geoApi.search({ q, limit: 5 });
     const best = Array.isArray(res.data?.results) ? res.data.results[0] : null;
     if (!best) {
-      throw new Error('We couldn’t find that location. Try a ZIP, a city and state (e.g. Davie, FL), or a street address.');
+      throw new Error('We couldn’t find that location. Try a ZIP code, a city and state (e.g. Davie, FL), or a street address.');
     }
+    const label = best.place || cleanLocationQuery(q) || q;
     await searchNearOrigin({
       lat: best.lat,
       lng: best.lng,
       label,
       detail: best.label === label ? null : best.label,
-      nameQuery,
     });
   }
 
@@ -189,15 +135,10 @@ export function CoachCourtsPage() {
     e?.preventDefault?.();
     const q = searchQ.trim();
     if (!q) {
-      setSearchError('Enter a court name, city, ZIP code, or address.');
+      setSearchError('Enter a city, ZIP code, or address.');
       return undefined;
     }
-    const kind = classifyCourtSearch(q);
-    return withSearch(() => {
-      if (kind === 'location') return searchNearPlace(q, cleanLocationQuery(q) || q);
-      if (kind === 'place_or_court') return searchPlaceOrCourt(q);
-      return searchCourtFields(q);
-    });
+    return withSearch(() => searchNearPlace(q));
   }
 
   function useNearby() {
@@ -230,7 +171,7 @@ export function CoachCourtsPage() {
   function onRadiusChange(e) {
     const next = e.target.value;
     setSearchRadius(next);
-    if (origin && resultsFor?.kind === 'location') withSearch(() => searchNearOrigin(origin, next));
+    if (origin) withSearch(() => searchNearOrigin(origin, next));
   }
 
   function clearSearch() {
@@ -423,13 +364,21 @@ export function CoachCourtsPage() {
           <div className="row" style={{ gap: 8, alignItems: 'end' }}>
             <div style={{ flex: 1 }}>
               <FormField
-                label="Search by court name, city, ZIP code, or address."
+                label="Where do you teach? Search a city, ZIP code, or address."
                 name="court_search"
                 value={searchQ}
                 onChange={(e) => setSearchQ(e.target.value)}
-                placeholder="e.g. Holiday Park, Weston, or 33328"
+                placeholder="e.g. Weston, FL or 33328"
               />
             </div>
+            <label className="row small" style={{ gap: 6, alignItems: 'center', paddingBottom: 8 }}>
+              Radius:
+              <select aria-label="Search radius" value={searchRadius} onChange={onRadiusChange} disabled={searchBusy}>
+                {SEARCH_RADIUS_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
+            </label>
             <button className="btn" type="submit" disabled={searchBusy}>
               {searchBusy ? 'Searching…' : 'Search'}
             </button>
@@ -438,16 +387,6 @@ export function CoachCourtsPage() {
             <button className="btn secondary" type="button" onClick={useNearby} disabled={searchBusy}>
               Use my current location
             </button>
-            {resultsFor?.kind === 'location' ? (
-              <label className="row small" style={{ gap: 6, alignItems: 'center' }}>
-                Radius:
-                <select aria-label="Search radius" value={searchRadius} onChange={onRadiusChange} disabled={searchBusy}>
-                  {SEARCH_RADIUS_OPTIONS.map((opt) => (
-                    <option key={opt.value} value={opt.value}>{opt.label}</option>
-                  ))}
-                </select>
-              </label>
-            ) : null}
             {searchResults ? (
               <button className="btn ghost" type="button" onClick={clearSearch}>
                 Clear
@@ -461,33 +400,11 @@ export function CoachCourtsPage() {
           <div className="stack">
             <div className="spread" style={{ flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
               <div>
-                <strong>
-                  {resultsFor.kind === 'location'
-                    ? `Courts within ${resultsFor.radius} miles of ${resultsFor.label}`
-                    : `Courts matching “${resultsFor.query}”`}
-                </strong>
+                <strong>{`Courts within ${resultsFor.radius} miles of ${resultsFor.label}`}</strong>
                 <div className="small muted">
                   {searchResults.length} court{searchResults.length === 1 ? '' : 's'}
-                  {resultsFor.kind === 'location' && resultsFor.detail ? ` · centered on ${resultsFor.detail}` : ''}
+                  {resultsFor.detail ? ` · centered on ${resultsFor.detail}` : ''}
                 </div>
-                {resultsFor.kind === 'location' && resultsFor.nameQuery ? (
-                  <div className="small">
-                    Looking for a court or park named “{resultsFor.nameQuery}”?{' '}
-                    <button
-                      className="btn ghost small"
-                      type="button"
-                      disabled={searchBusy}
-                      onClick={() => withSearch(() => searchCourtFields(resultsFor.nameQuery))}
-                    >
-                      Search court names instead
-                    </button>
-                  </div>
-                ) : null}
-                {resultsFor.kind === 'court' && resultsFor.placeUnavailable ? (
-                  <div className="small muted">
-                    Showing court names only — we couldn’t check whether “{resultsFor.query}” is a city right now.
-                  </div>
-                ) : null}
               </div>
               {!showCreate ? (
                 <button className="btn ghost" type="button" onClick={openCreate}>
@@ -501,31 +418,19 @@ export function CoachCourtsPage() {
             {discovery === 'failed' && searchResults.length > 0 ? (
               <p className="small muted">{COURT_DISCOVERY_FAILED_NOTE}</p>
             ) : null}
-            {searchResults.length === 0 && resultsFor.kind === 'location' && discovery === 'pending' ? (
+            {searchResults.length === 0 && discovery === 'pending' ? (
               <EmptyState title="No courts found yet" detail={COURT_DISCOVERY_PENDING_EMPTY} />
             ) : null}
-            {searchResults.length === 0 && resultsFor.kind === 'location' && discovery === 'failed' ? (
+            {searchResults.length === 0 && discovery === 'failed' ? (
               <EmptyState
                 title="We couldn’t check this area for new courts right now"
                 detail="Try again in a few minutes, or add the location if you know a court here."
               />
             ) : null}
-            {searchResults.length === 0 && resultsFor.kind === 'location' && !discovery ? (
+            {searchResults.length === 0 && !discovery ? (
               <EmptyState
                 title="No courts found in this area"
                 detail="Try a larger search radius, or add the location if this court is not in the directory yet."
-              />
-            ) : null}
-            {searchResults.length === 0 && resultsFor.kind === 'court' && resultsFor.unresolved ? (
-              <EmptyState
-                title={`We couldn’t find “${resultsFor.query}”`}
-                detail="No court name or city matched. Try a ZIP code, a city and state (e.g. Weston, FL), or a street address, or add the location if this court is not in the directory yet."
-              />
-            ) : null}
-            {searchResults.length === 0 && resultsFor.kind === 'court' && !resultsFor.unresolved ? (
-              <EmptyState
-                title="No matching courts in PickleCoach"
-                detail="Try another name, a city, ZIP code, or address, or add the location if this court is not in the directory yet."
               />
             ) : null}
             {searchResults.map((court) => (

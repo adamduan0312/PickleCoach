@@ -699,7 +699,7 @@ Authorization: Bearer <token>
     }
   }
   ```
-- **`place`**: City-level label (e.g. `"Austin, TX"`) when the hit is itself a city/town/village; `null` for ZIPs, streets, counties, and businesses/parks that share the name. The coach Courts search uses it to treat a bare term like `Austin` as a location search.
+- **`place`**: City-level label (e.g. `"Austin, TX"`) when the hit is itself a city/town/village; `null` for ZIPs, streets, counties, and businesses/parks that share the name. The coach Courts search uses it to label results ("Courts within 25 miles of Weston, FL").
 - **Empty match**: Still **200** with `results: []` and a helpful `message` (not an error).
 - **Errors**: `400` validation, `401`/`403` auth, `502`/`503` provider unavailable, `500` unexpected.
 

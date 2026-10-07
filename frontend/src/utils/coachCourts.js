@@ -35,8 +35,6 @@ const US_STATE_CODES = new Set(
 /** Google Plus Code, full or short (e.g. "3PGM+5JF"); geocoders cannot read them. */
 const PLUS_CODE_RE = /(^|[\s,])[23456789CFGHJMPQRVWX]{4,8}\+[23456789CFGHJMPQRVWX]{0,3}(?=$|[\s,])/gi;
 const COUNTRY_RE = /^(us|usa|united states( of america)?)$/i;
-const STREET_SUFFIX_RE = /\b(st|street|ave|avenue|rd|road|blvd|boulevard|dr|drive|ln|lane|ct|way|hwy|highway|pkwy|parkway|ter|terrace|pl|place|cir|circle|trl|trail)\.?$/i;
-const VENUE_WORD_RE = /\b(park|courts?|center|centre|club|complex|rec|recreation|ymca|school|academy|facility|pickleball)\b/i;
 
 function stripPlusCodes(text) {
   return String(text || '').replace(PLUS_CODE_RE, '$1').replace(/^[\s,]+|[\s,]+$/g, '');
@@ -94,69 +92,6 @@ export function splitPastedCourtAddress(text) {
     state: stateIdx >= 0 ? words[stateIdx].replace(/\.$/, '').toUpperCase() : '',
     postal_code: zipIdx >= 0 ? words[zipIdx].slice(0, 5) : '',
   };
-}
-
-/**
- * How to run Find a court text. Pattern-only, so court-name searches never wait on geocoding.
- * - 'location': ZIP, "City, ST", or street address → radius search around it.
- * - 'court': clearly a court/facility (venue words, digits, punctuation) → directory text search.
- * - 'place_or_court': a bare name like "Weston" or "Pine Island" → directory text search, then
- *   treated as a place only if directory courts have that city (see placeFromDirectoryMatches).
- * @param {string} query
- * @returns {'location' | 'court' | 'place_or_court'}
- */
-export function classifyCourtSearch(query) {
-  const q = stripPlusCodes(query).replace(/\s+/g, ' ');
-  if (!q) return 'court';
-  if (/^\d{5}(-\d{4})?$/.test(q)) return 'location';
-
-  const [first, ...rest] = q.split(',').map((s) => s.trim());
-  if (/^\d+\s+\S/.test(first) && (STREET_SUFFIX_RE.test(first) || rest.length > 0)) return 'location';
-
-  const cityState = q.match(/^([A-Za-z][A-Za-z .'-]*?)(?:,\s*|\s+)([A-Za-z]{2})\.?(?:,?\s+\d{5}(?:-\d{4})?)?$/);
-  if (cityState && US_STATE_CODES.has(cityState[2].toUpperCase()) && !VENUE_WORD_RE.test(cityState[1])) {
-    return 'location';
-  }
-  if (/^[A-Za-z][A-Za-z .'-]*$/.test(q) && q.split(' ').length <= 3 && !VENUE_WORD_RE.test(q)) {
-    return 'place_or_court';
-  }
-  return 'court';
-}
-
-/**
- * A bare query ("weston") is a place when directory courts list it as their city. Returns the
- * city as stored plus its most common state, or null.
- * @param {string} query
- * @param {Array<{ city?: string, state?: string }>} courts directory text-search results
- * @returns {{ city: string, state: string } | null}
- */
-export function placeFromDirectoryMatches(query, courts) {
-  const want = String(query || '').trim().replace(/\s+/g, ' ').toLowerCase();
-  if (!want) return null;
-  const byState = new Map();
-  let city = null;
-  for (const c of courts || []) {
-    if (String(c?.city || '').trim().replace(/\s+/g, ' ').toLowerCase() !== want) continue;
-    const state = String(c.state || '').trim().toUpperCase();
-    if (!US_STATE_CODES.has(state)) continue;
-    city = city || String(c.city).trim();
-    byState.set(state, (byState.get(state) || 0) + 1);
-  }
-  if (!city) return null;
-  const [state] = [...byState.entries()].sort((a, b) => b[1] - a[1])[0];
-  return { city, state };
-}
-
-/**
- * The geocode hit that is the city/town the user typed ("austin" → Austin, TX), or null.
- * Hits whose city-level `place` names a different town ("Tropical" → Alton, TX) don't count.
- * @param {string} query
- * @param {{ lat: number, lng: number, place?: string|null }[]} results geocode results, best first
- */
-export function recognizedPlaceFromGeocode(query, results) {
-  const want = String(query || '').trim().replace(/\s+/g, ' ').toLowerCase();
-  if (!want || !Array.isArray(results)) return null;
-  return results.find((r) => r?.place && r.place.split(',')[0].trim().toLowerCase() === want) || null;
 }
 
 export const COURT_DISCOVERY_PENDING_EMPTY =
