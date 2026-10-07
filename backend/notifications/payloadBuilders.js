@@ -117,7 +117,7 @@ export const buildWeatherCancellationDeclinedNotificationContent = (payload = {}
   const responder = otherPartyName(payload, { coach: 'Your student', student: 'Your coach' });
   return {
     headline: `${responder} declined your weather cancellation`,
-    summary: 'The lesson won’t be cancelled for weather.',
+    summary: 'Your weather cancellation request was declined. The booking remains active.',
     preview: payload.lesson_title || 'Lesson',
   };
 };

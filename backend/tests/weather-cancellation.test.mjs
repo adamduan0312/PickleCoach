@@ -145,7 +145,7 @@ describe('weather notification copy', () => {
   it('declined and accepted go to the requester', () => {
     const declined = buildWeatherCancellationDeclinedNotificationContent({ ...base, audience: 'student' });
     assert.equal(declined.headline, 'Sam declined your weather cancellation');
-    assert.equal(declined.summary, 'The lesson won’t be cancelled for weather.');
+    assert.equal(declined.summary, 'Your weather cancellation request was declined. The booking remains active.');
     const accepted = buildWeatherCancellationAcceptedNotificationContent({ ...base, audience: 'student', refund_amount: '60.00' });
     assert.equal(accepted.headline, 'Sam agreed to cancel for weather');
     assert.match(accepted.summary, /full refund of \$60\.00/);
