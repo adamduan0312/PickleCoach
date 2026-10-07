@@ -134,6 +134,8 @@ describe('isCourtDiscoveryPending', () => {
     assert.equal(isCourtDiscoveryPending({ discovery: { status: 'running' } }), true);
     assert.equal(isCourtDiscoveryPending({ discovery: { status: 'recent' } }), false);
     assert.equal(isCourtDiscoveryPending({}), false);
+    assert.equal(isCourtDiscoveryPending({ data: [], raw: { discovery: { status: 'started' } } }), true);
+    assert.equal(isCourtDiscoveryPending({ data: [], raw: { discovery: { status: 'recent' } } }), false);
   });
 });
 

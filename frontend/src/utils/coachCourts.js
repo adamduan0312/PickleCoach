@@ -166,10 +166,11 @@ export const COURT_DISCOVERY_PENDING_NOTE =
   'Still checking OpenStreetMap for more courts in this area — search again in a minute to see any new ones.';
 
 /**
- * Nearby search responses carry `discovery.status` while background OSM import runs.
- * @param {{ discovery?: { status?: string } } | null | undefined} res
+ * Nearby search responses carry `discovery.status` while background OSM import runs. `apiRequest`
+ * puts top-level fields other than `data` under `raw`.
+ * @param {{ raw?: { discovery?: { status?: string } }, discovery?: { status?: string } } | null | undefined} res
  */
 export function isCourtDiscoveryPending(res) {
-  const status = res?.discovery?.status;
+  const status = (res?.raw?.discovery || res?.discovery)?.status;
   return status === 'started' || status === 'running';
 }
