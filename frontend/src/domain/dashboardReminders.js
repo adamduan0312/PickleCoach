@@ -26,7 +26,7 @@ function sortByScheduledAsc(a, b) {
   return new Date(a.scheduled_at).getTime() - new Date(b.scheduled_at).getTime();
 }
 
-/** Weather requests expire at lesson start, so this banner leads. */
+/** Weather requests expire 24h after the lesson ends, so this banner leads. */
 function weatherRequestReminder(list, audience, now) {
   const waiting = list.filter((b) => weatherRequestAwaitsResponse(b, audience, now)).sort(sortByScheduledAsc);
   if (waiting.length === 0) return null;
@@ -37,8 +37,8 @@ function weatherRequestReminder(list, audience, now) {
     tone: 'warning',
     title: many ? `Action needed — ${waiting.length} weather cancellation requests` : WEATHER_ACTION_NEEDED_LABEL,
     body: many
-      ? 'Agree to cancel for weather or keep each lesson before it starts. Open the next request to respond.'
-      : `${asker} asked to cancel an upcoming lesson for weather. Agree or keep the lesson before it starts.`,
+      ? 'Agree to cancel for weather or keep each lesson. Open the next request to respond.'
+      : `${asker} asked to cancel a lesson for weather. Agree or keep the lesson.`,
     to: `/bookings/${waiting[0].id}`,
     cta: many ? 'Respond to next request' : 'Respond',
   };

@@ -1,5 +1,5 @@
-import { UniqueConstraintError } from 'sequelize';
-import { sequelize, Booking, WeatherCancellationRequest } from '../models/index.js';
+import { Op, UniqueConstraintError } from 'sequelize';
+import { sequelize, Booking, Dispute, WeatherCancellationRequest } from '../models/index.js';
 import { successResponse, errorResponse } from '../utils/response.js';
 import { logAudit } from '../utils/audit.js';
 import { logger } from '../config/logger.js';
@@ -7,8 +7,10 @@ import * as notificationService from '../services/notificationService.js';
 import {
   effectiveWeatherRequestStatus,
   serializeWeatherCancellation,
+  weatherRequestClosesAt,
   weatherRequestEligibility,
 } from '../utils/weatherCancellation.js';
+import { ACTIVE_DISPUTE_STATUSES } from '../services/disputeStateMachine.js';
 import { runPreLessonCancel } from './bookingController.js';
 
 function httpError(statusCode, message, code = null) {
@@ -41,9 +43,19 @@ function respondWithError(res, error, label) {
   return errorResponse(res, 'Something went wrong. Please try again.', 500);
 }
 
+/** True when an in-app dispute on this booking is open or under review. */
+export async function bookingHasActiveDispute(bookingId, { transaction } = {}) {
+  const count = await Dispute.count({
+    where: { booking_id: bookingId, status: { [Op.in]: [...ACTIVE_DISPUTE_STATUSES] } },
+    transaction,
+  });
+  return count > 0;
+}
+
 async function weatherBlockFor(bookingId, booking, viewerRole) {
   const rows = await WeatherCancellationRequest.findAll({ where: { booking_id: bookingId } });
-  return serializeWeatherCancellation(rows.map((r) => r.toJSON()), { booking, viewerRole });
+  const hasActiveDispute = await bookingHasActiveDispute(bookingId);
+  return serializeWeatherCancellation(rows.map((r) => r.toJSON()), { booking, viewerRole, hasActiveDispute });
 }
 
 /** POST /api/bookings/:id/weather-cancellation */
@@ -66,7 +78,8 @@ export const requestWeatherCancellation = async (req, res) => {
         transaction: t,
         lock: t.LOCK.UPDATE,
       });
-      const eligibility = weatherRequestEligibility({ booking, requesterRole, requests });
+      const hasActiveDispute = await bookingHasActiveDispute(booking.id, { transaction: t });
+      const eligibility = weatherRequestEligibility({ booking, requesterRole, requests, hasActiveDispute });
       if (!eligibility.ok) throw httpError(400, eligibility.message, eligibility.code);
 
       created = await WeatherCancellationRequest.create(
@@ -76,7 +89,7 @@ export const requestWeatherCancellation = async (req, res) => {
           requested_by_user_id: req.user.id,
           note,
           status: 'pending',
-          expires_at: booking.scheduled_at,
+          expires_at: weatherRequestClosesAt(booking),
         },
         { transaction: t },
       );
@@ -129,7 +142,8 @@ function respondToRequest(action) {
         });
         if (!request) throw httpError(404, 'Weather cancellation request not found.');
 
-        const status = effectiveWeatherRequestStatus(request, booking);
+        const hasActiveDispute = await bookingHasActiveDispute(booking.id, { transaction: t });
+        const status = effectiveWeatherRequestStatus(request, booking, new Date(), { hasActiveDispute });
         if (status !== 'pending') {
           throw httpError(400, 'This weather cancellation request is no longer open.', `weather_request_${status}`);
         }

@@ -4,7 +4,6 @@ import { readFileSync } from 'node:fs';
 import {
   COACH_WEATHER_POLICY_LINE,
   STUDENT_WEATHER_POLICY_LINE,
-  cancelWeatherAlternativeHint,
   cancellationPolicySummary,
   coachCancellationPolicyLines,
   isMutualWeatherCancellation,
@@ -56,11 +55,15 @@ test('policy lists name weather as an agreed exception, not an automatic refund'
   assert.match(COACH_WEATHER_POLICY_LINE, /If the other person agrees.*you aren’t paid/);
 });
 
-test('late student summary points to the weather request only while one is possible', () => {
-  const open = cancellationPolicySummary(booking({ block: { can_request: true } }), { audience: 'student', now: NOW, tz: TZ });
-  assert.match(open.body, /ask your coach to cancel for weather instead/);
-  const used = cancellationPolicySummary(booking({ block: { can_request: false } }), { audience: 'student', now: NOW, tz: TZ });
-  assert.doesNotMatch(used.body, /weather/);
+test('policy lines: weather requests stay open until 24h after the lesson', () => {
+  assert.match(STUDENT_WEATHER_POLICY_LINE, /until 24 hours after the lesson ends/);
+  assert.match(COACH_WEATHER_POLICY_LINE, /until 24 hours after the lesson ends/);
+});
+
+test('late student summary: can’t cancel, weather needs the coach to agree', () => {
+  const summary = cancellationPolicySummary(booking({ block: { can_request: true } }), { audience: 'student', now: NOW, tz: TZ });
+  assert.equal(summary.headline, 'This lesson can no longer be cancelled');
+  assert.match(summary.body, /ask your coach to cancel for weather — if they agree, you get a full refund/);
 });
 
 test('available: explains both outcomes per audience', () => {
@@ -72,7 +75,7 @@ test('available: explains both outcomes per audience', () => {
   assert.match(coach.body, /Ask the student.*the student gets a full refund and you aren’t paid/);
 });
 
-test('no weather request card more than 24h out, for pending, started, or cancelled bookings', () => {
+test('no weather request card more than 24h out, for pending or cancelled bookings, or after the review window', () => {
   for (const audience of ['student', 'coach']) {
     const far = booking({ hours: 30, block: { request_unavailable_code: 'weather_request_too_early' } });
     assert.equal(weatherCancellationView(far, { audience, now: NOW, tz: TZ }), null);
@@ -80,8 +83,24 @@ test('no weather request card more than 24h out, for pending, started, or cancel
     assert.equal(weatherCancellationView(staleFlag, { audience, now: NOW, tz: TZ }), null, 'client also enforces the 24h window');
   }
   assert.equal(weatherCancellationView(booking({ status: 'pending', block: { can_request: true } }), { now: NOW }), null);
-  assert.equal(weatherCancellationView(booking({ hours: -1, block: { can_request: true } }), { now: NOW }), null);
   assert.equal(weatherCancellationView(booking({ status: 'cancelled', block: { can_request: true } }), { now: NOW }), null);
+  for (const status of ['completed', 'student_no_show', 'coach_no_show', 'disputed']) {
+    assert.equal(weatherCancellationView(booking({ hours: -3, status, block: { can_request: true } }), { now: NOW }), null, status);
+  }
+  const closed = booking({ hours: -26, status: 'awaiting_verification', block: { can_request: true, request: pending() } });
+  assert.equal(weatherCancellationView(closed, { audience: 'coach', now: NOW, tz: TZ }), null, '24h after the lesson ended');
+});
+
+test('after the lesson: still available and answerable during the review window', () => {
+  const started = weatherCancellationView(booking({ hours: -1, block: { can_request: true } }), { audience: 'student', now: NOW, tz: TZ });
+  assert.equal(started.kind, 'available');
+  assert.match(started.body, /If weather stopped the lesson, ask your coach to cancel for weather by .*If they agree, you get a full refund/);
+
+  const awaiting = booking({ hours: -5, status: 'awaiting_verification', block: { request: pending(), closes_at: at(19) } });
+  const coach = weatherCancellationView(awaiting, { audience: 'coach', now: NOW, tz: TZ });
+  assert.equal(coach.kind, 'respond');
+  assert.match(coach.body, /If you don’t, the lesson stands\. Respond by .*3:00 AM/);
+  assert.doesNotMatch(coach.body, /keep the lesson/);
 });
 
 test('respond: the other person sees a prominent card with their own consequences and the note', () => {
@@ -108,25 +127,21 @@ test('waiting: the requester is told nothing has changed until the other person 
     { audience: 'student', now: NOW, tz: TZ },
   );
   assert.equal(view.kind, 'waiting');
-  assert.match(view.body, /Waiting for your coach.*If they agree.*expires when the lesson starts/);
+  assert.match(view.body, /Waiting for your coach.*If they agree.*stays open until .*24 hours after the lesson ends/);
 });
 
-test('declined: requester learns normal rules apply; responder sees the lesson is on', () => {
+test('declined: the lesson is on; only a coach requester is reminded they can still cancel', () => {
   const declined = { ...pending(), status: 'declined', can_respond: false };
   const requester = weatherCancellationView(booking({ block: { request: { ...declined, requested_by_me: true } } }), { audience: 'student', now: NOW, tz: TZ });
   assert.equal(requester.title, 'Casey Coach declined your weather cancellation');
-  assert.match(requester.body, /normal cancellation rules apply/);
+  assert.equal(requester.body, 'The lesson is still on.');
+  const coachRequester = weatherCancellationView(
+    booking({ block: { request: { ...declined, requested_by: 'coach', requested_by_me: true } } }),
+    { audience: 'coach', now: NOW, tz: TZ },
+  );
+  assert.match(coachRequester.body, /You can still cancel it yourself — the student gets a full refund/);
   const responder = weatherCancellationView(booking({ block: { request: declined } }), { audience: 'coach', now: NOW, tz: TZ });
   assert.equal(responder.title, 'You kept the lesson');
-});
-
-test('cancel dialog suggests the weather request only for a late student who can still ask', () => {
-  const b = booking({ block: { can_request: true } });
-  assert.match(cancelWeatherAlternativeHint('weather', b, { audience: 'student', now: NOW }), /ask your coach to cancel for weather/);
-  assert.equal(cancelWeatherAlternativeHint('sickness', b, { audience: 'student', now: NOW }), null);
-  assert.equal(cancelWeatherAlternativeHint('weather', b, { audience: 'coach', now: NOW }), null);
-  assert.equal(cancelWeatherAlternativeHint('weather', booking({ block: { can_request: false } }), { audience: 'student', now: NOW }), null);
-  assert.equal(cancelWeatherAlternativeHint('weather', booking({ hours: 30, block: { can_request: true } }), { audience: 'student', now: NOW }), null);
 });
 
 test('agreed weather cancellation: outcome and history say both agreed and full refund', () => {
@@ -169,7 +184,10 @@ test('action needed: only the participant who must answer sees the weather reque
   assert.equal(weatherRequestAwaitsResponse(row('student'), 'coach', NOW), true);
   assert.equal(weatherRequestAwaitsResponse(row('student'), 'student', NOW), false, 'requester is waiting, not acting');
   assert.equal(weatherRequestAwaitsResponse(row('coach'), 'student', NOW), true);
-  assert.equal(weatherRequestAwaitsResponse(row('student', { scheduled_at: at(-1) }), 'coach', NOW), false, 'expired at start');
+  assert.equal(weatherRequestAwaitsResponse(row('student', { scheduled_at: at(-1) }), 'coach', NOW), true, 'still open after start');
+  assert.equal(weatherRequestAwaitsResponse(row('student', { status: 'awaiting_verification', scheduled_at: at(-5) }), 'coach', NOW), true, 'review window');
+  assert.equal(weatherRequestAwaitsResponse(row('student', { status: 'awaiting_verification', scheduled_at: at(-25) }), 'coach', NOW), false, 'window closed');
+  assert.equal(weatherRequestAwaitsResponse(row('student', { status: 'completed', scheduled_at: at(-5) }), 'coach', NOW), false);
   assert.equal(weatherRequestAwaitsResponse(row('student', { status: 'cancelled' }), 'coach', NOW), false);
   assert.equal(weatherRequestAwaitsResponse({ status: 'confirmed', scheduled_at: at(5), pending_weather_request: null }, 'coach', NOW), false);
   assert.equal(

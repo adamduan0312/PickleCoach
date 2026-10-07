@@ -3,8 +3,11 @@
  *
  *   1. Student asks within 24h, coach accepts → cancelled, 100% refund queued, no late-cancel payout,
  *      no reliability impact, request accepted, requester notified.
- *   2. Coach asks, student declines → lesson stays on; a later student cancel follows normal rules (50%).
- *   3. Guards: too early, own request, one request per person, withdraw only by author.
+ *   2. Coach asks, student declines → lesson stays on; the student still cannot cancel inside 24h.
+ *   3. A request still pending after the lesson can be accepted during the 24h review window
+ *      (awaiting_verification → cancelled, full refund, no payout); the window closing expires it.
+ *   4. Opening a dispute closes a pending request and blocks new ones.
+ *   5. Guards: too early, own request, one request per person, withdraw only by author.
  *
  * Run from backend/: npm run test:integration
  */
@@ -21,6 +24,7 @@ import {
   CancellationHistory,
   Notification,
   WeatherCancellationRequest,
+  Dispute,
 } from '../../models/index.js';
 import * as stripeService from '../../services/stripeService.js';
 import { createInMemoryPaymentIntentDouble } from '../helpers/inMemoryPaymentIntentDouble.mjs';
@@ -188,7 +192,7 @@ describeHttp('HTTP integration: mutual weather cancellation', () => {
     assert.equal(plainCancelToCoach, 0, 'the coach accepted in-app; no generic "student cancelled" notice');
   });
 
-  it('coach asks, student declines → lesson stays on; later student cancel is a normal late cancel', async () => {
+  it('coach asks, student declines → lesson stays on; the student still cannot cancel inside 24h', async () => {
     await freshFixture();
     const { baseUrl } = server;
     const bookingId = await confirmedBooking(baseUrl, fixture, tokens, 'weather_decline', 5);
@@ -215,40 +219,105 @@ describeHttp('HTTP integration: mutual weather cancellation', () => {
 
     const cancelRes = await api(baseUrl, 'POST', `/api/bookings/${bookingId}/cancel`, {
       token: tokens.student,
-      body: { reason: 'schedule_conflict' },
+      body: { reason: 'weather' },
     });
-    assert.equal(cancelRes.status, 200, cancelRes.text);
-    const payment = await Payment.findOne({ where: { booking_id: bookingId } });
-    const totalCents = Math.round(Number(payment.total_charge_to_student) * 100);
-    const [action] = await PaymentAction.findAll({ where: { booking_id: bookingId, action_type: 'booking_cancel_refund' } });
-    assert.equal(action.refund_cents, Math.floor(totalCents / 2));
+    assert.equal(cancelRes.status, 400, cancelRes.text);
+    assert.equal(cancelRes.json.code, 'student_late_cancel_unavailable');
+    assert.equal((await Booking.findByPk(bookingId)).status, 'confirmed');
+    assert.equal(await PaymentAction.count({ where: { booking_id: bookingId, action_type: 'booking_cancel_refund' } }), 0);
 
     const coachDeclinedNotice = await eventuallyCount({ user_id: fixture.coach.id, type: 'weather_cancellation_declined', entity_id: bookingId });
     assert.ok(coachDeclinedNotice >= 1);
   });
 
-  it('asking for weather earns the requester nothing: cancelling while it is pending is a normal late cancel', async () => {
+  it('a request left pending past the lesson can be accepted during the review window', async () => {
     await freshFixture();
     const { baseUrl } = server;
-    const bookingId = await confirmedBooking(baseUrl, fixture, tokens, 'weather_pending_cancel', 5);
+    const bookingId = await confirmedBooking(baseUrl, fixture, tokens, 'weather_post_lesson', 5);
 
     const reqRes = await api(baseUrl, 'POST', `/api/bookings/${bookingId}/weather-cancellation`, { token: tokens.student, body: {} });
     assert.equal(reqRes.status, 201, reqRes.text);
     const requestId = reqRes.json.data.weather_cancellation.request.id;
 
-    const cancelRes = await api(baseUrl, 'POST', `/api/bookings/${bookingId}/cancel`, {
-      token: tokens.student,
-      body: { reason: 'weather' },
-    });
-    assert.equal(cancelRes.status, 200, cancelRes.text);
+    const cancelRes = await api(baseUrl, 'POST', `/api/bookings/${bookingId}/cancel`, { token: tokens.student, body: { reason: 'weather' } });
+    assert.equal(cancelRes.status, 400, 'a pending request does not unlock a unilateral cancel');
+    assert.equal(cancelRes.json.code, 'student_late_cancel_unavailable');
 
+    // Lesson ended 3h ago and the worker moved it to awaiting_verification.
+    await Booking.update(
+      { scheduled_at: new Date(Date.now() - 4 * HOUR), status: 'awaiting_verification' },
+      { where: { id: bookingId } },
+    );
+    const coachView = await api(baseUrl, 'GET', `/api/bookings/${bookingId}`, { token: tokens.coach });
+    assert.equal(coachView.json.data.weather_cancellation.request.status, 'pending');
+    assert.equal(coachView.json.data.weather_cancellation.request.can_respond, true);
+    const coachList = await api(baseUrl, 'GET', '/api/coaches/me/bookings', { token: tokens.coach });
+    const row = (Array.isArray(coachList.json.data) ? coachList.json.data : coachList.json.data.items).find((b) => b.id === bookingId);
+    assert.equal(row.pending_weather_request.requested_by, 'student', 'still flagged as action needed after the lesson');
+
+    const acceptRes = await api(baseUrl, 'POST', `/api/bookings/${bookingId}/weather-cancellation/${requestId}/accept`, { token: tokens.coach });
+    assert.equal(acceptRes.status, 200, acceptRes.text);
+
+    const booking = await Booking.findByPk(bookingId);
+    assert.equal(booking.status, 'cancelled');
+    assert.notEqual(booking.payout_status, 'pending', 'no coach payout');
     const payment = await Payment.findOne({ where: { booking_id: bookingId } });
     const totalCents = Math.round(Number(payment.total_charge_to_student) * 100);
     const [action] = await PaymentAction.findAll({ where: { booking_id: bookingId, action_type: 'booking_cancel_refund' } });
-    assert.equal(action.refund_cents, Math.floor(totalCents / 2), 'pending request does not unlock the full refund');
+    assert.equal(action.refund_cents, totalCents, 'full refund after the lesson');
     const [history] = await CancellationHistory.findAll({ where: { booking_id: bookingId } });
-    assert.notEqual(history.reason_notes, 'Cancelled for weather — agreed by both');
+    assert.equal(history.affects_reliability, false);
+    assert.equal(Number(history.penalty_amount), 0);
+    assert.equal((await WeatherCancellationRequest.findByPk(requestId)).status, 'accepted');
+  });
+
+  it('the review window closing expires a pending request', async () => {
+    await freshFixture();
+    const { baseUrl } = server;
+    const bookingId = await confirmedBooking(baseUrl, fixture, tokens, 'weather_window_closed', 5);
+    const reqRes = await api(baseUrl, 'POST', `/api/bookings/${bookingId}/weather-cancellation`, { token: tokens.student, body: {} });
+    assert.equal(reqRes.status, 201, reqRes.text);
+    const requestId = reqRes.json.data.weather_cancellation.request.id;
+
+    await Booking.update(
+      { scheduled_at: new Date(Date.now() - 26 * HOUR), status: 'awaiting_verification' },
+      { where: { id: bookingId } },
+    );
+    const lateAccept = await api(baseUrl, 'POST', `/api/bookings/${bookingId}/weather-cancellation/${requestId}/accept`, { token: tokens.coach });
+    assert.equal(lateAccept.status, 400, lateAccept.text);
+    assert.equal((await Booking.findByPk(bookingId)).status, 'awaiting_verification');
+    assert.equal(await PaymentAction.count({ where: { booking_id: bookingId, action_type: 'booking_cancel_refund' } }), 0);
+    const view = await api(baseUrl, 'GET', `/api/bookings/${bookingId}`, { token: tokens.student });
+    assert.equal(view.json.data.weather_cancellation.request.status, 'expired');
+    assert.equal(view.json.data.weather_cancellation.can_request, false);
+  });
+
+  it('opening a dispute closes a pending request and blocks new ones', async () => {
+    await freshFixture();
+    const { baseUrl } = server;
+    const bookingId = await confirmedBooking(baseUrl, fixture, tokens, 'weather_dispute', 5);
+    const reqRes = await api(baseUrl, 'POST', `/api/bookings/${bookingId}/weather-cancellation`, { token: tokens.coach, body: {} });
+    assert.equal(reqRes.status, 201, reqRes.text);
+    const requestId = reqRes.json.data.weather_cancellation.request.id;
+
+    await Booking.update(
+      { scheduled_at: new Date(Date.now() - 3 * HOUR), status: 'awaiting_verification' },
+      { where: { id: bookingId } },
+    );
+    const disputeRes = await api(baseUrl, 'POST', '/api/disputes', {
+      token: tokens.student,
+      body: { booking_id: bookingId, dispute_type_id: 1, notes: 'Coach never showed' },
+    });
+    assert.equal(disputeRes.status, 201, disputeRes.text);
     assert.equal((await WeatherCancellationRequest.findByPk(requestId)).status, 'closed');
+
+    const acceptRes = await api(baseUrl, 'POST', `/api/bookings/${bookingId}/weather-cancellation/${requestId}/accept`, { token: tokens.student });
+    assert.equal(acceptRes.status, 400, acceptRes.text);
+    const again = await api(baseUrl, 'POST', `/api/bookings/${bookingId}/weather-cancellation`, { token: tokens.student, body: {} });
+    assert.equal(again.status, 400, again.text);
+    assert.equal(again.json.code, 'weather_request_dispute_open');
+    assert.equal((await Booking.findByPk(bookingId)).status, 'awaiting_verification');
+    await Dispute.destroy({ where: { booking_id: bookingId } });
   });
 
   it('requests open 24h before the lesson; a normal cancel closes a pending request', async () => {

@@ -58,7 +58,6 @@ import {
 } from '../../domain/bookingStatus.js';
 import {
   cancelReasonSharedHint,
-  cancelWeatherAlternativeHint,
   cancellationPolicyLines,
   cancellationPolicySummary,
   isMutualWeatherCancellation,
@@ -691,12 +690,10 @@ export function BookingDetailPage({ admin = false }) {
           Student no-show
         </button>
       ) : null}
-      {(isStudent && canStudentCancel(booking)) || (isCoach && canCoachCancel(booking)) ? (
+      {(isStudent && canStudentCancel(booking, now)) || (isCoach && canCoachCancel(booking)) ? (
         <CancelForm
           busy={busy}
-          booking={booking}
           audience={isCoach ? 'coach' : 'student'}
-          now={now}
           consequence={cancelMoneyConsequenceCopy(booking, payment, { audience: isCoach ? 'coach' : 'student' })}
           onSubmit={(body) => run(() => bookingsApi.cancel(id, body))}
         />
@@ -721,8 +718,8 @@ export function BookingDetailPage({ admin = false }) {
           onSubmit={(body) => run(() => disputesApi.create(body))}
         />
       ) : null}
-      {rescheduleHint(booking, isCoach ? 'coach' : 'student') ? (
-        <p className="small muted">{rescheduleHint(booking, isCoach ? 'coach' : 'student')}</p>
+      {rescheduleHint(booking, isCoach ? 'coach' : 'student', now) ? (
+        <p className="small muted">{rescheduleHint(booking, isCoach ? 'coach' : 'student', now)}</p>
       ) : null}
       {isStudent && isMutualWeatherCancellation(booking) && booking.coach_id ? (
         <Link className="btn secondary" to={`/coaches/${booking.coach_id}`}>Book a new time</Link>
@@ -1296,10 +1293,9 @@ function WeatherCancellationSection({ view, audience, busy, onRequest, onAccept,
   );
 }
 
-function CancelForm({ onSubmit, busy, consequence, booking, audience, now }) {
+function CancelForm({ onSubmit, busy, consequence, audience }) {
   const [reason, setReason] = useState('');
   const [notes, setNotes] = useState('');
-  const weatherHint = cancelWeatherAlternativeHint(reason, booking, { audience, now });
   return (
     <form className="stack" onSubmit={(e) => { e.preventDefault(); if (!reason) return; onSubmit({ reason, reason_notes: notes || undefined }); }}>
       <h3 style={{ margin: 0, fontSize: '1rem' }}>Cancel booking</h3>
@@ -1307,9 +1303,6 @@ function CancelForm({ onSubmit, busy, consequence, booking, audience, now }) {
         <div className="alert warning" role="status">
           <strong>If you cancel</strong>
           <div className="small" style={{ marginTop: 4 }}>{consequence}</div>
-          {weatherHint ? (
-            <div className="small" style={{ marginTop: 4 }}><strong>{weatherHint}</strong></div>
-          ) : null}
         </div>
       ) : null}
       <FormField label="Cancel reason" name="reason" required>

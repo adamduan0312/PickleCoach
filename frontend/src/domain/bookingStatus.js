@@ -1,8 +1,8 @@
 import { formatMoney } from '../utils/format.js';
 import {
+  FULL_REFUND_CUTOFF_HOURS,
   WEATHER_ACTION_NEEDED_LABEL,
   isMutualWeatherCancellation,
-  isWithinLateCancelWindow,
   studentCancellationPolicyLines,
   weatherRequestAwaitsResponse,
 } from './cancellationPolicy.js';
@@ -398,8 +398,8 @@ export function isCoachPayoutNotDue(booking, payment) {
 
 /**
  * Pre-cancel money impact copy (matches paymentEngine.computeCancellationSplitCents).
- * Policy: uncaptured → release auth; early student cancel → full; late student (<24h) → ~half (floor);
- * coach cancel → full. Stripe remaining-balance cap is a processing safeguard, not a different policy.
+ * Policy: uncaptured → release auth; student cancel (only allowed ≥24h out) → full; coach cancel → full.
+ * Stripe remaining-balance cap is a processing safeguard, not a different policy.
  */
 export function cancelMoneyConsequenceCopy(booking, payment, { audience } = {}) {
   if (!booking) return null;
@@ -422,17 +422,16 @@ export function cancelMoneyConsequenceCopy(booking, payment, { audience } = {}) 
   const totalCents = Math.round(Number(payment?.total_charge_to_student ?? booking.price) * 100);
   const hasTotal = Number.isFinite(totalCents) && totalCents > 0;
 
-  if (isWithinLateCancelWindow(booking)) {
-    const amounts = hasTotal
-      ? ` (${formatMoney(Math.floor(totalCents / 2) / 100)} of ${formatMoney(totalCents / 100)})`
-      : '';
-    return `The lesson is less than 24 hours away, so you’ll be refunded 50%${amounts}.`;
-  }
   return `You’ll get a full refund${hasTotal ? ` of ${formatMoney(totalCents / 100)}` : ''}.`;
 }
 
-export function canStudentCancel(booking) {
-  return booking && ['pending', 'confirmed'].includes(booking.status);
+/** Pending is always free to cancel; a confirmed lesson only until 24h before it starts. */
+export function canStudentCancel(booking, now = Date.now()) {
+  if (!booking) return false;
+  if (booking.status === 'pending') return true;
+  if (booking.status !== 'confirmed') return false;
+  const start = new Date(booking.scheduled_at).getTime();
+  return Number.isFinite(start) && now < start - FULL_REFUND_CUTOFF_HOURS * 60 * 60 * 1000;
 }
 
 /** Coach cancel is for confirmed lessons — not pending requests (use decline). */

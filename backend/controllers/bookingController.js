@@ -15,7 +15,11 @@ import {
   Review,
   WeatherCancellationRequest,
 } from '../models/index.js';
-import { effectiveWeatherRequestStatus, serializeWeatherCancellation } from '../utils/weatherCancellation.js';
+import {
+  effectiveWeatherRequestStatus,
+  serializeWeatherCancellation,
+  WEATHER_REQUEST_BOOKING_STATUSES,
+} from '../utils/weatherCancellation.js';
 import { successResponse, errorResponse, paginatedResponse } from '../utils/response.js';
 import { getPagination, getPagingData } from '../utils/pagination.js';
 import { Op } from 'sequelize';
@@ -122,21 +126,26 @@ const BOOKING_LIST_ORDER = [
 ];
 
 /**
- * List DTOs: `pending_weather_request` ({ id, requested_by } | null) — an open weather request on a
- * confirmed lesson that hasn't started, so lists can flag "action needed" for the other participant.
+ * List DTOs: `pending_weather_request` ({ id, requested_by } | null) — an open weather request
+ * (before the lesson or during the post-lesson review window), so lists can flag "action needed"
+ * for the other participant.
  */
 async function attachPendingWeatherRequests(items) {
   for (const dto of items) dto.pending_weather_request = null;
-  const ids = items.filter((dto) => dto?.status === 'confirmed').map((dto) => dto.id);
-  if (ids.length === 0) return;
+  const byId = new Map(
+    items.filter((dto) => WEATHER_REQUEST_BOOKING_STATUSES.includes(dto?.status)).map((dto) => [Number(dto.id), dto]),
+  );
+  if (byId.size === 0) return;
   const rows = await WeatherCancellationRequest.findAll({
-    where: { booking_id: ids, status: 'pending', expires_at: { [Op.gt]: new Date() } },
-    attributes: ['id', 'booking_id', 'requested_by_role'],
+    where: { booking_id: [...byId.keys()], status: 'pending' },
+    attributes: ['id', 'booking_id', 'requested_by_role', 'status', 'expires_at'],
   });
-  const byBooking = new Map(rows.map((r) => [Number(r.booking_id), r]));
-  for (const dto of items) {
-    const row = byBooking.get(Number(dto.id));
-    if (row) dto.pending_weather_request = { id: row.id, requested_by: row.requested_by_role };
+  const now = new Date();
+  for (const row of rows) {
+    const dto = byId.get(Number(row.booking_id));
+    if (effectiveWeatherRequestStatus(row, dto, now) === 'pending') {
+      dto.pending_weather_request = { id: row.id, requested_by: row.requested_by_role };
+    }
   }
 }
 
@@ -297,6 +306,7 @@ export const getBookingById = async (req, res) => {
     dto.weather_cancellation = serializeWeatherCancellation(weatherRows.map((r) => r.toJSON()), {
       booking,
       viewerRole,
+      hasActiveDispute: issueMap.has(Number(booking.id)),
     });
 
     return successResponse(
@@ -914,9 +924,11 @@ export const cancelBooking = (req, res) => runPreLessonCancel(req, res);
 
 /**
  * Pre-lesson cancellation (participant or admin).
+ * Students can't cancel a confirmed lesson less than 24 hours before it starts; weather goes through
+ * a mutual weather request instead.
  * `mutualWeather` ({ requestId }) is set only when the other participant accepts a weather request:
  * the request's author is recorded as the canceller, the student is refunded in full, and nobody's
- * reliability is affected.
+ * reliability is affected. Accepting also works after the lesson, until the review window closes.
  */
 export async function runPreLessonCancel(req, res, mutualWeather = null) {
   try {
@@ -979,8 +991,8 @@ export async function runPreLessonCancel(req, res, mutualWeather = null) {
         throw err;
       }
 
-      const PRE_LESSON_STATUSES = ['pending', 'confirmed'];
-      if (!PRE_LESSON_STATUSES.includes(booking.status)) {
+      const CANCELLABLE_STATUSES = mutualWeather ? WEATHER_REQUEST_BOOKING_STATUSES : ['pending', 'confirmed'];
+      if (!CANCELLABLE_STATUSES.includes(booking.status)) {
         if (booking.status === 'awaiting_verification') {
           assertBookingStatusAllowsPreLessonCancel(booking.status);
         }
@@ -1024,7 +1036,10 @@ export async function runPreLessonCancel(req, res, mutualWeather = null) {
         throw err;
       }
 
-      assertPreLessonCancelAllowed(booking.scheduled_at, new Date());
+      if (!mutualWeather) {
+        assertPreLessonCancelAllowed(booking.scheduled_at, new Date());
+        assertStudentMayCancel(booking, actorRole, new Date());
+      }
 
       // Reliability starts once the coach accepts; backing out of a pending request is free for everyone.
       willAffectReliability =
@@ -1036,7 +1051,11 @@ export async function runPreLessonCancel(req, res, mutualWeather = null) {
           transaction: t,
           lock: t.LOCK.UPDATE,
         });
-        assertWeatherRequestAcceptable(weatherRequest, booking, actorRole);
+        const hasActiveDispute = (await Dispute.count({
+          where: { booking_id: booking.id, status: { [Op.in]: [...ACTIVE_DISPUTE_STATUSES] } },
+          transaction: t,
+        })) > 0;
+        assertWeatherRequestAcceptable(weatherRequest, booking, actorRole, { hasActiveDispute });
         cancelledBy = weatherRequest.requested_by_role;
       }
 
@@ -1231,7 +1250,7 @@ export async function runPreLessonCancel(req, res, mutualWeather = null) {
 
       await applyBookingStatusTransition(booking, {
         toStatus: 'cancelled',
-        via: BookingTransitionVia.PRE_LESSON_CANCEL,
+        via: mutualWeather ? BookingTransitionVia.MUTUAL_WEATHER_CANCEL : BookingTransitionVia.PRE_LESSON_CANCEL,
         patch: {
           cancelled_by: cancelledBy,
           cancelled_at: new Date(),
@@ -1360,6 +1379,23 @@ export async function runPreLessonCancel(req, res, mutualWeather = null) {
 
 const MUTUAL_WEATHER_CANCEL_NOTE = 'Cancelled for weather — agreed by both';
 
+export const STUDENT_LATE_CANCEL_BLOCKED_CODE = 'student_late_cancel_unavailable';
+
+/** Students can't cancel a confirmed lesson inside 24 hours; pending requests stay free to cancel. */
+function assertStudentMayCancel(booking, actorRole, now) {
+  if (actorRole !== 'student' || booking.status !== 'confirmed') return;
+  const hoursUntil = (new Date(booking.scheduled_at).getTime() - now.getTime()) / (60 * 60 * 1000);
+  if (hoursUntil >= 24) return;
+  const err = new Error(
+    'Lessons can’t be cancelled less than 24 hours before they start. If it’s because of bad weather, '
+      + 'ask your coach to cancel for weather — if they agree, you get a full refund.',
+  );
+  err.statusCode = 400;
+  err.code = STUDENT_LATE_CANCEL_BLOCKED_CODE;
+  err.booking_status = booking.status;
+  throw err;
+}
+
 function weatherAcceptError(message, code) {
   const err = new Error(message);
   err.statusCode = 400;
@@ -1368,13 +1404,13 @@ function weatherAcceptError(message, code) {
 }
 
 /** Inside the cancel transaction (booking + request rows locked). */
-function assertWeatherRequestAcceptable(request, booking, actorRole) {
+function assertWeatherRequestAcceptable(request, booking, actorRole, { hasActiveDispute = false } = {}) {
   if (!request) throw weatherAcceptError('Weather cancellation request not found.', 'weather_request_not_found');
-  const status = effectiveWeatherRequestStatus(request, booking);
+  const status = effectiveWeatherRequestStatus(request, booking, new Date(), { hasActiveDispute });
   if (status !== 'pending') {
     throw weatherAcceptError(
       status === 'expired'
-        ? 'This weather cancellation request expired when the lesson started.'
+        ? 'This weather cancellation request expired 24 hours after the lesson ended.'
         : 'This weather cancellation request is no longer open.',
       `weather_request_${status}`,
     );

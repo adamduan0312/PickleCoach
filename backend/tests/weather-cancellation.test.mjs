@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 import {
   effectiveWeatherRequestStatus,
   serializeWeatherCancellation,
+  weatherRequestClosesAt,
   weatherRequestEligibility,
   weatherRequestOpensAt,
 } from '../utils/weatherCancellation.js';
@@ -17,7 +18,7 @@ import { getEmailBodyFragment, getEmailSubject } from '../notifications/emailTem
 const HOUR = 60 * 60 * 1000;
 const NOW = new Date('2026-10-01T12:00:00Z');
 const at = (h) => new Date(NOW.getTime() + h * HOUR);
-const confirmed = (h) => ({ id: 1, status: 'confirmed', scheduled_at: at(h) });
+const confirmed = (h, status = 'confirmed') => ({ id: 1, status, scheduled_at: at(h), duration_minutes: 60 });
 const pendingRow = (role, extra = {}) => ({
   id: 7,
   requested_by_role: role,
@@ -28,18 +29,34 @@ const pendingRow = (role, extra = {}) => ({
 });
 
 describe('weather request eligibility', () => {
-  it('opens 24h before the lesson and closes at start', () => {
+  it('opens 24h before the lesson and closes 24h after the lesson ends', () => {
     assert.equal(weatherRequestOpensAt(confirmed(30)), at(6).toISOString());
+    assert.equal(weatherRequestClosesAt(confirmed(5)), at(5 + 1 + 24).toISOString());
     assert.equal(weatherRequestEligibility({ booking: confirmed(30), requesterRole: 'student', now: NOW }).code, 'weather_request_too_early');
     assert.equal(weatherRequestEligibility({ booking: confirmed(5), requesterRole: 'student', now: NOW }).ok, true);
-    assert.equal(weatherRequestEligibility({ booking: confirmed(-0.1), requesterRole: 'coach', now: NOW }).code, 'weather_request_lesson_started');
+    // Lesson started, not yet moved to awaiting_verification
+    assert.equal(weatherRequestEligibility({ booking: confirmed(-0.5), requesterRole: 'coach', now: NOW }).ok, true);
+    // Post-lesson review window (lesson ended 10h ago)
+    assert.equal(
+      weatherRequestEligibility({ booking: confirmed(-11, 'awaiting_verification'), requesterRole: 'student', now: NOW }).ok,
+      true,
+    );
+    assert.equal(
+      weatherRequestEligibility({ booking: confirmed(-25.5, 'awaiting_verification'), requesterRole: 'student', now: NOW }).code,
+      'weather_request_window_closed',
+    );
   });
 
-  it('confirmed lessons only', () => {
-    for (const status of ['pending', 'cancelled', 'completed', 'awaiting_verification']) {
-      const r = weatherRequestEligibility({ booking: { status, scheduled_at: at(5) }, requesterRole: 'student', now: NOW });
+  it('confirmed or awaiting-verification lessons only', () => {
+    for (const status of ['pending', 'cancelled', 'completed', 'student_no_show', 'coach_no_show', 'disputed']) {
+      const r = weatherRequestEligibility({ booking: confirmed(5, status), requesterRole: 'student', now: NOW });
       assert.equal(r.code, 'weather_request_not_confirmed', status);
     }
+  });
+
+  it('not while a dispute is open', () => {
+    const r = weatherRequestEligibility({ booking: confirmed(-3, 'awaiting_verification'), requesterRole: 'student', hasActiveDispute: true, now: NOW });
+    assert.equal(r.code, 'weather_request_dispute_open');
   });
 
   it('one open request at a time, one request per person per booking', () => {
@@ -61,8 +78,16 @@ describe('weather request eligibility', () => {
 
   it('stale pending requests read as expired / closed', () => {
     assert.equal(effectiveWeatherRequestStatus(pendingRow('student'), confirmed(5), NOW), 'pending');
-    assert.equal(effectiveWeatherRequestStatus(pendingRow('student', { expires_at: at(-1) }), confirmed(5), NOW), 'expired');
-    assert.equal(effectiveWeatherRequestStatus(pendingRow('student'), { status: 'cancelled', scheduled_at: at(5) }, NOW), 'closed');
+    // Expiry follows the booking's review window, including rows stored with the old start-time expiry
+    assert.equal(effectiveWeatherRequestStatus(pendingRow('student', { expires_at: at(-12) }), confirmed(-12, 'awaiting_verification'), NOW), 'pending');
+    assert.equal(effectiveWeatherRequestStatus(pendingRow('student'), confirmed(-26, 'awaiting_verification'), NOW), 'expired');
+    for (const status of ['cancelled', 'completed', 'student_no_show', 'disputed']) {
+      assert.equal(effectiveWeatherRequestStatus(pendingRow('student'), confirmed(-3, status), NOW), 'closed', status);
+    }
+    assert.equal(
+      effectiveWeatherRequestStatus(pendingRow('student'), confirmed(-3, 'awaiting_verification'), NOW, { hasActiveDispute: true }),
+      'closed',
+    );
     assert.equal(effectiveWeatherRequestStatus(pendingRow('student', { status: 'declined' }), confirmed(5), NOW), 'declined');
   });
 });

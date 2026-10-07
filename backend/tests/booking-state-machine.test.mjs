@@ -28,6 +28,19 @@ describe('bookingStateMachine', () => {
     assert.equal(r.code, 'booking_transition_not_allowed');
   });
 
+  it('mutual weather cancel is the only cancel path out of awaiting_verification', () => {
+    const via = BookingTransitionVia.MUTUAL_WEATHER_CANCEL;
+    assert.equal(canTransitionBookingStatus('confirmed', 'cancelled', via).ok, true);
+    assert.equal(canTransitionBookingStatus('awaiting_verification', 'cancelled', via).ok, true);
+    assert.equal(
+      canTransitionBookingStatus('awaiting_verification', 'cancelled', BookingTransitionVia.PRE_LESSON_CANCEL).ok,
+      false,
+    );
+    for (const from of ['completed', 'student_no_show', 'coach_no_show', 'disputed']) {
+      assert.equal(canTransitionBookingStatus(from, 'cancelled', via).ok, false, from);
+    }
+  });
+
   it('allows bulk worker confirmed → awaiting_verification', () => {
     assert.doesNotThrow(() =>
       assertBulkBookingStatusTransition(

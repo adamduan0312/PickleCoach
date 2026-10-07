@@ -50,6 +50,8 @@ export const BookingTransitionVia = Object.freeze({
   PAYMENT_AUTHORIZATION_FAILED: 'payment_authorization_failed',
   /** Pre-lesson cancel API (student/coach/admin wrapper) */
   PRE_LESSON_CANCEL: 'pre_lesson_cancel',
+  /** Other participant accepted a weather request (before the lesson or in the review window) */
+  MUTUAL_WEATHER_CANCEL: 'mutual_weather_cancel',
   /** Background: lesson end passed while still confirmed */
   WORKER_LESSON_END_TO_AWAITING_VERIFICATION: 'worker_lesson_end_to_awaiting_verification',
   /** Coach POST complete or auto-complete worker */
@@ -102,9 +104,8 @@ function buildEdges() {
   addEdge('confirmed', 'completed', [BookingTransitionVia.MARK_COMPLETED]);
   addEdge('awaiting_verification', 'completed', [BookingTransitionVia.MARK_COMPLETED]);
 
-  addEdge('confirmed', 'cancelled', [BookingTransitionVia.PRE_LESSON_CANCEL]);
-  // pre-lesson cancel only allows pending|confirmed in controller; keep graph aligned
-  // (no confirmed→cancelled via other vias)
+  addEdge('confirmed', 'cancelled', [BookingTransitionVia.PRE_LESSON_CANCEL, BookingTransitionVia.MUTUAL_WEATHER_CANCEL]);
+  addEdge('awaiting_verification', 'cancelled', [BookingTransitionVia.MUTUAL_WEATHER_CANCEL]);
 
   addEdge('confirmed', 'student_no_show', [
     BookingTransitionVia.COACH_MARK_STUDENT_NO_SHOW,

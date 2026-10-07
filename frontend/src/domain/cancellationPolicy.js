@@ -2,6 +2,8 @@
  * Cancellation policy copy shown at decision points (checkout, accept, booking detail, cancel).
  *
  * Money follows who cancels and when (backend paymentEngine.computeCancellationSplitCents).
+ * Students can't cancel a confirmed lesson inside 24h; weather then needs the coach to agree
+ * (mutual request, open until 24h after the lesson ends).
  * Reliability consequences of cancelling or declining are deliberately not shown to students or
  * coaches, so the reason they pick can't be tuned to the score.
  */
@@ -9,17 +11,20 @@ import { formatBookingWhenInZone, formatRemainingUntil } from '../utils/datetime
 
 export const FULL_REFUND_CUTOFF_HOURS = 24;
 
+const WEATHER_REQUEST_STATUSES = ['confirmed', 'awaiting_verification'];
+const HOUR_MS = 60 * 60 * 1000;
+
 export const STUDENT_WEATHER_POLICY_LINE =
-  'Bad weather within 24 hours of the lesson? Ask your coach to cancel for weather. If they agree, you get a full refund.';
+  'Bad weather within 24 hours of the lesson? Ask your coach to cancel for weather — you can ask until 24 hours after the lesson ends. If they agree, you get a full refund.';
 
 export const COACH_WEATHER_POLICY_LINE =
-  'Bad weather within 24 hours of the lesson? You or the student can ask to cancel for weather. If the other person agrees, the student gets a full refund and you aren’t paid.';
+  'Bad weather within 24 hours of the lesson? You or the student can ask to cancel for weather, until 24 hours after the lesson ends. If the other person agrees, the student gets a full refund and you aren’t paid.';
 
 export function studentCancellationPolicyLines() {
   return [
     'Until your coach accepts, you can cancel for free — your card is only authorized.',
-    'After your coach accepts, cancel at least 24 hours before the lesson for a full refund.',
-    'Cancellations less than 24 hours before the lesson receive a 50% refund.',
+    'After your coach accepts, you can cancel up to 24 hours before the lesson for a full refund.',
+    'Less than 24 hours before the lesson, you can’t cancel it yourself.',
     STUDENT_WEATHER_POLICY_LINE,
     'If your coach cancels, you get a full refund.',
     'If you don’t show up, your payment isn’t automatically refunded and your reliability score is affected.',
@@ -30,7 +35,7 @@ export function coachCancellationPolicyLines() {
   return [
     'If you decline a request, the student’s card authorization is released and they aren’t charged.',
     'If you cancel an accepted lesson, the student gets a full refund and you aren’t paid for it.',
-    'If the student cancels less than 24 hours before the lesson, they get 50% back and you’re paid your share of the rest.',
+    'Students can cancel for a full refund up to 24 hours before the lesson. After that, they can’t cancel it themselves.',
     COACH_WEATHER_POLICY_LINE,
     'If the student doesn’t show up, mark Student no-show after the lesson. Their payment isn’t automatically refunded.',
   ];
@@ -50,6 +55,23 @@ export function fullRefundDeadlineAt(booking) {
 function lessonStarted(booking, now) {
   const start = booking?.scheduled_at ? new Date(booking.scheduled_at).getTime() : NaN;
   return !Number.isFinite(start) || now >= start;
+}
+
+/** When a weather request can no longer be made or accepted: 24h after the lesson ends. */
+export function weatherRequestClosesAtMs(booking) {
+  for (const iso of [booking?.weather_cancellation?.closes_at, booking?.financial_review?.review_until]) {
+    const t = iso ? new Date(iso).getTime() : NaN;
+    if (Number.isFinite(t)) return t;
+  }
+  const start = booking?.scheduled_at ? new Date(booking.scheduled_at).getTime() : NaN;
+  if (!Number.isFinite(start)) return NaN;
+  return start + (Number(booking.duration_minutes) || 0) * 60 * 1000 + 24 * HOUR_MS;
+}
+
+function weatherRequestWindowOpen(booking, now) {
+  if (!WEATHER_REQUEST_STATUSES.includes(booking?.status)) return false;
+  const closes = weatherRequestClosesAtMs(booking);
+  return Number.isFinite(closes) && now < closes;
 }
 
 /** True when the lesson is less than 24 hours away (and hasn't started). */
@@ -90,30 +112,21 @@ export function cancellationPolicySummary(booking, { audience = 'student', now =
     return {
       headline: 'Free to cancel — you haven’t been charged',
       body: late
-        ? 'Once your coach accepts, cancellations receive a 50% refund because the lesson is less than 24 hours away.'
-        : `Once your coach accepts, you can still cancel for a full refund until ${when}. After that, cancellations receive a 50% refund.`,
+        ? 'Once your coach accepts, you can’t cancel because the lesson is less than 24 hours away.'
+        : `Once your coach accepts, you can still cancel for a full refund until ${when}. After that, you can’t cancel it yourself.`,
     };
   }
 
   if (late) {
     return {
-      headline: 'Cancelling now refunds 50%',
-      body: booking.weather_cancellation?.can_request
-        ? `The full-refund deadline was ${when}. If it’s because of bad weather, ask your coach to cancel for weather instead — if they agree, you get a full refund.`
-        : `The full-refund deadline was ${when}.`,
+      headline: 'This lesson can no longer be cancelled',
+      body: `Cancelling closed at ${when}, 24 hours before the lesson. If it’s because of bad weather, ask your coach to cancel for weather — if they agree, you get a full refund.`,
     };
   }
   return {
     headline: `Full refund until ${when}`,
-    body: `${formatRemainingUntil(deadline, new Date(now))} left. After that, cancellations receive a 50% refund.`,
+    body: `${formatRemainingUntil(deadline, new Date(now))} left. After that, you can’t cancel it yourself.`,
   };
-}
-
-/** Student picked Weather inside 24h while a mutual request is still possible: point to it. */
-export function cancelWeatherAlternativeHint(reason, booking, { audience, now = Date.now() } = {}) {
-  if (reason !== 'weather' || audience !== 'student') return null;
-  if (!isWithinLateCancelWindow(booking, now) || !booking?.weather_cancellation?.can_request) return null;
-  return 'Instead of cancelling, ask your coach to cancel for weather (above). If they agree, you get a full refund.';
 }
 
 export const WEATHER_ACTION_NEEDED_LABEL = 'Action needed — Weather cancellation request';
@@ -123,9 +136,8 @@ export const WEATHER_ACTION_NEEDED_LABEL = 'Action needed — Weather cancellati
  * List rows carry `pending_weather_request`; booking detail carries `weather_cancellation`.
  */
 export function weatherRequestAwaitsResponse(booking, audience, now = Date.now()) {
-  if (booking?.status !== 'confirmed' || (audience !== 'coach' && audience !== 'student')) return false;
-  const start = booking.scheduled_at ? new Date(booking.scheduled_at).getTime() : NaN;
-  if (!Number.isFinite(start) || now >= start) return false;
+  if (audience !== 'coach' && audience !== 'student') return false;
+  if (!weatherRequestWindowOpen(booking, now)) return false;
   const detailRequest = booking.weather_cancellation?.request;
   if (detailRequest) return detailRequest.can_respond === true;
   const pending = booking.pending_weather_request;
@@ -152,12 +164,13 @@ function otherPartyName(booking, audience) {
  */
 export function weatherCancellationView(booking, { audience = 'student', now = Date.now(), tz } = {}) {
   const block = booking?.weather_cancellation;
-  if (!block || booking.status !== 'confirmed') return null;
-  const start = booking.scheduled_at ? new Date(booking.scheduled_at).getTime() : NaN;
-  if (!Number.isFinite(start) || now >= start) return null;
+  if (!block || !weatherRequestWindowOpen(booking, now)) return null;
+  const start = new Date(booking.scheduled_at).getTime();
+  const started = now >= start;
 
   const other = otherPartyName(booking, audience);
-  const startLabel = formatBookingWhenInZone(booking.scheduled_at, tz);
+  const otherShort = audience === 'coach' ? 'the student' : 'your coach';
+  const closesLabel = formatBookingWhenInZone(new Date(weatherRequestClosesAtMs(booking)).toISOString(), tz);
   const req = block.request;
   const refundForViewer = audience === 'coach'
     ? 'the student gets a full refund and you aren’t paid'
@@ -169,7 +182,9 @@ export function weatherCancellationView(booking, { audience = 'student', now = D
       prominent: true,
       requestId: req.id,
       title: `${other} asked to cancel for weather`,
-      body: `If you agree, the lesson is cancelled and ${refundForViewer}. If you’d rather play, keep the lesson. Respond before the lesson starts (${startLabel}).`,
+      body: started
+        ? `If you agree, the lesson is cancelled and ${refundForViewer}. If you don’t, the lesson stands. Respond by ${closesLabel}.`
+        : `If you agree, the lesson is cancelled and ${refundForViewer}. If you’d rather play, keep the lesson. Respond by ${closesLabel}.`,
       note: req.note || null,
     };
   }
@@ -179,41 +194,44 @@ export function weatherCancellationView(booking, { audience = 'student', now = D
       prominent: true,
       requestId: req.id,
       title: 'Weather cancellation requested',
-      body: `Waiting for ${audience === 'coach' ? 'the student' : 'your coach'} to respond. If they agree, ${refundForViewer}. The request expires when the lesson starts (${startLabel}).`,
+      body: `Waiting for ${otherShort} to respond. If they agree, ${refundForViewer}. The request stays open until ${closesLabel}, 24 hours after the lesson ends.`,
       note: req.note || null,
     };
   }
   if (req?.status === 'declined') {
+    let body = started ? 'The lesson isn’t cancelled.' : 'The lesson is still on.';
+    if (!req.requested_by_me) body = `You declined the weather cancellation. ${body}`;
+    else if (audience === 'coach' && !started) body += ' You can still cancel it yourself — the student gets a full refund.';
     return {
       kind: 'declined',
       prominent: true,
       title: req.requested_by_me ? `${other} declined your weather cancellation` : 'You kept the lesson',
-      body: req.requested_by_me
-        ? 'The lesson is still on. If you cancel, the normal cancellation rules apply.'
-        : 'You declined the weather cancellation. The lesson is still on.',
+      body,
     };
   }
   // More than 24h out a normal Weather cancel already refunds in full, so there is nothing to ask for.
-  if (block.can_request && isWithinLateCancelWindow(booking, now)) {
+  if (block.can_request && now >= start - FULL_REFUND_CUTOFF_HOURS * HOUR_MS) {
     return {
       kind: 'available',
       prominent: false,
       title: 'Bad weather?',
-      body: `Ask ${audience === 'coach' ? 'the student' : 'your coach'} to cancel for weather. If they agree, ${refundForViewer}. If not, the lesson stays on.`,
+      body: started
+        ? `If weather stopped the lesson, ask ${otherShort} to cancel for weather by ${closesLabel}. If they agree, ${refundForViewer}.`
+        : `Ask ${otherShort} to cancel for weather. If they agree, ${refundForViewer}. If not, the lesson stays on.`,
     };
   }
   return null;
 }
 
 /** No reschedule yet; coaches can't cancel a pending request, so they decline it instead. */
-export function rescheduleHint(booking, audience) {
+export function rescheduleHint(booking, audience, now = Date.now()) {
   if (!['pending', 'confirmed'].includes(booking?.status)) return null;
   if (audience === 'coach' && booking.status === 'pending') {
     return 'Need a different time? Decline this request and ask the student to book a new slot.';
   }
+  if (audience === 'student' && booking.status === 'confirmed' && isWithinLateCancelWindow(booking, now)) return null;
   return 'There is no reschedule option yet. To change the time, cancel this booking and book a new slot.';
 }
-
 /** Cancel reasons are self-reported; say who sees them. */
 export function cancelReasonSharedHint(audience) {
   const other = audience === 'coach' ? 'student' : 'coach';

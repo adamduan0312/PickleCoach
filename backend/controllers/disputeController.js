@@ -6,6 +6,7 @@ import {
   User,
   Payment,
   PaymentAction,
+  WeatherCancellationRequest,
   sequelize,
 } from '../models/index.js';
 import { successResponse, errorResponse, paginatedResponse } from '../utils/response.js';
@@ -362,7 +363,7 @@ export const createDispute = async (req, res) => {
         err.statusCode = 409;
         throw err;
       }
-      return Dispute.create(
+      const created = await Dispute.create(
         {
           booking_id,
           dispute_type_id,
@@ -372,6 +373,12 @@ export const createDispute = async (req, res) => {
         },
         { transaction },
       );
+      // The dispute decides the outcome now; an open weather request can no longer be accepted.
+      await WeatherCancellationRequest.update(
+        { status: 'closed' },
+        { where: { booking_id, status: 'pending' }, transaction },
+      );
+      return created;
     });
 
     await logAudit(req.user.id, 'dispute_created', 'disputes', dispute.id, null, dispute.toJSON(), req);
