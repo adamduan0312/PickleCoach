@@ -7,8 +7,8 @@ import { courtCreatePayloadRejectsCoachCourtFields } from '../utils/validateCour
 import { parseCoachCourtLinkCoachNotesFromBody } from '../utils/coachCourtLinkNotes.js';
 import { publicCourtDirectoryWhere } from '../utils/courtPublicDirectory.js';
 import { findPublicActiveCoach } from '../utils/userLifecycle.js';
-import { serializeCourtForPublicViewer, courtForCoachLink, coachCourtIsPrivate } from '../utils/courtAddressVisibility.js';
-import { distanceMiles as courtDupDistanceMiles, rankCourtDuplicateCandidates, filterCourtsForDuplicateCheck } from '../utils/courtDuplicateMatch.js';
+import { serializeCourtForPublicViewer } from '../utils/courtDto.js';
+import { distanceMiles as courtDupDistanceMiles, rankCourtDuplicateCandidates } from '../utils/courtDuplicateMatch.js';
 import { DISCOVERY_MAX_RADIUS_MILES, courtDiscovery } from '../services/courtDiscoveryScheduler.js';
 
 /** Safety cap when listing all courts with no pagination (DoS prevention). */
@@ -26,7 +26,6 @@ const PUBLIC_COURT_LIST_ATTRIBUTES = [
   'country',
   'latitude',
   'longitude',
-  'is_private',
 ];
 
 /** Geo list/re-query cap — aligned with OSM discovery import cap. */
@@ -38,7 +37,6 @@ const COACH_COURT_LINK_API_ATTRIBUTES = [
   'coach_id',
   'court_id',
   'coach_notes',
-  'is_private',
   'created_at',
   'updated_at',
 ];
@@ -48,7 +46,6 @@ const COACH_COURT_LINK_POST_COURT_RESPONSE_ATTRIBUTES = [
   'id',
   'coach_id',
   'court_id',
-  'is_private',
   'created_at',
   'updated_at',
 ];
@@ -84,30 +81,10 @@ function textSearchWhere(q) {
 }
 
 /**
- * Load active courts near a point for duplicate matching (includes private — coaches may create near private).
- */
-/** Duplicate-check needs creator id so private courts can be shown to their owner. */
-const DUPLICATE_CHECK_COURT_ATTRIBUTES = [...PUBLIC_COURT_LIST_ATTRIBUTES, 'created_by_user_id'];
-
-/**
- * Court ids this coach already teaches at (linked), for private-court duplicate visibility.
- * @param {number} coachUserId
- * @returns {Promise<Set<number>>}
- */
-async function ownedCourtIdsForCoach(coachUserId) {
-  const links = await CoachCourtLocation.findAll({
-    where: { coach_id: coachUserId },
-    attributes: ['court_id'],
-  });
-  return new Set(links.map((r) => Number(r.court_id)).filter((id) => Number.isFinite(id)));
-}
-
-/**
- * Nearby courts eligible for duplicate detection for this viewer.
- * Private courts owned by other coaches are excluded (no street/GPS leak).
+ * Nearby courts for duplicate detection.
  * @returns {Promise<object[]>} plain court rows (not Sequelize models)
  */
-async function findCourtsNearForDuplicateCheck(lat, lng, radiusMiles = 1, viewer = {}) {
+async function findCourtsNearForDuplicateCheck(lat, lng, radiusMiles = 1) {
   const latRange = radiusMiles / 69;
   const lngRange = radiusMiles / (69 * Math.cos(lat * Math.PI / 180));
   const rows = await CourtLocation.findAll({
@@ -116,23 +93,15 @@ async function findCourtsNearForDuplicateCheck(lat, lng, radiusMiles = 1, viewer
       latitude: { [Op.between]: [lat - latRange, lat + latRange] },
       longitude: { [Op.between]: [lng - lngRange, lng + lngRange] },
     },
-    attributes: DUPLICATE_CHECK_COURT_ATTRIBUTES,
+    attributes: PUBLIC_COURT_LIST_ATTRIBUTES,
     limit: 50,
   });
-  const plain = rows.map((c) => c.get({ plain: true }));
-  return filterCourtsForDuplicateCheck(plain, {
-    viewerUserId: viewer.viewerUserId,
-    viewerIsAdmin: viewer.viewerIsAdmin,
-    ownedCourtIds: viewer.ownedCourtIds,
-  });
+  return rows.map((c) => c.get({ plain: true }));
 }
 
 /**
  * GET /api/courts
- * Public directory only: excludes courts with `is_private: true` (discovery flag —
- * see `publicCourtDirectoryWhere`). Does not affect coach/booking surfaces.
- * Note: coach court lists still redact private *addresses* for students; that is
- * address visibility, not directory discovery.
+ * Shared court directory (non-deleted courts).
  * - No lat/lng: all courts (capped) when page & limit omitted; else paginated.
  * - With lat/lng (+ radius) and **no** `q`: local public courts + OSM/Overpass discovery
  *   (always attempt external discovery; existing local courts do not block it).
@@ -250,9 +219,7 @@ export const searchCourts = async (req, res) => {
 
 /**
  * GET /api/courts/:id
- * Public directory only: courts with `is_private: true` return **404** (same message
- * as missing) — hidden from public discovery by id, not from coach-linked surfaces.
- * For coach-linked courts (including discovery-hidden), use `GET /api/coaches/:id/courts`.
+ * Deleted courts return **404**.
  */
 export const getCourt = async (req, res) => {
   try {
@@ -273,7 +240,6 @@ export const getCourt = async (req, res) => {
         'country',
         'latitude',
         'longitude',
-        'is_private',
         'source',
         'created_at',
         'updated_at',
@@ -314,14 +280,7 @@ export const checkCourtDuplicates = async (req, res) => {
       longitude: req.validated.longitude,
     };
 
-    const viewerUserId = req.user.id;
-    const viewerIsAdmin = userRoles.includes('admin');
-    const ownedCourtIds = viewerIsAdmin ? null : await ownedCourtIdsForCoach(viewerUserId);
-    const nearby = await findCourtsNearForDuplicateCheck(proposed.latitude, proposed.longitude, 1, {
-      viewerUserId,
-      viewerIsAdmin,
-      ownedCourtIds,
-    });
+    const nearby = await findCourtsNearForDuplicateCheck(proposed.latitude, proposed.longitude, 1);
     const ranked = rankCourtDuplicateCandidates(proposed, nearby);
 
     return res.json(createResponse(ranked, 'Duplicate check complete'));
@@ -383,7 +342,6 @@ export const createCourt = async (req, res) => {
       country,
       latitude,
       longitude,
-      is_private,
       acknowledge_possible_duplicates,
     } = req.validated || req.body;
     const userId = req.user.id;
@@ -426,19 +384,15 @@ export const createCourt = async (req, res) => {
         courtWasRestored = true;
         await court.reload();
       }
-      // Reuse — do not overwrite name/address/coords/is_private.
+      // Reuse — do not overwrite name/address/coords.
     } else {
       // Proximity / fuzzy duplicate gate (new rows only). Names alone never block create —
       // the same display name can legitimately exist in different cities/states.
       if (latitude != null && longitude != null) {
-        const viewerUserId = userId;
-        const viewerIsAdmin = userRoles.includes('admin');
-        const ownedCourtIds = viewerIsAdmin ? null : await ownedCourtIdsForCoach(viewerUserId);
         const nearby = await findCourtsNearForDuplicateCheck(
           parseFloat(latitude),
           parseFloat(longitude),
           1,
-          { viewerUserId, viewerIsAdmin, ownedCourtIds },
         );
         const ranked = rankCourtDuplicateCandidates(
           {
@@ -475,7 +429,6 @@ export const createCourt = async (req, res) => {
           ...identityFields,
           latitude: latitude != null ? parseFloat(latitude) : null,
           longitude: longitude != null ? parseFloat(longitude) : null,
-          is_private: Boolean(is_private),
           created_by_user_id: userId,
           source: 'manual',
         });
@@ -503,16 +456,12 @@ export const createCourt = async (req, res) => {
         where: { coach_id: userId, court_id: court.id },
       });
       let linkWasCreated = false;
-      const linkIsPrivate = coachCourtIsPrivate({ is_private: is_private === true }, court);
 
-      if (coachCourt) {
-        if (Boolean(coachCourt.is_private) !== linkIsPrivate) await coachCourt.update({ is_private: linkIsPrivate });
-      } else {
+      if (!coachCourt) {
         try {
           coachCourt = await CoachCourtLocation.create({
             coach_id: userId,
             court_id: court.id,
-            is_private: linkIsPrivate,
           });
           linkWasCreated = true;
         } catch (linkErr) {
@@ -573,7 +522,6 @@ export const createCourt = async (req, res) => {
  * GET /api/coaches/:id/courts
  * List courts where a coach teaches (for students viewing a coach's profile).
  * Public endpoint; no auth required.
- * Private-court exact address is always redacted here (booking endpoints unlock by status).
  */
 export const getCoachCourtsById = async (req, res) => {
   try {
@@ -609,7 +557,7 @@ export const getCoachCourtsById = async (req, res) => {
     });
 
     const data = coachCourts.rows.map((link) => {
-      const serialized = serializeCourtForPublicViewer(courtForCoachLink(link, link.court), {
+      const serialized = serializeCourtForPublicViewer(link.court, {
         includeId: true,
         idKey: 'court_id',
         latKey: 'lat',
@@ -678,23 +626,17 @@ export const getMyCoachCourts = async (req, res) => {
 /**
  * POST /api/coaches/me/courts
  * Link an existing court to the coach's available courts.
- * To create new courts (public or private), use POST /api/courts instead; coaches are auto-linked when they create.
- * Optional `is_private` (boolean) marks this coach's use of the court private. A court added as
- * private is private for every coach linked to it (400 when asking to make it public).
- * If already linked: body must include `coach_notes` and/or `is_private` to update the link (200); otherwise 409.
+ * To create new courts, use POST /api/courts instead; coaches are auto-linked when they create.
+ * If already linked: body must include `coach_notes` to update the link (200); otherwise 409.
  */
 export const addCoachCourt = async (req, res) => {
   try {
     const userId = req.user.id;
     const { court_id } = req.body;
     const { coachNotesProvided, coachNotes } = parseCoachCourtLinkCoachNotesFromBody(req.body);
-    const isPrivateProvided = req.body?.is_private !== undefined;
 
     if (!(req.user.roles || []).includes('coach')) {
       return res.status(403).json(createErrorResponse(`Only coaches can add courts to their profile. Your roles: ${(req.user.roles || []).join(', ') || 'none'}.`));
-    }
-    if (isPrivateProvided && typeof req.body.is_private !== 'boolean') {
-      return res.status(400).json(createErrorResponse('is_private must be true or false'));
     }
 
     const courtId = court_id != null ? parseInt(court_id, 10) : null;
@@ -708,12 +650,6 @@ export const addCoachCourt = async (req, res) => {
     if (!courtToAdd) {
       return res.status(404).json(createErrorResponse('Court not found'));
     }
-    if (isPrivateProvided && req.body.is_private === false && courtToAdd.is_private) {
-      return res.status(400).json(createErrorResponse(
-        'This location was added as a private court, so it can’t be shown publicly.',
-      ));
-    }
-    const linkIsPrivate = coachCourtIsPrivate({ is_private: req.body?.is_private === true }, courtToAdd);
 
     // Check if already linked
     const existing = await CoachCourtLocation.findOne({
@@ -724,13 +660,10 @@ export const addCoachCourt = async (req, res) => {
     });
 
     if (existing) {
-      if (!coachNotesProvided && !isPrivateProvided) {
+      if (!coachNotesProvided) {
         return res.status(409).json(createErrorResponse('Coach is already linked to this court'));
       }
-      await existing.update({
-        ...(coachNotesProvided ? { coach_notes: coachNotes } : {}),
-        ...(isPrivateProvided ? { is_private: linkIsPrivate } : {}),
-      });
+      await existing.update({ coach_notes: coachNotes });
       const court = await CourtLocation.findByPk(courtId, {
         attributes: PUBLIC_COURT_LIST_ATTRIBUTES,
       });
@@ -746,7 +679,6 @@ export const addCoachCourt = async (req, res) => {
       coach_id: userId,
       court_id: courtId,
       coach_notes: coachNotes,
-      is_private: linkIsPrivate,
     });
 
     const court = await CourtLocation.findByPk(courtId, {

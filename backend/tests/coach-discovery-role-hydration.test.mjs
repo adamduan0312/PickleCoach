@@ -92,7 +92,6 @@ function eligibleCoachRow(overrides = {}) {
           state: 'NY',
           latitude: '40.6993',
           longitude: '-73.9972',
-          is_private: false,
           deleted_at: null,
         },
       },

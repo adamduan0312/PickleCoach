@@ -1,6 +1,6 @@
 /**
- * Private courts are excluded from public discovery (`GET /api/courts`, `GET /api/courts/:id`)
- * via `publicCourtDirectoryWhere` and controller queries.
+ * Shared court directory (`GET /api/courts`, `GET /api/courts/:id`) lists every non-deleted court
+ * via `publicCourtDirectoryWhere`.
  */
 import assert from 'node:assert/strict';
 import { describe, it, afterEach } from 'node:test';
@@ -27,9 +27,9 @@ afterEach(() => {
 });
 
 describe('publicCourtDirectoryWhere', () => {
-  it('fixes deleted_at and is_private even if extra tries to override', () => {
-    const w = publicCourtDirectoryWhere({ is_private: true, deleted_at: new Date('2020-01-01') });
-    assert.equal(w.is_private, false);
+  it('fixes deleted_at even if extra tries to override; no privacy filter', () => {
+    const w = publicCourtDirectoryWhere({ deleted_at: new Date('2020-01-01') });
+    assert.equal('is_private' in w, false);
     assert.equal(w.deleted_at, null);
   });
 
@@ -39,14 +39,14 @@ describe('publicCourtDirectoryWhere', () => {
       latitude: { [Op.between]: [1, 2] },
     });
     assert.equal(w.id, 5);
-    assert.equal(w.is_private, false);
+    assert.equal('is_private' in w, false);
     assert.equal(w.deleted_at, null);
     assert.ok(w.latitude);
   });
 });
 
 describe('GET /api/courts (searchCourts) uses public directory where', () => {
-  it('non-paginated list passes is_private: false', async () => {
+  it('non-paginated list filters only deleted_at', async () => {
     let whereArg;
     CourtLocation.findAll = async (opts) => {
       whereArg = opts.where;
@@ -57,11 +57,11 @@ describe('GET /api/courts (searchCourts) uses public directory where', () => {
       this.payload = payload;
     } };
     await searchCourts(req, res);
-    assert.equal(whereArg.is_private, false);
+    assert.equal('is_private' in whereArg, false);
     assert.equal(whereArg.deleted_at, null);
   });
 
-  it('paginated list passes is_private: false', async () => {
+  it('paginated list filters only deleted_at', async () => {
     let whereArg;
     CourtLocation.findAndCountAll = async (opts) => {
       whereArg = opts.where;
@@ -79,11 +79,11 @@ describe('GET /api/courts (searchCourts) uses public directory where', () => {
       },
     };
     await searchCourts(req, res);
-    assert.equal(whereArg.is_private, false);
+    assert.equal('is_private' in whereArg, false);
     assert.equal(whereArg.deleted_at, null);
   });
 
-  it('geo search passes is_private: false with bbox', async () => {
+  it('geo search filters deleted_at with bbox', async () => {
     let whereArg;
     CourtLocation.findAll = async (opts) => {
       whereArg = opts.where;
@@ -98,7 +98,6 @@ describe('GET /api/courts (searchCourts) uses public directory where', () => {
           country: 'US',
           latitude: 40.7128,
           longitude: -74.006,
-          is_private: false,
         },
       ];
     };
@@ -110,7 +109,7 @@ describe('GET /api/courts (searchCourts) uses public directory where', () => {
         this.payload = payload;
       } };
       await searchCourts(req, res);
-      assert.equal(whereArg.is_private, false);
+      assert.equal('is_private' in whereArg, false);
       assert.equal(whereArg.deleted_at, null);
       assert.ok(whereArg.latitude);
       assert.ok(whereArg.longitude);
@@ -122,7 +121,7 @@ describe('GET /api/courts (searchCourts) uses public directory where', () => {
 });
 
 describe('GET /api/courts/:id (getCourt)', () => {
-  it('returns 404 when no public row matches (e.g. private court)', async () => {
+  it('returns 404 when no active row matches', async () => {
     let whereArg;
     CourtLocation.findOne = async (opts) => {
       whereArg = opts.where;
@@ -142,13 +141,13 @@ describe('GET /api/courts/:id (getCourt)', () => {
     await getCourt(req, res);
     assert.equal(res.statusCode, 404);
     assert.equal(whereArg.id, 99);
-    assert.equal(whereArg.is_private, false);
+    assert.equal('is_private' in whereArg, false);
     assert.equal(whereArg.deleted_at, null);
     assert.equal(res.payload?.success, false);
     assert.match(res.payload?.message || '', /not found/i);
   });
 
-  it('returns 200 for a public directory row', async () => {
+  it('returns 200 for a directory row', async () => {
     CourtLocation.findOne = async () => ({
       id: 1,
       name: 'Public',
@@ -159,7 +158,6 @@ describe('GET /api/courts/:id (getCourt)', () => {
       country: 'US',
       latitude: 40,
       longitude: -74,
-      is_private: false,
       source: 'manual',
       created_at: new Date(),
       updated_at: new Date(),
@@ -170,7 +168,6 @@ describe('GET /api/courts/:id (getCourt)', () => {
     } };
     await getCourt(req, res);
     assert.equal(res.payload.success, true);
-    assert.equal(res.payload.data.is_private, false);
   });
 
   it('returns 400 for invalid id', async () => {
@@ -190,7 +187,7 @@ describe('GET /api/courts/:id (getCourt)', () => {
   });
 });
 
-describe('Coach court lists (no public-directory privacy filter on court rows)', () => {
+describe('Coach court lists', () => {
   it('GET /api/coaches/:id/courts — CourtLocation include only filters deleted_at', async () => {
     let courtIncludeWhere;
     User.findOne = async () => ({

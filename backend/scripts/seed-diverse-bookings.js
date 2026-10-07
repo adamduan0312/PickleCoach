@@ -227,7 +227,6 @@ async function ensureCoachStack(coach, templateIndex) {
       country: 'US',
       latitude: 40.71 + coach.id * 0.001,
       longitude: -74.0 - coach.id * 0.001,
-      is_private: false,
       source: 'manual',
       created_by_user_id: coach.id,
     });

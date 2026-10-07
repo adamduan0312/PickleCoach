@@ -1,5 +1,5 @@
 import { isMessagingLocked } from './bookingMessaging.js';
-import { courtLocationAsBooked, serializeCourtLocationForBooking } from './courtAddressVisibility.js';
+import { courtLocationAsBooked, serializeCourtLocationForBooking } from './courtDto.js';
 import { serializeFinancialReview } from './financialReviewWindow.js';
 import { getCoachAcceptanceTimeoutHours, getMinBookingLeadHours, getCoachAcceptanceDeadlineAt } from './coachAcceptanceTimeout.js';
 
@@ -78,7 +78,6 @@ export const COURT_LOCATION_SUMMARY_FIELD_NAMES = [
   'country',
   'latitude',
   'longitude',
-  'is_private',
 ];
 
 /** Cancellation history on booking detail — no reliability engine internals. */
@@ -156,13 +155,11 @@ export function serializeLessonSummary(lesson) {
 }
 
 /**
- * Booking-embedded court — applies private-court address redaction unless privileged
- * or booking status allows reveal (confirmed+).
+ * Booking-embedded court.
  * @param {object|null|undefined} courtLocation
- * @param {{ bookingStatus?: string|null, viewerIsPrivileged?: boolean }} [opts]
  */
-export function serializeCourtLocationSummary(courtLocation, opts = {}) {
-  return serializeCourtLocationForBooking(courtLocation, opts);
+export function serializeCourtLocationSummary(courtLocation) {
+  return serializeCourtLocationForBooking(courtLocation);
 }
 
 /** Booking-detail cancellation history row (omits affects_reliability / refund_payment_id). */
@@ -225,16 +222,12 @@ export function serializeBookingDetailCore(booking) {
 
 /**
  * Booking list row with common nested associations (lesson, parties, court, conversation).
- * @param {{
- *   includeStudentReliability?: boolean,
- *   viewerIsPrivileged?: boolean,
- * }} [opts]
+ * @param {{ includeStudentReliability?: boolean }} [opts]
  *   `includeStudentReliability` is opt-in and unused by coach booking routes (MVP).
- *   `viewerIsPrivileged` — coach on booking or admin; sees exact private-court address.
  */
 export function serializeBookingListItem(
   bookingRow,
-  { includeStudentReliability = false, viewerIsPrivileged = false } = {},
+  { includeStudentReliability = false } = {},
 ) {
   if (!bookingRow) return null;
   const plain = toPlain(bookingRow);
@@ -258,10 +251,7 @@ export function serializeBookingListItem(
     dto.primaryStudent = serializeUserPartySummary(primaryStudent, { includeStudentReliability });
   }
   if (courtLocation !== undefined) {
-    dto.courtLocation = serializeCourtLocationSummary(courtLocationAsBooked(plain, courtLocation), {
-      bookingStatus: dto.status ?? plain.status,
-      viewerIsPrivileged,
-    });
+    dto.courtLocation = serializeCourtLocationSummary(courtLocationAsBooked(plain, courtLocation));
   }
   if (conversation !== undefined) dto.conversation = conversation;
   return dto;
@@ -272,12 +262,11 @@ export function serializeBookingListItem(
  * @param {{
  *   serializePayment?: Function,
  *   includeStudentReliability?: boolean,
- *   viewerIsPrivileged?: boolean,
  * }} [opts]
  */
 export function serializeBookingDetailPayload(
   bookingJson,
-  { serializePayment, includeStudentReliability = false, viewerIsPrivileged = false } = {},
+  { serializePayment, includeStudentReliability = false } = {},
 ) {
   if (!bookingJson) return null;
   const plain = toPlain(bookingJson);
@@ -300,10 +289,7 @@ export function serializeBookingDetailPayload(
     dto.primaryStudent = serializeUserPartySummary(primaryStudent, { includeStudentReliability });
   }
   if (courtLocation !== undefined) {
-    dto.courtLocation = serializeCourtLocationSummary(courtLocationAsBooked(plain, courtLocation), {
-      bookingStatus: dto.status ?? plain.status,
-      viewerIsPrivileged,
-    });
+    dto.courtLocation = serializeCourtLocationSummary(courtLocationAsBooked(plain, courtLocation));
   }
   if (conversation !== undefined) dto.conversation = conversation;
 
@@ -342,7 +328,7 @@ export function serializeBookingDetailPayload(
 
 /**
  * List/detail/mutation helper — preserves endpoint-specific extra fields.
- * @param {{ includeStudentReliability?: boolean, viewerIsPrivileged?: boolean }} [options]
+ * @param {{ includeStudentReliability?: boolean }} [options]
  */
 export function serializeBookingResponse(bookingLike, extras = {}, options = {}) {
   const plain = toPlain(bookingLike);

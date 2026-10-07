@@ -42,8 +42,7 @@ const Booking = sequelize.define('bookings', {
   },
   /**
    * Court as booked; NULL on legacy rows (fall back to courtLocation).
-   * Never serialize these directly — go through courtLocationAsBooked so
-   * private-court redaction applies.
+   * Serialize through courtLocationAsBooked.
    */
   court_name_at_booking: { type: DataTypes.STRING(255), allowNull: true },
   court_address_line1_at_booking: { type: DataTypes.STRING(255), allowNull: true },
@@ -51,7 +50,6 @@ const Booking = sequelize.define('bookings', {
   court_state_at_booking: { type: DataTypes.STRING(2), allowNull: true },
   court_postal_code_at_booking: { type: DataTypes.STRING(20), allowNull: true },
   court_country_at_booking: { type: DataTypes.STRING(2), allowNull: true },
-  court_is_private_at_booking: { type: DataTypes.BOOLEAN, allowNull: true },
   court_latitude_at_booking: { type: DataTypes.DOUBLE, allowNull: true },
   court_longitude_at_booking: { type: DataTypes.DOUBLE, allowNull: true },
   price: {

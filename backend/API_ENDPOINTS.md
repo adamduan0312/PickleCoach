@@ -714,15 +714,15 @@ Authorization: Bearer <token>
   1. Active user + coach role + non-deleted **coach profile**
   2. **`coach_profiles.stripe_ready = true`** (local cache; synced via Connect status / `account.updated` webhook)
   3. **≥1 active lesson** (`is_active`, not soft-deleted)
-  4. **≥1 non-deleted court** linked via CoachCourt (**any** `is_private` value — discovery flag only; coaches who teach only at courts hidden from the public directory remain listable)
+  4. **≥1 non-deleted court** linked via CoachCourt
   5. **≥1 availability** row
   Geo search further restricts courts to those near `(lat, lng)`. **`court_location_id`** further requires a link to that `court_locations.id` (soft-deleted court → **`404`**). Filters combine (AND). This matches booking reality (intent needs lesson + court + schedule; payment needs Stripe).
-- **DTO contract (flattened list card)**: Marketplace-friendly shape — **no** nested `coachProfile` / `coachCourts` / join-table IDs. Fields: `id`, `full_name`, `avatar_url`, `timezone`, profile summary (`headline`, `bio`, `experience_years`, `skill_rating`, `rating_system`, `certifications`, `location`, `rating_average`, `rating_count`), `reliability_score`, `reliability_last_updated`, and **`courts`** (name/`area`/structured address fields/`is_private`; **private courts redact** `address_line1`/`city`/`state`/`postal_code`/`country`/coordinates and expose only `area` — see Court address visibility). When **`court_location_id`** is set, included `courts[]` are scoped to that court (plus any other courts still matching geo filters if both are set). When **lat+lng** are set, also **`distance_miles`** (nearest included court, 1 decimal) and per-court `distance_miles` (computed server-side even when GPS is redacted). Never exposes credentials or Stripe/commission fields. Soft-deleted courts are omitted.
+- **DTO contract (flattened list card)**: Marketplace-friendly shape — **no** nested `coachProfile` / `coachCourts` / join-table IDs. Fields: `id`, `full_name`, `avatar_url`, `timezone`, profile summary (`headline`, `bio`, `experience_years`, `skill_rating`, `rating_system`, `certifications`, `location`, `rating_average`, `rating_count`), `reliability_score`, `reliability_last_updated`, and **`courts`** (name, `area`, structured address fields, coordinates). When **`court_location_id`** is set, included `courts[]` are scoped to that court (plus any other courts still matching geo filters if both are set). When **lat+lng** are set, also **`distance_miles`** (nearest included court, 1 decimal) and per-court `distance_miles`. Never exposes credentials or Stripe/commission fields. Soft-deleted courts are omitted.
 - **Query Parameters**:
   - `lat` (optional) – latitude in degrees (center point for distance filter)
   - `lng` (optional) – longitude in degrees (center point for distance filter)
   - `radius` (optional) – miles from (lat, lng); default **25** (launch default for sparse markets), max 500
-  - `court_location_id` (optional) – `court_locations.id`; return only coaches linked to that court. Missing/soft-deleted court → **`404`**. Works for public and private courts (private addresses still redacted on the card).
+  - `court_location_id` (optional) – `court_locations.id`; return only coaches linked to that court. Missing/soft-deleted court → **`404`**.
   - `rating_system` (optional) – **`DUPR`** or **`UTR-P`**. Returns only coaches rated on that system (with a rating). Omit for **Any** (no skill filtering or skill ranking).
   - `min_skill_rating` (optional) – playing level **≥** this value on `rating_system`’s scale (DUPR 2.000–8.000, UTR-P 1.0–10.0). **Requires `rating_system`** (`400` otherwise); out-of-scale values → `400`.
   - `max_skill_rating` (optional) – **≤** this value; same rules. Cannot be less than `min_skill_rating` when both are sent. Skill-fit ranking only compares coaches on the requested system.
@@ -764,7 +764,6 @@ Authorization: Bearer <token>
             "area": "San Francisco, CA 94114",
             "latitude": 37.7599,
             "longitude": -122.425,
-            "is_private": false,
             "distance_miles": 1.6
           }
         ]
@@ -1046,7 +1045,7 @@ Authorization: Bearer <token>
 - **Error responses**: `403` (not coach or not own availability), `404` (availability not found), `500` (server error).
 
 **Coach courts workflow**
-- **Create courts** (public or private): Use **`POST /api/courts`** only. Body: `name`, `address_line1`, `city`, `state`, `postal_code` (required); optional `country` (default `US`), `latitude`, `longitude`, `is_private` (default false). Free-text **`address` is rejected**. **Shared courts:** identity is `(name, address_line1, city, state, postal_code, country)`. Exact match → **reuse** (restore if soft-deleted) and **link** the coach. **Court names are not globally unique** — the same name may exist in different cities/states when coordinates are materially different. Nearby same-place matches use geographic duplicate detection (`COURT_DUPLICATE_HIGH` / `COURT_DUPLICATE_POSSIBLE`) so the coach can select the existing court. For **coach-specific link notes**, use **`POST /api/coaches/me/courts`** with `court_id` and **`coach_notes`**. Coaches may link/create courts **anywhere** — there is no teaching-area distance limit between a coach's courts.
+- **Create courts**: Use **`POST /api/courts`** only. Every court is a shared physical location listed in the court directory with its address. Body: `name`, `address_line1`, `city`, `state`, `postal_code` (required); optional `country` (default `US`), `latitude`, `longitude`. Free-text **`address` is rejected**. **Shared courts:** identity is `(name, address_line1, city, state, postal_code, country)`. Exact match → **reuse** (restore if soft-deleted) and **link** the coach. **Court names are not globally unique** — the same name may exist in different cities/states when coordinates are materially different. Nearby same-place matches use geographic duplicate detection (`COURT_DUPLICATE_HIGH` / `COURT_DUPLICATE_POSSIBLE`) so the coach can select the existing court. For **coach-specific link notes**, use **`POST /api/coaches/me/courts`** with `court_id` and **`coach_notes`**. Coaches may link/create courts **anywhere** — there is no teaching-area distance limit between a coach's courts.
 - **Add an existing court to your list**: Use **`POST /api/coaches/me/courts`** when the court already exists. Body: `court_id` (required), optional **`coach_notes`**. If you are **already linked** (for example after **`POST /api/courts`** auto-link), send **`coach_notes`** in the body to **update** link text (**`200`**); without **`coach_notes`**, duplicate link returns **`409`**. Coaches may link courts **anywhere** — there is no teaching-area distance limit between a coach's courts.
 - **Remove a court from your profile** (e.g. when moving): Use **`DELETE /api/coaches/me/courts/:courtId`** where **`courtId`** is **`court_locations.id`** (same as **`court_id`** / nested **`court.id`** on **`GET /api/coaches/me/courts`**). This **only** removes your coach–court link; it does **not** delete the shared court or affect other coaches. To remove the court from the marketplace entirely, an **admin** uses **`DELETE /api/courts/:id`**. After unlinking, add courts in the new city and update profile **location**.
 - **List your courts**: **`GET /api/coaches/me/courts`** returns all courts linked to the authenticated coach (use **`court_id`** for unlink).
@@ -1054,7 +1053,7 @@ Authorization: Bearer <token>
 
 ### `GET /api/coaches/:id/courts`
 - **Auth**: None required
-- **Description**: List courts where the given coach teaches. For students viewing a coach's profile before booking. Omit `page`/`limit` to return all matching rows (server-capped). Provide `page` or `limit` for paged mode. **Private courts** (`is_private: true`): structured address fields and `lat`/`lng` are **always redacted** here (`null`), **even if** the caller has a confirmed booking with this coach — use **`GET /api/bookings/:id`** for that booking’s court exact location. `area` (`City, ST ZIP`) is included when available. Students still receive `court_id` for booking selection. Available in Postman under **3 – Flow: Student** (Get Coach Courts).
+- **Description**: List courts where the given coach teaches. For students viewing a coach's profile before booking. Omit `page`/`limit` to return all matching rows (server-capped). Provide `page` or `limit` for paged mode. Each court includes its full structured address, `area` (`City, ST ZIP`) when available, and `lat`/`lng`. Students receive `court_id` for booking selection. Available in Postman under **3 – Flow: Student** (Get Coach Courts).
 - **Query Parameters**: Optional `page`, optional `limit`.
 - **Pagination contract**: Paged mode includes `pagination` (`page`, `limit`, `total`, `totalPages`). All-results mode returns only `data`.
 - **Response** (Status: 200):
@@ -1073,21 +1072,7 @@ Authorization: Bearer <token>
         "country": "US",
         "area": "Miami, FL 33101",
         "lat": 25.78,
-        "lng": -80.19,
-        "is_private": false
-      },
-      {
-        "court_id": 9,
-        "name": "Private Club Court",
-        "address_line1": null,
-        "city": null,
-        "state": null,
-        "postal_code": null,
-        "country": null,
-        "area": "Coral Springs, FL 33065",
-        "lat": null,
-        "lng": null,
-        "is_private": true
+        "lng": -80.19
       }
     ]
   }
@@ -1096,7 +1081,7 @@ Authorization: Bearer <token>
 
 ### `GET /api/coaches/me/courts`
 - **Auth**: Required (coach only)
-- **Description**: List courts associated with the authenticated coach. Each link includes **`is_private`** (this coach teaches here privately); the nested `court` is never redacted for its own coach. Omit `page`/`limit` to return all matching rows (server-capped). Provide `page` or `limit` for paged mode.
+- **Description**: List courts associated with the authenticated coach. Omit `page`/`limit` to return all matching rows (server-capped). Provide `page` or `limit` for paged mode.
 - **Query Parameters**: Optional `page`, optional `limit`.
 - **Pagination contract**: Paged mode includes `pagination` (`page`, `limit`, `total`, `totalPages`). All-results mode returns only `data`.
 - **Response** (Status: 200):
@@ -1121,8 +1106,7 @@ Authorization: Bearer <token>
           "postal_code": "10001",
           "country": "US",
           "latitude": 40.7,
-          "longitude": -74.0,
-          "is_private": false
+          "longitude": -74.0
         }
       }
     ]
@@ -1159,13 +1143,12 @@ Authorization: Bearer <token>
 
 ### `POST /api/coaches/me/courts`
 - **Auth**: Required (coach only; admins cannot add courts to their profile)
-- **Description**: Link an **existing** court to the coach's available courts. Does not create a new court; use `POST /api/courts` to create courts (coaches are auto-linked when they create). If the coach is **already linked** to that `court_id`, the request **`409`**s unless the body includes **`coach_notes`** and/or **`is_private`** — then the server **updates** those link fields and returns **`200`** (same `data` shape as create). **`is_private`** (boolean, optional) marks **this coach’s** use of the court private: students see only `Private location · City, ST` (redacted DTO) on this coach’s profile and marketplace card, and the booking snapshot records it. Other coaches linked to the same court are unaffected. A court **added as private** (`court_locations.is_private`) is private for every linked coach; asking to make it public returns **`400`**. Non-boolean `is_private` → **`400`**. **`coach_notes`** is optional free text the coach stores on the coach–court relationship (not shown on public `GET /api/coaches/:id/courts`).
+- **Description**: Link an **existing** court to the coach's available courts. Does not create a new court; use `POST /api/courts` to create courts (coaches are auto-linked when they create). If the coach is **already linked** to that `court_id`, the request **`409`**s unless the body includes **`coach_notes`** — then the server **updates** the link notes and returns **`200`** (same `data` shape as create). **`coach_notes`** is optional free text the coach stores on the coach–court relationship (not shown on public `GET /api/coaches/:id/courts`).
 - **Request Body**:
   ```json
   {
     "court_id": "number (required)",
-    "coach_notes": "string (optional)",
-    "is_private": "boolean (optional)"
+    "coach_notes": "string (optional)"
   }
   ```
 - **Response** (Status: **201** — new link):
@@ -1191,8 +1174,7 @@ Authorization: Bearer <token>
         "postal_code": "10001",
         "country": "US",
         "latitude": 40.7128,
-        "longitude": -74.006,
-        "is_private": false
+        "longitude": -74.006
       }
     }
   }
@@ -1342,29 +1324,17 @@ Authorization: Bearer <token>
 
 **Court field notes (MVP)**
 
-`is_private` is a **discovery flag**, not a permissions flag. It does **not** mean invitation-only, restricted booking access, or that customers cannot see the court.
-
-**Address visibility (separate from discovery):** Exact structured address (`address_line1`, `city`, `state`, `postal_code`, `country`) and GPS for **`is_private: true`** courts are revealed **only on booking endpoints**, and only when that booking’s status allows it (**`confirmed`** or later: `awaiting_verification`, `completed`, no-shows, `disputed`).
-
-| Endpoint | Student before confirm | Student after confirm |
-|----------|------------------------|------------------------|
-| `GET /api/coaches/:id/courts` (and marketplace coach `courts[]`) | Private address hidden | **Still hidden** — discovery/selection surface; no booking context |
-| `GET /api/bookings/:id` | Hidden | Visible **for that booking’s court only** |
-| Student/coach booking lists (`…/bookings`) | Hidden | Visible for confirmed+ rows that include `courtLocation` |
-
-Before confirmation (browse, intent, authorized/`pending`), students see `name`, `area` (`City, ST ZIP` from structured fields), optional `distance_miles`, and `is_private` — with structured address fields and coordinates `null`. **Public** courts (`is_private: false`) always expose the full structured address. **Coaches** (own courts / booking coach) and **admins** always see exact location. MVP maps “address_visibility = booking_confirmed” onto `is_private` in DTO logic (no separate DB column yet). `cancelled` and `pending` do **not** unlock exact private addresses (avoids leaking home addresses on declined/expired requests). Do **not** unlock all of a coach’s private courts just because the student has one confirmed booking — that would expose unrelated teaching locations.
+Every court is a shared physical location. All court surfaces (directory, coach profiles, marketplace cards, bookings, reminders) return the full structured address and coordinates. The `court_locations.is_private`, `coach_court_locations.is_private`, and `bookings.court_is_private_at_booking` columns still exist in the database but are unused.
 
 | Field | Where | MVP behavior |
 |-------|--------|----------------|
-| `is_private` | `court_locations` | Set when a coach **creates** a new court as private (e.g. a residence); never changed on reuse. **Only** path that sets it: `POST /api/courts` inserting a brand-new row (exact-identity matches are reused unchanged; high-confidence duplicates of an existing court are rejected with `409`, so a coach selects the existing court and marks their **link** private instead). No endpoint updates it afterwards; OSM imports are always `false`. Private rows never count as duplicates during OSM discovery, so they cannot keep a public court out of the directory. When `true`, the court is **hidden from public court discovery** only (`GET /api/courts`, `GET /api/courts/:id` — returns **`404`** on by-id lookup, same as missing). **`is_private` affects only public court discovery.** Once a court is linked to a coach, it remains available for coach profiles, marketplace eligibility, and booking regardless of its privacy setting. Coach-profile court lists (`GET /api/coaches/:id/courts`, `GET /api/coaches/me/courts`), booking payloads, and admin coach-court tools still expose the court row (exact address may be redacted for students — see above). |
 | `rate_modifier` | `coach_court_locations` | **Reserved** for future per-court pricing (`booking_price = lesson.price * rate_modifier`). Stored in DB; **not** exposed on coach/student APIs until pricing ships. Admin endpoints may include it for support. |
-| `is_private` | `coach_court_locations` | **Per-coach privacy** — drives student address redaction on `GET /api/coaches/:id/courts`, marketplace `courts[]`, and `court_is_private_at_booking`. Set via `POST /api/courts` (checkbox, applies to the creating coach’s link) or `POST /api/coaches/me/courts`. Effective privacy = link flag **or** the court’s own `is_private`. Existing links were backfilled from the court flag. |
 | `coach_notes` | `coach_court_locations` | Coach-specific notes on the coach–court relationship. **Only** via `POST /api/coaches/me/courts` (and returned on `GET /api/coaches/me/courts`). **`POST /api/courts` rejects `coach_notes` or legacy `notes`** — court creation is court entity only. |
 | `created_by_user_id` | `court_locations` | Internal ownership for delete authorization; not returned on public court endpoints. |
 
 ### `GET /api/courts`
 - **Auth**: None required
-- **Description**: **Public directory only** — returns courts with **`is_private: false`** and **`deleted_at: null`** only (courts with `is_private: true` are hidden from this shared catalog, not from coach/booking surfaces). **List all** when **lat** and **lng** are omitted. **No `page` and no `limit`** → return **all** matching courts in `data` (server-capped at **10,000** for safety). **Either `page` or `limit`** (or both) → **paginated** list (`data` + `pagination`); per-page max **100**. **Search near a point** when both **lat** and **lng** are provided (bounding box + **radius** in miles, default 10, max 100); results are ordered **closest to the search point first** (Haversine), up to **100** rows.
+- **Description**: Shared court directory — returns courts with **`deleted_at: null`**. **List all** when **lat** and **lng** are omitted. **No `page` and no `limit`** → return **all** matching courts in `data` (server-capped at **10,000** for safety). **Either `page` or `limit`** (or both) → **paginated** list (`data` + `pagination`); per-page max **100**. **Search near a point** when both **lat** and **lng** are provided (bounding box + **radius** in miles, default 10, max 100); results are ordered **closest to the search point first** (Haversine), up to **100** rows.
 - **Geographic discovery (no `q`)**: A `lat`+`lng` request **without** text `q` returns local `court_locations` **immediately** and schedules OSM/Overpass discovery for that area **in the background** — **even when local courts already exist**. The response never waits for Overpass or Nominatim; courts imported by the background run appear on **later** searches. `discovery.status` in the response is `started` (new background run), `running` (a run covering this area is in flight), `recent` (this area was **successfully** checked within **`COURT_DISCOVERY_COOLDOWN_MINUTES`**, default **360** — even if nothing was found), or `failed` (the last run covering this area failed; it is retried after **`COURT_DISCOVERY_FAILURE_COOLDOWN_MINUTES`**, default **10**). Discovery covers at most **`COURT_DISCOVERY_MAX_RADIUS_MILES`** (default **25**) around the search point, even when `radius` is larger; the results still use the requested `radius`. Coverage/cooldown state is per API process. Hard timeouts: **`COURT_OVERPASS_TIMEOUT_MS`** (default **60000**; a timeout or HTTP 429 fails the request without trying other Overpass mirrors, while connection errors and 5xx fall through to the next mirror) and **`COURT_REVERSE_GEOCODE_TIMEOUT_MS`** (default **8000**, per lookup). Overpass requests are serialized process-wide (one in flight at a time; public servers allow 2 query slots per IP). **Two-step Overpass query**: (1) a cheap bounding-box query lists pickleball features (center + tags), filtered to the discovery circle; (2) enclosing-facility lookups run only for the **`COURT_DISCOVER_MAX_IMPORTS`** nearest, 25 courts per request (a failed request — HTTP 429, 5xx, or timeout — is retried after 30 s, up to 3 times per run). If facility lookups still fail, the courts already looked up are still imported, the rest are deferred, and the run is reported `failed` so it is retried soon. OSM features whose reverse geocode **answered** with an unusable address are recorded in `osm_court_import_attempts` and not retried for **`COURT_OSM_RETRY_AFTER_DAYS`** (default **30**); other courts at the same facility are skipped that run without another lookup. A rate-limited (HTTP 429) or unavailable (5xx / timeout / network) geocoder is **never** recorded: lookups stop for the rest of the run, the affected courts are deferred, and the run is reported `failed` (short retry). Courts skipped because the lookup budget ran out are also deferred to the next run. The summary log line includes the search point, radius, and counts (candidates, imported, grouped, withheld unnamed, withheld incomplete address, recently failed, deferred). **Names**: a feature's own `name` tag is used; otherwise the name of the park / sports centre / recreation ground / school / community centre it sits inside. A park mapped in OSM only as a **point** (no outline, so it cannot enclose anything) names a court only when it is the single named park point within **120 m**, the court has no enclosing facility, and the court is not `access=private`. Features with neither — or only a generic name like "Pickleball Courts" — are **not imported** (coaches can still add them manually); placeholder names like `Pickleball Court (way/123)` are never created. Newly found pickleball features are deduplicated (stable **`osm_type` + `osm_id`**, proximity against manual courts, and the **same name within 0.25 mi**). An unnamed feature inside an OSM facility that **already has a listing** (any court in that same park/facility polygon) is grouped into it rather than listed again — grouping uses OSM facility identity, never distance alone, so nearby courts in different facilities stay separate. Addresses use OSM `addr:*` tags first, then Nominatim reverse geocode for gaps (budget **`COURT_DISCOVER_MAX_REVERSE_GEOCODES`**, default **20**). Reverse hits whose pin is more than **`COURT_IMPORT_REVERSE_MAX_DISTANCE_MILES`** (default **1**) from the OSM court coordinates are discarded (park-entrance offsets are fine; multi-mile mismatches are not). **Incomplete or placeholder addresses are never inserted** — those OSM features are skipped (coaches can still add them via `GET /api/geo/search` → confirm → `POST /api/courts`). Existing incomplete OSM rows are enriched on rediscovery when a valid address can be resolved (missing fields only). Cap: up to **`COURT_DISCOVER_MAX_IMPORTS`** (default **100**) closest OSM candidates per run. Overpass failures never affect the response.
 - **Text search (`q`)**: Optional filter on name / street / city / ZIP / state. **DB-only** — Overpass is **not** called when `q` is present (including combined `q` + geo).
 - **Query Parameters**:
@@ -1378,7 +1348,7 @@ Before confirmation (browse, intent, authorized/`pending`), students see `name`,
   {
     "success": true,
     "message": "Courts retrieved successfully",
-    "data": [ { "id": 1, "name": "...", "address_line1": "...", "city": "...", "state": "...", "postal_code": "...", "country": "US", "latitude": 40.7128, "longitude": -74.006, "is_private": false } ],
+    "data": [ { "id": 1, "name": "...", "address_line1": "...", "city": "...", "state": "...", "postal_code": "...", "country": "US", "latitude": 40.7128, "longitude": -74.006 } ],
     "pagination": { "page": 1, "limit": 10, "total": 42, "totalPages": 5 }
   }
   ```
@@ -1386,8 +1356,8 @@ Before confirmation (browse, intent, authorized/`pending`), students see `name`,
 
 ### `GET /api/courts/:id`
 - **Auth**: None required
-- **Description**: Get court details by ID (**public directory only**). Courts with **`is_private: true`** are **hidden from public discovery** here: response is **`404`** with the same **`Court not found`** shape as a missing or deleted id (the API does **not** indicate that the row exists). Use **`GET /api/coaches/:id/courts`** (or **`GET /api/coaches/me/courts`**) to see courts a coach teaches at, including locations hidden from the public directory.
-- **Error responses**: **`400`** (invalid id), **`404`** (not found, deleted, or hidden from public discovery).
+- **Description**: Get court details by ID. Deleted courts return **`404`** (`Court not found`).
+- **Error responses**: **`400`** (invalid id), **`404`** (not found or deleted).
 - **Response** (Status: 200):
   ```json
   {
@@ -1403,7 +1373,6 @@ Before confirmation (browse, intent, authorized/`pending`), students see `name`,
       "country": "US",
       "latitude": 40.7128,
       "longitude": -74.0060,
-      "is_private": false,
       "source": "manual",
       "created_at": "2026-01-01T00:00:00.000Z",
       "updated_at": "2026-01-01T00:00:00.000Z"
@@ -1424,8 +1393,7 @@ Before confirmation (browse, intent, authorized/`pending`), students see `name`,
     "postal_code": "string (required, 12345 or 12345-6789)",
     "country": "string (optional, default US)",
     "latitude": "number (optional)",
-    "longitude": "number (optional)",
-    "is_private": "boolean (optional, defaults to false)"
+    "longitude": "number (optional)"
   }
   ```
 - **Response** (Status: 201) — **coach** (new court or newly linked existing court):
@@ -1443,8 +1411,7 @@ Before confirmation (browse, intent, authorized/`pending`), students see `name`,
         "postal_code": "10001",
         "country": "US",
         "latitude": 40.7128,
-        "longitude": -74.0060,
-        "is_private": false
+        "longitude": -74.0060
       },
       "coachCourt": {
         "id": 10,
@@ -1471,7 +1438,6 @@ Before confirmation (browse, intent, authorized/`pending`), students see `name`,
       "country": "US",
       "latitude": 40.7128,
       "longitude": -74.0060,
-      "is_private": false,
       "created_at": "2026-01-01T00:00:00.000Z"
     }
   }
@@ -3129,7 +3095,6 @@ Dispute resolution is the **authoritative adjudication boundary** for whether th
           "country": "US",
           "latitude": 40.7128,
           "longitude": -74.006,
-          "is_private": false,
           "created_by": { "id": 2, "full_name": "Coach Name" }
         }
       }

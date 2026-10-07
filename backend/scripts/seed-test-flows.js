@@ -273,7 +273,6 @@ async function createCoachStack(coach) {
     country: 'US',
     latitude: 40.7128,
     longitude: -74.006,
-    is_private: false,
     source: 'manual',
     created_by_user_id: coach.id,
   });

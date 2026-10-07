@@ -128,7 +128,7 @@ See `POSTMAN_SETUP_GUIDE.md` for detailed instructions and all endpoint test scr
 
 Use this sequence when adding courts to a coach in Postman (or in the app):
 
-1. **Create courts** (public or private): **`POST /api/courts`** only — **court fields only** (no `coach_notes` or legacy `notes`; either returns **400**). Coach is **auto-linked**; response includes `court` and `coachCourt` (link row without `coach_notes`). For **coach-specific link notes**, call **`POST /api/coaches/me/courts`** with the same `court_id` and **`coach_notes`** (**200** updates the auto-linked row). Coaches may link/create courts **anywhere** — there is no teaching-area distance limit.
+1. **Create courts**: **`POST /api/courts`** only — **court fields only** (no `coach_notes` or legacy `notes`; either returns **400**). Coach is **auto-linked**; response includes `court` and `coachCourt` (link row without `coach_notes`). For **coach-specific link notes**, call **`POST /api/coaches/me/courts`** with the same `court_id` and **`coach_notes`** (**200** updates the auto-linked row). Coaches may link/create courts **anywhere** — there is no teaching-area distance limit.
 2. **Add an existing court**: **`POST /api/coaches/me/courts`** with `court_id` (required), optional **`coach_notes`**. If already linked and you omit **`coach_notes`**, you get **409**; with **`coach_notes`**, link text is updated (**200**). Coaches may link courts **anywhere** — there is no teaching-area distance limit.
 3. **Remove a court from your profile** (e.g. when moving): **`DELETE /api/coaches/me/courts/:courtId`** where **`courtId`** is **`court_locations.id`** (same as **`court_id`** / **`court.id`** from List My Courts). This only removes **your** link; it does not delete the shared court. Then add courts in the new city and update your profile **location**.
 4. **List your courts**: **`GET /api/coaches/me/courts`** returns all linked courts (use **`court_id`** in the unlink URL).
@@ -2366,8 +2366,7 @@ Authorization: Bearer <token>
           "postal_code": "10001",
           "country": "US",
           "latitude": 40.7,
-          "longitude": -74.0,
-          "is_private": false
+          "longitude": -74.0
         }
       }
     ]
@@ -2384,7 +2383,7 @@ Authorization: Bearer <token>
     "coach_notes": "string (optional)"
   }
   ```
-- **Response**: **201** when a new link is created; **200** when the coach was already linked and the body included **`coach_notes`** (coach_notes updated only). `data` contains `coachCourt` (id, coach_id, court_id, coach_notes, created_at, updated_at) and `court` (id, name, address, latitude, longitude, is_private). `rate_modifier` is reserved in DB for future pricing and is not returned on coach APIs.
+- **Response**: **201** when a new link is created; **200** when the coach was already linked and the body included **`coach_notes`** (coach_notes updated only). `data` contains `coachCourt` (id, coach_id, court_id, coach_notes, created_at, updated_at) and `court` (id, name, address, latitude, longitude). `rate_modifier` is reserved in DB for future pricing and is not returned on coach APIs.
 - **Error responses**: `400` (court_id missing/invalid), `404` (court not found), `409` (already linked and **`coach_notes`** omitted).
 
 ### `DELETE /api/coaches/me/courts/:courtId`
@@ -2436,9 +2435,7 @@ Authorization: Bearer <token>
 
 ## Courts (`/api/courts`)
 
-**Field notes:** `is_private` is a **discovery flag**, not a permissions flag (not invitation-only / access-restricted). When `true`, the court is **hidden from public court discovery** only (`GET /api/courts`, `GET /api/courts/:id` returns **404**). **`is_private` affects only public court discovery.** Once a court is linked to a coach, it remains available for coach profiles, marketplace eligibility, and booking regardless of its privacy setting. Admins always see both.
-
-**Address visibility:** Exact structured location for `is_private: true` is unlocked **only on booking endpoints** when that booking is **confirmed** (or later). `GET /api/coaches/:id/courts` and marketplace coach cards **always** redact private street/GPS (even after the student has a confirmed booking) — they expose only `area` (`City, ST ZIP`). Use `GET /api/bookings/:id` for the booked court’s exact address. Public courts always show full structured address. Coaches and admins always see exact location. See `API_ENDPOINTS.md` Court field notes.
+**Field notes:** Every court is a shared physical location listed in the court directory with its full address. Coach profiles, marketplace cards, and bookings always show the full structured address. See `API_ENDPOINTS.md` Court field notes.
 
 `rate_modifier` on coach–court links is stored for future per-court pricing but not exposed on coach/student APIs until booking logic uses it.
 
@@ -2461,8 +2458,7 @@ Authorization: Bearer <token>
         "postal_code": "10001",
         "country": "US",
         "latitude": 40.7128,
-        "longitude": -74.0060,
-        "is_private": false
+        "longitude": -74.0060
       }
     ]
   }
@@ -2486,7 +2482,6 @@ Authorization: Bearer <token>
       "country": "US",
       "latitude": 40.7128,
       "longitude": -74.0060,
-      "is_private": false,
       "source": "manual",
       "created_at": "2026-01-01T00:00:00.000Z",
       "updated_at": "2026-01-01T00:00:00.000Z"
@@ -2507,8 +2502,7 @@ Authorization: Bearer <token>
     "postal_code": "string (required, 12345 or 12345-6789)",
     "country": "string (optional, default US)",
     "latitude": "number (optional)",
-    "longitude": "number (optional)",
-    "is_private": "boolean (optional, defaults to false)"
+    "longitude": "number (optional)"
   }
   ```
 - **Response** (Status: 201) — **coach**:
@@ -2526,8 +2520,7 @@ Authorization: Bearer <token>
         "postal_code": "10001",
         "country": "US",
         "latitude": 40.7128,
-        "longitude": -74.0060,
-        "is_private": false
+        "longitude": -74.0060
       },
       "coachCourt": {
         "id": 10,
@@ -2554,7 +2547,6 @@ Authorization: Bearer <token>
       "country": "US",
       "latitude": 40.7128,
       "longitude": -74.0060,
-      "is_private": false,
       "created_at": "2026-01-01T00:00:00.000Z"
     }
   }

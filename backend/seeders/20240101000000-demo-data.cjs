@@ -140,7 +140,6 @@ module.exports = {
         country: 'US',
         latitude: city.lat + (Math.random() - 0.5) * 0.1,
         longitude: city.lng + (Math.random() - 0.5) * 0.1,
-        is_private: i % 5 === 0, // Every 5th court is private
         source: 'manual',
       });
 

@@ -55,7 +55,6 @@ describe('addCoachCourt — no teaching-area distance limit', () => {
       country: 'US',
       latitude: 40.7648,
       longitude: -73.9725,
-      is_private: false,
       deleted_at: null,
     };
     CourtLocation.findOne = async () => nycCourt;

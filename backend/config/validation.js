@@ -853,7 +853,7 @@ export const getAuditLogsQuerySchema = Joi.object({
   record_id: Joi.number().integer().min(0).optional(),
 });
 
-/** GET /api/courts — public directory only (`is_private: false`). List-all: omit lat/lng; omit page & limit to return all (server-capped). Pass page and/or limit to paginate. Geo: lat+lng together; optional radius. Text: optional `q` filters name/address/city/ZIP. */
+/** GET /api/courts — shared court directory. List-all: omit lat/lng; omit page & limit to return all (server-capped). Pass page and/or limit to paginate. Geo: lat+lng together; optional radius. Text: optional `q` filters name/address/city/ZIP. */
 export const searchCourtsQuerySchema = Joi.object({
   page: Joi.number().integer().min(1).optional(),
   limit: Joi.number().integer().min(1).max(10000).optional(),
@@ -910,7 +910,6 @@ export const createCourtBodySchema = Joi.object({
     }),
   latitude: Joi.number().min(-90).max(90).optional().allow(null),
   longitude: Joi.number().min(-180).max(180).optional().allow(null),
-  is_private: Joi.boolean().default(false),
   /** When true, skip "possible" duplicate soft-block (high-confidence still blocked). */
   acknowledge_possible_duplicates: Joi.boolean().default(false),
 });

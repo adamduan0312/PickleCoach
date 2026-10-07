@@ -74,7 +74,7 @@ async function loadMatrixBookings(studentId, coachId) {
   });
 
   const dtos = rows.map((row) =>
-    serializeBookingListItem(row, { viewerIsPrivileged: false }),
+    serializeBookingListItem(row),
   );
 
   const keyById = Object.fromEntries(
@@ -138,7 +138,7 @@ async function main() {
 
     const studentDtos = allStudentRows.map((r) => serializeBookingListItem(r));
     const coachDtos = allCoachRows.map((r) =>
-      serializeBookingListItem(r, { viewerIsPrivileged: true }),
+      serializeBookingListItem(r),
     );
 
     const { keyById } = await loadMatrixBookings(studentId, coachId);

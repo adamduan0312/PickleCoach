@@ -123,7 +123,6 @@ export function rankCourtDuplicateCandidates(proposed, existingCourts, { limit =
       country: court.country,
       latitude: court.latitude != null ? Number(court.latitude) : null,
       longitude: court.longitude != null ? Number(court.longitude) : null,
-      is_private: Boolean(court.is_private),
       distance_miles: miles != null ? Math.round(miles * 100) / 100 : null,
       name_similarity: Math.round(stringSimilarity(proposed.name, court.name) * 100) / 100,
       confidence: level === 'high' ? 'high' : 'possible',
@@ -144,40 +143,4 @@ export function rankCourtDuplicateCandidates(proposed, existingCourts, { limit =
     high_confidence: high.slice(0, limit),
     possible: possibleFiltered.slice(0, limit),
   };
-}
-
-/**
- * Whether a court may appear in duplicate-check / create-409 candidates for this viewer.
- *
- * Public courts: always visible (full address).
- * Private courts: only when the viewer is admin, created the court, or has linked it.
- * Non-owners must not learn another coach's private street address or GPS.
- *
- * @param {{ is_private?: boolean, created_by_user_id?: number|null, id?: number }|null|undefined} court
- * @param {{
- *   viewerUserId?: number|null,
- *   viewerIsAdmin?: boolean,
- *   ownedCourtIds?: Iterable<number>|null,
- * }} [opts]
- */
-export function isCourtVisibleInDuplicateCheck(court, opts = {}) {
-  if (!court) return false;
-  if (!court.is_private) return true;
-  if (opts.viewerIsAdmin) return true;
-  const viewerId = opts.viewerUserId != null ? Number(opts.viewerUserId) : null;
-  if (viewerId != null && Number(court.created_by_user_id) === viewerId) return true;
-  const owned = opts.ownedCourtIds;
-  if (owned && court.id != null) {
-    const id = Number(court.id);
-    if (owned instanceof Set) return owned.has(id);
-    return [...owned].some((x) => Number(x) === id);
-  }
-  return false;
-}
-
-/**
- * Filter courts before ranking so private non-owned locations never enter 409 / duplicate-check payloads.
- */
-export function filterCourtsForDuplicateCheck(courts, opts = {}) {
-  return (courts || []).filter((c) => isCourtVisibleInDuplicateCheck(c, opts));
 }

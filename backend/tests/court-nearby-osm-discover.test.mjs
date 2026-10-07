@@ -141,21 +141,6 @@ describe('shouldSkipOsmCandidate', () => {
     assert.equal(skip, false);
   });
 
-  it('a coach’s private court at the same spot (even same name) does not block the public OSM court', async () => {
-    CourtLocation.findOne = async () => null;
-    CourtLocation.findAll = async () => [
-      { id: 9, name: 'Holiday Park', osm_type: null, osm_id: null, is_private: true, latitude: 26.1331, longitude: -80.1324 },
-    ];
-    const skip = await shouldSkipOsmCandidate({
-      name: 'Holiday Park',
-      latitude: 26.13315,
-      longitude: -80.13245,
-      osmType: 'way',
-      osmId: 999,
-    });
-    assert.equal(skip, false);
-  });
-
   it('still proximity-skips against a nearby manual court (no osm id)', async () => {
     CourtLocation.findOne = async () => null;
     CourtLocation.findAll = async () => [
@@ -1018,7 +1003,6 @@ describe('searchCourts geographic discovery (non-blocking)', () => {
     country: 'US',
     latitude: 40.7128,
     longitude: -74.006,
-    is_private: false,
     get() { return this; },
   };
 

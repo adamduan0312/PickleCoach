@@ -5,7 +5,7 @@ import { Alert, EmptyState, ErrorState, LoadingState } from '../../components/ui
 import { SetupNextStep } from '../../components/coach/CoachOnboarding.jsx';
 import { FormField } from '../../components/ui/FormField.jsx';
 import { CHAR_LIMITS } from '../../utils/charLimits.js';
-import { courtLabel, formatCourtAddressLines, formatMiles, privateCourtArea } from '../../utils/format.js';
+import { courtLabel, formatCourtAddressLines, formatMiles } from '../../utils/format.js';
 import {
   COURT_DISCOVERY_FAILED_NOTE,
   COURT_DISCOVERY_PENDING_EMPTY,
@@ -64,7 +64,6 @@ export function CoachCourtsPage() {
     state: '',
     postal_code: '',
     country: 'US',
-    is_private: false,
   });
   const [resolved, setResolved] = useState(null); // { label, lat, lng }
   const [geoBusy, setGeoBusy] = useState(false);
@@ -296,7 +295,6 @@ export function CoachCourtsPage() {
         state: String(form.state).toUpperCase(),
         postal_code: form.postal_code.trim(),
         country: 'US',
-        is_private: form.is_private,
         latitude: resolved.lat,
         longitude: resolved.lng,
         acknowledge_possible_duplicates: acknowledgePossible,
@@ -310,7 +308,6 @@ export function CoachCourtsPage() {
         state: '',
         postal_code: '',
         country: 'US',
-        is_private: false,
       });
       setResolved(null);
       setDupState(null);
@@ -329,17 +326,6 @@ export function CoachCourtsPage() {
     setListErr(null);
     try {
       await coachesApi.removeCourt(courtId);
-      await reloadLinks();
-    } catch (ex) {
-      setListErr(ex.message);
-    }
-  }
-
-  async function setLinkPrivate(courtId, isPrivate) {
-    setListErr(null);
-    setMessage(null);
-    try {
-      await coachesApi.addCourt({ court_id: courtId, is_private: isPrivate });
       await reloadLinks();
     } catch (ex) {
       setListErr(ex.message);
@@ -370,7 +356,7 @@ export function CoachCourtsPage() {
       <h1>Courts</h1>
       <p className="muted">
         Find the courts where you teach and link them to your profile. Only add a new location when it is not
-        already listed (or when it is private/custom).
+        already listed.
       </p>
       <Alert tone="success">{message}</Alert>
       <SetupNextStep step="court" refreshKey={message} />
@@ -478,6 +464,7 @@ export function CoachCourtsPage() {
               Cancel
             </button>
           </div>
+          <p className="small muted">Locations you add are listed in the shared court directory with their address.</p>
           <form className="stack" onSubmit={confirmAddress}>
             <FormField label="Name" name="name" value={form.name} onChange={update} required maxLength={CHAR_LIMITS.courtName} />
             <FormField
@@ -493,10 +480,6 @@ export function CoachCourtsPage() {
             <FormField label="City" name="city" value={form.city} onChange={update} required maxLength={CHAR_LIMITS.courtCity} />
             <FormField label="State (2-letter)" name="state" value={form.state} onChange={update} required maxLength={2} />
             <FormField label="ZIP" name="postal_code" value={form.postal_code} onChange={update} required />
-            <label className="row">
-              <input type="checkbox" name="is_private" checked={form.is_private} onChange={update} />
-              Private court (exact address hidden from public directory / students until booking rules allow)
-            </label>
             <Alert tone="error">{addressErr}</Alert>
             <button className="btn secondary" type="submit" disabled={geoBusy || busy}>
               {geoBusy ? 'Confirming address…' : 'Confirm address location'}
@@ -588,28 +571,14 @@ export function CoachCourtsPage() {
         {(data || []).map((link) => {
           const court = link.court || link;
           const courtId = link.court_id || court.id;
-          const isPrivate = Boolean(link.is_private || court.is_private);
           return (
             <div key={link.id || courtId} className="card spread">
               <div>
                 <strong>{court.name || courtLabel(court)}</strong>
-                {isPrivate ? <div className="small"><strong>🔒 Private</strong></div> : null}
                 <CourtAddressBlock court={court} />
-                {isPrivate ? (
-                  <div className="small muted">
-                    Students see “Private location · {privateCourtArea(court) || 'your area'}” until booking rules allow the exact address.
-                  </div>
-                ) : null}
                 {link.coach_notes ? <div className="small muted">{link.coach_notes}</div> : null}
               </div>
-              <div className="row" style={{ gap: 8 }}>
-                {court.is_private ? null : (
-                  <button className="btn ghost" type="button" onClick={() => setLinkPrivate(courtId, !isPrivate)}>
-                    {isPrivate ? 'Show address publicly' : 'Mark private'}
-                  </button>
-                )}
-                <button className="btn ghost" type="button" onClick={() => unlink(courtId)}>Unlink</button>
-              </div>
+              <button className="btn ghost" type="button" onClick={() => unlink(courtId)}>Unlink</button>
             </div>
           );
         })}

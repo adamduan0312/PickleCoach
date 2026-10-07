@@ -23,12 +23,6 @@ const CoachCourtLocation = sequelize.define('coach_court_locations', {
     type: DataTypes.TEXT,
     allowNull: true,
   },
-  /** This coach teaches here privately: exact address hidden from students until booking rules allow. */
-  is_private: {
-    type: DataTypes.BOOLEAN,
-    allowNull: false,
-    defaultValue: false,
-  },
 }, {
   tableName: 'coach_court_locations',
   timestamps: true,

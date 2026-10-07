@@ -27,26 +27,12 @@ export function formatMilesAway(miles) {
  */
 export function teachingLocationLabel(court) {
   if (!court) return null;
-  if (court.is_private) {
-    const area = privateCourtArea(court);
-    return area ? `Private location · ${area}` : 'Private location';
-  }
   if (court.area) return court.area;
   const city = court.city && String(court.city).trim();
   const state = court.state && String(court.state).trim();
   if (city && state && state.length === 2 && city !== 'Unknown') return `${city}, ${state}`;
   if (court.name) return court.name;
   return null;
-}
-
-/** "Weston, FL" for a private court — city and state only (redacted DTOs carry just `area`). */
-export function privateCourtArea(court) {
-  if (!court) return null;
-  const city = court.city && String(court.city).trim();
-  const state = court.state && String(court.state).trim();
-  if (city && state) return `${city}, ${state}`;
-  const area = court.area && String(court.area).trim();
-  return area ? area.replace(/\s+\d{5}(-\d{4})?$/, '') : null;
 }
 
 /**

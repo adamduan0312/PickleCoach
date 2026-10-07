@@ -37,8 +37,6 @@ import { GALLERY_TITLE } from '../../domain/coachPhotos.js';
 import { CoachPhotoGallery } from '../../components/coach/CoachPhotoGallery.jsx';
 
 function courtTeachingLabel(court) {
-  // Private: "Private location · Weston, FL" — the court name can identify a residence.
-  if (court?.is_private) return teachingLocationLabel(court);
   const name = court?.name || 'Court';
   const area = teachingLocationLabel(court);
   return area ? `${name} · ${area}` : courtLabel(court);

@@ -10,7 +10,7 @@ const reminderIncludes = [
   {
     model: CourtLocation,
     as: 'courtLocation',
-    attributes: ['id', 'name', 'address_line1', 'city', 'state', 'postal_code', 'country', 'is_private'],
+    attributes: ['id', 'name', 'address_line1', 'city', 'state', 'postal_code', 'country'],
   },
 ];
 

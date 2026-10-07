@@ -1,14 +1,13 @@
 /**
  * Shared copy helpers for pre-lesson reminders (email + payload enrichment).
- * Court comes from booking.court_location_id; exact address follows
- * courtAddressVisibility (private courts redact until confirmed / for privileged viewers).
+ * Court comes from booking.court_location_id (as-booked snapshot when present).
  */
 
 import {
   courtLocationAsBooked,
   serializeCourtLocationForBooking,
   buildFullCourtAddress,
-} from './courtAddressVisibility.js';
+} from './courtDto.js';
 
 const DEFAULT_TZ = 'UTC';
 
@@ -122,9 +121,8 @@ export function formatDeadlineLabelForEmail(deadlineAt, timeZone = DEFAULT_TZ) {
 }
 
 /**
- * Address line for reminder email from a visibility-serialized court.
- * Revealed → "123 Main St, Fort Lauderdale, FL 33301"
- * Redacted private → area only "Fort Lauderdale, FL 33301"
+ * Address line for reminder email from a serialized court.
+ * "123 Main St, Fort Lauderdale, FL 33301"; area only when the street line is missing.
  * @param {object|null} serializedCourt — from serializeCourtLocationForBooking
  * @returns {string|null}
  */
@@ -135,21 +133,14 @@ export function formatReminderCourtAddress(serializedCourt) {
 
 /**
  * Fields shared by student/coach reminder payloads.
- * Uses booking.courtLocation + booking.status with the same reveal rules as booking DTOs.
  *
  * @param {object} booking
  * @param {string} [viewerTimezone]
- * @param {{ audience?: 'student'|'coach' }} [opts]
- *   coach → privileged (always exact address); student → status-gated for private courts
  */
-export function buildLessonReminderDetailFields(booking, viewerTimezone, opts = {}) {
+export function buildLessonReminderDetailFields(booking, viewerTimezone) {
   const court = courtLocationAsBooked(booking, booking.courtLocation || booking.court_location || null);
   const tz = viewerTimezone || DEFAULT_TZ;
-  const audience = opts.audience || 'student';
-  const serialized = serializeCourtLocationForBooking(court, {
-    bookingStatus: booking.status ?? null,
-    viewerIsPrivileged: audience === 'coach',
-  });
+  const serialized = serializeCourtLocationForBooking(court);
 
   const lesson_date = formatLessonDateForEmail(booking.scheduled_at, tz);
   const lesson_time = formatLessonTimeForEmail(booking.scheduled_at, tz);
@@ -175,7 +166,6 @@ export function buildLessonReminderDetailFields(booking, viewerTimezone, opts = 
     court_name,
     court_address,
     location_line,
-    court_is_private: serialized ? Boolean(serialized.is_private) : null,
     court_address_revealed: Boolean(serialized?.address_line1),
     timezone: tz,
   };

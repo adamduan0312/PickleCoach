@@ -116,7 +116,6 @@ async function ensureCourt(spec, createdByUserId) {
   return CourtLocation.create({
     ...spec,
     country: 'US',
-    is_private: false,
     source: 'manual',
     created_by_user_id: createdByUserId,
   });

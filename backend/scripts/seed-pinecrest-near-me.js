@@ -187,7 +187,6 @@ async function ensureCourt(spec, createdByUserId) {
       address_line1: spec.address_line1,
       latitude: spec.latitude,
       longitude: spec.longitude,
-      is_private: false,
     });
     return existing;
   }
@@ -195,7 +194,6 @@ async function ensureCourt(spec, createdByUserId) {
   return CourtLocation.create({
     ...courtFields,
     country: 'US',
-    is_private: false,
     source: 'manual',
     created_by_user_id: createdByUserId,
   });

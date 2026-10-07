@@ -1,6 +1,6 @@
 /**
  * POST /api/courts — create-or-reuse shared court + coach link.
- * Also covers POST /api/courts/duplicate-check private-court privacy.
+ * Also covers POST /api/courts/duplicate-check.
  */
 import assert from 'node:assert/strict';
 import { describe, it, beforeEach, afterEach } from 'node:test';
@@ -16,7 +16,6 @@ const baseBody = {
   country: 'US',
   latitude: 25.78,
   longitude: -80.19,
-  is_private: false,
 };
 
 function mockRes() {
@@ -82,7 +81,6 @@ describe('createCourt create-or-reuse', () => {
       country: 'US',
       latitude: baseBody.latitude,
       longitude: baseBody.longitude,
-      is_private: false,
     });
     CoachCourtLocation.findAll = async () => [];
     CoachCourtLocation.findOne = async () => null;
@@ -120,7 +118,6 @@ describe('createCourt create-or-reuse', () => {
       country: 'US',
       latitude: 25.78,
       longitude: -80.19,
-      is_private: false,
       deleted_at: null,
     };
     let createdCourt = false;
@@ -167,7 +164,6 @@ describe('createCourt create-or-reuse', () => {
       country: 'US',
       latitude: 25.78,
       longitude: -80.19,
-      is_private: false,
       deleted_at: null,
     };
     CourtLocation.findOne = async () => existing;
@@ -211,7 +207,6 @@ describe('createCourt create-or-reuse', () => {
       country: 'US',
       latitude: 25.78,
       longitude: -80.19,
-      is_private: false,
       deleted_at: null,
       toJSON() {
         return this;
@@ -258,7 +253,6 @@ describe('createCourt create-or-reuse', () => {
       country: 'US',
       latitude: 30.2672,
       longitude: -97.7431,
-      is_private: false,
     });
     CoachCourtLocation.findAll = async () => [];
     CoachCourtLocation.findOne = async () => null;
@@ -281,7 +275,6 @@ describe('createCourt create-or-reuse', () => {
         country: 'US',
         latitude: 30.2672,
         longitude: -97.7431,
-        is_private: false,
       },
       body: {
         name: 'Holiday Park',
@@ -292,7 +285,6 @@ describe('createCourt create-or-reuse', () => {
         country: 'US',
         latitude: 30.2672,
         longitude: -97.7431,
-        is_private: false,
       },
       user: { id: 3, roles: ['coach'] },
     };
@@ -317,7 +309,6 @@ describe('createCourt create-or-reuse', () => {
       country: 'US',
       latitude: 26.1367,
       longitude: -80.141,
-      is_private: false,
       deleted_at: null,
     };
     let createdCourt = false;
@@ -350,7 +341,6 @@ describe('createCourt create-or-reuse', () => {
       country: 'US',
       latitude: 26.1367,
       longitude: -80.141,
-      is_private: false,
     };
     const req = {
       validated: { ...body },
@@ -377,7 +367,6 @@ describe('createCourt create-or-reuse', () => {
       country: 'US',
       latitude: 26.1367,
       longitude: -80.141,
-      is_private: false,
       created_by_user_id: 99,
       deleted_at: null,
       get(opts) {
@@ -402,7 +391,6 @@ describe('createCourt create-or-reuse', () => {
         country: 'US',
         latitude: 26.1368,
         longitude: -80.1411,
-        is_private: false,
       },
       body: {
         name: 'Holiday Park',
@@ -413,7 +401,6 @@ describe('createCourt create-or-reuse', () => {
         country: 'US',
         latitude: 26.1368,
         longitude: -80.1411,
-        is_private: false,
       },
       user: { id: 3, roles: ['coach'] },
     };
@@ -425,18 +412,17 @@ describe('createCourt create-or-reuse', () => {
     assert.ok(res.payload.data?.high_confidence?.some((c) => c.id === 7));
   });
 
-  it('409 does not leak another coach private court street/GPS to a non-owner', async () => {
-    const privateOther = {
-      id: 77,
+  it('409 lists a nearby court created by another coach, with its address', async () => {
+    const otherCoachCourt = {
+      id: 88,
       name: 'Backyard Court',
-      address_line1: '999 Secret Lane',
+      address_line1: '999 Oak Lane',
       city: 'Coral Springs',
       state: 'FL',
       postal_code: '33065',
       country: 'US',
       latitude: 26.271,
       longitude: -80.27,
-      is_private: true,
       created_by_user_id: 50,
       deleted_at: null,
       get(opts) {
@@ -448,105 +434,21 @@ describe('createCourt create-or-reuse', () => {
       },
     };
     CourtLocation.findOne = async () => null;
-    CourtLocation.findAll = async () => [privateOther];
-    CourtLocation.create = async (attrs) => ({ id: 12, ...attrs });
-    CourtLocation.findByPk = async () => ({
-      id: 12,
-      name: 'Backyard Court',
-      address_line1: '999 Secret Lane',
-      city: 'Coral Springs',
-      state: 'FL',
-      postal_code: '33065',
-      country: 'US',
-      latitude: 26.271,
-      longitude: -80.27,
-      is_private: true,
-    });
-    CoachCourtLocation.findAll = async () => []; // viewer owns none
-    CoachCourtLocation.findOne = async () => null;
-    CoachCourtLocation.create = async () => ({ id: 100, coach_id: 3, court_id: 12 });
-    CoachCourtLocation.findByPk = async () => ({
-      id: 100,
-      coach_id: 3,
-      court_id: 12,
-      created_at: new Date(),
-      updated_at: new Date(),
-    });
+    CourtLocation.findAll = async () => [otherCoachCourt];
+    CourtLocation.create = async () => {
+      throw new Error('should not create when a duplicate exists');
+    };
 
     const req = {
       validated: {
         name: 'Backyard Court',
-        address_line1: '999 Secret Lane',
+        address_line1: '999 Oak Lane',
         city: 'Coral Springs',
         state: 'FL',
         postal_code: '33065',
         country: 'US',
         latitude: 26.2711,
         longitude: -80.2701,
-        is_private: true,
-      },
-      body: {},
-      user: { id: 3, roles: ['coach'] },
-    };
-    const res = mockRes();
-    await createCourt(req, res);
-
-    // Private other-coach court filtered out → create proceeds (or exact identity path).
-    // Must not return 409 with the private street/GPS.
-    if (res.statusCode === 409) {
-      const candidates = [
-        ...(res.payload?.data?.high_confidence || []),
-        ...(res.payload?.data?.possible || []),
-      ];
-      for (const c of candidates) {
-        assert.notEqual(c.address_line1, '999 Secret Lane');
-        assert.notEqual(Number(c.latitude), 26.271);
-      }
-    } else {
-      assert.ok([200, 201].includes(res.statusCode), res.payload);
-    }
-  });
-
-  it('owner still sees own private court in 409 duplicate candidates', async () => {
-    const privateOwn = {
-      id: 88,
-      name: 'My Backyard',
-      address_line1: '111 Owner Way',
-      city: 'Davie',
-      state: 'FL',
-      postal_code: '33314',
-      country: 'US',
-      latitude: 26.08,
-      longitude: -80.23,
-      is_private: true,
-      created_by_user_id: 3,
-      deleted_at: null,
-      get(opts) {
-        if (opts && opts.plain) {
-          const { get: _g, ...rest } = this;
-          return rest;
-        }
-        return this;
-      },
-    };
-    CourtLocation.findOne = async () => null;
-    CourtLocation.findAll = async () => [privateOwn];
-    CourtLocation.create = async () => {
-      throw new Error('should not create when owner duplicate is visible');
-    };
-    CoachCourtLocation.findAll = async () => [{ court_id: 88 }];
-
-    const req = {
-      validated: {
-        name: 'My Backyard',
-        address_line1: '111 Owner Way',
-        city: 'Davie',
-        state: 'FL',
-        postal_code: '33314',
-        country: 'US',
-        latitude: 26.0801,
-        longitude: -80.2301,
-        is_private: true,
       },
       body: {},
       user: { id: 3, roles: ['coach'] },
@@ -556,8 +458,8 @@ describe('createCourt create-or-reuse', () => {
 
     assert.equal(res.statusCode, 409, JSON.stringify(res.payload));
     const hit = (res.payload?.data?.high_confidence || []).find((c) => c.id === 88);
-    assert.ok(hit, 'owner must see their private court candidate');
-    assert.equal(hit.address_line1, '111 Owner Way');
+    assert.ok(hit);
+    assert.equal(hit.address_line1, '999 Oak Lane');
     assert.ok(hit.latitude != null);
   });
 
@@ -574,7 +476,6 @@ describe('createCourt create-or-reuse', () => {
       country: 'US',
       latitude: baseBody.latitude,
       longitude: baseBody.longitude,
-      is_private: false,
     });
     CoachCourtLocation.findAll = async () => [];
     CoachCourtLocation.findOne = async () => null;
@@ -612,7 +513,6 @@ describe('createCourt create-or-reuse', () => {
       country: 'US',
       latitude: 25.78,
       longitude: -80.19,
-      is_private: false,
       deleted_at: deletedAt,
       async update(patch) {
         if (Object.prototype.hasOwnProperty.call(patch, 'deleted_at')) {
@@ -675,7 +575,6 @@ describe('createCourt create-or-reuse', () => {
       country: 'US',
       latitude: 40.7648,
       longitude: -73.9725,
-      is_private: false,
     });
     CoachCourtLocation.findAll = async () => [
       { court: { id: 1, latitude: 26.1367, longitude: -80.141 } },
@@ -699,7 +598,6 @@ describe('createCourt create-or-reuse', () => {
       country: 'US',
       latitude: 40.7648,
       longitude: -73.9725,
-      is_private: false,
     };
     const req = {
       validated: { ...body },
@@ -715,7 +613,7 @@ describe('createCourt create-or-reuse', () => {
   });
 });
 
-describe('POST /api/courts/duplicate-check privacy', () => {
+describe('POST /api/courts/duplicate-check', () => {
   let origFindAll;
   let origLinkFindAll;
 
@@ -730,18 +628,17 @@ describe('POST /api/courts/duplicate-check privacy', () => {
     CoachCourtLocation.findAll = origLinkFindAll;
   });
 
-  it('does not return another coach private court street/GPS', async () => {
-    const privateOther = {
-      id: 77,
-      name: 'Backyard Court',
-      address_line1: '999 Secret Lane',
-      city: 'Coral Springs',
+  it('returns nearby courts created by any coach, with address', async () => {
+    const nearbyCourt = {
+      id: 88,
+      name: 'My Backyard',
+      address_line1: '111 Owner Way',
+      city: 'Davie',
       state: 'FL',
-      postal_code: '33065',
+      postal_code: '33314',
       country: 'US',
-      latitude: 26.271,
-      longitude: -80.27,
-      is_private: true,
+      latitude: 26.08,
+      longitude: -80.23,
       created_by_user_id: 50,
       deleted_at: null,
       get(opts) {
@@ -752,59 +649,7 @@ describe('POST /api/courts/duplicate-check privacy', () => {
         return this;
       },
     };
-    CourtLocation.findAll = async () => [privateOther];
-
-    const req = {
-      validated: {
-        name: 'Backyard Court',
-        address_line1: '999 Secret Lane',
-        city: 'Coral Springs',
-        state: 'FL',
-        postal_code: '33065',
-        country: 'US',
-        latitude: 26.2711,
-        longitude: -80.2701,
-      },
-      user: { id: 3, roles: ['coach'] },
-    };
-    const res = mockRes();
-    await checkCourtDuplicates(req, res);
-
-    assert.equal(res.statusCode, 200);
-    const candidates = [
-      ...(res.payload?.data?.high_confidence || []),
-      ...(res.payload?.data?.possible || []),
-    ];
-    assert.equal(candidates.length, 0);
-    for (const c of candidates) {
-      assert.notEqual(c.address_line1, '999 Secret Lane');
-      assert.notEqual(Number(c.latitude), 26.271);
-    }
-  });
-
-  it('returns owner private court candidates with address', async () => {
-    const privateOwn = {
-      id: 88,
-      name: 'My Backyard',
-      address_line1: '111 Owner Way',
-      city: 'Davie',
-      state: 'FL',
-      postal_code: '33314',
-      country: 'US',
-      latitude: 26.08,
-      longitude: -80.23,
-      is_private: true,
-      created_by_user_id: 3,
-      deleted_at: null,
-      get(opts) {
-        if (opts && opts.plain) {
-          const { get: _g, ...rest } = this;
-          return rest;
-        }
-        return this;
-      },
-    };
-    CourtLocation.findAll = async () => [privateOwn];
+    CourtLocation.findAll = async () => [nearbyCourt];
 
     const req = {
       validated: {
@@ -828,7 +673,7 @@ describe('POST /api/courts/duplicate-check privacy', () => {
       ...(res.payload?.data?.possible || []),
     ];
     const hit = candidates.find((c) => c.id === 88);
-    assert.ok(hit, 'owner must see their private court');
+    assert.ok(hit);
     assert.equal(hit.address_line1, '111 Owner Way');
     assert.equal(Number(hit.latitude), 26.08);
   });

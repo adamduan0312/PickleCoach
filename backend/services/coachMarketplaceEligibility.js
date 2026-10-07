@@ -157,9 +157,7 @@ export async function getCoachMarketplaceEligibility(coachId) {
   // The profile photo (users.avatar_url) is part of the profile step; gallery photos are not.
   const profileMissingFields = coachProfileStepMissing(profile, user?.avatar_url);
 
-  // Court step: any non-deleted linked court counts — do NOT filter is_private.
-  // is_private only hides courts from GET /api/courts; coaches who teach only at
-  // discovery-hidden courts must still be marketplace-eligible / bookable.
+  // Court step: any non-deleted linked court counts.
   const [lessonCount, courtCount, availabilityCount] = await Promise.all([
     Lesson.count({ where: { coach_id: id, is_active: true, deleted_at: null } }),
     CoachCourtLocation.count({
@@ -230,8 +228,7 @@ export function marketplaceDiscoveryProfileWhereBase({ alias = 'coachProfile' } 
  *   - `filterOnly`: empty `attributes` on join rows (eligibility gate without bloating payload).
  */
 export function marketplaceDiscoveryIncludes(opts = {}) {
-  // Default: any non-deleted court (public or discovery-hidden). Callers may add
-  // geo bbox keys; must not require is_private: false or private-only coaches vanish.
+  // Default: any non-deleted court. Callers may add geo bbox keys.
   const courtWhere = opts.courtWhere || { deleted_at: null };
   const filterAttrs = opts.filterOnly ? { attributes: [] } : {};
   const includes = [

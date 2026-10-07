@@ -233,7 +233,6 @@ async function ensureCoach() {
       country: 'US',
       latitude: 40.7,
       longitude: -73.99,
-      is_private: false,
       source: 'manual',
       created_by_user_id: user.id,
     });

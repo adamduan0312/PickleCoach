@@ -166,7 +166,6 @@ module.exports = {
           country: 'US',
           latitude: spec.latitude,
           longitude: spec.longitude,
-          is_private: false,
           source: 'manual',
           deleted_at: spec.softDeleted ? new Date() : null,
         },
@@ -179,7 +178,6 @@ module.exports = {
         country: 'US',
         latitude: spec.latitude,
         longitude: spec.longitude,
-        is_private: false,
         source: 'manual',
         deleted_at: spec.softDeleted ? (court.deleted_at || new Date()) : null,
       });

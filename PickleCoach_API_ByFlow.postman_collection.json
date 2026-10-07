@@ -1900,7 +1900,7 @@
 								}
 							]
 						},
-						"description": "Roles: Any (no auth). **Public directory only** \u2014 **`is_private: false`** courts.\n\n**Text (`q`):** PickleCoach DB only (name/street/city/ZIP/state). **No Overpass.**\n\n**Geo (`lat`+`lng`+optional `radius`, no `q`):** Always runs local lookup **and** OSM/Overpass discovery for that radius \u2014 existing local courts do **not** skip Overpass. New OSM courts are deduped (`osm_type`/`osm_id` + proximity vs manual) and imported; response is the combined set (closest first, up to 100). If Overpass fails, local courts are still returned.\n\n**No lat/lng:** list/paginate public courts. Coach \u201cCourts near me\u201d uses this geo path; Select still uses `POST /api/coaches/me/courts`."
+						"description": "Roles: Any (no auth). Shared court directory (all non-deleted courts).\n\n**Text (`q`):** PickleCoach DB only (name/street/city/ZIP/state). **No Overpass.**\n\n**Geo (`lat`+`lng`+optional `radius`, no `q`):** Always runs local lookup **and** OSM/Overpass discovery for that radius \u2014 existing local courts do **not** skip Overpass. New OSM courts are deduped (`osm_type`/`osm_id` + proximity vs manual) and imported; response is the combined set (closest first, up to 100). If Overpass fails, local courts are still returned.\n\n**No lat/lng:** list/paginate public courts. Coach \u201cCourts near me\u201d uses this geo path; Select still uses `POST /api/coaches/me/courts`."
 					},
 					"response": [],
 					"event": [
@@ -1949,7 +1949,7 @@
 								}
 							]
 						},
-						"description": "Roles: Any (no auth). **Public directory only** \u2014 **`404`** for private courts or missing/deleted ids (same message; does not reveal private existence). Use **`GET /api/coaches/:id/courts`** to see where a coach teaches (includes private)."
+						"description": "Roles: Any (no auth). **`404`** for missing/deleted ids. Use **`GET /api/coaches/:id/courts`** to see where a coach teaches."
 					},
 					"response": [],
 					"event": [
@@ -4036,7 +4036,7 @@
 								}
 							]
 						},
-						"description": "Roles: Any (no auth). **Public directory only** \u2014 **`is_private: false`** courts.\n\n**Text (`q`):** PickleCoach DB only (name/street/city/ZIP/state). **No Overpass.**\n\n**Geo (`lat`+`lng`+optional `radius`, no `q`):** Always runs local lookup **and** OSM/Overpass discovery for that radius \u2014 existing local courts do **not** skip Overpass. New OSM courts are deduped (`osm_type`/`osm_id` + proximity vs manual) and imported; response is the combined set (closest first, up to 100). If Overpass fails, local courts are still returned.\n\n**No lat/lng:** list/paginate public courts. Coach \u201cCourts near me\u201d uses this geo path; Select still uses `POST /api/coaches/me/courts`."
+						"description": "Roles: Any (no auth). Shared court directory (all non-deleted courts).\n\n**Text (`q`):** PickleCoach DB only (name/street/city/ZIP/state). **No Overpass.**\n\n**Geo (`lat`+`lng`+optional `radius`, no `q`):** Always runs local lookup **and** OSM/Overpass discovery for that radius \u2014 existing local courts do **not** skip Overpass. New OSM courts are deduped (`osm_type`/`osm_id` + proximity vs manual) and imported; response is the combined set (closest first, up to 100). If Overpass fails, local courts are still returned.\n\n**No lat/lng:** list/paginate public courts. Coach \u201cCourts near me\u201d uses this geo path; Select still uses `POST /api/coaches/me/courts`."
 					},
 					"response": [],
 					"event": [
@@ -4085,7 +4085,7 @@
 								}
 							]
 						},
-						"description": "Roles: Any (no auth). **Public directory only** \u2014 **`404`** for private courts or missing/deleted ids (same message; does not reveal private existence). Use **`GET /api/coaches/:id/courts`** to see where a coach teaches (includes private)."
+						"description": "Roles: Any (no auth). **`404`** for missing/deleted ids. Use **`GET /api/coaches/:id/courts`** to see where a coach teaches."
 					},
 					"response": [],
 					"event": [
@@ -4186,7 +4186,7 @@
 								}
 							]
 						},
-						"description": "Roles: Student, Coach, or Admin (same public marketplace cards; booking still requires student). **Coach flow:** browse competition / nearby coaches after listing courts. **Marketplace eligibility (DB-only):** profile + `stripe_ready` + \u22651 active lesson + \u22651 court + \u22651 availability. Flattened cards include redacted private-court `area` only. Optional filters: `court_location_id`, geo (`lat`/`lng`/`radius`), skill, review rating."
+						"description": "Roles: Student, Coach, or Admin (same public marketplace cards; booking still requires student). **Coach flow:** browse competition / nearby coaches after listing courts. **Marketplace eligibility (DB-only):** profile + `stripe_ready` + \u22651 active lesson + \u22651 court + \u22651 availability. Optional filters: `court_location_id`, geo (`lat`/`lng`/`radius`), skill, review rating."
 					},
 					"response": [],
 					"event": [
@@ -4413,7 +4413,7 @@
 								}
 							]
 						},
-						"description": "Roles: Any (no auth). **Coach flow:** after List Coaches, inspect another coach\u2019s teaching locations (`GET /api/coaches/:id/courts`). Path `:id` = that coach\u2019s user id (`{{coach_id}}`). Private courts appear with `area` only (street/GPS redacted). Your own courts with full address: use **List My Courts**."
+						"description": "Roles: Any (no auth). **Coach flow:** after List Coaches, inspect another coach\u2019s teaching locations (`GET /api/coaches/:id/courts`). Path `:id` = that coach\u2019s user id (`{{coach_id}}`). Your own courts (with link notes): use **List My Courts**."
 					},
 					"response": [],
 					"event": [
@@ -4567,7 +4567,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"name\": \"Central Park Pickleball Court\",\n  \"address_line1\": \"123 Main St\",\n  \"city\": \"New York\",\n  \"state\": \"NY\",\n  \"postal_code\": \"10001\",\n  \"country\": \"US\",\n  \"latitude\": 40.7128,\n  \"longitude\": -74.006,\n  \"is_private\": false,\n  \"acknowledge_possible_duplicates\": false\n}"
+							"raw": "{\n  \"name\": \"Central Park Pickleball Court\",\n  \"address_line1\": \"123 Main St\",\n  \"city\": \"New York\",\n  \"state\": \"NY\",\n  \"postal_code\": \"10001\",\n  \"country\": \"US\",\n  \"latitude\": 40.7128,\n  \"longitude\": -74.006,\n  \"acknowledge_possible_duplicates\": false\n}"
 						},
 						"url": {
 							"raw": "{{api_url}}/courts",
@@ -7901,7 +7901,7 @@
 								}
 							]
 						},
-						"description": "Roles: Any (no auth). **Public directory only** \u2014 **`is_private: false`** courts.\n\n**Text (`q`):** PickleCoach DB only (name/street/city/ZIP/state). **No Overpass.**\n\n**Geo (`lat`+`lng`+optional `radius`, no `q`):** Always runs local lookup **and** OSM/Overpass discovery for that radius \u2014 existing local courts do **not** skip Overpass. New OSM courts are deduped (`osm_type`/`osm_id` + proximity vs manual) and imported; response is the combined set (closest first, up to 100). If Overpass fails, local courts are still returned.\n\n**No lat/lng:** list/paginate public courts. Coach \u201cCourts near me\u201d uses this geo path; Select still uses `POST /api/coaches/me/courts`."
+						"description": "Roles: Any (no auth). Shared court directory (all non-deleted courts).\n\n**Text (`q`):** PickleCoach DB only (name/street/city/ZIP/state). **No Overpass.**\n\n**Geo (`lat`+`lng`+optional `radius`, no `q`):** Always runs local lookup **and** OSM/Overpass discovery for that radius \u2014 existing local courts do **not** skip Overpass. New OSM courts are deduped (`osm_type`/`osm_id` + proximity vs manual) and imported; response is the combined set (closest first, up to 100). If Overpass fails, local courts are still returned.\n\n**No lat/lng:** list/paginate public courts. Coach \u201cCourts near me\u201d uses this geo path; Select still uses `POST /api/coaches/me/courts`."
 					},
 					"response": [],
 					"event": [
@@ -7950,7 +7950,7 @@
 								}
 							]
 						},
-						"description": "Roles: Any (no auth). **Public directory only** \u2014 **`404`** for private courts or missing/deleted ids (same message; does not reveal private existence). Use **`GET /api/coaches/:id/courts`** to see where a coach teaches (includes private)."
+						"description": "Roles: Any (no auth). **`404`** for missing/deleted ids. Use **`GET /api/coaches/:id/courts`** to see where a coach teaches."
 					},
 					"response": [],
 					"event": [

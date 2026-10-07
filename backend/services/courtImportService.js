@@ -155,8 +155,6 @@ export async function shouldSkipOsmCandidate({
 
   for (const court of nearbyCourts) {
     if (court.latitude == null || court.longitude == null) continue;
-    // A coach's private location is not a directory listing; it must not keep a public court out.
-    if (court.is_private) continue;
     const distance = calculateDistance(latitude, longitude, court.latitude, court.longitude);
 
     // Same name close by is the same listing to a coach, whatever the OSM ids.
@@ -845,7 +843,6 @@ export async function importFromOpenStreetMap(
         ...resolved.address,
         latitude: candidate.latitude,
         longitude: candidate.longitude,
-        is_private: false,
         created_by_user_id: null,
         source: 'api',
         osm_type: candidate.osmType,

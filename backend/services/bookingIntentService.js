@@ -38,7 +38,6 @@ import { COACH_BOOKING_REQUEST_NOTIFIED_METADATA_KEY } from '../utils/paymentAut
 import { isPubliclyActiveUser } from '../utils/userLifecycle.js';
 import { escrowForUncapturedAuthorization } from '../utils/paymentEscrowStatus.js';
 import { assertMinBookingLeadTime } from '../utils/coachAcceptanceTimeout.js';
-import { coachCourtIsPrivate } from '../utils/courtAddressVisibility.js';
 
 async function ensureStripeCustomer(student, transaction = null) {
   let stripeCustomerId = student.stripe_customer_id || null;
@@ -516,7 +515,6 @@ export async function confirmBookingFromPaymentIntent({
         court_state_at_booking: court.state,
         court_postal_code_at_booking: court.postal_code,
         court_country_at_booking: court.country,
-        court_is_private_at_booking: coachCourtIsPrivate(coachCourtLink, court),
         court_latitude_at_booking: court.latitude,
         court_longitude_at_booking: court.longitude,
         price: amounts.lesson_price,

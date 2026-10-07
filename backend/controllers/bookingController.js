@@ -89,21 +89,11 @@ function primaryStudentInclude() {
   };
 }
 
-/** Privileged court-address viewers: booking coach or admin.
+/**
  * MVP: student reliability is not a coach-facing booking field (use /students/me/reliability or admin reliability APIs).
  */
-function coachViewerSerializeOptions(viewerUserId, booking, roles = []) {
-  const isCoach = Number(viewerUserId) === Number(booking?.coach_id);
-  const isAdmin = Array.isArray(roles) && roles.includes('admin');
-  return {
-    includeStudentReliability: false,
-    viewerIsPrivileged: isCoach || isAdmin,
-  };
-}
-
-/** Student booking viewers: follow booking status unless privileged. */
-function bookingCourtAddressOptions(viewerUserId, roles, booking) {
-  return coachViewerSerializeOptions(viewerUserId, booking, roles);
+function coachViewerSerializeOptions() {
+  return { includeStudentReliability: false };
 }
 
 function bookingListIncludes() {
@@ -177,27 +167,16 @@ async function respondWithBookingList(req, res, {
       order: BOOKING_LIST_ORDER,
     });
 
-    const serializeOpts = (row) => {
+    const serializeOpts = () => {
       if (studentReliabilityMode === true) {
-        return { includeStudentReliability: true, viewerIsPrivileged: true };
+        return { includeStudentReliability: true };
       }
-      if (studentReliabilityMode === false) {
-        return {
-          includeStudentReliability: false,
-          ...bookingCourtAddressOptions(req.user.id, roles, row),
-        };
-      }
-      // per_row_coach (admin list): admins always privileged for court address
-      const base = coachViewerSerializeOptions(req.user.id, row, req.user.roles || []);
-      if (roles.includes('admin')) {
-        return { ...base, viewerIsPrivileged: true };
-      }
-      return base;
+      return coachViewerSerializeOptions();
     };
 
     if (!isPaginated) {
       const data = await attachConversationSummaries(bookings.rows, req.user.id, roles);
-      const items = data.map((row) => serializeBookingListItem(row, serializeOpts(row)));
+      const items = data.map((row) => serializeBookingListItem(row, serializeOpts()));
       await attachActiveIssuesToBookingDtos(items);
       await attachPendingWeatherRequests(items);
       return successResponse(
@@ -209,7 +188,7 @@ async function respondWithBookingList(req, res, {
 
     const response = getPagingData(bookings, page, queryLimit);
     response.items = await attachConversationSummaries(response.items, req.user.id, roles);
-    const items = response.items.map((row) => serializeBookingListItem(row, serializeOpts(row)));
+    const items = response.items.map((row) => serializeBookingListItem(row, serializeOpts()));
     await attachActiveIssuesToBookingDtos(items);
     await attachPendingWeatherRequests(items);
     return paginatedResponse(
@@ -305,8 +284,6 @@ export const getBookingById = async (req, res) => {
     const dto = serializeBookingDetailPayload(payload, {
       serializePayment: (payment) => serializePaymentSummary(payment, { isAdmin: isAdminViewer }),
       includeStudentReliability: false,
-      viewerIsPrivileged:
-        Number(req.user.id) === Number(booking.coach_id) || isAdminViewer,
     });
     const issueMap = await loadActiveIssuesByBookingId([booking.id]);
     attachActiveIssue(dto, issueMap);
@@ -561,7 +538,7 @@ export const completeBooking = async (req, res) => {
     });
     return successResponse(
       res,
-      serializeBookingListItem(updated, coachViewerSerializeOptions(req.user.id, updated, req.user.roles || [])),
+      serializeBookingListItem(updated, coachViewerSerializeOptions()),
       'Booking marked as completed',
     );
   } catch (error) {
@@ -691,7 +668,7 @@ export const markBookingNoShow = async (req, res) => {
         attendance_outcome: 'student_no_show',
         no_show_party: 'student',
       },
-      coachViewerSerializeOptions(req.user.id, updated, req.user.roles || []),
+      coachViewerSerializeOptions(),
     );
     void notificationService.notifyStudentNoShow(id, { markedBy: 'coach' }).catch((err) => {
       logger.warn({
@@ -805,7 +782,7 @@ export const acceptBooking = async (req, res) => {
 
     return successResponse(
       res,
-      serializeBookingListItem(payload, { includeStudentReliability: false, viewerIsPrivileged: true }),
+      serializeBookingListItem(payload, { includeStudentReliability: false }),
       acceptMessage,
     );
   } catch (error) {
@@ -917,7 +894,7 @@ export const declineBooking = async (req, res) => {
 
     return successResponse(
       res,
-      serializeBookingListItem(updated, { includeStudentReliability: false, viewerIsPrivileged: true }),
+      serializeBookingListItem(updated, { includeStudentReliability: false }),
       'Booking declined',
     );
   } catch (error) {
@@ -1344,7 +1321,7 @@ export async function runPreLessonCancel(req, res, mutualWeather = null) {
     return successResponse(
       res,
       {
-        booking: serializeBookingListItem(afterBooking, coachViewerSerializeOptions(req.user.id, afterBooking, req.user.roles || [])),
+        booking: serializeBookingListItem(afterBooking, coachViewerSerializeOptions()),
         cancellation: cancellationPayload,
         ...(queuedCancelRefundPaymentActionId
           ? {
@@ -1569,7 +1546,7 @@ export const adminMarkCoachNoShow = async (req, res) => {
         no_show_party: 'coach',
         auto_refund: autoRefund,
       },
-      coachViewerSerializeOptions(req.user.id, updated, req.user.roles || []),
+      coachViewerSerializeOptions(),
     );
     void notificationService.notifyCoachNoShow(id).catch((err) => {
       logger.warn({
@@ -1735,7 +1712,7 @@ export const adminMarkBookingNoShow = async (req, res) => {
         attendance_outcome: 'student_no_show',
         no_show_party: 'student',
       },
-      coachViewerSerializeOptions(req.user.id, updated, req.user.roles || []),
+      coachViewerSerializeOptions(),
     );
     void notificationService.notifyStudentNoShow(id, { markedBy: 'admin' }).catch((err) => {
       logger.warn({

@@ -200,7 +200,7 @@ describe('discovery filters (DB-only)', () => {
     assert.equal(includes[2].required, true);
   });
 
-  it('court eligibility does not require public (is_private: false) courts', () => {
+  it('court eligibility counts any non-deleted court', () => {
     const includes = marketplaceDiscoveryIncludes();
     const courtWhere = includes[0].include[0].where;
     assert.equal(courtWhere.deleted_at, null);

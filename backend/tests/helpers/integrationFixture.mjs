@@ -136,7 +136,6 @@ export async function createBookingJourneyFixture({ studentCount = 1 } = {}) {
     country: 'US',
     latitude: 40.7,
     longitude: -73.99,
-    is_private: false,
     source: 'manual',
     created_by_user_id: coach.id,
   });

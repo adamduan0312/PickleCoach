@@ -24,7 +24,6 @@ describe('createCourtBodySchema', () => {
       postal_code: '10001',
       latitude: 40.7128,
       longitude: -74.006,
-      is_private: false,
     });
     assert.equal(error, undefined);
     assert.equal(value.state, 'NY');

@@ -3,7 +3,7 @@ import { describe, it } from 'node:test';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { courtLocationAsBooked } from '../utils/courtAddressVisibility.js';
+import { courtLocationAsBooked } from '../utils/courtDto.js';
 import {
   BOOKING_SUMMARY_FIELD_NAMES,
   serializeBookingDetailPayload,
@@ -23,7 +23,6 @@ const liveCourt = {
   state: 'NY',
   postal_code: '11101',
   country: 'US',
-  is_private: false,
   latitude: 40.7,
   longitude: -73.9,
 };
@@ -36,7 +35,6 @@ const snapshotCols = {
   court_state_at_booking: 'NY',
   court_postal_code_at_booking: '11222',
   court_country_at_booking: 'US',
-  court_is_private_at_booking: false,
   court_latitude_at_booking: 40.72,
   court_longitude_at_booking: -73.95,
 };
@@ -101,7 +99,7 @@ describe('booking DTOs use the snapshot', () => {
     assert.equal(dto.lesson.title, 'Private Lesson');
   });
 
-  it('never returns raw court snapshot columns (they bypass redaction)', () => {
+  it('never returns raw court snapshot columns', () => {
     const summary = serializeBookingSummary(booking());
     const detail = serializeBookingDetailPayload(booking());
     for (const obj of [summary, detail]) {
@@ -113,33 +111,9 @@ describe('booking DTOs use the snapshot', () => {
   });
 });
 
-describe('private court redaction applies to the snapshot', () => {
-  const privateSnap = { court_is_private_at_booking: true };
-
-  it('pending booking: student sees only the area, coach sees the exact address', () => {
-    const b = booking({ ...privateSnap, status: 'pending' });
-    const student = serializeBookingDetailPayload(b, { viewerIsPrivileged: false });
-    assert.equal(student.courtLocation.address_line1, null);
-    assert.equal(student.courtLocation.latitude, null);
-    assert.equal(student.courtLocation.area, 'Brooklyn, NY 11222');
-    const coach = serializeBookingDetailPayload(b, { viewerIsPrivileged: true });
-    assert.equal(coach.courtLocation.address_line1, '776 Lorimer St');
-  });
-
-  it('confirmed booking reveals the snapshot address to the student', () => {
-    const dto = serializeBookingDetailPayload(booking({ ...privateSnap, status: 'confirmed' }));
-    assert.equal(dto.courtLocation.address_line1, '776 Lorimer St');
-  });
-
-  it('court made public later does not unredact a snapshot taken while private', () => {
-    const b = booking({ ...privateSnap, status: 'pending', courtLocation: { ...liveCourt, is_private: false } });
-    assert.equal(serializeBookingDetailPayload(b).courtLocation.address_line1, null);
-  });
-});
-
 describe('reminder emails use the snapshot', () => {
   it('title and court come from the booking snapshot', () => {
-    const f = buildLessonReminderDetailFields(booking(), 'America/New_York', { audience: 'student' });
+    const f = buildLessonReminderDetailFields(booking(), 'America/New_York');
     assert.equal(f.lesson_title, 'Beginner Group Clinic');
     assert.equal(f.court_name, 'Pending-Stripe Court C — McCarren Park');
     assert.equal(f.court_address, '776 Lorimer St, Brooklyn, NY 11222');
@@ -147,18 +121,9 @@ describe('reminder emails use the snapshot', () => {
 
   it('legacy booking falls back to the live lesson title and court', () => {
     const legacy = booking({ lesson_title_at_booking: null, court_name_at_booking: null });
-    const f = buildLessonReminderDetailFields(legacy, 'America/New_York', { audience: 'student' });
+    const f = buildLessonReminderDetailFields(legacy, 'America/New_York');
     assert.equal(f.lesson_title, 'Private Lesson');
     assert.equal(f.court_name, 'Renamed Court');
-  });
-
-  it('private snapshot on a pending booking stays redacted for the student', () => {
-    const f = buildLessonReminderDetailFields(
-      booking({ court_is_private_at_booking: true, status: 'pending' }),
-      'America/New_York',
-      { audience: 'student' },
-    );
-    assert.equal(f.court_address_revealed, false);
   });
 });
 
@@ -174,13 +139,12 @@ describe('booking creation copies the snapshot only inside Booking.create', () =
       'court_state_at_booking: court.state,',
       'court_postal_code_at_booking: court.postal_code,',
       'court_country_at_booking: court.country,',
-      'court_is_private_at_booking: coachCourtIsPrivate(coachCourtLink, court),',
       'court_latitude_at_booking: court.latitude,',
       'court_longitude_at_booking: court.longitude,',
     ]) {
       assert.equal(src.split(line).length - 1, 1, `expected exactly one "${line}"`);
       assert.ok(createBlock.includes(line), `"${line}" must be inside Booking.create`);
     }
-    assert.equal((src.match(/_at_booking/g) || []).length, 12);
+    assert.equal((src.match(/_at_booking/g) || []).length, 11);
   });
 });
