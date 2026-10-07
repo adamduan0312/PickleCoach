@@ -7,6 +7,7 @@ import { FormField } from '../../components/ui/FormField.jsx';
 import { CHAR_LIMITS } from '../../utils/charLimits.js';
 import { courtLabel, formatCourtAddressLines, formatMiles } from '../../utils/format.js';
 import {
+  COURT_DISCOVERY_PENDING_EMPTY,
   COURT_DISCOVERY_PENDING_NOTE,
   classifyCourtSearch,
   cleanLocationQuery,
@@ -14,6 +15,7 @@ import {
   isCourtDiscoveryPending,
   linkedCourtIdSet,
   placeFromDirectoryMatches,
+  recognizedPlaceFromGeocode,
   splitPastedCourtAddress,
 } from '../../utils/coachCourts.js';
 
@@ -119,19 +121,28 @@ export function CoachCourtsPage() {
     showDirectoryResults(q, asList(res.data));
   }
 
-  /** Bare names: a city in the directory ("Weston") searches nearby; anything else is a name search. */
+  /**
+   * Bare names: a recognized city ("Austin", "Weston") searches nearby — directory cities first,
+   * so "Weston" means Weston, FL when we list courts there; anything else is a name search.
+   */
   async function searchPlaceOrCourt(q) {
     const res = await courtsApi.search({ q });
     const courts = asList(res.data);
-    const place = placeFromDirectoryMatches(q, courts);
-    if (place) {
-      const label = `${place.city}, ${place.state}`;
-      try {
+    const known = placeFromDirectoryMatches(q, courts);
+    try {
+      if (known) {
+        const label = `${known.city}, ${known.state}`;
         await searchNearPlace(label, label);
         return;
-      } catch {
-        // Geocoder unavailable: the directory matches below are still useful.
       }
+      const geo = await geoApi.search({ q, limit: 5 });
+      const place = recognizedPlaceFromGeocode(q, geo.data?.results);
+      if (place) {
+        await searchNearOrigin({ lat: place.lat, lng: place.lng, label: place.place, detail: null });
+        return;
+      }
+    } catch {
+      // Geocoder unavailable: the directory matches below are still useful.
     }
     showDirectoryResults(q, courts, { canSearchNear: courts.length === 0 });
   }
@@ -456,15 +467,22 @@ export function CoachCourtsPage() {
                 </button>
               ) : null}
             </div>
-            {discoveryPending ? <p className="small muted">{COURT_DISCOVERY_PENDING_NOTE}</p> : null}
-            {searchResults.length === 0 ? (
+            {discoveryPending && searchResults.length > 0 ? (
+              <p className="small muted">{COURT_DISCOVERY_PENDING_NOTE}</p>
+            ) : null}
+            {searchResults.length === 0 && resultsFor.kind === 'location' && discoveryPending ? (
+              <EmptyState title="No courts found yet" detail={COURT_DISCOVERY_PENDING_EMPTY} />
+            ) : null}
+            {searchResults.length === 0 && resultsFor.kind === 'location' && !discoveryPending ? (
+              <EmptyState
+                title="No courts found in this area"
+                detail="Try a larger search radius, or add the location if this court is not in the directory yet."
+              />
+            ) : null}
+            {searchResults.length === 0 && resultsFor.kind === 'court' ? (
               <EmptyState
                 title="No matching courts in PickleCoach"
-                detail={
-                  resultsFor.kind === 'location'
-                    ? 'Try a larger search radius, or add the location if this court is not in the directory yet.'
-                    : 'Try another name, a city, ZIP code, or address, or add the location if this court is not in the directory yet.'
-                }
+                detail="Try another name, a city, ZIP code, or address, or add the location if this court is not in the directory yet."
               />
             ) : null}
             {searchResults.map((court) => (

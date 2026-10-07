@@ -147,6 +147,21 @@ export function placeFromDirectoryMatches(query, courts) {
   return { city, state };
 }
 
+/**
+ * The geocode hit that is the city/town the user typed ("austin" → Austin, TX), or null.
+ * Hits whose city-level `place` names a different town ("Tropical" → Alton, TX) don't count.
+ * @param {string} query
+ * @param {{ lat: number, lng: number, place?: string|null }[]} results geocode results, best first
+ */
+export function recognizedPlaceFromGeocode(query, results) {
+  const want = String(query || '').trim().replace(/\s+/g, ' ').toLowerCase();
+  if (!want || !Array.isArray(results)) return null;
+  return results.find((r) => r?.place && r.place.split(',')[0].trim().toLowerCase() === want) || null;
+}
+
+export const COURT_DISCOVERY_PENDING_EMPTY =
+  'We’re checking this area for additional courts. Try searching again shortly.';
+
 export const COURT_DISCOVERY_PENDING_NOTE =
   'Still checking OpenStreetMap for more courts in this area — search again in a minute to see any new ones.';
 

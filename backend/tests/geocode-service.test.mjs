@@ -77,6 +77,34 @@ describe('geocodeService Nominatim mapping', () => {
     assert.ok(results[0].label.includes('San Francisco'));
   });
 
+  it('labels city/town hits with a city-level place, but not parks, counties, or ZIPs', () => {
+    const results = mapNominatimResults([
+      {
+        lat: '30.27', lon: '-97.74', class: 'boundary', type: 'administrative', importance: 0.9,
+        address: { city: 'Austin', county: 'Travis County', state: 'Texas' },
+      },
+      {
+        lat: '26.1', lon: '-80.4', class: 'leisure', type: 'park', importance: 0.3,
+        address: { park: 'Weston Regional Park', city: 'Weston', state: 'Florida' },
+      },
+      {
+        lat: '35.9', lon: '-80.5', class: 'boundary', type: 'administrative', importance: 0.2,
+        address: { county: 'Davie County', state: 'North Carolina' },
+      },
+      {
+        lat: '26.07', lon: '-80.25', class: 'place', type: 'postcode', importance: 0.1,
+        address: { postcode: '33328', town: 'Davie', state: 'Florida' },
+      },
+    ]);
+    const at = (lat) => results.find((r) => r.lat === lat);
+    const [city, park, county, zip] = [at(30.27), at(26.1), at(35.9), at(26.07)];
+    assert.equal(city.place, 'Austin, TX');
+    assert.equal(park.place, null);
+    assert.equal(county.place, null);
+    assert.equal(zip.place, null);
+    assert.equal('_score' in city, false);
+  });
+
   it('ranks city/suburb hits above same-named counties', () => {
     const results = mapNominatimResults([
       {

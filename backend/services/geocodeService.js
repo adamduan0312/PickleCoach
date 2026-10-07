@@ -126,10 +126,31 @@ export function rankGeocodeHit(hit, ctx = {}) {
   return score;
 }
 
+const NON_SETTLEMENT_PLACE_TYPES = new Set(['postcode', 'house', 'county', 'state', 'country']);
+
+/**
+ * City-level label ("Austin, TX") when the hit is itself a city/town/village, not a county,
+ * ZIP, street, or a business/park that merely shares the name. Null otherwise.
+ * @param {object} hit
+ * @returns {string|null}
+ */
+export function settlementLabelFromHit(hit) {
+  const cls = String(hit?.class || '');
+  const type = String(hit?.type || '');
+  const isSettlement = (cls === 'place' && !NON_SETTLEMENT_PLACE_TYPES.has(type))
+    || (cls === 'boundary' && type === 'administrative');
+  if (!isSettlement || isCountyOnlyHit(hit)) return null;
+  const a = hit?.address && typeof hit.address === 'object' ? hit.address : {};
+  const place = settlementName(a);
+  const state = normalizeUsStateCode(a.state);
+  if (!place || !state) return null;
+  return `${String(place).trim()}, ${state}`.slice(0, 255);
+}
+
 /**
  * @param {unknown} raw
  * @param {{ preferPostcode?: boolean }} [ctx]
- * @returns {{ label: string, lat: number, lng: number, type: string|null }[]}
+ * @returns {{ label: string, lat: number, lng: number, type: string|null, place: string|null }[]}
  */
 export function mapNominatimResults(raw, ctx = {}) {
   if (!Array.isArray(raw)) return [];
@@ -145,11 +166,12 @@ export function mapNominatimResults(raw, ctx = {}) {
       lat,
       lng,
       type: hit?.type || null,
+      place: settlementLabelFromHit(hit),
       _score: rankGeocodeHit(hit, ctx),
     });
   }
   scored.sort((a, b) => b._score - a._score);
-  return scored.map(({ label, lat, lng, type }) => ({ label, lat, lng, type }));
+  return scored.map(({ _score, ...result }) => result);
 }
 
 /** Google Plus Code, full ("76RX3PGM+5JF") or short ("3PGM+5JF"); Nominatim cannot read them. */

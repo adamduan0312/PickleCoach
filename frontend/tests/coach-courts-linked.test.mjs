@@ -7,6 +7,7 @@ import {
   isCourtDiscoveryPending,
   linkedCourtIdSet,
   placeFromDirectoryMatches,
+  recognizedPlaceFromGeocode,
   splitPastedCourtAddress,
 } from '../src/utils/coachCourts.js';
 
@@ -45,8 +46,8 @@ describe('classifyCourtSearch', () => {
     }
   });
 
-  it('leaves bare names (possible city or court) to the directory check', () => {
-    for (const q of ['Davie', 'Weston', 'fort lauderdale', 'Pine Island', 'Tropical']) {
+  it('leaves bare names (possible city or court) to the place check', () => {
+    for (const q of ['Austin', 'Davie', 'Weston', 'fort lauderdale', 'Pine Island', 'Tropical']) {
       assert.equal(classifyCourtSearch(q), 'place_or_court', q);
     }
     assert.equal(classifyCourtSearch('One Two Three Four'), 'court');
@@ -61,6 +62,22 @@ describe('cleanLocationQuery', () => {
     );
     assert.equal(cleanLocationQuery('33328'), '33328');
     assert.equal(cleanLocationQuery('Davie,  FL'), 'Davie, FL');
+  });
+});
+
+describe('recognizedPlaceFromGeocode', () => {
+  it('accepts a geocoded city/town whose name is what was typed', () => {
+    const austin = { lat: 30.27, lng: -97.74, place: 'Austin, TX' };
+    assert.equal(recognizedPlaceFromGeocode(' austin ', [austin]), austin);
+    const davie = { lat: 26.07, lng: -80.25, place: 'Davie, FL' };
+    assert.equal(recognizedPlaceFromGeocode('Davie', [{ lat: 35.9, lng: -80.5, place: null }, davie]), davie);
+  });
+
+  it('rejects non-places and places named differently', () => {
+    assert.equal(recognizedPlaceFromGeocode('Tropical', [{ lat: 26, lng: -98, place: 'Alton, TX' }]), null);
+    assert.equal(recognizedPlaceFromGeocode('Weston Regional', [{ lat: 26, lng: -80, place: null }]), null);
+    assert.equal(recognizedPlaceFromGeocode('Austin', []), null);
+    assert.equal(recognizedPlaceFromGeocode('Austin', undefined), null);
   });
 });
 
