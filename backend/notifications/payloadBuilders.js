@@ -94,12 +94,16 @@ function otherPartyName(payload, fallbackForAudience) {
   return name || fallbackForAudience[isCoachRecipient ? 'coach' : 'student'];
 }
 
-/** To the other participant: accept (full refund) or decline before the lesson starts. */
+/** To the other participant: accept (full refund) or decline before the request closes (24h after the lesson ends). */
 export const buildWeatherCancellationRequestedNotificationContent = (payload = {}) => {
   const requester = otherPartyName(payload, { coach: 'Your student', student: 'Your coach' });
-  const summary = payload.audience === 'coach'
-    ? 'If you agree, the lesson is cancelled and the student gets a full refund. You won’t be paid for it. Respond before the lesson starts.'
-    : 'If you agree, the lesson is cancelled and you get a full refund. Respond before the lesson starts.';
+  const consequence = payload.audience === 'coach'
+    ? 'If you agree, the lesson is cancelled and the student gets a full refund. You won’t be paid for it.'
+    : 'If you agree, the lesson is cancelled and you get a full refund.';
+  const respond = payload.respond_by_label
+    ? `Please respond by ${payload.respond_by_label}.`
+    : 'Please respond to this weather cancellation request.';
+  const summary = `${consequence} ${respond}`;
   return {
     headline: `${requester} asked to cancel for weather`,
     summary,
@@ -113,7 +117,7 @@ export const buildWeatherCancellationDeclinedNotificationContent = (payload = {}
   const responder = otherPartyName(payload, { coach: 'Your student', student: 'Your coach' });
   return {
     headline: `${responder} declined your weather cancellation`,
-    summary: 'The lesson is still on. If you cancel, the normal cancellation rules apply.',
+    summary: 'The lesson won’t be cancelled for weather.',
     preview: payload.lesson_title || 'Lesson',
   };
 };

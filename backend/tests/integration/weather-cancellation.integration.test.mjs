@@ -188,6 +188,11 @@ describeHttp('HTTP integration: mutual weather cancellation', () => {
     const studentNotified = await eventuallyCount({ user_id: fixture.student.id, type: 'weather_cancellation_accepted', entity_id: bookingId });
     assert.ok(coachNotified >= 1);
     assert.ok(studentNotified >= 1);
+    const requestNotice = await Notification.findOne({
+      where: { user_id: fixture.coach.id, type: 'weather_cancellation_requested', entity_id: bookingId, channel: 'in_app' },
+    });
+    assert.match(requestNotice.payload.summary, /Please respond by .+\.$/);
+    assert.doesNotMatch(requestNotice.payload.summary, /before the lesson starts/);
     const plainCancelToCoach = await Notification.count({ where: { user_id: fixture.coach.id, type: 'booking_cancelled', entity_id: bookingId } });
     assert.equal(plainCancelToCoach, 0, 'the coach accepted in-app; no generic "student cancelled" notice');
   });

@@ -22,6 +22,7 @@ import {
   buildLessonReminderDetailFields,
   formatDeadlineLabelForEmail,
 } from '../utils/lessonReminderCopy.js';
+import { weatherRequestClosesAt } from '../utils/weatherCancellation.js';
 import {
   buildBookingConfirmedNotificationContent,
   buildBookingRequestCoachNotificationContent,
@@ -695,7 +696,8 @@ async function notifyWeatherParticipant(bookingId, recipientRole, type, buildCon
   if (!booking) return;
   const { userId, email } = participantFor(booking, recipientRole);
   if (!userId) return;
-  const base = { ...bookingNotifyBase(booking, recipientRole), audience: recipientRole, ...extra };
+  const resolvedExtra = typeof extra === 'function' ? extra(booking, recipientRole) : extra;
+  const base = { ...bookingNotifyBase(booking, recipientRole), audience: recipientRole, ...resolvedExtra };
   await deliverDualChannel(userId, type, { ...base, ...buildContent(base) }, { email, ...bookingEntity(booking) });
 }
 
@@ -708,7 +710,15 @@ export const notifyWeatherCancellationRequested = async (bookingId, { requesterR
     otherRole(requesterRole),
     'weather_cancellation_requested',
     buildWeatherCancellationRequestedNotificationContent,
-    { requested_by: requesterRole, note },
+    (booking, recipientRole) => {
+      const closesAt = weatherRequestClosesAt(booking);
+      return {
+        requested_by: requesterRole,
+        note,
+        respond_by_at: closesAt,
+        respond_by_label: closesAt ? formatDeadlineLabelForEmail(new Date(closesAt), recipientTimezone(booking, recipientRole)) : null,
+      };
+    },
   );
 
 /** Weather cancellation declined → requester (lesson stays on). */

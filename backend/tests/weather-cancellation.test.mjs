@@ -131,7 +131,10 @@ describe('weather notification copy', () => {
   it('request: consequences for each recipient', () => {
     const toCoach = buildWeatherCancellationRequestedNotificationContent({ ...base, audience: 'coach', note: 'Storms' });
     assert.equal(toCoach.headline, 'Riley asked to cancel for weather');
-    assert.match(toCoach.summary, /student gets a full refund\. You won’t be paid for it\./);
+    assert.match(toCoach.summary, /student gets a full refund\. You won’t be paid for it\. Please respond to this weather cancellation request\.$/);
+    assert.doesNotMatch(toCoach.summary, /before the lesson starts/);
+    const withDeadline = buildWeatherCancellationRequestedNotificationContent({ ...base, audience: 'coach', respond_by_label: 'Friday, October 2 · 3:00 PM' });
+    assert.match(withDeadline.summary, /Please respond by Friday, October 2 · 3:00 PM\.$/);
     assert.doesNotMatch(toCoach.summary, /penaliz|reliab/i);
     assert.equal(toCoach.note_line, '“Storms”');
     const toStudent = buildWeatherCancellationRequestedNotificationContent({ ...base, audience: 'student' });
@@ -142,7 +145,7 @@ describe('weather notification copy', () => {
   it('declined and accepted go to the requester', () => {
     const declined = buildWeatherCancellationDeclinedNotificationContent({ ...base, audience: 'student' });
     assert.equal(declined.headline, 'Sam declined your weather cancellation');
-    assert.match(declined.summary, /still on.*normal cancellation rules apply/);
+    assert.equal(declined.summary, 'The lesson won’t be cancelled for weather.');
     const accepted = buildWeatherCancellationAcceptedNotificationContent({ ...base, audience: 'student', refund_amount: '60.00' });
     assert.equal(accepted.headline, 'Sam agreed to cancel for weather');
     assert.match(accepted.summary, /full refund of \$60\.00/);
