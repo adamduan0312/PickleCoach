@@ -119,9 +119,9 @@ export const calculateDistance = (lat1, lng1, lat2, lng2) => {
  * Rules:
  * - Same osm_type + osm_id → duplicate (primary identity for OSM imports).
  * - Same name within 0.25 mi → duplicate, whatever the OSM ids.
- * - Different OSM ids → otherwise never collapse solely due to proximity (distinct mapped features),
- *   except a facility-derived name (`derivedName`), which is only a fallback: any court already
- *   listed within 0.1 mi wins.
+ * - Different OSM ids → otherwise never collapse solely due to proximity (distinct mapped features).
+ *   Courts inside the same OSM facility are grouped separately, by facility identity
+ *   (see importFromOpenStreetMap), not here.
  * - Proximity near a court with no OSM id (manual) → still treated as duplicate.
  */
 export async function shouldSkipOsmCandidate({
@@ -130,7 +130,6 @@ export async function shouldSkipOsmCandidate({
   longitude,
   osmType,
   osmId,
-  derivedName = false,
 }) {
   if (osmType != null && osmId != null) {
     const byOsm = await CourtLocation.findOne({
@@ -157,8 +156,7 @@ export async function shouldSkipOsmCandidate({
     if (court.latitude == null || court.longitude == null) continue;
     const distance = calculateDistance(latitude, longitude, court.latitude, court.longitude);
 
-    // Same name close by is the same listing to a coach, whatever the OSM ids
-    // (e.g. several unnamed pitches inside one park all named after the park).
+    // Same name close by is the same listing to a coach, whatever the OSM ids.
     if (
       name &&
       court.name &&
@@ -170,7 +168,6 @@ export async function shouldSkipOsmCandidate({
 
     // Otherwise distinct OSM features stay distinct even when mapped close together.
     if (
-      !derivedName &&
       osmType != null &&
       osmId != null &&
       court.osm_type != null &&
@@ -221,26 +218,40 @@ function facilityRank(tags = {}) {
   return i === -1 ? null : i;
 }
 
-/** Best facility name from enclosing OSM areas (tags only), or null. */
-export function facilityNameFromAreas(areas = []) {
-  const ranked = areas
-    .map((tags) => ({ name: meaningfulName(tags?.name), rank: facilityRank(tags) }))
-    .filter((a) => a.name && a.rank != null)
-    .sort((a, b) => a.rank - b.rank);
-  return ranked[0]?.name ?? null;
+/**
+ * Named facilities (parks, sports centres…) among a court's enclosing OSM areas, most specific first.
+ * @param {{ key: string, tags: object }[]} areas
+ * @returns {{ key: string, name: string }[]}
+ */
+export function enclosingFacilities(areas = []) {
+  return areas
+    .map((a) => ({ key: a?.key, name: meaningfulName(a?.tags?.name), rank: facilityRank(a?.tags) }))
+    .filter((a) => a.key && a.name && a.rank != null)
+    .sort((a, b) => a.rank - b.rank)
+    .filter((a, i, all) => all.findIndex((b) => b.key === a.key) === i)
+    .map(({ key, name }) => ({ key, name }));
 }
 
 /**
  * Listing name for an OSM court: its own name tag, else the enclosing park/facility name.
  * Null when neither is meaningful — such courts are withheld from the directory, never given
  * a placeholder like "Pickleball Court (way/123)" or a generic "Pickleball Court".
- * @returns {{ name: string, source: 'osm'|'facility' }|null}
+ * `facilityKey` identifies the OSM facility a derived name came from.
+ * @returns {{ name: string, source: 'osm'|'facility', facilityKey: string|null }|null}
  */
 export function osmCourtName(tags = {}, facilityAreas = []) {
   const own = meaningfulName(tags.name) || meaningfulName(tags['name:en']);
-  if (own) return { name: own, source: 'osm' };
-  const facility = facilityNameFromAreas(facilityAreas);
-  return facility ? { name: facility, source: 'facility' } : null;
+  if (own) return { name: own, source: 'osm', facilityKey: null };
+  const [facility] = enclosingFacilities(facilityAreas);
+  return facility ? { name: facility.name, source: 'facility', facilityKey: facility.key } : null;
+}
+
+/** Overpass area ids encode the source way/relation (2400000000 + way id, 3600000000 + relation id). */
+export function osmFeatureKey(type, id) {
+  const n = Number(id);
+  if (type === 'area' && n >= 3600000000) return `relation/${n - 3600000000}`;
+  if (type === 'area' && n >= 2400000000) return `way/${n - 2400000000}`;
+  return `${type === 'rel' ? 'relation' : type}/${n}`;
 }
 
 /**
@@ -420,8 +431,8 @@ function normalizeOsmElement(element, facilityAreas = []) {
 /**
  * Overpass output from buildPickleballOverpassQuery is a stream of court elements (which carry
  * coordinates: `center` or `lat`), each followed by the tag-only facilities that enclose it.
- * Pair each court with its facilities' tags.
- * @returns {{ element: object, facilityAreas: object[] }[]}
+ * Pair each court with those facilities (OSM key + tags).
+ * @returns {{ element: object, facilityAreas: { key: string, tags: object }[] }[]}
  */
 export function groupCourtsWithFacilities(elements = []) {
   const courts = [];
@@ -430,7 +441,7 @@ export function groupCourtsWithFacilities(elements = []) {
     if (el.center || el.lat != null) {
       courts.push({ element: el, facilityAreas: [] });
     } else {
-      courts.at(-1)?.facilityAreas.push(el.tags || {});
+      courts.at(-1)?.facilityAreas.push({ key: osmFeatureKey(el.type, el.id), tags: el.tags || {} });
     }
   }
   return courts;
@@ -528,9 +539,10 @@ export function buildOsmFeaturesFacilityQuery(idsByType) {
  * Features whose reverse geocode answered but still gave no usable address are recorded and
  * skipped for OSM_IMPORT_RETRY_AFTER_DAYS (timeouts / network errors are not recorded).
  * Features with no meaningful name of their own or from an enclosing facility are not imported
- * (see osmCourtName); coaches can still add those courts manually.
+ * (see osmCourtName); coaches can still add those courts manually. Unnamed courts inside an OSM
+ * facility that already has a listing are grouped into it (groupedSameFacility).
  *
- * @returns {{ imported: object[], enriched: object[], skippedIncomplete: number, skippedRecentlyFailed: number, skippedUnnamed: number }}
+ * @returns {{ imported: object[], enriched: object[], skippedIncomplete: number, skippedRecentlyFailed: number, skippedUnnamed: number, groupedSameFacility: number }}
  */
 export async function importFromOpenStreetMap(
   latitude,
@@ -561,7 +573,13 @@ export async function importFromOpenStreetMap(
   }
 
   candidates.sort((a, b) => (a.distanceMiles ?? 999) - (b.distanceMiles ?? 999));
-  const toImport = candidates.slice(0, maxImports);
+  for (const c of candidates) c.named = osmCourtName(c.tags, c.facilityAreas);
+  // Courts with their own name first, so a facility's unnamed pitches group under that listing.
+  const nearest = candidates.slice(0, maxImports);
+  const toImport = [
+    ...nearest.filter((c) => c.named?.source === 'osm'),
+    ...nearest.filter((c) => c.named?.source !== 'osm'),
+  ];
 
   let reverseBudget = maxReverseGeocodes;
   const importedCourts = [];
@@ -569,10 +587,30 @@ export async function importFromOpenStreetMap(
   let skippedIncomplete = 0;
   let skippedRecentlyFailed = 0;
   let skippedUnnamed = 0;
+  let groupedSameFacility = 0;
   const recentlyFailed = await attemptStore.recentlyFailedKeys(toImport);
 
+  // OSM facilities (park, sports centre…) that already have a listing. An unnamed court named
+  // after one of these is another pitch at that facility, so it joins the listing instead of
+  // becoming a second "<Park name>". Grouping is by OSM facility identity, never by distance.
+  const listedFacilities = new Set();
+  const markListed = (c) => enclosingFacilities(c.facilityAreas).forEach((f) => listedFacilities.add(f.key));
+  if (toImport.length) {
+    const existingRows = await CourtLocation.findAll({
+      where: {
+        deleted_at: null,
+        [Op.or]: toImport.map((c) => ({ osm_type: c.osmType, osm_id: c.osmId })),
+      },
+      attributes: ['osm_type', 'osm_id'],
+    });
+    const existingKeys = new Set(existingRows
+      .filter((r) => r.osm_type != null && r.osm_id != null)
+      .map((r) => osmKey(r.osm_type, r.osm_id)));
+    toImport.filter((c) => existingKeys.has(osmKey(c.osmType, c.osmId))).forEach(markListed);
+  }
+
   for (const candidate of toImport) {
-    const named = osmCourtName(candidate.tags, candidate.facilityAreas);
+    const { named } = candidate;
     const name = named?.name ?? null;
 
     const existingByOsm = await CourtLocation.findOne({
@@ -599,15 +637,21 @@ export async function importFromOpenStreetMap(
         skippedUnnamed += 1;
         continue;
       }
+      if (named.source === 'facility' && listedFacilities.has(named.facilityKey)) {
+        groupedSameFacility += 1;
+        continue;
+      }
       const skipProximity = await shouldSkipOsmCandidate({
         name,
         latitude: candidate.latitude,
         longitude: candidate.longitude,
         osmType: candidate.osmType,
         osmId: candidate.osmId,
-        derivedName: named.source === 'facility',
       });
-      if (skipProximity) continue;
+      if (skipProximity) {
+        markListed(candidate);
+        continue;
+      }
     }
 
     const resolved = await resolveImportAddress({
@@ -660,12 +704,20 @@ export async function importFromOpenStreetMap(
         osm_id: candidate.osmId,
       });
       importedCourts.push(court);
+      markListed(candidate);
     } catch (error) {
       logger.warn(`Failed to import court ${name}: ${error.message}`);
     }
   }
 
-  return { imported: importedCourts, enriched: enrichedCourts, skippedIncomplete, skippedRecentlyFailed, skippedUnnamed };
+  return {
+    imported: importedCourts,
+    enriched: enrichedCourts,
+    skippedIncomplete,
+    skippedRecentlyFailed,
+    skippedUnnamed,
+    groupedSameFacility,
+  };
 }
 
 /** Fill only placeholder/missing address fields on an existing row. */
@@ -723,7 +775,7 @@ export async function discoverCourtsNearby(latitude, longitude, radiusMiles = 10
   logger.info(
     `OSM discovery: imported=${result.imported.length} enriched=${result.enriched.length} `
     + `skippedIncomplete=${result.skippedIncomplete} skippedRecentlyFailed=${result.skippedRecentlyFailed} `
-    + `skippedUnnamed=${result.skippedUnnamed}`,
+    + `skippedUnnamed=${result.skippedUnnamed} groupedSameFacility=${result.groupedSameFacility}`,
   );
   return result.imported;
 }

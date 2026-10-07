@@ -96,7 +96,7 @@ npm run seed:dedupe-disputes -- --apply
 | `seed-dev-frontend-fixtures.js` | `npm run seed:dev-frontend` | Notification examples + resolved disputes + payment states for UI | ✅ |
 | `seed-testflow-lesson-history.js` | `npm run seed:testflow-lesson-history` | Extra lessons + soft-deleted lesson still nested on bookings | ✅ |
 | `create-first-admin.js` | `npm run seed:first-admin -- <email> <password> [name]` | Create/update an admin user | ⚠️ mutates user |
-| `clean-unnamed-osm-courts.js` | `node scripts/clean-unnamed-osm-courts.js [--apply]` | Rename "Pickleball Court (way/…)" rows after their park/facility, delete the rest unless a coach or booking uses them (dry run without `--apply`) | ⚠️ mutates courts |
+| `clean-unnamed-osm-courts.js` | `node scripts/clean-unnamed-osm-courts.js [--apply]` | Apply OSM naming rules to existing courts: placeholder / operator names → enclosing park/facility name; unnamed or same-facility duplicates deleted unless a coach or booking uses them (dry run without `--apply`) | ⚠️ mutates courts |
 | `fix-invalid-user-emails.js` | `npm run fix:invalid-emails` | Rewrite legacy `@picklecoach.test` → `.example.org` | ✅ |
 | `reset-user-password.js` | `npm run user:reset-password -- <email> <pw>` | Set password | ⚠️ |
 | `set-user-role.js` | `npm run user:set-role -- <email> [coach\|student]` | Print or set coach/student role | ⚠️ |
