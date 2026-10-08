@@ -8,6 +8,7 @@ import { CHAR_LIMITS } from '../../utils/charLimits.js';
 import { useAuth } from '../../auth/AuthContext.jsx';
 import { formatInZone, detectLocalTimezone, relativeFromNow } from '../../utils/datetime.js';
 import { conversationClosedNotice } from '../../domain/bookingStatus.js';
+import { MESSAGES_BOOKING_CHANGES_NOTE } from '../../domain/cancellationPolicy.js';
 import { counterpartRoleLabel, sortConversationsForInbox } from '../../domain/conversationInbox.js';
 
 function bookingContextLabel(bookingId, scheduledAt, timeZone, counterpartRole) {
@@ -274,6 +275,9 @@ export function ConversationPage() {
           })}
         </div>
 
+        {!locked && data.booking_id ? (
+          <p className="small muted chat-booking-changes-note">{MESSAGES_BOOKING_CHANGES_NOTE}</p>
+        ) : null}
         {!locked ? (
           <form className="chat-composer" onSubmit={send}>
             <div className="chat-composer-input">

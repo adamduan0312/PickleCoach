@@ -4,6 +4,7 @@ import {
   coachAcceptanceTimeoutHours,
   minBookingLeadHours,
 } from '../../domain/bookingStatus.js';
+import { IN_APP_BOOKING_CHANGES_LINE } from '../../domain/cancellationPolicy.js';
 
 export function CheckoutPolicyExplainer({ amountLabel }) {
   const acceptanceCopy = checkoutAcceptancePolicyCopy({
@@ -30,6 +31,7 @@ export function CheckoutPolicyExplainer({ amountLabel }) {
             <li key={line}>{line}</li>
           ))}
         </ul>
+        <p className="checkout-in-app-rule"><strong>{IN_APP_BOOKING_CHANGES_LINE}</strong></p>
       </div>
     </div>
   );

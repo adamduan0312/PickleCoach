@@ -919,6 +919,15 @@ table.data th { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0
   max-height: 160px;
   resize: vertical;
 }
+.chat-booking-changes-note {
+  margin: 0;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--pc-line);
+}
+.chat-booking-changes-note + .chat-composer {
+  border-top: none;
+  padding-top: 0.45rem;
+}
 .chat-locked .chat-composer {
   opacity: 0.92;
 }
@@ -1858,6 +1867,11 @@ table.data th { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0
 }
 .checkout-auth-explainer-list li {
   margin: 0.3rem 0;
+}
+.checkout-in-app-rule {
+  margin: 0.55rem 0 0;
+  font-size: 0.88rem;
+  line-height: 1.45;
 }
 .checkout-authorize-cta {
   width: 100%;

@@ -2,6 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
+  COACH_PENDING_IN_APP_STEP,
+  IN_APP_BOOKING_CHANGES_LINE,
+  MESSAGES_BOOKING_CHANGES_NOTE,
   cancelReasonSharedHint,
   cancellationPolicySummary,
   coachCancellationPolicyLines,
@@ -123,15 +126,38 @@ test('booking detail shows the policy section and a cancel form that requires a 
 });
 
 test('reschedule hint: coaches decline pending requests; everyone else cancels and rebooks while they can', () => {
-  const cancelAndRebook = 'There is no reschedule option yet. To change the time, cancel this booking and book a new slot.';
+  const cancelAndRebook = 'There is no reschedule option. To change the time, cancel this booking and book a new slot.';
   assert.equal(
-    rescheduleHint({ status: 'pending' }, 'coach'),
-    'Need a different time? Decline this request and ask the student to book a new slot.',
+    rescheduleHint({ status: 'pending', scheduled_at: at(30) }, 'coach', NOW),
+    'There is no reschedule option. Decline this request and ask the student to book a new slot.',
   );
-  assert.equal(rescheduleHint({ status: 'pending' }, 'student'), cancelAndRebook);
+  assert.equal(rescheduleHint({ status: 'pending', scheduled_at: at(2) }, 'student', NOW), cancelAndRebook);
   assert.equal(rescheduleHint({ status: 'confirmed', scheduled_at: at(30) }, 'student', NOW), cancelAndRebook);
-  assert.equal(rescheduleHint({ status: 'confirmed', scheduled_at: at(2) }, 'student', NOW), null, 'student can’t cancel inside 24h');
+  assert.match(
+    rescheduleHint({ status: 'confirmed', scheduled_at: at(2) }, 'student', NOW),
+    /less than 24 hours away, so it can’t be cancelled\. For bad weather, ask your coach to cancel for weather\./,
+  );
   assert.equal(rescheduleHint({ status: 'confirmed', scheduled_at: at(2) }, 'coach', NOW), cancelAndRebook);
+  assert.equal(rescheduleHint({ status: 'confirmed', scheduled_at: at(-0.5) }, 'coach', NOW), null, 'lesson started');
   assert.equal(rescheduleHint({ status: 'completed' }, 'coach'), null);
   assert.match(detailSrc, /rescheduleHint\(booking, isCoach \? 'coach' : 'student', now\)/);
+  assert.match(detailSrc, /title: 'Need a different time\?', body: reschedule/, 'shown in What happens next');
+});
+
+test('booking changes only count in PickleCoach: checkout, coach pending request, messages', () => {
+  assert.equal(
+    IN_APP_BOOKING_CHANGES_LINE,
+    'Cancellations, weather cancellations, attendance and issue reports only count when completed in PickleCoach. Agreements made in messages, by text, or elsewhere don’t change the booking. There is no reschedule option — to change the time, cancel and book a new slot.',
+  );
+  const checkoutSrc = readFileSync(new URL('../src/components/bookings/CheckoutPolicyExplainer.jsx', import.meta.url), 'utf8');
+  assert.match(checkoutSrc, /\{IN_APP_BOOKING_CHANGES_LINE\}/);
+
+  assert.match(COACH_PENDING_IN_APP_STEP.body, /Agreements in messages or by text don’t change the booking/);
+  const nextStepsSrc = detailSrc.slice(detailSrc.indexOf('function bookingDetailNextSteps'));
+  const pendingCoach = nextStepsSrc.slice(nextStepsSrc.indexOf("case 'pending':"), nextStepsSrc.indexOf("case 'confirmed':"));
+  assert.match(pendingCoach, /COACH_PENDING_IN_APP_STEP/);
+
+  const messagesSrc = readFileSync(new URL('../src/pages/messages/MessagesPages.jsx', import.meta.url), 'utf8');
+  assert.match(messagesSrc, /!locked && data\.booking_id \? \(\s*<p className="small muted chat-booking-changes-note">\{MESSAGES_BOOKING_CHANGES_NOTE\}<\/p>/);
+  assert.match(MESSAGES_BOOKING_CHANGES_NOTE, /doesn’t update the booking\. Use the booking page/);
 });

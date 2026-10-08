@@ -61,6 +61,7 @@ import {
   cancellationPolicyLines,
   cancellationPolicySummary,
   isMutualWeatherCancellation,
+  COACH_PENDING_IN_APP_STEP,
   rescheduleHint,
   weatherCancellationView,
 } from '../../domain/cancellationPolicy.js';
@@ -182,6 +183,7 @@ function bookingDetailNextSteps(booking, { audience, tz, now = Date.now(), payme
             title: 'The student is waiting',
             body: 'They\'ll be notified when you respond.',
           },
+          COACH_PENDING_IN_APP_STEP,
         ];
       }
       return [
@@ -718,9 +720,6 @@ export function BookingDetailPage({ admin = false }) {
           onSubmit={(body) => run(() => disputesApi.create(body))}
         />
       ) : null}
-      {rescheduleHint(booking, isCoach ? 'coach' : 'student', now) ? (
-        <p className="small muted">{rescheduleHint(booking, isCoach ? 'coach' : 'student', now)}</p>
-      ) : null}
       {isStudent && isMutualWeatherCancellation(booking) && booking.coach_id ? (
         <Link className="btn secondary" to={`/coaches/${booking.coach_id}`}>Book a new time</Link>
       ) : null}
@@ -755,12 +754,16 @@ export function BookingDetailPage({ admin = false }) {
   const lead = admin
     ? `${booking.primaryStudent?.full_name || 'Student'} → ${booking.coach?.full_name || 'Coach'}`
     : bookingDetailLead(booking, { audience: audience || 'student', tz, now, payment });
-  const nextSteps = admin ? [] : bookingDetailNextSteps(booking, {
-    audience: audience || 'student',
-    tz,
-    now,
-    payment,
-  });
+  const reschedule = admin ? null : rescheduleHint(booking, isCoach ? 'coach' : 'student', now);
+  const nextSteps = admin ? [] : [
+    ...bookingDetailNextSteps(booking, {
+      audience: audience || 'student',
+      tz,
+      now,
+      payment,
+    }),
+    ...(reschedule ? [{ title: 'Need a different time?', body: reschedule }] : []),
+  ];
   const adminStatusItems = admin
     ? [...adminBookingMoneyStatusItems({ booking, payment }), adminRefundStatusView(payment)]
     : null;

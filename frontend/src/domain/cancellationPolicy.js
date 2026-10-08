@@ -223,15 +223,33 @@ export function weatherCancellationView(booking, { audience = 'student', now = D
   return null;
 }
 
-/** No reschedule yet; coaches can't cancel a pending request, so they decline it instead. */
+/** Booking changes only happen through the app; chat or text agreements don't count. */
+export const IN_APP_BOOKING_CHANGES_LINE =
+  'Cancellations, weather cancellations, attendance and issue reports only count when completed in PickleCoach. Agreements made in messages, by text, or elsewhere don’t change the booking. There is no reschedule option — to change the time, cancel and book a new slot.';
+
+export const COACH_PENDING_IN_APP_STEP = {
+  title: 'Keep booking changes in PickleCoach',
+  body: 'Cancellations, weather cancellations and attendance only count when completed in PickleCoach. Agreements in messages or by text don’t change the booking.',
+};
+
+export const MESSAGES_BOOKING_CHANGES_NOTE =
+  'Agreeing here to cancel or change the lesson doesn’t update the booking. Use the booking page to cancel, ask to cancel for weather, or report an issue.';
+
+/**
+ * No reschedule yet. Coaches decline pending requests; a confirmed lesson inside 24h can't be
+ * cancelled by the student, so only weather (with the coach's agreement) remains.
+ */
 export function rescheduleHint(booking, audience, now = Date.now()) {
-  if (!['pending', 'confirmed'].includes(booking?.status)) return null;
+  if (!['pending', 'confirmed'].includes(booking?.status) || lessonStarted(booking, now)) return null;
   if (audience === 'coach' && booking.status === 'pending') {
-    return 'Need a different time? Decline this request and ask the student to book a new slot.';
+    return 'There is no reschedule option. Decline this request and ask the student to book a new slot.';
   }
-  if (audience === 'student' && booking.status === 'confirmed' && isWithinLateCancelWindow(booking, now)) return null;
-  return 'There is no reschedule option yet. To change the time, cancel this booking and book a new slot.';
+  if (audience === 'student' && booking.status === 'confirmed' && isWithinLateCancelWindow(booking, now)) {
+    return 'There is no reschedule option, and this lesson is less than 24 hours away, so it can’t be cancelled. For bad weather, ask your coach to cancel for weather.';
+  }
+  return 'There is no reschedule option. To change the time, cancel this booking and book a new slot.';
 }
+
 /** Cancel reasons are self-reported; say who sees them. */
 export function cancelReasonSharedHint(audience) {
   const other = audience === 'coach' ? 'student' : 'coach';
