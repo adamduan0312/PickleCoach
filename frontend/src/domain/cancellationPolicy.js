@@ -37,6 +37,7 @@ export function coachCancellationPolicyLines() {
     'If you cancel an accepted lesson, the student gets a full refund and you aren’t paid for it.',
     'Students can cancel for a full refund up to 24 hours before the lesson. After that, they can’t cancel it themselves.',
     COACH_WEATHER_POLICY_LINE,
+    'Weather isn’t a reason you can pick when cancelling on your own — send a weather cancellation request instead.',
     'If the student doesn’t show up, mark Student no-show after the lesson. Their payment isn’t automatically refunded.',
   ];
 }
@@ -120,7 +121,7 @@ export function cancellationPolicySummary(booking, { audience = 'student', now =
   if (late) {
     return {
       headline: 'This lesson can no longer be cancelled',
-      body: `Cancelling closed at ${when}, 24 hours before the lesson. If it’s because of bad weather, ask your coach to cancel for weather — if they agree, you get a full refund.`,
+      body: `Cancelling closed at ${when}, 24 hours before the lesson. If it’s because of bad weather, send your coach a weather cancellation request — if they agree, you get a full refund.`,
     };
   }
   return {
@@ -235,20 +236,32 @@ export const COACH_PENDING_IN_APP_STEP = {
 export const MESSAGES_BOOKING_CHANGES_NOTE =
   'Agreeing here to cancel or change the lesson doesn’t update the booking. Use the booking page to cancel, ask to cancel for weather, or report an issue.';
 
-/**
- * No reschedule yet. Coaches decline pending requests; a confirmed lesson inside 24h can't be
- * cancelled by the student, so only weather (with the coach's agreement) remains.
- */
+/** No reschedule yet: same rule for both sides, with the action each one can actually take. */
 export function rescheduleHint(booking, audience, now = Date.now()) {
   if (!['pending', 'confirmed'].includes(booking?.status) || lessonStarted(booking, now)) return null;
-  if (audience === 'coach' && booking.status === 'pending') {
-    return 'There is no reschedule option. Decline this request and ask the student to book a new slot.';
+  const coach = audience === 'coach';
+  if (booking.status === 'pending') {
+    return coach
+      ? 'There is no reschedule option. If the student needs a different time, decline this request and ask them to book a new slot.'
+      : 'There is no reschedule option. If you need a different time, cancel this request (it’s free) and book a new slot.';
   }
-  if (audience === 'student' && booking.status === 'confirmed' && isWithinLateCancelWindow(booking, now)) {
-    return 'There is no reschedule option, and this lesson is less than 24 hours away, so it can’t be cancelled. For bad weather, ask your coach to cancel for weather.';
+  if (isWithinLateCancelWindow(booking, now)) {
+    return coach
+      ? 'There is no reschedule option. If you can’t make it, you can still cancel — the student gets a full refund. For bad weather, send a weather cancellation request so the student can agree to the cancellation.'
+      : 'There is no reschedule option, and this lesson is less than 24 hours away, so you can’t cancel it. For bad weather, send your coach a weather cancellation request — if they agree, you get a full refund.';
   }
-  return 'There is no reschedule option. To change the time, cancel this booking and book a new slot.';
+  return coach
+    ? 'There is no reschedule option. If the student needs a different time, cancel this booking and ask them to book a new slot.'
+    : 'There is no reschedule option. To change the time, cancel this booking and book a new slot.';
 }
+
+/** Weather is only a cancellation the student agrees to, so coaches can't pick it on their own. */
+export function cancelReasonsFor(audience, reasons) {
+  return audience === 'coach' ? reasons.filter((r) => r.value !== 'weather') : reasons;
+}
+
+export const COACH_CANCEL_WEATHER_HINT =
+  'Bad weather? Send the student a weather cancellation request instead (available from 24 hours before the lesson). If they agree, the lesson is cancelled.';
 
 /** Cancel reasons are self-reported; say who sees them. */
 export function cancelReasonSharedHint(audience) {

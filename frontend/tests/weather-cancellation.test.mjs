@@ -63,7 +63,7 @@ test('policy lines: weather requests stay open until 24h after the lesson', () =
 test('late student summary: can’t cancel, weather needs the coach to agree', () => {
   const summary = cancellationPolicySummary(booking({ block: { can_request: true } }), { audience: 'student', now: NOW, tz: TZ });
   assert.equal(summary.headline, 'This lesson can no longer be cancelled');
-  assert.match(summary.body, /ask your coach to cancel for weather — if they agree, you get a full refund/);
+  assert.match(summary.body, /send your coach a weather cancellation request — if they agree, you get a full refund/);
 });
 
 test('available: explains both outcomes per audience', () => {

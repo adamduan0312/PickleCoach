@@ -339,9 +339,17 @@ describeHttp('HTTP integration: mutual weather cancellation', () => {
     assert.equal(reqRes.status, 201, reqRes.text);
     const requestId = reqRes.json.data.weather_cancellation.request.id;
 
-    const coachCancel = await api(baseUrl, 'POST', `/api/bookings/${bookingId}/cancel`, {
+    const coachWeatherCancel = await api(baseUrl, 'POST', `/api/bookings/${bookingId}/cancel`, {
       token: tokens.coach,
       body: { reason: 'weather' },
+    });
+    assert.equal(coachWeatherCancel.status, 400, 'coach can’t claim Weather unilaterally');
+    assert.equal(coachWeatherCancel.json.code, 'coach_weather_cancel_requires_agreement');
+    assert.equal((await WeatherCancellationRequest.findByPk(requestId)).status, 'pending');
+
+    const coachCancel = await api(baseUrl, 'POST', `/api/bookings/${bookingId}/cancel`, {
+      token: tokens.coach,
+      body: { reason: 'emergency' },
     });
     assert.equal(coachCancel.status, 200, coachCancel.text);
     assert.equal((await WeatherCancellationRequest.findByPk(requestId)).status, 'closed');

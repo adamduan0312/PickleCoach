@@ -2,7 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
+  COACH_CANCEL_WEATHER_HINT,
   COACH_PENDING_IN_APP_STEP,
+  cancelReasonsFor,
   IN_APP_BOOKING_CHANGES_LINE,
   MESSAGES_BOOKING_CHANGES_NOTE,
   cancelReasonSharedHint,
@@ -13,7 +15,7 @@ import {
   rescheduleHint,
   studentCancellationPolicyLines,
 } from '../src/domain/cancellationPolicy.js';
-import { canStudentCancel, cancelMoneyConsequenceCopy, checkoutCancellationNoShowPolicyLines } from '../src/domain/bookingStatus.js';
+import { CANCEL_REASONS, canStudentCancel, cancelMoneyConsequenceCopy, checkoutCancellationNoShowPolicyLines } from '../src/domain/bookingStatus.js';
 
 const HOUR = 60 * 60 * 1000;
 const NOW = Date.parse('2026-10-01T12:00:00Z');
@@ -64,7 +66,7 @@ test('student booking detail: concrete deadline before it passes, no cancelling 
 
   const late = cancellationPolicySummary({ status: 'confirmed', scheduled_at: at(2) }, { audience: 'student', now: NOW, tz: TZ });
   assert.equal(late.headline, 'This lesson can no longer be cancelled');
-  assert.match(late.body, /Cancelling closed at .*24 hours before the lesson\. If it’s because of bad weather, ask your coach to cancel for weather/);
+  assert.match(late.body, /Cancelling closed at .*24 hours before the lesson\. If it’s because of bad weather, send your coach a weather cancellation request/);
 
   const pending = cancellationPolicySummary({ status: 'pending', scheduled_at: at(30) }, { audience: 'student', now: NOW, tz: TZ });
   assert.match(pending.headline, /Free to cancel/);
@@ -125,23 +127,36 @@ test('booking detail shows the policy section and a cancel form that requires a 
   assert.match(detailSrc, /If you cancel after accepting, the student gets a full refund and you aren’t paid\./);
 });
 
-test('reschedule hint: coaches decline pending requests; everyone else cancels and rebooks while they can', () => {
-  const cancelAndRebook = 'There is no reschedule option. To change the time, cancel this booking and book a new slot.';
+test('reschedule hint: same rule for both sides, role-specific action', () => {
+  const hint = (status, hours, audience) => rescheduleHint({ status, scheduled_at: at(hours) }, audience, NOW);
+  assert.equal(hint('pending', 30, 'coach'), 'There is no reschedule option. If the student needs a different time, decline this request and ask them to book a new slot.');
+  assert.equal(hint('pending', 2, 'student'), 'There is no reschedule option. If you need a different time, cancel this request (it’s free) and book a new slot.');
+  assert.equal(hint('confirmed', 30, 'student'), 'There is no reschedule option. To change the time, cancel this booking and book a new slot.');
+  assert.equal(hint('confirmed', 30, 'coach'), 'There is no reschedule option. If the student needs a different time, cancel this booking and ask them to book a new slot.');
   assert.equal(
-    rescheduleHint({ status: 'pending', scheduled_at: at(30) }, 'coach', NOW),
-    'There is no reschedule option. Decline this request and ask the student to book a new slot.',
+    hint('confirmed', 2, 'student'),
+    'There is no reschedule option, and this lesson is less than 24 hours away, so you can’t cancel it. For bad weather, send your coach a weather cancellation request — if they agree, you get a full refund.',
   );
-  assert.equal(rescheduleHint({ status: 'pending', scheduled_at: at(2) }, 'student', NOW), cancelAndRebook);
-  assert.equal(rescheduleHint({ status: 'confirmed', scheduled_at: at(30) }, 'student', NOW), cancelAndRebook);
-  assert.match(
-    rescheduleHint({ status: 'confirmed', scheduled_at: at(2) }, 'student', NOW),
-    /less than 24 hours away, so it can’t be cancelled\. For bad weather, ask your coach to cancel for weather\./,
+  assert.equal(
+    hint('confirmed', 2, 'coach'),
+    'There is no reschedule option. If you can’t make it, you can still cancel — the student gets a full refund. For bad weather, send a weather cancellation request so the student can agree to the cancellation.',
   );
-  assert.equal(rescheduleHint({ status: 'confirmed', scheduled_at: at(2) }, 'coach', NOW), cancelAndRebook);
-  assert.equal(rescheduleHint({ status: 'confirmed', scheduled_at: at(-0.5) }, 'coach', NOW), null, 'lesson started');
+  assert.doesNotMatch(hint('confirmed', 2, 'coach'), /ask your coach/);
+  assert.equal(hint('confirmed', -0.5, 'coach'), null, 'lesson started');
   assert.equal(rescheduleHint({ status: 'completed' }, 'coach'), null);
   assert.match(detailSrc, /rescheduleHint\(booking, isCoach \? 'coach' : 'student', now\)/);
   assert.match(detailSrc, /title: 'Need a different time\?', body: reschedule/, 'shown in What happens next');
+});
+
+test('coaches can’t pick Weather when cancelling on their own; students still can', () => {
+  const coachReasons = cancelReasonsFor('coach', CANCEL_REASONS).map((r) => r.value);
+  assert.equal(coachReasons.includes('weather'), false);
+  assert.ok(coachReasons.includes('emergency'));
+  assert.equal(cancelReasonsFor('student', CANCEL_REASONS).some((r) => r.value === 'weather'), true);
+  assert.match(COACH_CANCEL_WEATHER_HINT, /Send the student a weather cancellation request instead/);
+  assert.doesNotMatch(COACH_CANCEL_WEATHER_HINT, RELIABILITY_WORDING);
+  assert.match(detailSrc, /cancelReasonsFor\(audience, CANCEL_REASONS\)/);
+  assert.match(coachCancellationPolicyLines().join('\n'), /Weather isn’t a reason you can pick when cancelling on your own/);
 });
 
 test('booking changes only count in PickleCoach: checkout, coach pending request, messages', () => {

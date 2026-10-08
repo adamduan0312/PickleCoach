@@ -291,7 +291,7 @@ describeHttp('HTTP integration: booking lifecycle gaps', () => {
     assert.ok(Number(coachRel.reliability_score) < 100, 'coach score drops for a non-weather cancel');
   });
 
-  it('coach Weather cancel of confirmed booking: full refund, no reliability impact', async () => {
+  it('coach cannot cancel a confirmed booking for Weather on their own (needs the student to agree)', async () => {
     if (fixture?.cleanup) await fixture.cleanup();
     fixture = await createBookingJourneyFixture();
     const { baseUrl } = server;
@@ -309,22 +309,12 @@ describeHttp('HTTP integration: booking lifecycle gaps', () => {
       token: coachToken,
       body: { reason: 'weather' },
     });
-    assert.equal(cancelRes.status, 200, cancelRes.text);
+    assert.equal(cancelRes.status, 400, cancelRes.text);
+    assert.equal(cancelRes.json?.code, 'coach_weather_cancel_requires_agreement');
 
-    const booking = await Booking.findByPk(bookingId);
-    const payment = await Payment.findOne({ where: { booking_id: bookingId }, order: [['id', 'DESC']] });
-    assert.equal(booking.status, 'cancelled');
-    assert.equal(booking.cancelled_by, 'coach');
-    assert.notEqual(booking.payout_status, 'pending', 'no coach payout on coach cancel');
-    const [action] = await PaymentAction.findAll({ where: { booking_id: bookingId, action_type: 'booking_cancel_refund' } });
-    assert.equal(Number(action.refund_cents), Math.round(Number(payment.total_charge_to_student) * 100));
-
-    const history = await CancellationHistory.findOne({ where: { booking_id: bookingId } });
-    assert.equal(history.affects_reliability, false);
-    await updateUserReliability(fixture.coach.id, 'coach');
-    const coachRel = await UserReliability.findOne({ where: { user_id: fixture.coach.id, role: 'coach' } });
-    assert.equal(coachRel?.coach_cancels_non_late_recent ?? 0, 0);
-    assert.equal(Number(coachRel?.reliability_score ?? 100), 100);
+    assert.equal((await Booking.findByPk(bookingId)).status, 'confirmed');
+    assert.equal(await PaymentAction.count({ where: { booking_id: bookingId, action_type: 'booking_cancel_refund' } }), 0);
+    assert.equal(await CancellationHistory.count({ where: { booking_id: bookingId } }), 0);
   });
 
   it('coach complete after lesson end sets completed + pending payout (escrow still held)', async () => {

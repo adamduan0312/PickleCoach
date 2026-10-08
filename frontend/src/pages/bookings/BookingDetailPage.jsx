@@ -61,7 +61,9 @@ import {
   cancellationPolicyLines,
   cancellationPolicySummary,
   isMutualWeatherCancellation,
+  COACH_CANCEL_WEATHER_HINT,
   COACH_PENDING_IN_APP_STEP,
+  cancelReasonsFor,
   rescheduleHint,
   weatherCancellationView,
 } from '../../domain/cancellationPolicy.js';
@@ -1313,8 +1315,9 @@ function CancelForm({ onSubmit, busy, consequence, audience }) {
           <p className="small muted" style={{ margin: '0 0 6px' }}>{cancelReasonSharedHint(audience)}</p>
           <select id="reason" value={reason} onChange={(e) => setReason(e.target.value)} required>
             <option value="" disabled>Select a reason</option>
-            {CANCEL_REASONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
+            {cancelReasonsFor(audience, CANCEL_REASONS).map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
           </select>
+          {audience === 'coach' ? <p className="small muted" style={{ margin: '6px 0 0' }}>{COACH_CANCEL_WEATHER_HINT}</p> : null}
         </>
       </FormField>
       <FormField label="Notes (optional)" name="reason_notes">
