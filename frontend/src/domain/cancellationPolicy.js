@@ -2,8 +2,8 @@
  * Cancellation policy copy shown at decision points (checkout, accept, booking detail, cancel).
  *
  * Money follows who cancels and when (backend paymentEngine.computeCancellationSplitCents).
- * Inside 24h a student's cancel refunds 50%. Weather is never a unilateral reason for either side:
- * it's a mutual request (open from 24h before until 24h after the lesson ends) that refunds in full.
+ * Inside 24h a student's cancel refunds 50%. Either side may cancel for Weather until 24h before;
+ * inside 24h Weather is a mutual request (open until 24h after the lesson ends) that refunds in full.
  * Which reasons are reliability-neutral is deliberately not shown, so the reason picked can't be
  * tuned to the score; coaches only get a broad "may affect your reliability score" warning.
  */
@@ -17,6 +17,9 @@ const HOUR_MS = 60 * 60 * 1000;
 export const STUDENT_WEATHER_POLICY_LINE =
   'Bad weather within 24 hours of the lesson? Send your coach a weather cancellation request — you can until 24 hours after the lesson ends. If they agree, you get a full refund.';
 
+export const WEATHER_TIMING_POLICY_LINE =
+  'Weather cancellations are available up to 24 hours before the lesson. Inside 24 hours, both sides must agree to a weather cancellation.';
+
 export const COACH_WEATHER_POLICY_LINE =
   'Bad weather within 24 hours of the lesson? You or the student can ask to cancel for weather, until 24 hours after the lesson ends. If the other person agrees, the student gets a full refund and you aren’t paid.';
 
@@ -25,8 +28,8 @@ export function studentCancellationPolicyLines() {
     'Until your coach accepts, you can cancel for free — your card is only authorized.',
     'After your coach accepts, cancel at least 24 hours before the lesson for a full refund.',
     'Cancellations less than 24 hours before the lesson receive a 50% refund.',
+    WEATHER_TIMING_POLICY_LINE,
     STUDENT_WEATHER_POLICY_LINE,
-    'Weather isn’t a reason you can pick when cancelling on your own — send a weather cancellation request instead.',
     'If your coach cancels, you get a full refund.',
     'If you don’t show up, your payment isn’t automatically refunded and your reliability score is affected.',
   ];
@@ -37,8 +40,8 @@ export function coachCancellationPolicyLines() {
     'If you decline a request, the student’s card authorization is released and they aren’t charged.',
     'If you cancel an accepted lesson, the student gets a full refund and you aren’t paid for it.',
     'If the student cancels less than 24 hours before the lesson, they get 50% back and you’re paid your share of the rest.',
+    WEATHER_TIMING_POLICY_LINE,
     COACH_WEATHER_POLICY_LINE,
-    'Weather isn’t a reason you can pick when cancelling on your own — send a weather cancellation request instead.',
     'If the student doesn’t show up, mark Student no-show after the lesson. Their payment isn’t automatically refunded.',
   ];
 }
@@ -258,24 +261,29 @@ export function rescheduleHint(booking, audience, now = Date.now()) {
     : 'There is no reschedule option. To change the time, cancel this booking and book a new slot.';
 }
 
-/** Weather is a mutual cancellation, never a reason either side picks on their own. */
-export function cancelReasonsFor(reasons) {
-  return reasons.filter((r) => r.value !== 'weather');
+function weatherNeedsAgreement(booking, now) {
+  return booking?.status === 'confirmed' && isWithinLateCancelWindow(booking, now);
 }
 
-export const COACH_CANCEL_WARNING =
-  'Cancelling this booking may affect your reliability score. Please only cancel when necessary. Weather cancellations must be handled through a weather cancellation request.';
+/** Same for both sides: Weather is a cancel reason until 24h before a confirmed lesson, then mutual only. */
+export function cancelReasonsFor(reasons, booking, now = Date.now()) {
+  return weatherNeedsAgreement(booking, now) ? reasons.filter((r) => r.value !== 'weather') : reasons;
+}
+
+export const COACH_CANCEL_RELIABILITY_WARNING =
+  'Cancelling this booking may affect your reliability score. Please only cancel when necessary.';
+
+export const COACH_LATE_CANCEL_WEATHER_LINE =
+  'Weather cancellations must be handled through a weather cancellation request.';
 
 export const STUDENT_LATE_CANCEL_WEATHER_HINT =
   'Bad weather? Send your coach a weather cancellation request instead. If they agree, you get a full refund.';
 
-export const STUDENT_EARLY_CANCEL_WEATHER_HINT =
-  'Bad weather? Weather cancellations go through a weather cancellation request, which opens 24 hours before the lesson.';
-
 export function cancelWeatherHint(audience, booking, now = Date.now()) {
   if (booking?.status !== 'confirmed') return null;
-  if (audience === 'coach') return COACH_CANCEL_WARNING;
-  return isWithinLateCancelWindow(booking, now) ? STUDENT_LATE_CANCEL_WEATHER_HINT : STUDENT_EARLY_CANCEL_WEATHER_HINT;
+  const late = weatherNeedsAgreement(booking, now);
+  if (audience === 'coach') return late ? `${COACH_CANCEL_RELIABILITY_WARNING} ${COACH_LATE_CANCEL_WEATHER_LINE}` : COACH_CANCEL_RELIABILITY_WARNING;
+  return late ? STUDENT_LATE_CANCEL_WEATHER_HINT : null;
 }
 
 /** Cancel reasons are self-reported; say who sees them. */

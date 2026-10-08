@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
-  COACH_CANCEL_WARNING,
+  COACH_CANCEL_RELIABILITY_WARNING,
+  WEATHER_TIMING_POLICY_LINE,
   COACH_PENDING_IN_APP_STEP,
   cancelReasonsFor,
   cancelWeatherHint,
@@ -96,8 +97,8 @@ test('reliability only appears as the broad coach cancel warning; no reason is s
   assert.equal(cancelReasonSharedHint('student'), 'Select the reason that best describes your cancellation. It’s shared with your coach.');
   assert.match(cancelReasonSharedHint('coach'), /shared with your student/);
   assert.doesNotMatch(policySrc, /doesn’t affect your reliability|won’t affect your reliability|penalized/);
-  assert.equal((policySrc.match(/may affect your reliability/g) || []).length, 2, 'only COACH_CANCEL_WARNING (+ its doc comment)');
-  assert.doesNotMatch(COACH_CANCEL_WARNING, /sick|emergenc|excus/i, 'doesn’t reveal which reasons are reliability-neutral');
+  assert.equal((policySrc.match(/may affect your reliability/g) || []).length, 2, 'only COACH_CANCEL_RELIABILITY_WARNING (+ the doc comment)');
+  assert.doesNotMatch(COACH_CANCEL_RELIABILITY_WARNING, /sick|emergenc|excus|weather/i, 'doesn’t reveal which reasons are reliability-neutral');
   const cancelForm = detailSrc.slice(detailSrc.indexOf('function CancelForm'), detailSrc.indexOf('function DeclineForm'));
   const declineForm = detailSrc.slice(detailSrc.indexOf('function DeclineForm'), detailSrc.indexOf('function DeclineForm') + 3000);
   assert.doesNotMatch(cancelForm, RELIABILITY_WORDING);
@@ -149,27 +150,37 @@ test('reschedule hint: same rule for both sides, role-specific action', () => {
   assert.match(detailSrc, /title: 'Need a different time\?', body: reschedule/, 'shown in What happens next');
 });
 
-test('Weather is never a unilateral cancel reason, for either side, at any time', () => {
-  const values = cancelReasonsFor(CANCEL_REASONS).map((r) => r.value);
-  assert.equal(values.includes('weather'), false);
-  for (const r of ['emergency', 'sickness', 'schedule_conflict']) assert.ok(values.includes(r), r);
-  assert.match(detailSrc, /reasons=\{cancelReasonsFor\(CANCEL_REASONS\)\}/);
+test('Weather: either side can pick it until 24h before; inside 24h it needs the other to agree', () => {
+  const values = (hours, status = 'confirmed') =>
+    cancelReasonsFor(CANCEL_REASONS, { status, scheduled_at: at(hours) }, NOW).map((r) => r.value);
+  assert.equal(values(72).includes('weather'), true);
+  assert.equal(values(24 + 1 / 60).includes('weather'), true);
+  assert.equal(values(24 - 1 / 60).includes('weather'), false);
+  assert.equal(values(2).includes('weather'), false);
+  for (const r of ['emergency', 'sickness', 'schedule_conflict']) assert.ok(values(2).includes(r), r);
+  assert.equal(values(2, 'pending').includes('weather'), true, 'pending cancels are free');
+  assert.match(detailSrc, /reasons=\{cancelReasonsFor\(CANCEL_REASONS, booking, now\)\}/);
 
   const hint = (audience, hours, status = 'confirmed') => cancelWeatherHint(audience, { status, scheduled_at: at(hours) }, NOW);
+  assert.equal(hint('coach', 72), 'Cancelling this booking may affect your reliability score. Please only cancel when necessary.');
   assert.equal(
-    COACH_CANCEL_WARNING,
+    hint('coach', 2),
     'Cancelling this booking may affect your reliability score. Please only cancel when necessary. Weather cancellations must be handled through a weather cancellation request.',
   );
-  for (const hours of [72, 30, 2]) assert.equal(hint('coach', hours), COACH_CANCEL_WARNING);
   assert.equal(hint('student', 2), 'Bad weather? Send your coach a weather cancellation request instead. If they agree, you get a full refund.');
-  assert.equal(hint('student', 72), 'Bad weather? Weather cancellations go through a weather cancellation request, which opens 24 hours before the lesson.');
+  assert.equal(hint('student', 72), null);
   assert.equal(hint('student', 2, 'pending'), null, 'pending cancels are free');
-  for (const h of [hint('student', 2), hint('student', 72)]) assert.doesNotMatch(h, RELIABILITY_WORDING);
+  assert.doesNotMatch(hint('student', 2), RELIABILITY_WORDING);
   assert.match(detailSrc, /cancelWeatherHint\(isCoach \? 'coach' : 'student', booking, now\)/);
 
-  const weatherRule = /Weather isn’t a reason you can pick when cancelling on your own — send a weather cancellation request instead\./;
-  assert.match(coachCancellationPolicyLines().join('\n'), weatherRule);
-  assert.match(studentCancellationPolicyLines().join('\n'), weatherRule);
+  assert.equal(
+    WEATHER_TIMING_POLICY_LINE,
+    'Weather cancellations are available up to 24 hours before the lesson. Inside 24 hours, both sides must agree to a weather cancellation.',
+  );
+  for (const lines of [coachCancellationPolicyLines(), studentCancellationPolicyLines()]) {
+    assert.ok(lines.includes(WEATHER_TIMING_POLICY_LINE));
+    assert.doesNotMatch(lines.join('\n'), /Weather isn’t a reason you can pick/);
+  }
 });
 
 test('booking changes only count in PickleCoach: checkout, coach pending request, messages', () => {

@@ -15,11 +15,12 @@
  * Scenarios:
  *   p1 — student cancels a pending booking
  *   p2 — coach declines a pending booking
- *   c1 — student cancels a confirmed booking ≥24h out: Weather isn't offered; cancel with Schedule conflict (full refund)
- *   c2 — coach cancels confirmed bookings ≥24h out: reliability warning shown, Weather isn't offered
+ *   c1 — student cancels a confirmed booking ≥24h out with reason Weather (full refund, no reliability hit)
+ *   c2 — coach cancels confirmed bookings ≥24h out: one with Weather (no reliability hit), one with Schedule conflict
  *   c3 — student cancels a confirmed booking <24h out with reason Schedule conflict (50% refund, reliability hit)
  *   c4 — student, confirmed <24h out: Weather isn't a cancel reason; sends a weather request instead
  *   c5 — student cancels a confirmed booking <24h out with reason Sickness (50% refund, no reliability hit)
+ *   c6 — coach, confirmed <24h out: Weather isn't a cancel reason; full warning shown
  *   w1 — student already asked to cancel for weather (+ "rain" chat message); coach accepts or declines
  *   w2 — coach already asked to cancel for weather; student accepts (full refund) or declines
  *   w3 — lesson ended 2h ago: either side can still send a weather request (open until 24h after the end)
@@ -263,9 +264,9 @@ const SCENARIOS = {
     action: 'Decline request → write a message to the student → pick a reason → Decline request',
   },
   c1: {
-    title: 'C1 — Student cancels confirmed ≥24h before (Weather not offered)',
+    title: 'C1 — Student cancels confirmed ≥24h before, reason Weather',
     loginAs: STUDENT_EMAIL,
-    action: 'Cancel booking → Weather isn’t in the list (hint: requests open 24h before) → reason Schedule conflict → confirm (full refund)',
+    action: 'Cancel booking → reason Weather → confirm (full refund, affects_reliability = false)',
     confirmed: true,
   },
   c2: {
@@ -273,8 +274,8 @@ const SCENARIOS = {
     loginAs: COACH_EMAIL,
     confirmed: true,
     bookings: [
-      { label: 'C2a', action: 'Cancel booking → see the reliability warning; Weather isn’t in the list → reason Schedule conflict → confirm' },
-      { label: 'C2b', action: 'Cancel booking → reason Sickness → confirm (student still gets a full refund)' },
+      { label: 'C2a (Weather)', action: 'Cancel booking → see the reliability warning → reason Weather → confirm (student full refund, affects_reliability = false)' },
+      { label: 'C2b (non-weather)', action: 'Cancel booking → reason Schedule conflict → confirm (student full refund, affects_reliability = true)' },
     ],
   },
   c3: {
@@ -299,6 +300,17 @@ const SCENARIOS = {
     loginAs: STUDENT_EMAIL,
     confirmed: true,
     bookings: [{ label: null, hoursOut: 10, action: 'Cancel booking → reason Sickness → confirm (expect 50% refund, affects_reliability = false)' }],
+  },
+  c6: {
+    title: 'C6 — Coach, confirmed <24h before: Weather needs the student to agree',
+    loginAs: COACH_EMAIL,
+    confirmed: true,
+    bookings: [{
+      label: null,
+      hoursOut: 18,
+      action: 'Cancel booking → Weather isn’t in the list; the warning ends “Weather cancellations must be handled through a weather cancellation request.” '
+        + 'Close the form and send a weather cancellation request instead',
+    }],
   },
   w1: {
     title: 'W1 — Student asked to cancel for weather; coach responds',

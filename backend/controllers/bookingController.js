@@ -1038,7 +1038,7 @@ export async function runPreLessonCancel(req, res, mutualWeather = null) {
 
       if (!mutualWeather) {
         assertPreLessonCancelAllowed(booking.scheduled_at, new Date());
-        assertWeatherNeedsAgreement(booking, actorRole, reason);
+        assertWeatherNeedsAgreement(booking, actorRole, reason, new Date());
       }
 
       // Reliability starts once the coach accepts; backing out of a pending request is free for everyone.
@@ -1383,16 +1383,18 @@ export const STUDENT_WEATHER_CANCEL_NEEDS_AGREEMENT_CODE = 'student_weather_canc
 export const COACH_WEATHER_CANCEL_NEEDS_AGREEMENT_CODE = 'coach_weather_cancel_requires_agreement';
 
 /**
- * Weather is never a unilateral cancel reason on a confirmed lesson, for either side and at any time:
- * it's a mutual cancellation (one asks, the other agrees). Other reasons follow the normal rules.
+ * Either side may cancel a confirmed lesson for Weather until 24h before it. Inside 24h, Weather is a
+ * mutual cancellation (one asks, the other agrees). Other reasons follow the normal rules.
  */
-function assertWeatherNeedsAgreement(booking, actorRole, reason) {
+function assertWeatherNeedsAgreement(booking, actorRole, reason, now) {
   if (booking.status !== 'confirmed' || reason !== 'weather') return;
   if (actorRole !== 'student' && actorRole !== 'coach') return;
+  const hoursUntil = (new Date(booking.scheduled_at).getTime() - now.getTime()) / (60 * 60 * 1000);
+  if (hoursUntil >= 24) return;
   const other = actorRole === 'student' ? 'your coach' : 'the student';
   const err = new Error(
-    `A weather cancellation needs ${other} to agree. From 24 hours before the lesson, send a weather `
-      + 'cancellation request, or cancel with a different reason.',
+    `Within 24 hours of the lesson, a weather cancellation needs ${other} to agree. `
+      + 'Send a weather cancellation request, or cancel with a different reason.',
   );
   err.statusCode = 400;
   err.code = actorRole === 'student' ? STUDENT_WEATHER_CANCEL_NEEDS_AGREEMENT_CODE : COACH_WEATHER_CANCEL_NEEDS_AGREEMENT_CODE;

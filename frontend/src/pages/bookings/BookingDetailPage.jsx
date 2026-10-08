@@ -698,7 +698,7 @@ export function BookingDetailPage({ admin = false }) {
         <CancelForm
           busy={busy}
           audience={isCoach ? 'coach' : 'student'}
-          reasons={cancelReasonsFor(CANCEL_REASONS)}
+          reasons={cancelReasonsFor(CANCEL_REASONS, booking, now)}
           weatherHint={cancelWeatherHint(isCoach ? 'coach' : 'student', booking, now)}
           consequence={cancelMoneyConsequenceCopy(booking, payment, { audience: isCoach ? 'coach' : 'student' })}
           onSubmit={(body) => run(() => bookingsApi.cancel(id, body))}
