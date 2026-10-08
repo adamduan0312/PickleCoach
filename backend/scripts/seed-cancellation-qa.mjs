@@ -9,6 +9,7 @@
  *   node scripts/seed-cancellation-qa.mjs --scenario=all  # clear + seed every scenario below at once
  *   node scripts/seed-cancellation-qa.mjs --scenario=p1   # clear + seed one scenario (p1 default)
  *   node scripts/seed-cancellation-qa.mjs --scenario=c4 --keep   # seed without clearing earlier QA bookings
+ *   node scripts/seed-cancellation-qa.mjs --scenario=c6 --keep --hour=18   # pick a free booking hour (NY time, 3 days out)
  *   node scripts/seed-cancellation-qa.mjs --clear-only
  *   node scripts/seed-cancellation-qa.mjs --verify=<bookingId>
  *
@@ -396,7 +397,7 @@ async function main() {
       for (const [key, value] of Object.entries(SCENARIOS)) await seedScenario(key, value, nextHour, { verbose: false });
       console.log('\nCheckout copy: open any coach profile and go to checkout (no seed needed). The cancel / reschedule copy is on each booking page under "What happens next".');
     } else {
-      if (PLAIN_HOURS[scenario]) hour = PLAIN_HOURS[scenario];
+      hour = Number(arg('hour')) || PLAIN_HOURS[scenario] || hour;
       await seedScenario(scenario, steps, nextHour, { verbose: true });
     }
   });
