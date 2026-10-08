@@ -234,6 +234,8 @@ export const COACH_PENDING_IN_APP_STEP = {
   body: 'Cancellations, weather cancellations and attendance only count when completed in PickleCoach. Agreements in messages or by text don’t change the booking.',
 };
 
+export const MESSAGES_BOOKING_CHANGES_TITLE = 'Keep booking changes on the booking page';
+
 export const MESSAGES_BOOKING_CHANGES_NOTE =
   'Agreeing here to cancel or change the lesson doesn’t update the booking. Use the booking page to cancel, ask to cancel for weather, or report an issue.';
 

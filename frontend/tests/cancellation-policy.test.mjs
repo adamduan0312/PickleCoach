@@ -8,6 +8,7 @@ import {
   cancelWeatherHint,
   IN_APP_BOOKING_CHANGES_LINE,
   MESSAGES_BOOKING_CHANGES_NOTE,
+  MESSAGES_BOOKING_CHANGES_TITLE,
   cancelReasonSharedHint,
   cancellationPolicySummary,
   coachCancellationPolicyLines,
@@ -181,6 +182,13 @@ test('booking changes only count in PickleCoach: checkout, coach pending request
   assert.match(pendingCoach, /COACH_PENDING_IN_APP_STEP/);
 
   const messagesSrc = readFileSync(new URL('../src/pages/messages/MessagesPages.jsx', import.meta.url), 'utf8');
-  assert.match(messagesSrc, /!locked && data\.booking_id \? \(\s*<p className="small muted chat-booking-changes-note">\{MESSAGES_BOOKING_CHANGES_NOTE\}<\/p>/);
+  const chatCard = messagesSrc.slice(messagesSrc.indexOf('className={`card chat'));
+  assert.ok(
+    chatCard.indexOf('chat-booking-changes-note') < chatCard.indexOf('className="chat-list"'),
+    'notice sits at the top of the conversation, before the messages',
+  );
+  assert.ok(messagesSrc.indexOf('View booking') < messagesSrc.indexOf('chat-booking-changes-note'), 'below the booking header');
+  assert.match(chatCard, /!locked && data\.booking_id \? \(\s*<div className="chat-booking-changes-note">/);
+  assert.equal(MESSAGES_BOOKING_CHANGES_TITLE, 'Keep booking changes on the booking page');
   assert.match(MESSAGES_BOOKING_CHANGES_NOTE, /doesn’t update the booking\. Use the booking page/);
 });
