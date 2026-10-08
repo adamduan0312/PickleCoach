@@ -6,7 +6,8 @@
  * checkout flow: booking intent → Stripe test card authorization → POST /bookings/confirm.
  *
  * Usage (from backend/, API on :4000):
- *   node scripts/seed-cancellation-qa.mjs --scenario=p1   # clear + seed (p1 default, p2)
+ *   node scripts/seed-cancellation-qa.mjs --scenario=all  # clear + seed every scenario below at once
+ *   node scripts/seed-cancellation-qa.mjs --scenario=p1   # clear + seed one scenario (p1 default)
  *   node scripts/seed-cancellation-qa.mjs --scenario=c4 --keep   # seed without clearing earlier QA bookings
  *   node scripts/seed-cancellation-qa.mjs --clear-only
  *   node scripts/seed-cancellation-qa.mjs --verify=<bookingId>
@@ -16,8 +17,15 @@
  *   p2 — coach declines a pending booking
  *   c1 — student cancels a confirmed booking ≥24h out with reason Weather
  *   c2 — coach cancels confirmed bookings ≥24h out: one with Weather, one with Schedule conflict
- *   c3 — student cancels a confirmed booking <24h out with reason Schedule conflict (late, penalized)
- *   c4 — student cancels a confirmed booking <24h out with reason Weather (late money rules, no reliability hit)
+ *   c3 — student cancels a confirmed booking <24h out with reason Schedule conflict (50% refund, reliability hit)
+ *   c4 — student, confirmed <24h out: Weather isn't a cancel reason; sends a weather request instead
+ *   c5 — student cancels a confirmed booking <24h out with reason Sickness (50% refund, no reliability hit)
+ *   w1 — student already asked to cancel for weather (+ "rain" chat message); coach accepts or declines
+ *   w2 — coach already asked to cancel for weather; student accepts (full refund) or declines
+ *   w3 — lesson ended 2h ago: either side can still send a weather request (open until 24h after the end)
+ *
+ * The coach's recurring availability only covers a few hours, so seeding adds a temporary
+ * all-week window for checkout and deletes it again before exiting.
  *
  * Accounts (password Test1234!Ab):
  *   student adamduan0312@gmail.com, coach adamduan0312+coach@gmail.com
@@ -38,6 +46,7 @@ const PASSWORD = 'Test1234!Ab';
 const STUDENT_EMAIL = 'adamduan0312@gmail.com';
 const COACH_EMAIL = 'adamduan0312+coach@gmail.com';
 const KEY_PREFIX = 'qa_cancel_seed_';
+const RAIN_MESSAGE = 'Forecast says heavy rain tomorrow — want to just cancel?';
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
 const { sequelize, Booking, Payment, PaymentAction, Payout, CancellationHistory, Lesson, CoachCourtLocation, User } =
@@ -140,6 +149,42 @@ function slot(daysOut, hour) {
   return new Date(guess.getTime() - (Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute) - guess.getTime())).toISOString();
 }
 
+async function withTemporaryAvailability(coachId, fn) {
+  const [rows] = await sequelize.query('SHOW COLUMNS FROM coach_availabilities');
+  const hasTimestamps = rows.some((r) => r.Field === 'updated_at');
+  const ids = [];
+  try {
+    for (let weekday = 0; weekday < 7; weekday += 1) {
+      const [id] = await sequelize.query(
+        `INSERT INTO coach_availabilities (coach_id, weekday, start_time, end_time, created_at${hasTimestamps ? ', updated_at' : ''})
+         VALUES (:coachId, :weekday, '06:00:00', '22:00:00', NOW()${hasTimestamps ? ', NOW()' : ''})`,
+        { replacements: { coachId, weekday } },
+      );
+      ids.push(id);
+    }
+    return await fn();
+  } finally {
+    if (ids.length) await sequelize.query('DELETE FROM coach_availabilities WHERE id IN (:ids)', { replacements: { ids } });
+  }
+}
+
+async function sendChat(bookingId, email, text) {
+  const token = await login(email);
+  const conv = await api('POST', '/messages/conversations', { token, body: { booking_id: bookingId } });
+  const conversationId = conv.json.data?.id ?? conv.json.data?.conversation?.id;
+  if (!conversationId) throw new Error(`Conversation create failed: ${conv.status} ${conv.json.message || ''}`);
+  const sent = await api('POST', '/messages/send', { token, body: { conversation_id: conversationId, message_text: text } });
+  if (![200, 201].includes(sent.status)) throw new Error(`Send message failed: ${sent.status} ${sent.json.message || ''}`);
+}
+
+async function requestWeather(bookingId, email) {
+  const res = await api('POST', `/bookings/${bookingId}/weather-cancellation`, {
+    token: await login(email),
+    body: { note: 'Thunderstorms forecast all afternoon.' },
+  });
+  if (res.status !== 201) throw new Error(`Weather request failed: ${res.status} ${res.json.message || ''}`);
+}
+
 async function seedPendingBooking(scenario, scheduledAt) {
   const { coach } = await users();
   const lesson = await Lesson.findOne({ where: { coach_id: coach.id, is_active: true, deleted_at: null }, order: [['id', 'ASC']] });
@@ -239,12 +284,86 @@ const SCENARIOS = {
     bookings: [{ label: null, hour: 10, hoursOut: 12, action: 'Cancel booking → reason Schedule conflict → confirm' }],
   },
   c4: {
-    title: 'C4 — Student cancels confirmed <24h before, reason Weather (late, no mutual agreement)',
+    title: 'C4 — Student, confirmed <24h before: Weather needs the coach to agree',
     loginAs: STUDENT_EMAIL,
     confirmed: true,
-    bookings: [{ label: null, hour: 15, hoursOut: 14, action: 'Cancel booking → reason Weather → confirm (do NOT use the weather request card)' }],
+    bookings: [{
+      label: null,
+      hoursOut: 14,
+      action: 'Cancel booking → Weather isn’t in the reason list, and the form points to the weather request. '
+        + 'Close the form, send a weather cancellation request, then log in as the coach to accept or decline it',
+    }],
+  },
+  c5: {
+    title: 'C5 — Student cancels confirmed <24h before, reason Sickness (50%, excused)',
+    loginAs: STUDENT_EMAIL,
+    confirmed: true,
+    bookings: [{ label: null, hoursOut: 10, action: 'Cancel booking → reason Sickness → confirm (expect 50% refund, affects_reliability = false)' }],
+  },
+  w1: {
+    title: 'W1 — Student asked to cancel for weather; coach responds',
+    loginAs: COACH_EMAIL,
+    confirmed: true,
+    bookings: [{
+      label: null,
+      hoursOut: 16,
+      chat: [[STUDENT_EMAIL, RAIN_MESSAGE]],
+      weatherRequestBy: STUDENT_EMAIL,
+      action: 'Messages: see the reminder above the message box. Booking page: accept (full refund, $0 payout) or decline (booking stays active)',
+    }],
+  },
+  w2: {
+    title: 'W2 — Coach asked to cancel for weather; student responds',
+    loginAs: STUDENT_EMAIL,
+    confirmed: true,
+    bookings: [{
+      label: null,
+      hoursOut: 20,
+      weatherRequestBy: COACH_EMAIL,
+      action: 'Accept the weather request (full refund) or decline it (booking stays active; cancelling is then 50%)',
+    }],
+  },
+  w3: {
+    title: 'W3 — Lesson already ended 2h ago: weather request still open',
+    loginAs: STUDENT_EMAIL,
+    confirmed: true,
+    bookings: [{
+      label: null,
+      hoursOut: -3,
+      action: 'Send a weather cancellation request (open until 24h after the lesson ends); then accept it as the coach',
+    }],
   },
 };
+
+const PLAIN_HOURS = { p1: 7, p2: 8, c1: 9 };
+
+async function seedScenario(scenario, steps, nextHour, { verbose }) {
+  const plan = (steps.bookings || [{ label: null, action: steps.action }]);
+  console.log(`\n${steps.title}\n  Log in:  ${steps.loginAs} / ${PASSWORD}`);
+  for (const b of plan) {
+    const { bookingId, piId, lesson } = await seedPendingBooking(scenario, slot(3, nextHour()));
+    if (steps.confirmed) {
+      const accept = await api('PUT', `/bookings/${bookingId}/accept`, { token: await login(COACH_EMAIL) });
+      if (accept.status !== 200) throw new Error(`Coach accept failed: ${accept.status} ${accept.json.message || ''}`);
+    }
+    if (b.hoursOut) {
+      // Checkout requires advance notice, so book days out and then pull the lesson into the window under test.
+      await Booking.update(
+        { scheduled_at: new Date(Date.now() + b.hoursOut * 3600000) },
+        { where: { id: bookingId } },
+      );
+    }
+    for (const [email, text] of b.chat || []) await sendChat(bookingId, email, text);
+    if (b.weatherRequestBy) await requestWeather(bookingId, b.weatherRequestBy);
+    const when = b.hoursOut == null ? '' : b.hoursOut < 0 ? `, lesson started ${-b.hoursOut}h ago` : `, lesson moved to ${b.hoursOut}h from now`;
+    console.log(`
+  ${b.label ? `${b.label} — ` : ''}Booking #${bookingId}: "${lesson.title}", ${steps.confirmed ? 'confirmed by the coach, card charged' : 'pending (waiting for coach), card authorized'}${when}
+  Open:    http://localhost:5173/bookings/${bookingId}
+  Do:      ${b.action}
+  Then:    node scripts/seed-cancellation-qa.mjs --verify=${bookingId}`);
+    if (verbose) await verify(bookingId);
+  }
+}
 
 async function main() {
   const verifyId = arg('verify');
@@ -252,33 +371,23 @@ async function main() {
 
   const scenario = (arg('scenario') || 'p1').toLowerCase();
   const steps = SCENARIOS[scenario];
-  if (!steps && !hasFlag('clear-only')) throw new Error(`Unknown scenario "${scenario}" (use ${Object.keys(SCENARIOS).join(', ')})`);
+  if (!steps && scenario !== 'all' && !hasFlag('clear-only')) throw new Error(`Unknown scenario "${scenario}" (use ${Object.keys(SCENARIOS).join(', ')})`);
 
   if (!hasFlag('keep')) await clearSeeded();
   if (hasFlag('clear-only')) return;
 
-  const plan = steps.bookings || [{ label: null, hour: 10, action: steps.action }];
-  console.log(`\n${steps.title}\n  Log in:  ${steps.loginAs} / ${PASSWORD}`);
-  for (const b of plan) {
-    const { bookingId, piId, lesson } = await seedPendingBooking(scenario, slot(3, b.hour));
-    if (steps.confirmed) {
-      const accept = await api('PUT', `/bookings/${bookingId}/accept`, { token: await login(COACH_EMAIL) });
-      if (accept.status !== 200) throw new Error(`Coach accept failed: ${accept.status} ${accept.json.message || ''}`);
+  const { coach } = await users();
+  let hour = 7;
+  const nextHour = () => hour++;
+  await withTemporaryAvailability(coach.id, async () => {
+    if (scenario === 'all') {
+      for (const [key, value] of Object.entries(SCENARIOS)) await seedScenario(key, value, nextHour, { verbose: false });
+      console.log('\nCheckout copy: open any coach profile and go to checkout (no seed needed). The cancel / reschedule copy is on each booking page under "What happens next".');
+    } else {
+      if (PLAIN_HOURS[scenario]) hour = PLAIN_HOURS[scenario];
+      await seedScenario(scenario, steps, nextHour, { verbose: true });
     }
-    if (b.hoursOut) {
-      // Checkout requires advance notice, so book days out and then pull the lesson inside the late window.
-      await Booking.update(
-        { scheduled_at: new Date(Date.now() + b.hoursOut * 3600000) },
-        { where: { id: bookingId } },
-      );
-    }
-    console.log(`
-  ${b.label ? `${b.label} — ` : ''}Booking #${bookingId}: "${lesson.title}", ${steps.confirmed ? 'confirmed by the coach, card charged' : 'pending (waiting for coach), card authorized'} via ${piId}${b.hoursOut ? `, lesson moved to ${b.hoursOut}h from now` : ''}
-  Open:    http://localhost:5173/bookings/${bookingId}
-  Do:      ${b.action}
-  Then:    node scripts/seed-cancellation-qa.mjs --verify=${bookingId}`);
-    await verify(bookingId);
-  }
+  });
 }
 
 main()
