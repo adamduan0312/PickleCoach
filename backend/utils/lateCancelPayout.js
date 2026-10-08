@@ -4,7 +4,7 @@ export const LATE_CANCELLATION_PENALTY_REASON = 'Late cancellation';
 
 /** Coach-facing copy for cancellation policy UI / help screens. */
 export const COACH_LATE_STUDENT_CANCEL_HELP_TEXT =
-  'Students can’t cancel a confirmed lesson within 24 hours of the lesson start time. For bad weather, either of you can ask to cancel for weather, until 24 hours after the lesson ends; if the other person agrees, the student gets a full refund and there is no coach payout. A booking that is still pending (payment only authorized, before coach accept) can be cancelled anytime; the authorization is released in full and no coach payout applies.';
+  'Student cancellations made within 24 hours of the lesson start time receive a 50% refund when payment was captured. The remaining amount is split between coach payout and the platform commission (same ratio as a completed lesson). Weather is the exception: within 24 hours, either of you can ask to cancel for weather (until 24 hours after the lesson ends); if the other person agrees, the student gets a full refund and there is no coach payout. If payment was only authorized and not yet captured (e.g. pending booking before coach accept), the authorization is released in full and no coach payout applies.';
 
 /** Student late cancel with retained penalty — coach receives normal payout share of net retained. */
 export const isLateCancelRetainedRevenueEligible = ({

@@ -3,7 +3,8 @@
  *
  *   1. Student asks within 24h, coach accepts → cancelled, 100% refund queued, no late-cancel payout,
  *      no reliability impact, request accepted, requester notified.
- *   2. Coach asks, student declines → lesson stays on; the student still cannot cancel inside 24h.
+ *   2. Coach asks, student declines → lesson stays on; the student can't cancel for Weather on their own,
+ *      but a normal late cancel (50%) still works.
  *   3. A request still pending after the lesson can be accepted during the 24h review window
  *      (awaiting_verification → cancelled, full refund, no payout); the window closing expires it.
  *   4. Opening a dispute closes a pending request and blocks new ones.
@@ -197,7 +198,7 @@ describeHttp('HTTP integration: mutual weather cancellation', () => {
     assert.equal(plainCancelToCoach, 0, 'the coach accepted in-app; no generic "student cancelled" notice');
   });
 
-  it('coach asks, student declines → lesson stays on; the student still cannot cancel inside 24h', async () => {
+  it('coach asks, student declines → lesson stays on; later student cancel is a normal late cancel', async () => {
     await freshFixture();
     const { baseUrl } = server;
     const bookingId = await confirmedBooking(baseUrl, fixture, tokens, 'weather_decline', 5);
@@ -227,9 +228,18 @@ describeHttp('HTTP integration: mutual weather cancellation', () => {
       body: { reason: 'weather' },
     });
     assert.equal(cancelRes.status, 400, cancelRes.text);
-    assert.equal(cancelRes.json.code, 'student_late_cancel_unavailable');
+    assert.equal(cancelRes.json.code, 'student_weather_cancel_requires_agreement');
     assert.equal((await Booking.findByPk(bookingId)).status, 'confirmed');
-    assert.equal(await PaymentAction.count({ where: { booking_id: bookingId, action_type: 'booking_cancel_refund' } }), 0);
+
+    const lateCancel = await api(baseUrl, 'POST', `/api/bookings/${bookingId}/cancel`, {
+      token: tokens.student,
+      body: { reason: 'schedule_conflict' },
+    });
+    assert.equal(lateCancel.status, 200, lateCancel.text);
+    const payment = await Payment.findOne({ where: { booking_id: bookingId } });
+    const totalCents = Math.round(Number(payment.total_charge_to_student) * 100);
+    const [action] = await PaymentAction.findAll({ where: { booking_id: bookingId, action_type: 'booking_cancel_refund' } });
+    assert.equal(action.refund_cents, Math.floor(totalCents / 2));
 
     const coachDeclinedNotice = await eventuallyCount({ user_id: fixture.coach.id, type: 'weather_cancellation_declined', entity_id: bookingId });
     assert.ok(coachDeclinedNotice >= 1);
@@ -245,8 +255,8 @@ describeHttp('HTTP integration: mutual weather cancellation', () => {
     const requestId = reqRes.json.data.weather_cancellation.request.id;
 
     const cancelRes = await api(baseUrl, 'POST', `/api/bookings/${bookingId}/cancel`, { token: tokens.student, body: { reason: 'weather' } });
-    assert.equal(cancelRes.status, 400, 'a pending request does not unlock a unilateral cancel');
-    assert.equal(cancelRes.json.code, 'student_late_cancel_unavailable');
+    assert.equal(cancelRes.status, 400, 'a pending request does not unlock a unilateral Weather cancel');
+    assert.equal(cancelRes.json.code, 'student_weather_cancel_requires_agreement');
 
     // Lesson ended 3h ago and the worker moved it to awaiting_verification.
     await Booking.update(

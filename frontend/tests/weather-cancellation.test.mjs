@@ -51,7 +51,7 @@ const pending = (overrides) => ({
 test('policy lists name weather as an agreed exception, not an automatic refund', () => {
   assert.ok(studentCancellationPolicyLines().includes(STUDENT_WEATHER_POLICY_LINE));
   assert.ok(coachCancellationPolicyLines().includes(COACH_WEATHER_POLICY_LINE));
-  assert.match(STUDENT_WEATHER_POLICY_LINE, /Ask your coach.*If they agree, you get a full refund/);
+  assert.match(STUDENT_WEATHER_POLICY_LINE, /Send your coach a weather cancellation request.*If they agree, you get a full refund/);
   assert.match(COACH_WEATHER_POLICY_LINE, /If the other person agrees.*you aren’t paid/);
 });
 
@@ -60,10 +60,10 @@ test('policy lines: weather requests stay open until 24h after the lesson', () =
   assert.match(COACH_WEATHER_POLICY_LINE, /until 24 hours after the lesson ends/);
 });
 
-test('late student summary: can’t cancel, weather needs the coach to agree', () => {
+test('late student summary: 50% to cancel, weather needs the coach to agree', () => {
   const summary = cancellationPolicySummary(booking({ block: { can_request: true } }), { audience: 'student', now: NOW, tz: TZ });
-  assert.equal(summary.headline, 'This lesson can no longer be cancelled');
-  assert.match(summary.body, /send your coach a weather cancellation request — if they agree, you get a full refund/);
+  assert.equal(summary.headline, 'Cancelling now refunds 50%');
+  assert.match(summary.body, /send your coach a weather cancellation request instead — if they agree, you get a full refund/);
 });
 
 test('available: explains both outcomes per audience', () => {

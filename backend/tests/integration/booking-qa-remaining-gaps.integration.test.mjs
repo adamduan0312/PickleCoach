@@ -340,7 +340,7 @@ describeHttp('HTTP integration: booking QA remaining gaps', () => {
     void cancelsBefore;
   });
 
-  it('student cancel boundaries: ≥24h full, <24h blocked when confirmed, exactly 24h full, pending voids', async () => {
+  it('student cancel boundaries: ≥24h full, <24h ~50% (Weather needs agreement), exactly 24h full, pending voids', async () => {
     if (fixture?.cleanup) await fixture.cleanup();
     fixture = await createBookingJourneyFixture();
     const { baseUrl } = server;
@@ -381,7 +381,7 @@ describeHttp('HTTP integration: booking QA remaining gaps', () => {
       assert.equal(refundActions.length, 0);
     }
 
-    async function cancelConfirmedAtOffsetHours(hoursUntil, key) {
+    async function cancelConfirmedAtOffsetHours(hoursUntil, key, body = CANCEL_BODY) {
       const { bookingId } = await createCapturedConfirmedBooking(
         baseUrl,
         fixture,
@@ -395,7 +395,7 @@ describeHttp('HTTP integration: booking QA remaining gaps', () => {
       );
       const cancelRes = await api(baseUrl, 'POST', `/api/bookings/${bookingId}/cancel`, {
         token: studentToken,
-        body: CANCEL_BODY,
+        body,
       });
       assert.equal(cancelRes.status, 200, cancelRes.text);
       const action = await PaymentAction.findOne({
@@ -420,31 +420,36 @@ describeHttp('HTTP integration: booking QA remaining gaps', () => {
     assert.equal(earlyHistory.affects_reliability, true);
     assert.equal('affects_reliability' in (early.cancelRes.json?.data?.cancellation || {}), false);
 
-    async function expectLateCancelBlocked(hoursUntil, key) {
-      const { bookingId } = await createCapturedConfirmedBooking(baseUrl, fixture, studentToken, coachToken, key);
-      await Booking.update(
-        { scheduled_at: new Date(Date.now() + hoursUntil * 60 * 60 * 1000) },
-        { where: { id: bookingId } },
-      );
-      for (const reason of ['schedule_conflict', 'weather']) {
-        const cancelRes = await api(baseUrl, 'POST', `/api/bookings/${bookingId}/cancel`, {
-          token: studentToken,
-          body: { reason },
-        });
-        assert.equal(cancelRes.status, 400, cancelRes.text);
-        assert.equal(cancelRes.json?.code, 'student_late_cancel_unavailable');
-      }
+    const late = await cancelConfirmedAtOffsetHours(12, 'qa_cancel_late');
+    assert.equal(late.cancellationType, 'late');
+    assert.equal(late.refundCents, Math.floor(late.totalChargeCents / 2), '<24h ~50% refund');
+    const lateHistory = await CancellationHistory.findOne({ where: { booking_id: late.bookingId } });
+    assert.equal(lateHistory.affects_reliability, true);
+
+    const sick = await cancelConfirmedAtOffsetHours(12, 'qa_cancel_late_sick', { reason: 'sickness' });
+    assert.equal(sick.refundCents, Math.floor(sick.totalChargeCents / 2), 'excused reasons still get 50%');
+    const sickHistory = await CancellationHistory.findOne({ where: { booking_id: sick.bookingId } });
+    assert.equal(sickHistory.affects_reliability, false, 'sickness stays excused');
+
+    // Inside 24h, Weather needs the coach to agree (mutual weather request), so the student can't pick it.
+    {
+      const { bookingId } = await createCapturedConfirmedBooking(baseUrl, fixture, studentToken, coachToken, 'qa_cancel_late_weather');
+      await Booking.update({ scheduled_at: new Date(Date.now() + 12 * 60 * 60 * 1000) }, { where: { id: bookingId } });
+      const cancelRes = await api(baseUrl, 'POST', `/api/bookings/${bookingId}/cancel`, {
+        token: studentToken,
+        body: { reason: 'weather' },
+      });
+      assert.equal(cancelRes.status, 400, cancelRes.text);
+      assert.equal(cancelRes.json?.code, 'student_weather_cancel_requires_agreement');
       assert.equal((await Booking.findByPk(bookingId)).status, 'confirmed');
       assert.equal(await PaymentAction.count({ where: { booking_id: bookingId, action_type: 'booking_cancel_refund' } }), 0);
-      assert.equal(await CancellationHistory.count({ where: { booking_id: bookingId } }), 0);
     }
 
-    // Students cannot cancel a confirmed lesson inside 24h, for any reason (weather needs the coach to agree).
-    await expectLateCancelBlocked(12, 'qa_cancel_late');
-
-    // Boundary: blocked iff hoursUntil < 24. Use ±5s cushions so HTTP latency
+    // Boundary policy: late iff 0 ≤ hoursUntil < 24. Use ±5s cushions so HTTP latency
     // cannot flip the intended side of the cutoff.
-    await expectLateCancelBlocked(24 - 5 / 3600, 'qa_cancel_just_under_24');
+    const justUnder = await cancelConfirmedAtOffsetHours(24 - 5 / 3600, 'qa_cancel_just_under_24');
+    assert.equal(justUnder.cancellationType, 'late');
+    assert.equal(justUnder.refundCents, Math.floor(justUnder.totalChargeCents / 2));
 
     const atOrOver = await cancelConfirmedAtOffsetHours(24 + 5 / 3600, 'qa_cancel_at_or_over_24');
     assert.equal(

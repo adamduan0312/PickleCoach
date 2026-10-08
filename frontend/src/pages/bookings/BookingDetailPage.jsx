@@ -61,7 +61,7 @@ import {
   cancellationPolicyLines,
   cancellationPolicySummary,
   isMutualWeatherCancellation,
-  COACH_CANCEL_WEATHER_HINT,
+  cancelWeatherHint,
   COACH_PENDING_IN_APP_STEP,
   cancelReasonsFor,
   rescheduleHint,
@@ -694,10 +694,12 @@ export function BookingDetailPage({ admin = false }) {
           Student no-show
         </button>
       ) : null}
-      {(isStudent && canStudentCancel(booking, now)) || (isCoach && canCoachCancel(booking)) ? (
+      {(isStudent && canStudentCancel(booking)) || (isCoach && canCoachCancel(booking)) ? (
         <CancelForm
           busy={busy}
           audience={isCoach ? 'coach' : 'student'}
+          reasons={cancelReasonsFor(isCoach ? 'coach' : 'student', CANCEL_REASONS, booking, now)}
+          weatherHint={cancelWeatherHint(isCoach ? 'coach' : 'student', booking, now)}
           consequence={cancelMoneyConsequenceCopy(booking, payment, { audience: isCoach ? 'coach' : 'student' })}
           onSubmit={(body) => run(() => bookingsApi.cancel(id, body))}
         />
@@ -1298,7 +1300,7 @@ function WeatherCancellationSection({ view, audience, busy, onRequest, onAccept,
   );
 }
 
-function CancelForm({ onSubmit, busy, consequence, audience }) {
+function CancelForm({ onSubmit, busy, consequence, audience, reasons = CANCEL_REASONS, weatherHint = null }) {
   const [reason, setReason] = useState('');
   const [notes, setNotes] = useState('');
   return (
@@ -1315,9 +1317,9 @@ function CancelForm({ onSubmit, busy, consequence, audience }) {
           <p className="small muted" style={{ margin: '0 0 6px' }}>{cancelReasonSharedHint(audience)}</p>
           <select id="reason" value={reason} onChange={(e) => setReason(e.target.value)} required>
             <option value="" disabled>Select a reason</option>
-            {cancelReasonsFor(audience, CANCEL_REASONS).map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
+            {reasons.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
           </select>
-          {audience === 'coach' ? <p className="small muted" style={{ margin: '6px 0 0' }}>{COACH_CANCEL_WEATHER_HINT}</p> : null}
+          {weatherHint ? <p className="small muted" style={{ margin: '6px 0 0' }}>{weatherHint}</p> : null}
         </>
       </FormField>
       <FormField label="Notes (optional)" name="reason_notes">

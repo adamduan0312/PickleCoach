@@ -1038,7 +1038,7 @@ export async function runPreLessonCancel(req, res, mutualWeather = null) {
 
       if (!mutualWeather) {
         assertPreLessonCancelAllowed(booking.scheduled_at, new Date());
-        assertStudentMayCancel(booking, actorRole, new Date());
+        assertStudentWeatherNeedsAgreement(booking, actorRole, reason, new Date());
         assertCoachWeatherNeedsAgreement(booking, actorRole, reason);
       }
 
@@ -1380,7 +1380,7 @@ export async function runPreLessonCancel(req, res, mutualWeather = null) {
 
 const MUTUAL_WEATHER_CANCEL_NOTE = 'Cancelled for weather — agreed by both';
 
-export const STUDENT_LATE_CANCEL_BLOCKED_CODE = 'student_late_cancel_unavailable';
+export const STUDENT_WEATHER_CANCEL_NEEDS_AGREEMENT_CODE = 'student_weather_cancel_requires_agreement';
 export const COACH_WEATHER_CANCEL_NEEDS_AGREEMENT_CODE = 'coach_weather_cancel_requires_agreement';
 
 /** Weather is only penalty-free when the student agrees, so a coach can't pick it as a cancel reason. */
@@ -1394,17 +1394,20 @@ function assertCoachWeatherNeedsAgreement(booking, actorRole, reason) {
   throw err;
 }
 
-/** Students can't cancel a confirmed lesson inside 24 hours; pending requests stay free to cancel. */
-function assertStudentMayCancel(booking, actorRole, now) {
-  if (actorRole !== 'student' || booking.status !== 'confirmed') return;
+/**
+ * Inside 24h a confirmed lesson's Weather cancel is only penalty-free with the coach's agreement,
+ * so students send a weather request instead. Other reasons follow the normal late-cancel rules.
+ */
+function assertStudentWeatherNeedsAgreement(booking, actorRole, reason, now) {
+  if (actorRole !== 'student' || booking.status !== 'confirmed' || reason !== 'weather') return;
   const hoursUntil = (new Date(booking.scheduled_at).getTime() - now.getTime()) / (60 * 60 * 1000);
   if (hoursUntil >= 24) return;
   const err = new Error(
-    'Lessons can’t be cancelled less than 24 hours before they start. If it’s because of bad weather, '
-      + 'ask your coach to cancel for weather — if they agree, you get a full refund.',
+    'Within 24 hours of the lesson, a weather cancellation needs your coach to agree. '
+      + 'Send your coach a weather cancellation request — if they agree, you get a full refund.',
   );
   err.statusCode = 400;
-  err.code = STUDENT_LATE_CANCEL_BLOCKED_CODE;
+  err.code = STUDENT_WEATHER_CANCEL_NEEDS_AGREEMENT_CODE;
   err.booking_status = booking.status;
   throw err;
 }

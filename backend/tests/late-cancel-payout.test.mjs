@@ -94,9 +94,10 @@ describe('isLateCancelRefundSettledForPayout', () => {
 });
 
 describe('COACH_LATE_STUDENT_CANCEL_HELP_TEXT', () => {
-  it('says students can’t late-cancel and weather needs both to agree', () => {
-    assert.doesNotMatch(COACH_LATE_STUDENT_CANCEL_HELP_TEXT, /50%/);
-    assert.match(COACH_LATE_STUDENT_CANCEL_HELP_TEXT, /can’t cancel a confirmed lesson within 24 hours/);
+  it('includes 50% refund, coach / platform split, and the agreed-weather exception', () => {
+    assert.match(COACH_LATE_STUDENT_CANCEL_HELP_TEXT, /50%/);
+    assert.match(COACH_LATE_STUDENT_CANCEL_HELP_TEXT, /coach payout/i);
+    assert.match(COACH_LATE_STUDENT_CANCEL_HELP_TEXT, /platform commission/i);
     assert.match(COACH_LATE_STUDENT_CANCEL_HELP_TEXT, /if the other person agrees, the student gets a full refund and there is no coach payout/);
   });
 });
