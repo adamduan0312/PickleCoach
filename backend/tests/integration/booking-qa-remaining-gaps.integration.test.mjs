@@ -431,15 +431,15 @@ describeHttp('HTTP integration: booking QA remaining gaps', () => {
     const sickHistory = await CancellationHistory.findOne({ where: { booking_id: sick.bookingId } });
     assert.equal(sickHistory.affects_reliability, false, 'sickness stays excused');
 
-    // Inside 24h, Weather needs the coach to agree (mutual weather request), so the student can't pick it.
-    {
-      const { bookingId } = await createCapturedConfirmedBooking(baseUrl, fixture, studentToken, coachToken, 'qa_cancel_late_weather');
-      await Booking.update({ scheduled_at: new Date(Date.now() + 12 * 60 * 60 * 1000) }, { where: { id: bookingId } });
+    // Weather is never a unilateral reason on a confirmed lesson, early or late: it needs the coach to agree.
+    for (const hoursOut of [12, 72]) {
+      const { bookingId } = await createCapturedConfirmedBooking(baseUrl, fixture, studentToken, coachToken, `qa_cancel_weather_${hoursOut}h`);
+      await Booking.update({ scheduled_at: new Date(Date.now() + hoursOut * 60 * 60 * 1000) }, { where: { id: bookingId } });
       const cancelRes = await api(baseUrl, 'POST', `/api/bookings/${bookingId}/cancel`, {
         token: studentToken,
         body: { reason: 'weather' },
       });
-      assert.equal(cancelRes.status, 400, cancelRes.text);
+      assert.equal(cancelRes.status, 400, `${hoursOut}h: ${cancelRes.text}`);
       assert.equal(cancelRes.json?.code, 'student_weather_cancel_requires_agreement');
       assert.equal((await Booking.findByPk(bookingId)).status, 'confirmed');
       assert.equal(await PaymentAction.count({ where: { booking_id: bookingId, action_type: 'booking_cancel_refund' } }), 0);

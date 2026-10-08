@@ -2,11 +2,10 @@
  * Cancellation policy copy shown at decision points (checkout, accept, booking detail, cancel).
  *
  * Money follows who cancels and when (backend paymentEngine.computeCancellationSplitCents).
- * Inside 24h a student's cancel refunds 50%; weather instead needs the other person to agree
- * (mutual request, open until 24h after the lesson ends) and refunds in full. Coaches never pick
- * Weather on their own.
- * Reliability consequences of cancelling or declining are deliberately not shown to students or
- * coaches, so the reason they pick can't be tuned to the score.
+ * Inside 24h a student's cancel refunds 50%. Weather is never a unilateral reason for either side:
+ * it's a mutual request (open from 24h before until 24h after the lesson ends) that refunds in full.
+ * Which reasons are reliability-neutral is deliberately not shown, so the reason picked can't be
+ * tuned to the score; coaches only get a broad "may affect your reliability score" warning.
  */
 import { formatBookingWhenInZone, formatRemainingUntil } from '../utils/datetime.js';
 
@@ -27,6 +26,7 @@ export function studentCancellationPolicyLines() {
     'After your coach accepts, cancel at least 24 hours before the lesson for a full refund.',
     'Cancellations less than 24 hours before the lesson receive a 50% refund.',
     STUDENT_WEATHER_POLICY_LINE,
+    'Weather isn’t a reason you can pick when cancelling on your own — send a weather cancellation request instead.',
     'If your coach cancels, you get a full refund.',
     'If you don’t show up, your payment isn’t automatically refunded and your reliability score is affected.',
   ];
@@ -258,28 +258,24 @@ export function rescheduleHint(booking, audience, now = Date.now()) {
     : 'There is no reschedule option. To change the time, cancel this booking and book a new slot.';
 }
 
-/**
- * Weather is only a cancellation the other person agrees to: coaches never pick it on their own,
- * and students can't inside 24h of a confirmed lesson.
- */
-function weatherReasonUnavailable(audience, booking, now) {
-  if (audience === 'coach') return true;
-  return audience === 'student' && booking?.status === 'confirmed' && isWithinLateCancelWindow(booking, now);
+/** Weather is a mutual cancellation, never a reason either side picks on their own. */
+export function cancelReasonsFor(reasons) {
+  return reasons.filter((r) => r.value !== 'weather');
 }
 
-export function cancelReasonsFor(audience, reasons, booking, now = Date.now()) {
-  return weatherReasonUnavailable(audience, booking, now) ? reasons.filter((r) => r.value !== 'weather') : reasons;
-}
-
-export const COACH_CANCEL_WEATHER_HINT =
-  'Bad weather? Send the student a weather cancellation request instead (available from 24 hours before the lesson). If they agree, the lesson is cancelled.';
+export const COACH_CANCEL_WARNING =
+  'Cancelling this booking may affect your reliability score. Please only cancel when necessary. Weather cancellations must be handled through a weather cancellation request.';
 
 export const STUDENT_LATE_CANCEL_WEATHER_HINT =
   'Bad weather? Send your coach a weather cancellation request instead. If they agree, you get a full refund.';
 
+export const STUDENT_EARLY_CANCEL_WEATHER_HINT =
+  'Bad weather? Weather cancellations go through a weather cancellation request, which opens 24 hours before the lesson.';
+
 export function cancelWeatherHint(audience, booking, now = Date.now()) {
-  if (!weatherReasonUnavailable(audience, booking, now)) return null;
-  return audience === 'coach' ? COACH_CANCEL_WEATHER_HINT : STUDENT_LATE_CANCEL_WEATHER_HINT;
+  if (booking?.status !== 'confirmed') return null;
+  if (audience === 'coach') return COACH_CANCEL_WARNING;
+  return isWithinLateCancelWindow(booking, now) ? STUDENT_LATE_CANCEL_WEATHER_HINT : STUDENT_EARLY_CANCEL_WEATHER_HINT;
 }
 
 /** Cancel reasons are self-reported; say who sees them. */

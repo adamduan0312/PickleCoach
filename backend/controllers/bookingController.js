@@ -1038,8 +1038,7 @@ export async function runPreLessonCancel(req, res, mutualWeather = null) {
 
       if (!mutualWeather) {
         assertPreLessonCancelAllowed(booking.scheduled_at, new Date());
-        assertStudentWeatherNeedsAgreement(booking, actorRole, reason, new Date());
-        assertCoachWeatherNeedsAgreement(booking, actorRole, reason);
+        assertWeatherNeedsAgreement(booking, actorRole, reason);
       }
 
       // Reliability starts once the coach accepts; backing out of a pending request is free for everyone.
@@ -1383,31 +1382,20 @@ const MUTUAL_WEATHER_CANCEL_NOTE = 'Cancelled for weather — agreed by both';
 export const STUDENT_WEATHER_CANCEL_NEEDS_AGREEMENT_CODE = 'student_weather_cancel_requires_agreement';
 export const COACH_WEATHER_CANCEL_NEEDS_AGREEMENT_CODE = 'coach_weather_cancel_requires_agreement';
 
-/** Weather is only penalty-free when the student agrees, so a coach can't pick it as a cancel reason. */
-function assertCoachWeatherNeedsAgreement(booking, actorRole, reason) {
-  if (actorRole !== 'coach' || booking.status !== 'confirmed' || reason !== 'weather') return;
-  const err = new Error('A weather cancellation needs the student to agree. Send a weather cancellation request '
-    + '(available from 24 hours before the lesson), or cancel with a different reason.');
-  err.statusCode = 400;
-  err.code = COACH_WEATHER_CANCEL_NEEDS_AGREEMENT_CODE;
-  err.booking_status = booking.status;
-  throw err;
-}
-
 /**
- * Inside 24h a confirmed lesson's Weather cancel is only penalty-free with the coach's agreement,
- * so students send a weather request instead. Other reasons follow the normal late-cancel rules.
+ * Weather is never a unilateral cancel reason on a confirmed lesson, for either side and at any time:
+ * it's a mutual cancellation (one asks, the other agrees). Other reasons follow the normal rules.
  */
-function assertStudentWeatherNeedsAgreement(booking, actorRole, reason, now) {
-  if (actorRole !== 'student' || booking.status !== 'confirmed' || reason !== 'weather') return;
-  const hoursUntil = (new Date(booking.scheduled_at).getTime() - now.getTime()) / (60 * 60 * 1000);
-  if (hoursUntil >= 24) return;
+function assertWeatherNeedsAgreement(booking, actorRole, reason) {
+  if (booking.status !== 'confirmed' || reason !== 'weather') return;
+  if (actorRole !== 'student' && actorRole !== 'coach') return;
+  const other = actorRole === 'student' ? 'your coach' : 'the student';
   const err = new Error(
-    'Within 24 hours of the lesson, a weather cancellation needs your coach to agree. '
-      + 'Send your coach a weather cancellation request — if they agree, you get a full refund.',
+    `A weather cancellation needs ${other} to agree. From 24 hours before the lesson, send a weather `
+      + 'cancellation request, or cancel with a different reason.',
   );
   err.statusCode = 400;
-  err.code = STUDENT_WEATHER_CANCEL_NEEDS_AGREEMENT_CODE;
+  err.code = actorRole === 'student' ? STUDENT_WEATHER_CANCEL_NEEDS_AGREEMENT_CODE : COACH_WEATHER_CANCEL_NEEDS_AGREEMENT_CODE;
   err.booking_status = booking.status;
   throw err;
 }
