@@ -237,6 +237,17 @@ export const COACH_PENDING_IN_APP_STEP = {
   body: 'Cancellations, weather cancellations and attendance only count when completed in PickleCoach. Agreements in messages or by text don’t change the booking.',
 };
 
+export const STAY_ON_PLATFORM_TITLE = 'Stay on PickleCoach';
+
+export const STAY_ON_PLATFORM_BODY =
+  'Keep communication, booking, and payment on PickleCoach. Off-platform arrangements aren’t permitted and may result in loss of platform protections and account restrictions.';
+
+export const COACH_PENDING_STAY_ON_PLATFORM_STEP = { title: STAY_ON_PLATFORM_TITLE, body: STAY_ON_PLATFORM_BODY };
+
+export const MESSAGES_STAY_ON_PLATFORM_NOTE =
+  'Keep your lesson on PickleCoach. Don’t exchange payment information or arrange PickleCoach bookings outside the platform. '
+  + 'Messages may be reviewed for safety, fraud prevention, and policy enforcement.';
+
 export const MESSAGES_BOOKING_CHANGES_TITLE = 'Keep booking changes on the booking page';
 
 export const MESSAGES_BOOKING_CHANGES_NOTE =

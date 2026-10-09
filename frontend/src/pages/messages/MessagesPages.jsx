@@ -8,7 +8,7 @@ import { CHAR_LIMITS } from '../../utils/charLimits.js';
 import { useAuth } from '../../auth/AuthContext.jsx';
 import { formatInZone, detectLocalTimezone, relativeFromNow } from '../../utils/datetime.js';
 import { conversationClosedNotice } from '../../domain/bookingStatus.js';
-import { MESSAGES_BOOKING_CHANGES_NOTE, MESSAGES_BOOKING_CHANGES_TITLE } from '../../domain/cancellationPolicy.js';
+import { MESSAGES_BOOKING_CHANGES_NOTE, MESSAGES_BOOKING_CHANGES_TITLE, MESSAGES_STAY_ON_PLATFORM_NOTE } from '../../domain/cancellationPolicy.js';
 import { counterpartRoleLabel, sortConversationsForInbox } from '../../domain/conversationInbox.js';
 
 function bookingContextLabel(bookingId, scheduledAt, timeZone, counterpartRole) {
@@ -252,6 +252,7 @@ export function ConversationPage() {
           <div className="chat-booking-changes-note">
             <p className="chat-booking-changes-title">{MESSAGES_BOOKING_CHANGES_TITLE}</p>
             <p className="small muted">{MESSAGES_BOOKING_CHANGES_NOTE}</p>
+            <p className="small muted chat-stay-on-platform">{MESSAGES_STAY_ON_PLATFORM_NOTE}</p>
           </div>
         ) : null}
         <div

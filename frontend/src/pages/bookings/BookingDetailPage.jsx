@@ -63,6 +63,7 @@ import {
   isMutualWeatherCancellation,
   cancelWeatherHint,
   COACH_PENDING_IN_APP_STEP,
+  COACH_PENDING_STAY_ON_PLATFORM_STEP,
   cancelReasonsFor,
   rescheduleHint,
   weatherCancellationView,
@@ -186,6 +187,7 @@ function bookingDetailNextSteps(booking, { audience, tz, now = Date.now(), payme
             body: 'They\'ll be notified when you respond.',
           },
           COACH_PENDING_IN_APP_STEP,
+          COACH_PENDING_STAY_ON_PLATFORM_STEP,
         ];
       }
       return [

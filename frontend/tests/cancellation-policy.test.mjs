@@ -3,6 +3,10 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   COACH_CANCEL_RELIABILITY_WARNING,
+  COACH_PENDING_STAY_ON_PLATFORM_STEP,
+  MESSAGES_STAY_ON_PLATFORM_NOTE,
+  STAY_ON_PLATFORM_BODY,
+  STAY_ON_PLATFORM_TITLE,
   WEATHER_TIMING_POLICY_LINE,
   COACH_PENDING_IN_APP_STEP,
   cancelReasonsFor,
@@ -206,4 +210,32 @@ test('booking changes only count in PickleCoach: checkout, coach pending request
   assert.match(chatCard, /!locked && data\.booking_id \? \(\s*<div className="chat-booking-changes-note">/);
   assert.equal(MESSAGES_BOOKING_CHANGES_TITLE, 'Keep booking changes on the booking page');
   assert.match(MESSAGES_BOOKING_CHANGES_NOTE, /doesn’t update the booking\. Use the booking page/);
+});
+
+test('stay on PickleCoach: checkout, coach pending request, messages — no “monitored” promise', () => {
+  assert.equal(STAY_ON_PLATFORM_TITLE, 'Stay on PickleCoach');
+  assert.equal(
+    STAY_ON_PLATFORM_BODY,
+    'Keep communication, booking, and payment on PickleCoach. Off-platform arrangements aren’t permitted and may result in loss of platform protections and account restrictions.',
+  );
+  const checkoutSrc = readFileSync(new URL('../src/components/bookings/CheckoutPolicyExplainer.jsx', import.meta.url), 'utf8');
+  assert.match(checkoutSrc, /\{STAY_ON_PLATFORM_TITLE\}/);
+  assert.match(checkoutSrc, /\{STAY_ON_PLATFORM_BODY\}/);
+
+  assert.deepEqual(COACH_PENDING_STAY_ON_PLATFORM_STEP, { title: STAY_ON_PLATFORM_TITLE, body: STAY_ON_PLATFORM_BODY });
+  const nextStepsSrc = detailSrc.slice(detailSrc.indexOf('function bookingDetailNextSteps'));
+  const pendingCoach = nextStepsSrc.slice(nextStepsSrc.indexOf("case 'pending':"), nextStepsSrc.indexOf("case 'confirmed':"));
+  assert.match(pendingCoach, /COACH_PENDING_STAY_ON_PLATFORM_STEP/);
+
+  assert.equal(
+    MESSAGES_STAY_ON_PLATFORM_NOTE,
+    'Keep your lesson on PickleCoach. Don’t exchange payment information or arrange PickleCoach bookings outside the platform. Messages may be reviewed for safety, fraud prevention, and policy enforcement.',
+  );
+  const messagesSrc = readFileSync(new URL('../src/pages/messages/MessagesPages.jsx', import.meta.url), 'utf8');
+  const note = messagesSrc.slice(messagesSrc.indexOf('<div className="chat-booking-changes-note">'), messagesSrc.indexOf('className="chat-list"'));
+  assert.match(note, /\{MESSAGES_STAY_ON_PLATFORM_NOTE\}/);
+
+  for (const copy of [STAY_ON_PLATFORM_BODY, MESSAGES_STAY_ON_PLATFORM_NOTE]) {
+    assert.doesNotMatch(copy, /monitored|will be reviewed|detect/i);
+  }
 });

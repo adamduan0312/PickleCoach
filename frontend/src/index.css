@@ -928,6 +928,9 @@ table.data th { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0
 .chat-booking-changes-note p {
   margin: 0;
 }
+.chat-booking-changes-note .chat-stay-on-platform {
+  margin-top: 0.3rem;
+}
 .chat-booking-changes-title {
   font-weight: 600;
   font-size: 0.9rem;
