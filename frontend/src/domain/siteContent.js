@@ -31,6 +31,15 @@ export const HOW_IT_WORKS = [
   { title: 'Play', body: 'Meet your coach on the court. Cancellations, weather requests, and issue reports are handled in PickleCoach.' },
 ];
 
+const STUDENT_NO_SHOW_FAQ_LINE = 'If you don’t show up, your payment isn’t automatically refunded.';
+
+function studentFaqCancellationLines() {
+  return studentCancellationPolicyLines()
+    .filter((line) => line !== STUDENT_WEATHER_POLICY_LINE && line !== WEATHER_TIMING_POLICY_LINE)
+    .map((line) => (line.startsWith('If you don’t show up') ? STUDENT_NO_SHOW_FAQ_LINE : line))
+    .concat('Please attend the lessons you book. If you can’t make it, cancel through PickleCoach as early as you can.');
+}
+
 export const COACH_INFO_NOTICE =
   'Coach profiles — including experience, certifications, and skill ratings — are provided by coaches. PickleCoach doesn’t verify credentials or skill ratings and doesn’t run background checks. Review a coach’s profile, reviews, and reliability score before booking.';
 
@@ -48,7 +57,7 @@ export const STUDENT_FAQ = [
   },
   {
     q: 'What if I need to cancel?',
-    a: studentCancellationPolicyLines().filter((line) => line !== STUDENT_WEATHER_POLICY_LINE && line !== WEATHER_TIMING_POLICY_LINE),
+    a: studentFaqCancellationLines(),
   },
   {
     q: 'What if the weather is bad?',

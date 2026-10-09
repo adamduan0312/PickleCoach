@@ -70,9 +70,10 @@ test('student FAQ matches how bookings actually work', () => {
   assert.match(STUDENT_TEXT, /50%/);
   assert.match(STUDENT_TEXT, /Inside 24 hours, both sides must agree to a weather cancellation/);
   assert.match(STUDENT_TEXT, /until 24 hours after the scheduled lesson ends/);
-  const ownWords = STUDENT_FAQ.flatMap(({ q, a }) => [q, ...a])
-    .filter((line) => line !== COACH_INFO_NOTICE && !studentCancellationPolicyLines().includes(line));
-  assert.doesNotMatch(ownWords.join('\n'), /reliability/i, 'no reliability wording beyond the shared checkout policy');
+  assert.doesNotMatch(STUDENT_TEXT.replaceAll(COACH_INFO_NOTICE, ''), /reliability/i, 'FAQ doesn’t describe what affects scores');
+  assert.match(STUDENT_TEXT, /If you don’t show up, your payment isn’t automatically refunded\./, 'no-show consequence still stated');
+  assert.match(STUDENT_TEXT, /cancel through PickleCoach/);
+  assert.ok(studentCancellationPolicyLines().some((l) => /reliability score is affected/.test(l)), 'checkout wording unchanged');
   assert.doesNotMatch(STUDENT_TEXT, /sick|emergenc/i, 'reliability-neutral reasons stay unlisted');
 });
 
