@@ -21,6 +21,8 @@ import { VerifyEmailPage } from './pages/auth/VerifyEmailPage.jsx';
 import { ChangeEmailConfirmPage } from './pages/auth/ChangeEmailConfirmPage.jsx';
 import { ForbiddenPage, NotFoundPage } from './pages/StatusPages.jsx';
 import { PrivacyPage, TermsPage } from './pages/LegalPages.jsx';
+import { FaqPage } from './pages/FaqPage.jsx';
+import { FAQ_PATH } from './domain/siteContent.js';
 import { PRIVACY_PATH, TERMS_PATH } from './domain/legal.js';
 import { StudentDashboardPage } from './pages/student/StudentDashboardPage.jsx';
 import { DiscoverPage } from './pages/student/DiscoverPage.jsx';
@@ -91,6 +93,7 @@ const router = createBrowserRouter(
       <Route path="/forbidden" element={<ForbiddenPage />} />
       <Route path={TERMS_PATH} element={<TermsPage />} />
       <Route path={PRIVACY_PATH} element={<PrivacyPage />} />
+      <Route path={FAQ_PATH} element={<FaqPage />} />
 
       <Route element={<ShellLayout />}>
         <Route path="/dashboard" element={<RequireRole roles={['student']}><StudentDashboardPage /></RequireRole>} />

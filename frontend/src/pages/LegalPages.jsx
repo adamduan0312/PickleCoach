@@ -1,18 +1,22 @@
 import { Link } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext.jsx';
 import { homePathFor } from '../auth/paths.js';
+import { PublicFooter } from '../components/layout/PublicFooter.jsx';
 import { LEGAL_DETAILS, PRIVACY_PATH, TERMS_PATH } from '../domain/legal.js';
 
 function LegalPage({ title, children }) {
   const { user, mode, isAuthenticated } = useAuth();
   const home = isAuthenticated ? homePathFor(user, mode) : '/';
   return (
-    <div className="page-narrow legal-page">
-      <p className="small"><Link to={home}>← Back to PickleCoach</Link></p>
-      <h1>{title}</h1>
-      <p className="muted small">Effective {LEGAL_DETAILS.effectiveDate}</p>
-      {children}
-    </div>
+    <>
+      <div className="page-narrow legal-page">
+        <p className="small"><Link to={home}>← Back to PickleCoach</Link></p>
+        <h1>{title}</h1>
+        <p className="muted small">Effective {LEGAL_DETAILS.effectiveDate}</p>
+        {children}
+      </div>
+      <PublicFooter />
+    </>
   );
 }
 

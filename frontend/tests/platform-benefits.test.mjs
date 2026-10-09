@@ -28,7 +28,7 @@ test('landing page: student and coach benefits after the hero, before the footer
   const src = read('../src/pages/LandingPage.jsx');
   const hero = src.indexOf('className="hero"');
   const benefits = src.indexOf('className="landing-benefits"');
-  assert.ok(hero < benefits && benefits < src.indexOf('legal-footer'));
+  assert.ok(hero < benefits && benefits < src.indexOf('<PublicFooter />'));
   assert.match(src, /<BenefitList heading="For students" items=\{STUDENT_BENEFITS\} \/>/);
   assert.match(src, /<BenefitList heading="For coaches" items=\{COACH_BENEFITS\} \/>/);
   assert.equal(BENEFITS_HEADING, 'Book with confidence on PickleCoach');

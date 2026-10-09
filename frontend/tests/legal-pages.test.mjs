@@ -14,9 +14,9 @@ test('terms and privacy are public routes', () => {
   assert.match(legalSrc, /export const PRIVACY_PATH = '\/privacy';/);
 });
 
-test('linked from registration, landing, account menu, checkout and messages', () => {
+test('linked from registration, public footer, account menu, checkout and messages', () => {
   assert.match(read('../src/pages/auth/RegisterPage.jsx'), /18 or older and agree to the\{' '\}\s*<Link to=\{TERMS_PATH\}>Terms of Service<\/Link> and <Link to=\{PRIVACY_PATH\}>Privacy Policy<\/Link>/);
-  for (const path of ['../src/pages/LandingPage.jsx', '../src/components/layout/AppShell.jsx', '../src/pages/messages/MessagesPages.jsx']) {
+  for (const path of ['../src/components/layout/PublicFooter.jsx', '../src/components/layout/AppShell.jsx', '../src/pages/messages/MessagesPages.jsx']) {
     const src = read(path);
     assert.match(src, /to=\{TERMS_PATH\}/, path);
     assert.match(src, /to=\{PRIVACY_PATH\}/, path);

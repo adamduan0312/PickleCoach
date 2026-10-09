@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { PRIVACY_PATH, TERMS_PATH } from '../../domain/legal.js';
+import { FAQ_PATH } from '../../domain/siteContent.js';
 import { useAuth } from '../../auth/AuthContext.jsx';
 import { homePathFor } from '../../auth/paths.js';
 import { hasAdminRole, hasCoachRole, hasStudentRole } from '../../domain/userReadiness.js';
@@ -249,6 +250,7 @@ export function AppShell({ children }) {
                 {showCoachProfileLink ? (
                   <Link to="/coach/profile" onClick={closeOverlays}>Coach profile</Link>
                 ) : null}
+                <Link to={FAQ_PATH} onClick={closeOverlays}>Help &amp; FAQ</Link>
                 <Link to={TERMS_PATH} onClick={closeOverlays}>Terms of Service</Link>
                 <Link to={PRIVACY_PATH} onClick={closeOverlays}>Privacy Policy</Link>
                 <button type="button" onClick={handleLogout}>Log out</button>

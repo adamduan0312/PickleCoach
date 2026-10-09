@@ -1919,9 +1919,69 @@ table.data th { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0
 .legal-page ul {
   padding-left: 1.2rem;
 }
-.legal-footer {
+.faq-page h2 {
+  font-size: 1.3rem;
+  margin-top: 2rem;
+}
+.faq-page h3 {
+  font-size: 1rem;
+  margin: 1rem 0 0.3rem;
+}
+.site-footer {
+  border-top: 1px solid var(--pc-line);
+  margin-top: 3rem;
+  padding: 2rem 1rem 1.5rem;
+}
+.site-footer-inner {
+  max-width: 960px;
+  margin: 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2rem;
+  justify-content: space-between;
+}
+.site-footer-brand p {
+  margin: 0.35rem 0 0;
+}
+.site-footer-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2.5rem;
+}
+.site-footer-links h3 {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin: 0 0 0.5rem;
+}
+.site-footer-links a {
+  display: block;
+  font-size: 0.9rem;
+  margin-bottom: 0.35rem;
+}
+.site-footer-copy {
   text-align: center;
+  margin: 2rem 0 0;
+}
+.landing-about {
+  max-width: 960px;
+  margin: 0 auto;
   padding: 2rem 1rem;
+  text-align: center;
+}
+.landing-steps {
+  list-style: none;
+  padding: 0;
+  margin: 1.25rem 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1rem;
+  text-align: left;
+}
+.landing-steps li {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
 }
 .checkout-in-app-rule {
   margin: 0.55rem 0 0;

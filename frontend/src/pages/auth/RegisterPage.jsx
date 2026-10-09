@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { PRIVACY_PATH, TERMS_PATH } from '../../domain/legal.js';
 import { AuthLayout } from '../../components/layout/AuthLayout.jsx';
 import { FormField } from '../../components/ui/FormField.jsx';
@@ -13,11 +13,12 @@ import { passwordHint, validatePassword, fieldError } from '../../utils/format.j
 export function RegisterPage() {
   const { register } = useAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [form, setForm] = useState({
     full_name: '',
     email: '',
     password: '',
-    role: 'student',
+    role: searchParams.get('role') === 'coach' ? 'coach' : 'student',
   });
   const [error, setError] = useState(null);
   const [fieldErrors, setFieldErrors] = useState({});
