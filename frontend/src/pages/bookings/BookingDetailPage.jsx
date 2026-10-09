@@ -68,6 +68,7 @@ import {
   rescheduleHint,
   weatherCancellationView,
 } from '../../domain/cancellationPolicy.js';
+import { COACH_PENDING_BENEFITS_STEP } from '../../domain/platformBenefits.js';
 import {
   coachPayoutLabel,
   issueResolutionFacts,
@@ -188,6 +189,7 @@ function bookingDetailNextSteps(booking, { audience, tz, now = Date.now(), payme
           },
           COACH_PENDING_IN_APP_STEP,
           COACH_PENDING_STAY_ON_PLATFORM_STEP,
+          COACH_PENDING_BENEFITS_STEP,
         ];
       }
       return [

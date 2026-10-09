@@ -1,5 +1,22 @@
 import { Link } from 'react-router-dom';
 import { PRIVACY_PATH, TERMS_PATH } from '../domain/legal.js';
+import { BENEFITS_HEADING, BENEFITS_INTRO, COACH_BENEFITS, STUDENT_BENEFITS } from '../domain/platformBenefits.js';
+
+function BenefitList({ heading, items }) {
+  return (
+    <div className="card landing-benefits-card">
+      <h3>{heading}</h3>
+      <ul className="landing-benefits-list">
+        {items.map((item) => (
+          <li key={item.title}>
+            <strong>{item.title}</strong>
+            <span className="muted">{item.body}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
 
 export function LandingPage() {
   return (
@@ -23,6 +40,14 @@ export function LandingPage() {
         <div className="row" style={{ justifyContent: 'center', marginTop: 24 }}>
           <Link className="btn" to="/register">Create an account</Link>
           <Link className="btn secondary" to="/login">I already have an account</Link>
+        </div>
+      </section>
+      <section className="landing-benefits" aria-labelledby="landing-benefits-heading">
+        <h2 id="landing-benefits-heading">{BENEFITS_HEADING}</h2>
+        <p className="muted">{BENEFITS_INTRO}</p>
+        <div className="grid-2">
+          <BenefitList heading="For students" items={STUDENT_BENEFITS} />
+          <BenefitList heading="For coaches" items={COACH_BENEFITS} />
         </div>
       </section>
       <footer className="legal-footer small muted">

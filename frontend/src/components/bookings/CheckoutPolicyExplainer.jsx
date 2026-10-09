@@ -7,6 +7,7 @@ import {
 } from '../../domain/bookingStatus.js';
 import { IN_APP_BOOKING_CHANGES_LINE, STAY_ON_PLATFORM_BODY, STAY_ON_PLATFORM_TITLE } from '../../domain/cancellationPolicy.js';
 import { TERMS_PATH } from '../../domain/legal.js';
+import { CHECKOUT_BENEFITS, CHECKOUT_BENEFITS_TITLE } from '../../domain/platformBenefits.js';
 
 export function CheckoutPolicyExplainer({ amountLabel }) {
   const acceptanceCopy = checkoutAcceptancePolicyCopy({
@@ -36,9 +37,14 @@ export function CheckoutPolicyExplainer({ amountLabel }) {
         <p className="checkout-in-app-rule"><strong>{IN_APP_BOOKING_CHANGES_LINE}</strong></p>
       </div>
       <div className="checkout-auth-explainer">
-        <h3 className="checkout-auth-explainer-title">{STAY_ON_PLATFORM_TITLE}</h3>
+        <h3 className="checkout-auth-explainer-title">{CHECKOUT_BENEFITS_TITLE}</h3>
+        <ul className="checkout-auth-explainer-list">
+          {CHECKOUT_BENEFITS.map((line) => (
+            <li key={line}>{line}</li>
+          ))}
+        </ul>
         <p className="checkout-in-app-rule">
-          {STAY_ON_PLATFORM_BODY} See the <Link to={TERMS_PATH}>Terms of Service</Link>.
+          <strong>{STAY_ON_PLATFORM_TITLE}.</strong> {STAY_ON_PLATFORM_BODY} See the <Link to={TERMS_PATH}>Terms of Service</Link>.
         </p>
       </div>
     </div>
