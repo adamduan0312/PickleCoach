@@ -10,7 +10,7 @@ import { logger } from '../config/logger.js';
 import * as notificationService from '../services/notificationService.js';
 import { canSelfServiceAddRole, canSelfServiceRemoveRole } from '../utils/roleGovernance.js';
 import { countOtherLiveAdmins } from '../utils/userRoleChangeGuards.js';
-import { softDeleteUserAccount } from '../utils/userLifecycle.js';
+import { accountClosureBlockers, softDeleteUserAccount } from '../utils/userLifecycle.js';
 import {
   deleteManagedAvatarFile,
   publicPathForAvatarFilename,
@@ -459,6 +459,18 @@ export const deleteMyAccount = async (req, res) => {
           { code: 'last_admin_required' },
         );
       }
+    }
+
+    const blockers = await accountClosureBlockers(user.id);
+    if (blockers.active_bookings || blockers.pending_payouts || blockers.open_issues) {
+      return errorResponse(
+        res,
+        'You can’t close your account while lessons, issue reports, or payouts are still in progress. '
+          + 'Finish, cancel, or resolve them first, then try again.',
+        409,
+        null,
+        { code: 'account_closure_blocked', blockers },
+      );
     }
 
     const beforeState = user.toJSON();

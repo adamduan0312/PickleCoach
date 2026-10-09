@@ -12,7 +12,8 @@
  * on delete/restore (lessons remain for booking history; suspension never touches them).
  */
 
-import { CoachProfile, User, UserRole } from '../models/index.js';
+import { Op } from 'sequelize';
+import { Booking, CoachProfile, Dispute, User, UserRole } from '../models/index.js';
 import { getEffectiveRolesForUserRecord } from './roleGovernance.js';
 
 /** Sequelize `where` for publicly discoverable / bookable accounts (Active only). */
@@ -83,6 +84,29 @@ export async function softDeleteUserAccount(user, { transaction } = {}) {
   }
 
   return { coachProfile };
+}
+
+const CLOSURE_BLOCKING_BOOKING_STATUSES = ['pending', 'confirmed', 'awaiting_verification', 'disputed'];
+const CLOSURE_BLOCKING_PAYOUT_STATUSES = ['pending', 'awaiting_verification', 'processing'];
+const CLOSURE_BLOCKING_DISPUTE_STATUSES = ['open', 'under_review'];
+
+/**
+ * What still needs this user before they can close their own account: bookings in progress
+ * (as student or coach), unresolved issue reports on their bookings, and coach payouts not yet paid.
+ * Closing early would leave the other person unable to cancel, report, or get a response.
+ */
+export async function accountClosureBlockers(userId, { transaction } = {}) {
+  const participant = { [Op.or]: [{ coach_id: userId }, { primary_student_id: userId }] };
+  const [activeBookings, pendingPayouts, openIssues] = await Promise.all([
+    Booking.count({ where: { ...participant, status: CLOSURE_BLOCKING_BOOKING_STATUSES }, transaction }),
+    Booking.count({ where: { coach_id: userId, payout_status: CLOSURE_BLOCKING_PAYOUT_STATUSES }, transaction }),
+    Dispute.count({
+      where: { status: CLOSURE_BLOCKING_DISPUTE_STATUSES },
+      include: [{ model: Booking, as: 'booking', attributes: [], where: participant, required: true }],
+      transaction,
+    }),
+  ]);
+  return { active_bookings: activeBookings, pending_payouts: pendingPayouts, open_issues: openIssues };
 }
 
 /**

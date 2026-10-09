@@ -180,6 +180,39 @@ describeHttp('HTTP integration: booking lifecycle gaps', () => {
     }
   });
 
+  it('account closure is refused while a booking is in progress, then signs the user out', async () => {
+    if (fixture?.cleanup) await fixture.cleanup();
+    fixture = await createBookingJourneyFixture();
+    const { baseUrl } = server;
+    const { studentToken, coachToken } = await loginPair(baseUrl, fixture);
+    const { bookingId } = await createPendingAuthorizedBooking(baseUrl, fixture, studentToken, 'gap_close_account');
+
+    for (const token of [studentToken, coachToken]) {
+      const blocked = await api(baseUrl, 'DELETE', '/api/auth/me', { token });
+      assert.equal(blocked.status, 409, blocked.text);
+      assert.equal(blocked.json?.code, 'account_closure_blocked');
+      assert.equal(blocked.json?.blockers?.active_bookings, 1);
+    }
+    assert.equal((await User.findByPk(fixture.student.id)).deleted_at, null);
+
+    const cancelRes = await api(baseUrl, 'POST', `/api/bookings/${bookingId}/cancel`, { token: studentToken, body: CANCEL_BODY });
+    assert.equal(cancelRes.status, 200, cancelRes.text);
+
+    const closed = await api(baseUrl, 'DELETE', '/api/auth/me', { token: studentToken });
+    assert.equal(closed.status, 200, closed.text);
+    const student = await User.findByPk(fixture.student.id);
+    assert.ok(student.deleted_at);
+    assert.equal(student.is_active, false);
+    assert.equal((await Booking.findByPk(bookingId)).status, 'cancelled', 'booking history kept');
+
+    const after = await api(baseUrl, 'GET', '/api/auth/profile', { token: studentToken });
+    assert.equal(after.status, 401, 'old session no longer works');
+    const relogin = await api(baseUrl, 'POST', '/api/auth/login', {
+      body: { email: fixture.student.email, password: fixture.password },
+    });
+    assert.notEqual(relogin.status, 200, 'closed account can’t sign in');
+  });
+
   it('expires stale pending booking and voids authorization (worker path)', async () => {
     if (fixture?.cleanup) await fixture.cleanup();
     fixture = await createBookingJourneyFixture();

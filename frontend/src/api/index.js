@@ -17,6 +17,7 @@ export const authApi = {
   },
   removeAvatar: () => apiRequest('/auth/profile/avatar', { method: 'DELETE' }),
   logout: () => apiRequest('/auth/logout', { method: 'POST' }),
+  closeAccount: () => apiRequest('/auth/me', { method: 'DELETE' }),
   addRole: (role) => apiRequest('/auth/me/role', { method: 'PUT', body: { role, action: 'add' } }),
   removeRole: (role) => apiRequest('/auth/me/role', { method: 'PUT', body: { role, action: 'remove' } }),
   changePassword: (body) => apiRequest('/auth/change-password', { method: 'PUT', body }),

@@ -12,6 +12,7 @@ import { sanitizePhoneInput, validatePhone } from '../../domain/phone.js';
 import { hasCoachRole, hasStudentRole } from '../../domain/userReadiness.js';
 import { reopenHowBookingsWork } from '../../utils/howBookingsWorkStorage.js';
 import { ReliabilitySelfServeCard } from '../../components/settings/ReliabilitySelfServeCard.jsx';
+import { CloseAccountCard } from '../../components/settings/CloseAccountCard.jsx';
 export function SettingsPage() {
   const { user, mode, refreshProfile, applySession, readiness } = useAuth();
   const navigate = useNavigate();
@@ -265,6 +266,8 @@ export function SettingsPage() {
         {(mode === 'student' && isStudent) || (mode === 'coach' && isCoach) ? (
           <ReliabilitySelfServeCard role={mode === 'coach' ? 'coach' : 'student'} />
         ) : null}
+
+        <CloseAccountCard />
       </div>
     </div>
   );

@@ -453,7 +453,8 @@ Authorization: Bearer <token>
     "data": null
   }
   ```
-- **Error responses**: `409` (last live admin — same `message` / `code: "last_admin_required"` as admin user delete when no other active admin exists), `401` (missing or invalid token), `500` (server error).
+- **In-progress guard**: refused while the user still has, as student or coach, a booking in `pending` / `confirmed` / `awaiting_verification` / `disputed`, an issue report in `open` / `under_review` on one of their bookings, or (coach) a booking with `payout_status` `pending` / `awaiting_verification` / `processing`. **409** with `code: "account_closure_blocked"` and `blockers: { active_bookings, open_issues, pending_payouts }` (counts). Used by Settings → Close account.
+- **Error responses**: `409` (`account_closure_blocked` — see above; or last live admin — same `message` / `code: "last_admin_required"` as admin user delete when no other active admin exists), `401` (missing or invalid token), `500` (server error).
 
 ### `POST /api/auth/logout`
 - **Auth**: Required

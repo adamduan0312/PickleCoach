@@ -34,11 +34,22 @@ test('describes actual practices: review on occasion, not constant monitoring', 
   assert.match(legalSrc, /We don’t sell your personal information/);
 });
 
+test('account closure: Settings card on the existing endpoint, described in both policies', () => {
+  const card = read('../src/components/settings/CloseAccountCard.jsx');
+  assert.match(read('../src/api/index.js'), /closeAccount: \(\) => apiRequest\('\/auth\/me', \{ method: 'DELETE' \}\)/);
+  assert.match(read('../src/pages/settings/SettingsPage.jsx'), /<CloseAccountCard \/>/);
+  assert.ok(card.indexOf('confirming ?') > -1 && card.indexOf('Yes, close my account') > card.indexOf('confirming ?'), 'two-step, inline');
+  assert.match(card, /await authApi\.closeAccount\(\);\s*await logout\(\);/);
+  assert.match(card, /records are kept/);
+  assert.match(legalSrc, /close your account in Settings once no lessons, issue reports, or payouts are still in progress/);
+  assert.doesNotMatch(legalSrc, /to close your account,\s*contact/i);
+});
+
 test('business details live in one place until filled in', () => {
   const placeholders = legalSrc.match(/\[[A-Z ]+\]/g) || [];
   assert.deepEqual(
     [...new Set(placeholders)].sort(),
-    ['[COMPANY LEGAL NAME]', '[CONTACT EMAIL]', '[EFFECTIVE DATE]', '[HOSTING PROVIDER]'],
+    ['[COMPANY LEGAL NAME]', '[CONTACT EMAIL]', '[EFFECTIVE DATE]'],
   );
   for (const p of placeholders) assert.equal(legalSrc.split(p).length - 1, 1, `${p} only in LEGAL_DETAILS`);
   assert.match(legalSrc, /governingLaw: 'the State of Florida, USA'/);

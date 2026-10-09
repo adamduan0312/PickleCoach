@@ -116,8 +116,9 @@ export function TermsPage() {
 
       <Section title="8. Closing your account">
         <p>
-          You can ask us to close your account at any time by contacting {contactEmail}. Some records are kept after an
-          account is closed, as described in our <Link to={PRIVACY_PATH}>Privacy Policy</Link>.
+          You can close your account in Settings once no lessons, issue reports, or payouts are still in progress.
+          Some records are kept after an account is closed, as described in our{' '}
+          <Link to={PRIVACY_PATH}>Privacy Policy</Link>. Questions: {contactEmail}.
         </p>
       </Section>
 
@@ -144,7 +145,7 @@ export function TermsPage() {
 }
 
 export function PrivacyPage() {
-  const { companyName, contactEmail, hostingProvider } = LEGAL_DETAILS;
+  const { companyName, contactEmail } = LEGAL_DETAILS;
   return (
     <LegalPage title="Privacy Policy">
       <p>
@@ -222,7 +223,7 @@ export function PrivacyPage() {
             <strong>OpenStreetMap services (Nominatim, Photon, Overpass)</strong> — the location text or coordinates you
             search with are sent to these services to find places and courts.
           </li>
-          <li><strong>{hostingProvider}</strong> — hosting our servers and database.</li>
+          <li><strong>Hosting providers</strong> — the cloud services that run our website, servers, and database.</li>
         </ul>
         <p>We don’t sell your personal information.</p>
       </Section>
@@ -238,8 +239,8 @@ export function PrivacyPage() {
 
       <Section title="Your choices">
         <p>
-          You can update your profile in Settings. To access or correct your information, or to close your account,
-          contact {contactEmail}.
+          You can update your profile or close your account in Settings (once no lessons, issue reports, or payouts are
+          still in progress). To access or correct your information, contact {contactEmail}.
         </p>
       </Section>
 
