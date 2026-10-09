@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom';
+import { PRIVACY_PATH, TERMS_PATH } from '../domain/legal.js';
 
 export function LandingPage() {
   return (
@@ -24,6 +25,11 @@ export function LandingPage() {
           <Link className="btn secondary" to="/login">I already have an account</Link>
         </div>
       </section>
+      <footer className="legal-footer small muted">
+        <Link to={TERMS_PATH}>Terms of Service</Link>
+        <span aria-hidden="true"> · </span>
+        <Link to={PRIVACY_PATH}>Privacy Policy</Link>
+      </footer>
     </div>
   );
 }

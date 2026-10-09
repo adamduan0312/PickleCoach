@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { PRIVACY_PATH, TERMS_PATH } from '../../domain/legal.js';
 import { AuthLayout } from '../../components/layout/AuthLayout.jsx';
 import { FormField } from '../../components/ui/FormField.jsx';
 import { PasswordField } from '../../components/ui/PasswordField.jsx';
@@ -67,6 +68,10 @@ export function RegisterPage() {
             <option value="coach">Coach</option>
           </select>
         </FormField>
+        <p className="small muted">
+          By creating an account, you confirm you’re 18 or older and agree to the{' '}
+          <Link to={TERMS_PATH}>Terms of Service</Link> and <Link to={PRIVACY_PATH}>Privacy Policy</Link>.
+        </p>
         <button className="btn block" type="submit" disabled={busy}>{busy ? 'Creating account…' : 'Create account'}</button>
         <p className="small muted">Already have an account? <Link to="/login">Log in</Link></p>
       </form>

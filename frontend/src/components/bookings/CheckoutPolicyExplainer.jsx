@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom';
 import {
   checkoutAcceptancePolicyCopy,
   checkoutCancellationNoShowPolicyLines,
@@ -5,6 +6,7 @@ import {
   minBookingLeadHours,
 } from '../../domain/bookingStatus.js';
 import { IN_APP_BOOKING_CHANGES_LINE, STAY_ON_PLATFORM_BODY, STAY_ON_PLATFORM_TITLE } from '../../domain/cancellationPolicy.js';
+import { TERMS_PATH } from '../../domain/legal.js';
 
 export function CheckoutPolicyExplainer({ amountLabel }) {
   const acceptanceCopy = checkoutAcceptancePolicyCopy({
@@ -35,7 +37,9 @@ export function CheckoutPolicyExplainer({ amountLabel }) {
       </div>
       <div className="checkout-auth-explainer">
         <h3 className="checkout-auth-explainer-title">{STAY_ON_PLATFORM_TITLE}</h3>
-        <p className="checkout-in-app-rule">{STAY_ON_PLATFORM_BODY}</p>
+        <p className="checkout-in-app-rule">
+          {STAY_ON_PLATFORM_BODY} See the <Link to={TERMS_PATH}>Terms of Service</Link>.
+        </p>
       </div>
     </div>
   );

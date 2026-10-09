@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
+import { PRIVACY_PATH, TERMS_PATH } from '../../domain/legal.js';
 import { messagesApi, asList } from '../../api/index.js';
 import { useAsync } from '../../hooks/useAsync.js';
 import { EmptyState, ErrorState, LoadingState, Alert } from '../../components/ui/States.jsx';
@@ -252,7 +253,9 @@ export function ConversationPage() {
           <div className="chat-booking-changes-note">
             <p className="chat-booking-changes-title">{MESSAGES_BOOKING_CHANGES_TITLE}</p>
             <p className="small muted">{MESSAGES_BOOKING_CHANGES_NOTE}</p>
-            <p className="small muted chat-stay-on-platform">{MESSAGES_STAY_ON_PLATFORM_NOTE}</p>
+            <p className="small muted chat-stay-on-platform">
+              {MESSAGES_STAY_ON_PLATFORM_NOTE} <Link to={TERMS_PATH}>Terms</Link> · <Link to={PRIVACY_PATH}>Privacy</Link>
+            </p>
           </div>
         ) : null}
         <div

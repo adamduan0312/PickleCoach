@@ -20,6 +20,8 @@ import { ResetPasswordPage } from './pages/auth/ResetPasswordPage.jsx';
 import { VerifyEmailPage } from './pages/auth/VerifyEmailPage.jsx';
 import { ChangeEmailConfirmPage } from './pages/auth/ChangeEmailConfirmPage.jsx';
 import { ForbiddenPage, NotFoundPage } from './pages/StatusPages.jsx';
+import { PrivacyPage, TermsPage } from './pages/LegalPages.jsx';
+import { PRIVACY_PATH, TERMS_PATH } from './domain/legal.js';
 import { StudentDashboardPage } from './pages/student/StudentDashboardPage.jsx';
 import { DiscoverPage } from './pages/student/DiscoverPage.jsx';
 import { CoachPublicProfilePage } from './pages/student/CoachPublicProfilePage.jsx';
@@ -87,6 +89,8 @@ const router = createBrowserRouter(
       <Route path="/verify-email" element={<VerifyEmailPage />} />
       <Route path="/change-email/confirm" element={<ChangeEmailConfirmPage />} />
       <Route path="/forbidden" element={<ForbiddenPage />} />
+      <Route path={TERMS_PATH} element={<TermsPage />} />
+      <Route path={PRIVACY_PATH} element={<PrivacyPage />} />
 
       <Route element={<ShellLayout />}>
         <Route path="/dashboard" element={<RequireRole roles={['student']}><StudentDashboardPage /></RequireRole>} />

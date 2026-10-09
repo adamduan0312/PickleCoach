@@ -1876,6 +1876,24 @@ table.data th { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0
 .checkout-auth-explainer-list li {
   margin: 0.3rem 0;
 }
+.legal-page {
+  padding-bottom: 3rem;
+}
+.legal-page h2 {
+  font-size: 1.05rem;
+  margin: 1.4rem 0 0.4rem;
+}
+.legal-page p,
+.legal-page li {
+  line-height: 1.55;
+}
+.legal-page ul {
+  padding-left: 1.2rem;
+}
+.legal-footer {
+  text-align: center;
+  padding: 2rem 1rem;
+}
 .checkout-in-app-rule {
   margin: 0.55rem 0 0;
   font-size: 0.88rem;
