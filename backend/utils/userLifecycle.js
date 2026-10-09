@@ -13,7 +13,7 @@
  */
 
 import { Op } from 'sequelize';
-import { Booking, CoachProfile, Dispute, User, UserRole } from '../models/index.js';
+import { Booking, CoachProfile, Dispute, Payment, User, UserRole } from '../models/index.js';
 import { getEffectiveRolesForUserRecord } from './roleGovernance.js';
 
 /** Sequelize `where` for publicly discoverable / bookable accounts (Active only). */
@@ -88,6 +88,8 @@ export async function softDeleteUserAccount(user, { transaction } = {}) {
 
 const CLOSURE_BLOCKING_BOOKING_STATUSES = ['pending', 'confirmed', 'awaiting_verification', 'disputed'];
 const CLOSURE_BLOCKING_PAYOUT_STATUSES = ['pending', 'awaiting_verification', 'processing'];
+/** Captured money not yet released or refunded; the payout worker pays these even at payout_status 'none' (e.g. student no-show). */
+const CLOSURE_BLOCKING_ESCROW_STATUSES = ['held', 'pending_release'];
 const CLOSURE_BLOCKING_DISPUTE_STATUSES = ['open', 'under_review'];
 
 /**
@@ -99,7 +101,19 @@ export async function accountClosureBlockers(userId, { transaction } = {}) {
   const participant = { [Op.or]: [{ coach_id: userId }, { primary_student_id: userId }] };
   const [activeBookings, pendingPayouts, openIssues] = await Promise.all([
     Booking.count({ where: { ...participant, status: CLOSURE_BLOCKING_BOOKING_STATUSES }, transaction }),
-    Booking.count({ where: { coach_id: userId, payout_status: CLOSURE_BLOCKING_PAYOUT_STATUSES }, transaction }),
+    Booking.count({
+      where: {
+        coach_id: userId,
+        [Op.or]: [
+          { payout_status: CLOSURE_BLOCKING_PAYOUT_STATUSES },
+          { '$payments.escrow_status$': CLOSURE_BLOCKING_ESCROW_STATUSES },
+        ],
+      },
+      include: [{ model: Payment, as: 'payments', attributes: [], required: false }],
+      distinct: true,
+      col: 'id',
+      transaction,
+    }),
     Dispute.count({
       where: { status: CLOSURE_BLOCKING_DISPUTE_STATUSES },
       include: [{ model: Booking, as: 'booking', attributes: [], where: participant, required: true }],

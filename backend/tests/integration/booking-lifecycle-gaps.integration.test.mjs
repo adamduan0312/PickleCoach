@@ -424,6 +424,13 @@ describeHttp('HTTP integration: booking lifecycle gaps', () => {
     assert.equal(payment.payment_status, 'captured');
     assert.equal(payment.escrow_status, 'held');
 
+    // Payout is still to come (and the student can still report an issue), so the coach can't close yet.
+    assert.equal(booking.payout_status, 'none');
+    const closeRes = await api(baseUrl, 'DELETE', '/api/auth/me', { token: coachToken });
+    assert.equal(closeRes.status, 409, closeRes.text);
+    assert.equal(closeRes.json?.code, 'account_closure_blocked');
+    assert.equal(closeRes.json?.blockers?.pending_payouts, 1);
+
     const refundActions = await PaymentAction.findAll({
       where: { booking_id: bookingId },
     });
