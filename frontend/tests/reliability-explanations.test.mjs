@@ -33,7 +33,10 @@ test('coach profile shows an info icon beside the score; Discover keeps a hover 
 
 test('coach dashboard shows own score with info icon and a link to Settings', () => {
   const dash = read('../src/pages/coach/CoachDashboardPage.jsx');
-  assert.match(dash, /<CoachReliabilitySummary listed=\{listed\} \/>/);
+  const order = ['{!listed ? checklist : null}', '{market ? <CoachReliabilitySummary listed={listed} /> : null}', '{!listed ? photoPrompt : null}', '<HowBookingsWorkGuide', '<h2>Incoming requests</h2>']
+    .map((needle) => dash.indexOf(needle));
+  assert.ok(order.every((i) => i >= 0), 'dashboard sections present');
+  assert.deepEqual([...order].sort((x, y) => x - y), order, 'listing checklist → reliability → photos → how bookings work → incoming requests');
   assert.match(COACH_DASHBOARD_RELIABILITY_NOTE_UNLISTED, /^Once you’re listed/);
   const summary = read('../src/components/coach/CoachReliabilitySummary.jsx');
   assert.match(summary, /<InfoTip label="What your reliability score means">\{COACH_OWN_RELIABILITY_HINT\}<\/InfoTip>/);

@@ -73,28 +73,27 @@ export function CoachDashboardPage() {
     : null;
   const listed = Boolean(market?.listed);
 
-  const onboarding = setup ? (
-    <>
-      <CoachOnboardingCard
-        listed={listed}
-        setup={setup}
-        userId={user?.id}
-        onRefresh={() => { refreshProfile(); refreshStripeStatus(); }}
-      />
-      {galleryCount === 0 ? (
-        <div className="card coach-optional-photo">
-          <div>
-            <span className="small muted coach-next-step-label">Optional</span>
-            <p>
-              <strong>Add coaching photos</strong>
-              <br />
-              <span className="small">Show students what your lessons look like, on the court and in action.</span>
-            </p>
-          </div>
-          <Link className="btn secondary" to="/coach/profile#coaching-photos">Add photos →</Link>
-        </div>
-      ) : null}
-    </>
+  const checklist = setup ? (
+    <CoachOnboardingCard
+      listed={listed}
+      setup={setup}
+      userId={user?.id}
+      onRefresh={() => { refreshProfile(); refreshStripeStatus(); }}
+    />
+  ) : null;
+
+  const photoPrompt = setup && galleryCount === 0 ? (
+    <div className="card coach-optional-photo">
+      <div>
+        <span className="small muted coach-next-step-label">Optional</span>
+        <p>
+          <strong>Add coaching photos</strong>
+          <br />
+          <span className="small">Show students what your lessons look like, on the court and in action.</span>
+        </p>
+      </div>
+      <Link className="btn secondary" to="/coach/profile#coaching-photos">Add photos →</Link>
+    </div>
   ) : null;
 
   return (
@@ -112,14 +111,16 @@ export function CoachDashboardPage() {
           {user?.id ? <Link to={`/coaches/${user.id}`}>View public profile</Link> : null}
         </Alert>
       ) : null}
-      {!listed ? onboarding : null}
+      {!listed ? checklist : null}
+      {market ? <CoachReliabilitySummary listed={listed} /> : null}
+      {!listed ? photoPrompt : null}
       <HowBookingsWorkGuide userId={user?.id} role="coach" />
       {!bookingsLoading && !bookingsError ? <DashboardReminders items={reminders} /> : null}
       {loading ? <LoadingState /> : null}
       {marketError ? <ErrorState error={marketError} /> : null}
       {bookingsError ? <ErrorState error={bookingsError} /> : null}
-      {listed ? onboarding : null}
-      <CoachReliabilitySummary listed={listed} />
+      {listed ? checklist : null}
+      {listed ? photoPrompt : null}
       <div className="card">
         <h2>Incoming requests</h2>
         {bookingsData && bookingsData.pending.length === 0 ? (

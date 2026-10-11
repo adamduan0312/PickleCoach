@@ -135,8 +135,8 @@ test('dashboard: one "Get listed on Discover" card replaces Next step + Marketpl
   assert.doesNotMatch(src, /Marketplace status/);
   assert.doesNotMatch(src, /coach-next-step"/);
   // Unlisted: onboarding first on the page; listed: short confirmation further down.
-  assert.ok(src.indexOf('{!listed ? onboarding : null}') < src.indexOf('<HowBookingsWorkGuide'));
-  assert.ok(src.indexOf('{listed ? onboarding : null}') > src.indexOf('<DashboardReminders'));
+  assert.ok(src.indexOf('{!listed ? checklist : null}') < src.indexOf('<HowBookingsWorkGuide'));
+  assert.ok(src.indexOf('{listed ? checklist : null}') > src.indexOf('<DashboardReminders'));
 
   const card = read('../src/components/coach/CoachOnboarding.jsx');
   assert.match(card, />Get listed on Discover</);

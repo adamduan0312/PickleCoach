@@ -54,7 +54,7 @@ test('profile photo is part of the Coach profile step (no separate step); the ga
 });
 
 test('dashboard: optional coaching-gallery nudge (profile photo is now in the required checklist)', () => {
-  assert.match(dashboard, /\{galleryCount === 0 \? \(\s*<div className="card coach-optional-photo">/);
+  assert.match(dashboard, /setup && galleryCount === 0 \? \(\s*<div className="card coach-optional-photo">/);
   assert.match(dashboard, /<strong>Add coaching photos<\/strong>/);
   assert.match(dashboard, /<Link className="btn secondary" to="\/coach\/profile#coaching-photos">Add photos →<\/Link>/);
   assert.doesNotMatch(dashboard, /Add a profile photo/);
