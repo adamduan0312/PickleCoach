@@ -70,6 +70,6 @@ describe('reliabilitySelfServe', () => {
 
   it('public marketplace hint stays concise and matches format helper', () => {
     assert.equal(formatReliabilityHint(), PUBLIC_COACH_RELIABILITY_HINT);
-    assert.match(formatReliabilityHint(), /attendance/i);
+    assert.match(formatReliabilityHint(), /follows through on bookings/);
   });
 });

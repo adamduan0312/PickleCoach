@@ -91,6 +91,18 @@ export function reliabilityVisibilityCopy(role) {
   return 'Students can see your reliability score on Discover and your public coach profile. Use this page to understand how your score works.';
 }
 
-/** Public marketplace gloss (Discover / coach profile) — concise trust signal. */
+/** Public marketplace gloss (Discover / coach profile). Says what the score means, never how it's calculated. */
 export const PUBLIC_COACH_RELIABILITY_HINT =
-  'Based on recent attendance, cancellations, and completed lessons.';
+  'Reliability scores help indicate how consistently someone follows through on bookings. Missed lessons and other booking-related behavior may affect a score.';
+
+/** Coach's own score (dashboard info icon). */
+export const COACH_OWN_RELIABILITY_HINT =
+  'Your reliability score reflects how consistently you follow through on bookings. Missed lessons and other booking-related behavior may affect your score.';
+
+const COACH_RELIABILITY_EFFECT_LINE = 'Missed lessons and other booking-related behavior may affect it.';
+
+export const COACH_DASHBOARD_RELIABILITY_NOTE =
+  `Students see this score on Discover and your coach profile. ${COACH_RELIABILITY_EFFECT_LINE}`;
+
+export const COACH_DASHBOARD_RELIABILITY_NOTE_UNLISTED =
+  `Once you’re listed, students see this score on Discover and your coach profile. ${COACH_RELIABILITY_EFFECT_LINE}`;

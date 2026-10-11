@@ -13,6 +13,7 @@ import { bookingLessonTitle } from '../../domain/lessonOffering.js';
 import { formatListWhenInZone, formatListWhenWithZone } from '../../utils/datetime.js';
 import { coachSetupView } from '../../domain/coachSetup.js';
 import { CoachOnboardingCard } from '../../components/coach/CoachOnboarding.jsx';
+import { CoachReliabilitySummary } from '../../components/coach/CoachReliabilitySummary.jsx';
 
 function respondByWhen(booking, tz) {
   const iso = coachAcceptanceDeadlineAt(booking);
@@ -118,6 +119,7 @@ export function CoachDashboardPage() {
       {marketError ? <ErrorState error={marketError} /> : null}
       {bookingsError ? <ErrorState error={bookingsError} /> : null}
       {listed ? onboarding : null}
+      <CoachReliabilitySummary listed={listed} />
       <div className="card">
         <h2>Incoming requests</h2>
         {bookingsData && bookingsData.pending.length === 0 ? (

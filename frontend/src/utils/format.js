@@ -1,3 +1,5 @@
+import { PUBLIC_COACH_RELIABILITY_HINT } from '../domain/reliabilitySelfServe.js';
+
 export function formatMoney(amount, currency = 'USD') {
   if (amount == null || amount === '') return '—';
   const n = Number(amount);
@@ -75,7 +77,7 @@ export function formatReliabilityLabel(score) {
 
 /** Short Discover / public-profile gloss — marketplace trust signal only. */
 export function formatReliabilityHint() {
-  return 'Based on recent attendance, cancellations, and completed lessons.';
+  return PUBLIC_COACH_RELIABILITY_HINT;
 }
 
 /**

@@ -8,7 +8,7 @@
 export const BENEFITS_HEADING = 'Book with confidence on PickleCoach';
 
 export const BENEFITS_INTRO =
-  'Find trusted coaches, keep your bookings organized, and know your options if plans change.';
+  'Compare coaches, keep your bookings organized, and understand your options if plans change.';
 
 export const STUDENT_BENEFITS = [
   {

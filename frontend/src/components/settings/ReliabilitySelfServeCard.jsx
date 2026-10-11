@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import { coachesApi, studentsApi } from '../../api/index.js';
 import { useAsync } from '../../hooks/useAsync.js';
 import { EmptyState, ErrorState, LoadingState } from '../ui/States.jsx';
@@ -22,11 +23,18 @@ export function ReliabilitySelfServeCard({ role }) {
     return res?.data?.reliability ?? res?.reliability ?? null;
   }, [role]);
 
+  const cardRef = useRef(null);
+  useEffect(() => {
+    if (data && window.location.hash === '#reliability') {
+      cardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, [data]);
+
   const percent = formatSelfReliabilityPercent(data?.reliability_score);
   const activity = reliabilityActivityRows(data, role);
 
   return (
-    <div className="card stack" id="reliability">
+    <div className="card stack" id="reliability" ref={cardRef}>
       <h2>Reliability</h2>
 
       {loading ? <LoadingState /> : null}

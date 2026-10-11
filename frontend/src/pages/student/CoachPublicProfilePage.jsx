@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { InfoTip } from '../../components/ui/InfoTip.jsx';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { coachesApi, asList } from '../../api/index.js';
 import { useAsync } from '../../hooks/useAsync.js';
@@ -216,9 +217,12 @@ export function CoachPublicProfilePage() {
                 </li>
               ) : null}
               {reliabilityLine ? (
-                <li title={formatReliabilityHint()}>
+                <li>
                   <span className="coach-highlight-label">Reliability</span>
-                  <span>{reliabilityLine.replace(/^Reliability:\s*/i, '')}</span>
+                  <span>
+                    {reliabilityLine.replace(/^Reliability:\s*/i, '')}
+                    <InfoTip label="What reliability scores mean">{formatReliabilityHint()}</InfoTip>
+                  </span>
                 </li>
               ) : null}
               {profile.location ? (
