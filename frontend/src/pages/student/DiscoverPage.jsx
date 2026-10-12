@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { coachesApi, asList } from '../../api/index.js';
 import { useAsync } from '../../hooks/useAsync.js';
+import { scrollResultsIntoView } from '../../utils/scrollToResults.js';
 import { useAuth } from '../../auth/AuthContext.jsx';
 import { Alert, EmptyState, ErrorState, LoadingState } from '../../components/ui/States.jsx';
 import { Avatar } from '../../components/ui/Avatar.jsx';
@@ -98,6 +99,20 @@ export function DiscoverPage() {
     if (!skillConflict) setSkillError(null);
   }, [skillConflict]);
 
+  // Explicit location actions only: scroll once the reloaded results (or their error) replace what was on screen.
+  const resultsRef = useRef(null);
+  const resultsScrollRef = useRef(null);
+  function scrollToResultsWhenLoaded() {
+    resultsScrollRef.current = { before: data };
+    setReloadToken((n) => n + 1);
+  }
+  useEffect(() => {
+    const pending = resultsScrollRef.current;
+    if (!pending || loading || (data === pending.before && !error)) return;
+    resultsScrollRef.current = null;
+    scrollResultsIntoView(resultsRef.current);
+  }, [loading, data, error]);
+
   function applyLocation(nextLocation) {
     const f = filtersRef.current;
     if (skillConflictRef.current) {
@@ -156,13 +171,14 @@ export function DiscoverPage() {
     setLocationError(null);
     setLocation(next);
     applyLocation(next);
+    scrollToResultsWhenLoaded();
   }
 
   /**
    * Single path for place text → coordinates (Search button + ?q= bootstrap).
    * Always clears locationBusy in finally.
    */
-  async function runLocationQuery(q, { keepQueryText = true } = {}) {
+  async function runLocationQuery(q, { keepQueryText = true, scrollToResults = false } = {}) {
     const trimmed = String(q || '').trim();
     if (keepQueryText) setLocationQuery(trimmed);
     setLocationError(null);
@@ -183,6 +199,7 @@ export function DiscoverPage() {
       setLocationCandidates(null);
       setLocationError(null);
       applyLocation(outcome.location);
+      if (scrollToResults) scrollToResultsWhenLoaded();
       return outcome;
     } catch (err) {
       setLocationError(err?.message || 'Location search failed. Please try again.');
@@ -204,6 +221,7 @@ export function DiscoverPage() {
       setLocation(next);
       setLocationQuery('');
       applyLocation(next);
+      scrollToResultsWhenLoaded();
     } catch (err) {
       if (isGeolocationPermissionDenied(err)) setGeoPermission('denied');
       setLocationError(geolocationErrorMessage(err));
@@ -214,7 +232,7 @@ export function DiscoverPage() {
 
   async function searchLocation(e) {
     e?.preventDefault?.();
-    await runLocationQuery(locationQuery, { keepQueryText: true });
+    await runLocationQuery(locationQuery, { keepQueryText: true, scrollToResults: true });
   }
 
   // Dashboard / shareable links: ?q=… or ?lat=&lng=&label=…
@@ -535,7 +553,7 @@ export function DiscoverPage() {
         </div>
       </form>
 
-      <div className="discover-results" style={{ marginTop: 16 }} aria-live="polite">
+      <div className="discover-results" ref={resultsRef} style={{ marginTop: 16 }} aria-live="polite">
         {loading ? <LoadingState label={hasLocation ? 'Finding coaches near this location…' : 'Loading coaches…'} /> : null}
         {error ? (
           <ErrorState error={error} onRetry={() => setReloadToken((n) => n + 1)} />
