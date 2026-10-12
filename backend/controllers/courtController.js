@@ -327,7 +327,8 @@ export const deleteCourt = async (req, res) => {
  * Rules:
  * - Exact identity (active or soft-deleted) → reuse (restore if soft-deleted); never overwrite fields.
  * - Court names are NOT globally unique — "Holiday Park" may exist in many cities/states.
- * - Same/nearby coordinates (geographic duplicate gate) → 409 with existing candidates to select.
+ * - Same/nearby coordinates (geographic duplicate gate) → 409 with existing candidates to select, unless the
+ *   coach confirms with `acknowledge_possible_duplicates` that theirs is a different location.
  * - Different name, same address → allow (multiple courts at one venue).
  * - OSM imports use osm_type + osm_id as stable external identity (separate from this path).
  */
@@ -403,12 +404,13 @@ export const createCourt = async (req, res) => {
           nearby,
         );
 
-        if (ranked.high_confidence.length > 0) {
+        // Nearby matches warn; the coach can still confirm theirs is a different location.
+        if (ranked.high_confidence.length > 0 && !acknowledge_possible_duplicates) {
           return res.status(409).json({
             success: false,
             error: 'COURT_DUPLICATE_HIGH',
             message:
-              'We found an existing court that is very likely this location. Please use the existing court instead of creating a new one.',
+              'We found an existing court that is very likely this location. Use it, or confirm yours is a different location.',
             data: ranked,
           });
         }

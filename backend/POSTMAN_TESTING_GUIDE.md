@@ -240,7 +240,7 @@ Use this as a living checklist. Check off each line as you verify it (happy path
 - [ ] List/Search Courts — 200; optional **`q`** (DB-only). Geo **lat/lng** (no `q`) always attempts OSM discovery + merge (existing locals do not block); repeat search must not duplicate; Overpass down → still return locals
 - [ ] Get Court By ID — 200
 - [ ] Check Court Duplicates — 200; `POST /api/courts/duplicate-check` with structured address + lat/lng → `high_confidence` / `possible`
-- [ ] Create Court — 201; coaches **require** lat/lng. May return **`409 COURT_DUPLICATE_HIGH`** (use existing) or **`409 COURT_DUPLICATE_POSSIBLE`** (retry with `acknowledge_possible_duplicates: true`). Coach response includes `court` + `coachCourt` (auto-linked; no `coach_notes` on `coachCourt`). Prefer search → **`POST /api/coaches/me/courts`** when the court already exists.
+- [ ] Create Court — 201; coaches **require** lat/lng. May return **`409 COURT_DUPLICATE_HIGH`** / **`409 COURT_DUPLICATE_POSSIBLE`** (use existing, or retry with `acknowledge_possible_duplicates: true`). Coach response includes `court` + `coachCourt` (auto-linked; no `coach_notes` on `coachCourt`). Prefer search → **`POST /api/coaches/me/courts`** when the court already exists.
 - [ ] Delete Court Globally (Admin) — 200; `DELETE /api/courts/:id` (Admin flow; coaches unlink via `DELETE /api/coaches/me/courts/:courtId`)
 
 ### LESSONS

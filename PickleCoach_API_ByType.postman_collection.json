@@ -2544,7 +2544,7 @@
 								"duplicate-check"
 							]
 						},
-						"description": "Roles: Coach or Admin. **Does not create a court.** After geocoding a proposed address (`GET /api/geo/search`), call this with structured fields + **required** `latitude`/`longitude`.\n\nReturns `data.high_confidence` and `data.possible` candidate courts (distance + fuzzy name/address). Coach UI: high → require selecting existing; possible → warn and allow “different location”; empty → safe to create.\n\n**Create gate:** `POST /api/courts` enforces the same rules — `409 COURT_DUPLICATE_HIGH` (must use existing) or `409 COURT_DUPLICATE_POSSIBLE` (retry create with `acknowledge_possible_duplicates: true`)."
+						"description": "Roles: Coach or Admin. **Does not create a court.** After geocoding a proposed address (`GET /api/geo/search`), call this with structured fields + **required** `latitude`/`longitude`.\n\nReturns `data.high_confidence` and `data.possible` candidate courts (distance + fuzzy name/address). Coach UI: high or possible → warn, offer the existing courts, and allow “different location”; empty → safe to create.\n\n**Create gate:** `POST /api/courts` enforces the same rules — `409 COURT_DUPLICATE_HIGH` / `409 COURT_DUPLICATE_POSSIBLE` (use an existing court, or retry create with `acknowledge_possible_duplicates: true`)."
 					},
 					"response": [],
 					"event": [
@@ -2597,7 +2597,7 @@
 								"courts"
 							]
 						},
-						"description": "Roles: Coach (or Admin). Create **or reuse** a shared court (**court fields only** — do not send `coach_notes`, `notes`, or free-text `address`).\n\n**Coach workflow:** search PickleCoach courts first (`GET /api/courts?q=` / near-me) → link with `POST /api/coaches/me/courts`. Only if genuinely new: geocode (`GET /api/geo/search`) → optional `POST /api/courts/duplicate-check` → create with **required** `latitude`/`longitude`.\n\n**Duplicate gate (new rows):** `409 COURT_DUPLICATE_HIGH` → must select existing court; `409 COURT_DUPLICATE_POSSIBLE` → review candidates or retry with **`acknowledge_possible_duplicates: true`**. Exact identity still **reuses**. Court names are not globally unique — same name at far-apart coordinates is allowed; nearby same-place matches use `COURT_DUPLICATE_*`.\n\n**Auto-link:** coaches get `coachCourt` in response. Coaches may link/create courts anywhere — no teaching-area distance limit."
+						"description": "Roles: Coach (or Admin). Create **or reuse** a shared court (**court fields only** — do not send `coach_notes`, `notes`, or free-text `address`).\n\n**Coach workflow:** search PickleCoach courts first (`GET /api/courts?q=` / near-me) → link with `POST /api/coaches/me/courts`. Only if genuinely new: geocode (`GET /api/geo/search`) → optional `POST /api/courts/duplicate-check` → create with **required** `latitude`/`longitude`.\n\n**Duplicate gate (new rows):** `409 COURT_DUPLICATE_HIGH` / `409 COURT_DUPLICATE_POSSIBLE` → select an existing court or retry with **`acknowledge_possible_duplicates: true`**. Exact identity still **reuses**. Court names are not globally unique — same name at far-apart coordinates is allowed; nearby same-place matches use `COURT_DUPLICATE_*`.\n\n**Auto-link:** coaches get `coachCourt` in response. Coaches may link/create courts anywhere — no teaching-area distance limit."
 					},
 					"response": [],
 					"event": [

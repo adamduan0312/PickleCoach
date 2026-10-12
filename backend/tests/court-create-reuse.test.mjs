@@ -412,6 +412,47 @@ describe('createCourt create-or-reuse', () => {
     assert.ok(res.payload.data?.high_confidence?.some((c) => c.id === 7));
   });
 
+  it('creates and links a court next to a very likely match once the coach confirms it is different', async () => {
+    const nearbyExisting = {
+      id: 7, name: 'Holiday Park', address_line1: '1150 G Harold Martin Dr', city: 'Fort Lauderdale',
+      state: 'FL', postal_code: '33304', country: 'US', latitude: 26.1367, longitude: -80.141,
+      created_by_user_id: 99, deleted_at: null,
+      get(opts) {
+        if (opts && opts.plain) return { ...this, get: undefined };
+        return this;
+      },
+    };
+    let createdAttrs = null;
+    let linked = null;
+    CourtLocation.findOne = async () => null;
+    CourtLocation.findAll = async () => [nearbyExisting];
+    CourtLocation.create = async (attrs) => {
+      createdAttrs = attrs;
+      return { id: 43, ...attrs };
+    };
+    CourtLocation.findByPk = async () => ({ id: 43, name: 'Holiday Park' });
+    CoachCourtLocation.findAll = async () => [];
+    CoachCourtLocation.findOne = async () => null;
+    CoachCourtLocation.create = async (attrs) => {
+      linked = attrs;
+      return { id: 71, ...attrs };
+    };
+    CoachCourtLocation.findByPk = async () => ({ id: 71, coach_id: 3, court_id: 43 });
+
+    const fields = {
+      name: 'Holiday Park', address_line1: '1150 G. Harold Martin Drive', city: 'Fort Lauderdale',
+      state: 'FL', postal_code: '33304', country: 'US', latitude: 26.1368, longitude: -80.1411,
+      acknowledge_possible_duplicates: true,
+    };
+    const res = mockRes();
+    await createCourt({ validated: fields, body: fields, user: { id: 3, roles: ['coach'] } }, res);
+
+    assert.equal(res.statusCode, 201);
+    assert.equal(res.payload.message, 'Court created successfully');
+    assert.equal(createdAttrs?.name, 'Holiday Park');
+    assert.deepEqual(linked, { coach_id: 3, court_id: 43 });
+  });
+
   it('409 lists a nearby court created by another coach, with its address', async () => {
     const otherCoachCourt = {
       id: 88,

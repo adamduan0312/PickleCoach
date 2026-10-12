@@ -281,10 +281,6 @@ export function CoachCourtsPage() {
       setSaveErr('Confirm the address location before creating.');
       return;
     }
-    if (dupState?.high_confidence?.length) {
-      setSaveErr('A very likely match already exists. Select that court instead of creating a new one.');
-      return;
-    }
     setBusy(true);
     setSaveErr(null);
     try {
@@ -334,6 +330,7 @@ export function CoachCourtsPage() {
 
   const high = dupState?.high_confidence || [];
   const possible = dupState?.possible || [];
+  const nearbyMatches = [...high, ...possible];
   const linkedIds = useMemo(() => linkedCourtIdSet(data), [data]);
 
   function CourtSelectAction({ court }) {
@@ -497,38 +494,14 @@ export function CoachCourtsPage() {
 
           <Alert tone="error">{saveErr}</Alert>
 
-          {high.length > 0 ? (
+          {nearbyMatches.length > 0 ? (
             <div className="stack">
               <Alert tone="warning">
-                We found a court that is very likely this location. Select it instead of creating a duplicate.
+                {high.length > 0
+                  ? 'There’s already a court here that looks like the same location. Use it if it’s the same place, or create yours if it’s different.'
+                  : 'There are courts nearby that may be the same location. Use one if it’s the same place, or create yours if it’s different.'}
               </Alert>
-              {high.map((c) => (
-                <div key={c.id} className="card spread">
-                  <div>
-                    <strong>{c.name}</strong>
-                    <CourtAddressBlock court={c} />
-                    {c.distance_miles != null ? <div className="small muted">{formatMiles(c.distance_miles)} away</div> : null}
-                  </div>
-                  {isCourtAlreadyLinked(linkedIds, c) ? (
-                    <span className="btn secondary" aria-disabled="true" style={{ pointerEvents: 'none', opacity: 0.85 }}>
-                      Already added
-                    </span>
-                  ) : (
-                    <button className="btn" type="button" disabled={busy} onClick={() => selectExisting(c)}>
-                      Use this court
-                    </button>
-                  )}
-                </div>
-              ))}
-            </div>
-          ) : null}
-
-          {high.length === 0 && possible.length > 0 ? (
-            <div className="stack">
-              <Alert tone="warning">
-                Nearby courts may already be this location. Review them, or confirm yours is different.
-              </Alert>
-              {possible.map((c) => (
+              {nearbyMatches.map((c) => (
                 <div key={c.id} className="card spread">
                   <div>
                     <strong>{c.name}</strong>
@@ -552,7 +525,7 @@ export function CoachCourtsPage() {
                 disabled={busy || !resolved}
                 onClick={() => createNew({ acknowledgePossible: true })}
               >
-                This is a different location — create new
+                {busy ? 'Saving…' : 'This is a different location — create new'}
               </button>
             </div>
           ) : null}
