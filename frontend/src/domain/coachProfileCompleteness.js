@@ -56,8 +56,25 @@ export function missingFieldsPhrase(fields) {
   return `a ${names.slice(0, -1).join(', ')}, and ${names.at(-1)}`;
 }
 
-/** Coach-facing sentence for an incomplete profile, or null when complete. */
-export function incompleteProfileMessage(fields) {
-  const phrase = missingFieldsPhrase(fields);
-  return phrase ? `Add ${phrase} to make your profile ready for students.` : null;
+const LENGTH_MINIMUMS = { headline: COACH_HEADLINE_MIN, bio: COACH_BIO_MIN };
+
+/**
+ * Coach-facing sentence for an incomplete profile, or null when complete. With the saved `profile`,
+ * a headline or bio that's filled in but too short is asked to be lengthened rather than added.
+ */
+export function incompleteProfileMessage(fields, profile = null) {
+  const list = fields || [];
+  const tooShort = profile
+    ? list.filter((f) => LENGTH_MINIMUMS[f] && trimmedLength(profile[f]) > 0)
+    : [];
+  const toAdd = list.filter((f) => !tooShort.includes(f));
+  if (!tooShort.length) {
+    const phrase = missingFieldsPhrase(toAdd);
+    return phrase ? `Add ${phrase} to make your profile ready for students.` : null;
+  }
+  const lengthen = tooShort.length === 2
+    ? `lengthen your headline (at least ${COACH_HEADLINE_MIN} characters) and bio (at least ${COACH_BIO_MIN} characters)`
+    : `lengthen your ${tooShort[0]} to at least ${LENGTH_MINIMUMS[tooShort[0]]} characters`;
+  const add = missingFieldsPhrase(toAdd);
+  return `To make your profile ready for students, ${add ? `add ${add}, and ` : ''}${lengthen}.`;
 }

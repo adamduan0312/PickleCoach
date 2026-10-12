@@ -54,7 +54,7 @@ export function CoachProfileEditPage() {
   useUnsavedChangesGuard(isDirty);
   const ratingCopy = ratingFieldCopy(form.rating_system);
   const stepMissing = coachProfileStepMissing(existing, user?.avatar_url);
-  const incompleteNotice = message && stepMissing.length ? incompleteProfileMessage(stepMissing) : null;
+  const incompleteNotice = message && stepMissing.length ? incompleteProfileMessage(stepMissing, existing) : null;
 
   useEffect(() => {
     if (isDirty) setMessage(null);

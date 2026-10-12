@@ -75,6 +75,28 @@ test('incomplete-profile copy lists only what is missing', () => {
   );
 });
 
+test('filled-in but too-short headline/bio asks to lengthen them, not add them', () => {
+  const short = { headline: 'Adam Dua', bio: 'Profile restored fo discovery after test-flow re', location: 'New York' };
+  assert.equal(
+    frontend.incompleteProfileMessage(['headline', 'bio'], short),
+    'To make your profile ready for students, lengthen your headline (at least 10 characters) and bio (at least 50 characters).',
+  );
+  assert.equal(
+    frontend.incompleteProfileMessage(['bio'], short),
+    'To make your profile ready for students, lengthen your bio to at least 50 characters.',
+  );
+  assert.equal(
+    frontend.incompleteProfileMessage(['photo', 'bio', 'location'], { headline: 'Doubles strategy coach', bio: 'Short bio', location: '' }),
+    'To make your profile ready for students, add a profile photo and location, and lengthen your bio to at least 50 characters.',
+  );
+  assert.equal(
+    frontend.incompleteProfileMessage(['headline', 'bio'], { headline: '  ', bio: null }),
+    'Add a headline and bio to make your profile ready for students.',
+  );
+  const page = read('../src/pages/coach/CoachProfileEditPage.jsx');
+  assert.match(page, /incompleteProfileMessage\(stepMissing, existing\)/);
+});
+
 test('profile form: required markers, minimum hints, draft save allowed with a not-ready notice', () => {
   const src = read('../src/pages/coach/CoachProfileEditPage.jsx');
   assert.match(src, /label="Headline \*"/);

@@ -70,6 +70,7 @@ export function CoachDashboardPage() {
       coachUiPhase: readiness.coachUiPhase,
       profileExists: market?.profile_exists ?? readiness.coachUiPhase !== 'start_setup',
       profileMissingFields: market?.profile_missing_fields,
+      profile: user?.coachProfile,
     })
     : null;
   const listed = Boolean(market?.listed);

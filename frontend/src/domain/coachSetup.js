@@ -46,13 +46,13 @@ export function missingSetupSteps(missing) {
     .map((key) => ({ key, ...COACH_SETUP_STEPS[key] }));
 }
 
-function nextStepCopy(key, { coachUiPhase, profileExists, profileMissingFields }) {
+function nextStepCopy(key, { coachUiPhase, profileExists, profileMissingFields, profile }) {
   switch (key) {
     case 'profile':
       return profileExists
         ? {
           title: 'Complete your coach profile',
-          detail: incompleteProfileMessage(profileMissingFields?.length ? profileMissingFields : COACH_PROFILE_STEP_FIELDS),
+          detail: incompleteProfileMessage(profileMissingFields?.length ? profileMissingFields : COACH_PROFILE_STEP_FIELDS, profile),
           cta: 'Complete profile',
         }
         : { title: 'Create your coach profile', detail: 'Add your photo and tell students about yourself.', cta: 'Start setup' };
@@ -77,7 +77,7 @@ function nextStepCopy(key, { coachUiPhase, profileExists, profileMissingFields }
  * draft is enough) is what unlocks payouts. `next` is the first incomplete step in
  * COACH_SETUP_ORDER (null once everything is done).
  */
-export function coachSetupView(steps, { coachUiPhase, profileExists, profileMissingFields } = {}) {
+export function coachSetupView(steps, { coachUiPhase, profileExists, profileMissingFields, profile } = {}) {
   const s = steps || {};
   const exists = Boolean(profileExists ?? s.profile);
   const checklist = COACH_SETUP_ORDER.map((key) => {
@@ -97,7 +97,7 @@ export function coachSetupView(steps, { coachUiPhase, profileExists, profileMiss
     ? {
       key: first.key,
       to: first.to,
-      ...nextStepCopy(first.key, { coachUiPhase, profileExists: exists, profileMissingFields }),
+      ...nextStepCopy(first.key, { coachUiPhase, profileExists: exists, profileMissingFields, profile }),
     }
     : null;
   const doneCount = checklist.filter((item) => item.done).length;

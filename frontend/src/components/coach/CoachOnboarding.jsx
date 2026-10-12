@@ -136,6 +136,7 @@ export function SetupNextStep({ step, refreshKey }) {
     coachUiPhase: readiness.coachUiPhase,
     profileExists: status.profile_exists,
     profileMissingFields: status.profile_missing_fields,
+    profile: user?.coachProfile,
   });
   if (!view) return null;
 
