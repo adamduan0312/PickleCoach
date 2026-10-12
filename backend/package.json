@@ -23,6 +23,7 @@
     "seed:dedupe-disputes": "node scripts/dedupe-seeded-disputes.js",
     "seed:test-flows": "node scripts/seed-test-flows.js",
     "seed:feature-tour": "node scripts/seed-feature-tour.mjs",
+    "seed:discover-scroll": "node scripts/seed-discover-scroll.mjs",
     "seed:cancel-test-bookings": "node scripts/seed-cancel-test-bookings.js",
     "seed:booking-action-tests": "node scripts/seed-booking-action-test-bookings.js",
     "seed:dev-frontend": "node scripts/seed-dev-frontend-fixtures.js",
