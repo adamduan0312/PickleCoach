@@ -5,6 +5,7 @@ import { computeCoachReadiness, hasCoachRole } from '../domain/userReadiness.js'
 import { inferMode } from './paths.js';
 import { markIntentionalLogout } from './logoutIntent.js';
 import { detectLocalTimezone } from '../utils/datetime.js';
+import { nextPayoutSetupReset, payoutSetupResetStorageKey } from '../domain/payoutSetupReset.js';
 
 const AuthContext = createContext(null);
 /** Legacy single-slot key — cleared on logout; do not use as a fallback. */
@@ -78,6 +79,7 @@ export function AuthProvider({ children }) {
   const [token, setToken] = useState(() => getStoredToken());
   const [user, setUser] = useState(null);
   const [stripeStatus, setStripeStatus] = useState(null);
+  const [payoutSetupReset, setPayoutSetupReset] = useState(false);
   const [mode, setModeState] = useState(null);
   const [bootstrapping, setBootstrapping] = useState(Boolean(getStoredToken()));
   const [authError, setAuthError] = useState(null);
@@ -87,6 +89,7 @@ export function AuthProvider({ children }) {
     setToken(null);
     setUser(null);
     setStripeStatus(null);
+    setPayoutSetupReset(false);
     // Keep per-user mode in storage so the next login for that account restores it.
     // Clear the legacy global key so the next account cannot inherit this session's mode.
     clearLegacyGlobalMode();
@@ -132,12 +135,21 @@ export function AuthProvider({ children }) {
     try {
       const { data } = await coachesApi.stripeStatus();
       setStripeStatus(data);
+      const key = payoutSetupResetStorageKey(user?.id);
+      let stored = false;
+      try { stored = sessionStorage.getItem(key) === '1'; } catch { /* storage unavailable */ }
+      const next = nextPayoutSetupReset(stored, data);
+      try {
+        if (next) sessionStorage.setItem(key, '1');
+        else sessionStorage.removeItem(key);
+      } catch { /* storage unavailable */ }
+      setPayoutSetupReset(next);
       return data;
     } catch {
       setStripeStatus(null);
       return null;
     }
-  }, [user?.roles]);
+  }, [user?.roles, user?.id]);
 
   useEffect(() => {
     onUnauthorized(() => {
@@ -264,6 +276,7 @@ export function AuthProvider({ children }) {
       bootstrapping,
       authError,
       stripeStatus,
+      payoutSetupReset,
       readiness,
       isAuthenticated: Boolean(token && user),
       login,
@@ -281,6 +294,7 @@ export function AuthProvider({ children }) {
       bootstrapping,
       authError,
       stripeStatus,
+      payoutSetupReset,
       readiness,
       login,
       register,

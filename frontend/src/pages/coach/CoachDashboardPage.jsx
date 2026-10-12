@@ -14,6 +14,7 @@ import { formatListWhenInZone, formatListWhenWithZone } from '../../utils/dateti
 import { coachSetupView } from '../../domain/coachSetup.js';
 import { CoachOnboardingCard } from '../../components/coach/CoachOnboarding.jsx';
 import { CoachReliabilitySummary } from '../../components/coach/CoachReliabilitySummary.jsx';
+import { PAYOUT_SETUP_RESET_MESSAGE } from '../../domain/payoutSetupReset.js';
 
 function respondByWhen(booking, tz) {
   const iso = coachAcceptanceDeadlineAt(booking);
@@ -21,7 +22,7 @@ function respondByWhen(booking, tz) {
 }
 
 export function CoachDashboardPage() {
-  const { user, readiness, refreshProfile, refreshStripeStatus } = useAuth();
+  const { user, readiness, payoutSetupReset, refreshProfile, refreshStripeStatus } = useAuth();
   const tz = user?.timezone;
   const location = useLocation();
   const navigate = useNavigate();
@@ -109,6 +110,12 @@ export function CoachDashboardPage() {
         <Alert tone="success">
           {flash}{' '}
           {user?.id ? <Link to={`/coaches/${user.id}`}>View public profile</Link> : null}
+        </Alert>
+      ) : null}
+      {payoutSetupReset && !listed ? (
+        <Alert tone="warning">
+          {PAYOUT_SETUP_RESET_MESSAGE}{' '}
+          <Link to="/coach/stripe">Set up payouts</Link>
         </Alert>
       ) : null}
       {!listed ? checklist : null}

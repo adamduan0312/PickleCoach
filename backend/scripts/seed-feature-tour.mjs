@@ -9,8 +9,9 @@
  *   · completed + reviewed · completed awaiting review · open issue report
  *
  * Coaches: Maya (listed, reviews, photos), Leo (listed, no bookings), Nina (not listed yet — checklist).
- * Tour payments are tagged `qa_fixture` so the payout worker never tries to transfer to the fake
- * Stripe accounts.
+ * Maya and Leo get simulated payout setup (`acct_tour_*`, see utils/devSeedStripeConnect.js): outside
+ * production it skips live Stripe sync so they stay listed, and the payout worker never transfers to it.
+ * In production those ids are treated as invalid. Tour payments are also tagged `qa_fixture`.
  *
  * Usage (from backend/, API on :4000): node scripts/seed-feature-tour.mjs
  * Password for every tour account: Test1234!Ab · Admin: admin.testflow@picklecoach.example.org

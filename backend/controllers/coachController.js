@@ -1,3 +1,4 @@
+import { isDevSeedStripeConnectAccountId } from '../utils/devSeedStripeConnect.js';
 import {
   User,
   UserRole,
@@ -791,25 +792,7 @@ export const stripeConnectOnboardDeps = {
   loadAudit: () => import('../utils/audit.js'),
 };
 
-/**
- * Fake Connect account ids used by local seed scripts. Live Stripe sync would
- * mark them not-ready and unlist coaches that Discover still shows via DB stripe_ready.
- *
- * Keep in sync with seed scripts (`acct_davie_*`, `acct_pinecrest_*`, `acct_rating_*`,
- * `acct_diverse_*`, `acct_testflow_*`, `acct_seed_*`). Do **not** treat `acct_restored_*`
- * as seed — those are intentionally cleared as invalid.
- */
-export function isDevSeedStripeConnectAccountId(accountId) {
-  const id = String(accountId || '');
-  return (
-    id.startsWith('acct_testflow_')
-    || id.startsWith('acct_seed_')
-    || id.startsWith('acct_davie_')
-    || id.startsWith('acct_pinecrest_')
-    || id.startsWith('acct_rating_')
-    || id.startsWith('acct_diverse_')
-  );
-}
+export { isDevSeedStripeConnectAccountId };
 
 /** Mutable deps for GET stripe-connect/status unit tests. */
 export const stripeConnectStatusDeps = {

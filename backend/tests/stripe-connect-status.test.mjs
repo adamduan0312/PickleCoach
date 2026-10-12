@@ -122,8 +122,20 @@ describe('isDevSeedStripeConnectAccountId', () => {
     assert.equal(isDevSeedStripeConnectAccountId('acct_pinecrest_coach_pine_a'), true);
     assert.equal(isDevSeedStripeConnectAccountId('acct_rating_demo'), true);
     assert.equal(isDevSeedStripeConnectAccountId('acct_diverse_12'), true);
+    assert.equal(isDevSeedStripeConnectAccountId('acct_tour_maya'), true);
     assert.equal(isDevSeedStripeConnectAccountId('acct_1Tz1Iz9auWv0U6YZ'), false);
     assert.equal(isDevSeedStripeConnectAccountId('acct_restored_70'), false);
+  });
+
+  it('never matches in production', () => {
+    const prev = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    try {
+      assert.equal(isDevSeedStripeConnectAccountId('acct_testflow_seed'), false);
+      assert.equal(isDevSeedStripeConnectAccountId('acct_tour_maya'), false);
+    } finally {
+      process.env.NODE_ENV = prev;
+    }
   });
 });
 
@@ -214,6 +226,30 @@ describe('GET /api/coaches/me/stripe-connect/status', () => {
     assert.equal(res.payload.data.onboarded, false);
     assert.equal(retrieved, false);
     assert.equal(profile.stripe_account_id, null);
+  });
+
+  it('treats simulated seed accounts as invalid in production', async () => {
+    const profile = coachProfileRow({
+      stripe_account_id: 'acct_tour_maya',
+      stripe_ready: true,
+    });
+    CoachProfile.findOne = async () => profile;
+    stripeConnectStatusDeps.loadStripeService = async () => ({
+      default: { accounts: { retrieve: async () => ({}) } },
+    });
+
+    const prev = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    try {
+      const res = mockRes();
+      await getStripeConnectStatus({ user: { id: 6, roles: ['coach'] }, query: {} }, res);
+      assert.equal(res.payload.data.seed_connect_account, undefined);
+      assert.equal(res.payload.data.cleared_invalid_account, true);
+      assert.equal(res.payload.data.stripe_ready, false);
+      assert.equal(profile.stripe_account_id, null);
+    } finally {
+      process.env.NODE_ENV = prev;
+    }
   });
 
   it('clears stale account and returns 200 when Stripe says account is missing', async () => {

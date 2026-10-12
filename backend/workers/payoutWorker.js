@@ -1,4 +1,5 @@
 import { Booking, Payment, User, CoachProfile, CancellationHistory, PaymentAction, Dispute, sequelize } from '../models/index.js';
+import { isDevSeedStripeConnectAccountId } from '../utils/devSeedStripeConnect.js';
 import { Op } from 'sequelize';
 import { logger } from '../config/logger.js';
 import * as paymentService from '../services/paymentService.js';
@@ -37,6 +38,11 @@ export async function processHeldEscrowPayment(payment) {
   if (meta.seed_skip_payout_worker === true || meta.qa_fixture === true) {
     logger.info(`Skipping payout for payment ${payment.id} - seed/QA fixture`);
     return { skipped: true, reason: 'seed_fixture' };
+  }
+
+  if (isDevSeedStripeConnectAccountId(payment.coach?.coachProfile?.stripe_account_id)) {
+    logger.info(`Skipping payout for payment ${payment.id} - simulated dev seed Connect account`);
+    return { skipped: true, reason: 'dev_seed_connect_account' };
   }
 
   if (bookingStatusUsesPostLessonPayoutClock(payment.booking.status)
