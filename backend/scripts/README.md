@@ -15,6 +15,12 @@ Run all commands from `backend/` unless noted. Most seed scripts refuse non-`dev
 
 ## Which script should I run?
 
+### Click through every feature (small, re-runnable)
+```bash
+npm run seed:feature-tour   # API on :4000; uses Stripe test mode
+```
+Own `tour.*@picklecoach.example.org` accounts (password `Test1234!Ab`): one booking per state (pending, declined, confirmed + chat, weather request, late cancel, completed + reviewed, awaiting review, open issue), two listed coaches and one still on the listing checklist. Re-running clears and rebuilds only the tour accounts' data. Prints logins and booking links.
+
 ### Fresh local database (wipe + migrate + demo + common fixtures)
 ```bash
 npm run db:reset:test
@@ -93,6 +99,7 @@ npm run seed:dedupe-disputes -- --apply
 | Script | Command | Purpose | Safe? |
 | ------ | ------- | ------- | ----- |
 | `seed-test-flows.js` | `npm run seed:test-flows` | Admin/coach/student testflow users, coach stack, bookings/disputes for cancel & no-show paths | ✅* |
+| `seed-feature-tour.mjs` | `npm run seed:feature-tour` | Small end-to-end data set for clicking through the whole app with `tour.*` accounts | ✅ tour accounts only |
 | `seed-dev-frontend-fixtures.js` | `npm run seed:dev-frontend` | Notification examples + resolved disputes + payment states for UI | ✅ |
 | `seed-testflow-lesson-history.js` | `npm run seed:testflow-lesson-history` | Extra lessons + soft-deleted lesson still nested on bookings | ✅ |
 | `create-first-admin.js` | `npm run seed:first-admin -- <email> <password> [name]` | Create/update an admin user | ⚠️ mutates user |
