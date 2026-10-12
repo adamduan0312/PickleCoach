@@ -127,12 +127,13 @@ async function clearTourBookings(userIds) {
       await q('DELETE FROM conversations WHERE booking_id IN (:ids)');
       await q('DELETE FROM weather_cancellation_requests WHERE booking_id IN (:ids)');
       await q('DELETE FROM reviews WHERE booking_id IN (:ids)');
-      await q('DELETE FROM dispute_resolution_actions WHERE dispute_id IN (SELECT id FROM disputes WHERE booking_id IN (:ids))');
-      await q('DELETE FROM disputes WHERE booking_id IN (:ids)');
+      await q('DELETE FROM student_feedback WHERE booking_id IN (:ids)');
+      await q('DELETE FROM system_jobs WHERE related_booking_id IN (:ids)');
       await q('DELETE FROM payment_actions WHERE booking_id IN (:ids)');
       await q('DELETE FROM payouts WHERE payment_id IN (SELECT id FROM payments WHERE booking_id IN (:ids))');
-      await q('DELETE FROM payments WHERE booking_id IN (:ids)');
       await q('DELETE FROM cancellation_history WHERE booking_id IN (:ids)');
+      await q('DELETE FROM payments WHERE booking_id IN (:ids)');
+      await q('DELETE FROM disputes WHERE booking_id IN (:ids)');
       await q('DELETE FROM booking_players WHERE booking_id IN (:ids)');
       await q('DELETE FROM bookings WHERE id IN (:ids)');
     }
