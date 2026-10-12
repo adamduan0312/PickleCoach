@@ -42,9 +42,23 @@ test('Discover scrolls only after explicit, successful location actions', () => 
   assert.ok(resolved < query.indexOf('} catch'), 'not when the lookup fails');
 
   assert.match(src, /runLocationQuery\(handoff\.q, \{ keepQueryText: true \}\)/, 'dashboard handoff on page load does not scroll');
-  assert.doesNotMatch(fn('onFilterSubmit'), /scrollToResults/);
   assert.match(src, /onChange=\{\(e\) => \{\s*setLocationQuery\(e\.target\.value\);/, 'typing only updates the field');
 
-  assert.match(src, /if \(!pending \|\| loading \|\| \(data === pending\.before && !error\)\) return;/, 'waits for the reloaded results');
+  assert.match(src, /if \(!pending \|\| loading\) return;/, 'waits for the reloaded results');
+  assert.match(src, /if \(error\) \{\s*resultsScrollRef\.current = null;\s*return;\s*\}/, 'a failed load stays at the controls');
+  assert.match(src, /if \(data === pending\.before\) return;/, 'never scrolls to stale results');
   assert.match(src, /className="discover-results" ref=\{resultsRef\}/);
+});
+
+test('Discover scrolls after Apply filters, not while filters are being edited', () => {
+  const src = read('../src/pages/student/DiscoverPage.jsx');
+  const fn = (name) => src.slice(src.indexOf(`function ${name}(`), src.indexOf('\n  }\n', src.indexOf(`function ${name}(`)));
+
+  assert.match(fn('onFilterSubmit'), /applyFilters\(location\)/);
+  assert.match(fn('applyFilters'), /if \(!skillConflictRef\.current\) scrollToResultsWhenLoaded\(\);/, 'not when the skill range is invalid');
+  assert.doesNotMatch(src, /setFilters\(\(f\) => \(\{ \.\.\.f, rating_system[^\n]*scrollToResults/, 'editing a filter does not scroll');
+
+  const clear = fn('clearFilters');
+  assert.match(clear, /if \(JSON\.stringify\(next\) === JSON\.stringify\(applied\)\) return;/, 'nothing applied: no refresh, no scroll');
+  assert.ok(clear.indexOf('scrollToResultsWhenLoaded()') > clear.indexOf('setApplied(next)'), 'scrolls only when clearing refreshes results');
 });

@@ -99,7 +99,8 @@ export function DiscoverPage() {
     if (!skillConflict) setSkillError(null);
   }, [skillConflict]);
 
-  // Explicit location actions only: scroll once the reloaded results (or their error) replace what was on screen.
+  // Explicit actions only (location, Apply filters): scroll once the reloaded results replace what was
+  // on screen. A failed load leaves the student at the controls to retry.
   const resultsRef = useRef(null);
   const resultsScrollRef = useRef(null);
   function scrollToResultsWhenLoaded() {
@@ -108,7 +109,12 @@ export function DiscoverPage() {
   }
   useEffect(() => {
     const pending = resultsScrollRef.current;
-    if (!pending || loading || (data === pending.before && !error)) return;
+    if (!pending || loading) return;
+    if (error) {
+      resultsScrollRef.current = null;
+      return;
+    }
+    if (data === pending.before) return;
     resultsScrollRef.current = null;
     scrollResultsIntoView(resultsRef.current);
   }, [loading, data, error]);
@@ -136,6 +142,7 @@ export function DiscoverPage() {
 
   function applyFilters(nextLocation = location) {
     applyLocation(nextLocation);
+    if (!skillConflictRef.current) scrollToResultsWhenLoaded();
   }
 
   function clearFilters() {
@@ -147,10 +154,10 @@ export function DiscoverPage() {
     };
     setFilters(cleared);
     setSkillError(null);
-    setApplied({
-      ...cleared,
-      location,
-    });
+    const next = { ...cleared, location };
+    if (JSON.stringify(next) === JSON.stringify(applied)) return;
+    setApplied(next);
+    scrollToResultsWhenLoaded();
   }
 
   function clearLocation() {
