@@ -78,6 +78,7 @@ import {
   bookingSettlementDisplayRows,
   bookingSettlementFacts,
 } from '../../domain/bookingSettlementDisplay.js';
+import { BackLink } from '../../components/ui/BackLink.jsx';
 import {
   adminBookingMoneyStatusItems,
   adminRefundStatusView,
@@ -938,7 +939,7 @@ export function BookingDetailPage({ admin = false }) {
         </section>
       ) : null}
       <p className="small" style={{ marginTop: 16 }}>
-        <Link to={admin ? '/admin/bookings' : (isCoach ? '/coach/bookings' : '/bookings')}>Back to list</Link>
+        <BackLink fallbackTo={admin ? '/admin/bookings' : (isCoach ? '/coach/bookings' : '/bookings')} fallbackLabel="Back to list" />
       </p>
     </div>
   );

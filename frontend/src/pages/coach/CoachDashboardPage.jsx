@@ -110,7 +110,7 @@ export function CoachDashboardPage() {
       {flash ? (
         <Alert tone="success">
           {flash}{' '}
-          {user?.id ? <Link to={`/coaches/${user.id}`}>View public profile</Link> : null}
+          {user?.id ? <Link to={`/coaches/${user.id}`} state={{ backTo: '/coach' }}>View public profile</Link> : null}
         </Alert>
       ) : null}
       {payoutSetupReset && !listed ? (

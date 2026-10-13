@@ -24,6 +24,7 @@ import {
   sanitizePriceInput,
   validateLessonForm,
 } from '../../domain/lessonOffering.js';
+import { BackLink } from '../../components/ui/BackLink.jsx';
 
 const NEW_BLOCKED_HINT = 'Save or cancel the current lesson before creating a new one.';
 const EDIT_BLOCKED_HINT = 'Save or cancel the current lesson before editing another lesson.';
@@ -320,7 +321,7 @@ export function CoachLessonsPage() {
           </div>
         )))}
       </div>
-      <p className="small"><Link to="/coach">Back to dashboard</Link></p>
+      <p className="small"><BackLink fallbackTo="/coach" fallbackLabel="Back to dashboard" /></p>
     </div>
   );
 }

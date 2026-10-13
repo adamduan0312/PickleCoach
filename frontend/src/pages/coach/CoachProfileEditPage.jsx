@@ -243,7 +243,7 @@ export function CoachProfileEditPage() {
             {busy ? 'Saving…' : creating ? 'Save profile' : 'Save changes'}
           </button>
           {!creating && user?.id ? (
-            <Link className="btn secondary" to={`/coaches/${user.id}`}>View public profile</Link>
+            <Link className="btn secondary" to={`/coaches/${user.id}`} state={{ backTo: '/coach/profile' }}>View public profile</Link>
           ) : (
             <>
               <button className="btn secondary" type="button" disabled aria-describedby="view-profile-hint">

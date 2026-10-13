@@ -307,12 +307,12 @@ test('coach profile page: system before rating, dynamic copy, field errors, unsa
   assert.match(src, /disabled aria-describedby="view-profile-hint">\s*View public profile\s*<\/button>/);
   // Persistent link once a profile exists (not while creating); a normal Link, so the unsaved-changes guard applies.
   assert.match(src, /\{busy \? 'Saving…' : creating \? 'Save profile' : 'Save changes'\}/);
-  assert.match(src, /\{!creating && user\?\.id \? \(\s*<Link className="btn secondary" to=\{`\/coaches\/\$\{user\.id\}`\}>View public profile<\/Link>/);
+  assert.match(src, /\{!creating && user\?\.id \? \(\s*<Link className="btn secondary" to=\{`\/coaches\/\$\{user\.id\}`\} state=\{\{ backTo: '\/coach\/profile' \}\}>View public profile<\/Link>/);
 
   const dash = read('../src/pages/coach/CoachDashboardPage.jsx');
   assert.match(dash, /const \[flash\] = useState\(\(\) => location\.state\?\.flash \|\| null\);/);
   assert.match(dash, /navigate\(`\$\{location\.pathname\}\$\{location\.search\}`, \{ replace: true, state: null \}\);/);
-  assert.match(dash, /\{flash\}\{' '\}\s*\{user\?\.id \? <Link to=\{`\/coaches\/\$\{user\.id\}`\}>View public profile<\/Link> : null\}/);
+  assert.match(dash, /\{flash\}\{' '\}\s*\{user\?\.id \? <Link to=\{`\/coaches\/\$\{user\.id\}`\} state=\{\{ backTo: '\/coach' \}\}>View public profile<\/Link> : null\}/);
   assert.match(src, /skill_rating: bad \? ratingSwitchMessage\(form\.skill_rating, system\) : undefined/);
   assert.doesNotMatch(src, /self|Self-reported|2\.0–6\.0|half steps/);
   assert.match(src, /label="Location \(Based in\) \*"/);

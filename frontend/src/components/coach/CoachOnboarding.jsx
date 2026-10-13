@@ -10,7 +10,7 @@ function ReadyToBeDiscovered({ userId }) {
     <>
       <h2 className="coach-onboarding-title">You’re ready to be discovered! ✓</h2>
       <p className="small">Your coach profile can now appear in Discover.</p>
-      {userId ? <Link className="btn secondary" to={`/coaches/${userId}`}>View public profile</Link> : null}
+      {userId ? <Link className="btn secondary" to={`/coaches/${userId}`} state={{ backTo: '/coach' }}>View public profile</Link> : null}
     </>
   );
 }

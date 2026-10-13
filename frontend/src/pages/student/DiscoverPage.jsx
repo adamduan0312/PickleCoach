@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useSearchParams } from 'react-router-dom';
 import { coachesApi, asList } from '../../api/index.js';
 import { useAsync } from '../../hooks/useAsync.js';
 import { scrollResultsIntoView } from '../../utils/scrollToResults.js';
@@ -21,6 +21,12 @@ import {
 } from '../../utils/geolocation.js';
 import { resolveLocationQuery } from '../../utils/resolveLocationQuery.js';
 import {
+  currentDiscoverEntryId,
+  ensureDiscoverEntryId,
+  readDiscoverEntry,
+  writeDiscoverEntry,
+} from '../../utils/discoverHistoryState.js';
+import {
   captureDiscoverUrlHandoff,
   markDiscoverUrlHandoffDone,
   runDiscoverQHandoffOnce,
@@ -41,15 +47,18 @@ export function DiscoverPage() {
   const { user, mode } = useAuth();
   const browseOnly = mode === 'coach';
   const [searchParams, setSearchParams] = useSearchParams();
-  const [filters, setFilters] = useState({
+  const routerLocation = useLocation();
+  // Back / Forward to this history entry: pick up the search that was on screen.
+  const [restored] = useState(() => readDiscoverEntry(currentDiscoverEntryId()));
+  const [filters, setFilters] = useState(() => restored?.filters || {
     rating_system: '',
     min_skill_rating: '',
     max_skill_rating: '',
     radius: DEFAULT_SEARCH_RADIUS,
   });
   /** @type {null | { lat: number, lng: number, label: string, source: 'geolocation' | 'search' }} */
-  const [location, setLocation] = useState(null);
-  const [locationQuery, setLocationQuery] = useState('');
+  const [location, setLocation] = useState(() => restored?.location || null);
+  const [locationQuery, setLocationQuery] = useState(() => restored?.locationQuery || '');
   const [locationBusy, setLocationBusy] = useState(false);
   const [locationError, setLocationError] = useState(null);
   /** @type {'granted'|'prompt'|'denied'|'unsupported'|null} */
@@ -57,13 +66,16 @@ export function DiscoverPage() {
   /** @type {null | { label: string, lat: number, lng: number }[]} */
   const [locationCandidates, setLocationCandidates] = useState(null);
   const [skillError, setSkillError] = useState(null);
-  const [applied, setApplied] = useState({
+  const [applied, setApplied] = useState(() => restored?.applied || {
     rating_system: '',
     min_skill_rating: '',
     max_skill_rating: '',
     radius: DEFAULT_SEARCH_RADIUS,
     location: null,
   });
+  useEffect(() => {
+    writeDiscoverEntry(ensureDiscoverEntryId(), { filters, applied, location, locationQuery });
+  }, [routerLocation.key, filters, applied, location, locationQuery]);
   const [reloadToken, setReloadToken] = useState(0);
   /** Keep latest filters for apply-from-async without stale closures. */
   const filtersRef = useRef(filters);
@@ -265,6 +277,9 @@ export function DiscoverPage() {
           // Safari / unsupported — ignore
         }
       }
+
+      // Returning to this entry: keep the restored search instead of starting over.
+      if (restored) return;
 
       const handoff = captureDiscoverUrlHandoff(searchParams);
 

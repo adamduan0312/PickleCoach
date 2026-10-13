@@ -36,6 +36,7 @@ import { certificationList, formatExperienceYears } from '../../domain/coachRati
 import { ownProfileLessonPreview } from '../../domain/coachSetup.js';
 import { GALLERY_TITLE } from '../../domain/coachPhotos.js';
 import { CoachPhotoGallery } from '../../components/coach/CoachPhotoGallery.jsx';
+import { BackLink } from '../../components/ui/BackLink.jsx';
 
 function courtTeachingLabel(court) {
   const name = court?.name || 'Court';
@@ -546,7 +547,7 @@ export function CoachPublicProfilePage() {
       </section>
 
       <p className="small muted" style={{ marginTop: 16 }}>
-        <Link to="/discover">Back to Discover</Link>
+        <BackLink fallbackTo="/discover" fallbackLabel="Back to Discover" />
       </p>
     </div>
   );
