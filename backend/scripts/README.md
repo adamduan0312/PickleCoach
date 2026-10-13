@@ -101,6 +101,7 @@ npm run seed:dedupe-disputes -- --apply
 | `seed-test-flows.js` | `npm run seed:test-flows` | Admin/coach/student testflow users, coach stack, bookings/disputes for cancel & no-show paths | ✅* |
 | `seed-feature-tour.mjs` | `npm run seed:feature-tour` | Small end-to-end data set for clicking through the whole app with `tour.*` accounts | ✅ tour accounts only |
 | `seed-discover-scroll.mjs` | `npm run seed:discover-scroll` | 9 listed coaches near Davie and Coral Gables for testing Discover scroll-to-results (simulated payouts, existing courts) | ✅ `discover.coach*` accounts only |
+| `seed-weather-requests.mjs` | `npm run seed:weather-requests` | Two confirmed tour lessons a few hours out with no weather request yet (one for Sam to ask, one for Maya); needs `seed:feature-tour` | ✅ tour accounts only; removes its previous run |
 | `seed-dev-frontend-fixtures.js` | `npm run seed:dev-frontend` | Notification examples + resolved disputes + payment states for UI | ✅ |
 | `seed-testflow-lesson-history.js` | `npm run seed:testflow-lesson-history` | Extra lessons + soft-deleted lesson still nested on bookings | ✅ |
 | `create-first-admin.js` | `npm run seed:first-admin -- <email> <password> [name]` | Create/update an admin user | ⚠️ mutates user |
