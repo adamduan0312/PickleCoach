@@ -2019,6 +2019,9 @@ table.data th { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0
   text-transform: uppercase;
   color: var(--pc-text-muted, #666);
 }
+.booking-detail-number {
+  margin: 0;
+}
 .booking-cancellation-history {
   margin-top: 1rem;
 }

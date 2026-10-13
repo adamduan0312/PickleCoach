@@ -33,8 +33,9 @@ export function FaqPage() {
         <h2 id={CONTACT_ANCHOR}>Contact support</h2>
         <p>
           Need help with a booking, payment, your account, or an issue report? Email{' '}
-          {email.includes('@') ? <a href={`mailto:${email}`}>{email}</a> : email}. If it’s about a specific booking,
-          include the booking number.
+          {email.includes('@') ? <a href={`mailto:${email}`}>{email}</a> : email}. When contacting support, include
+          your booking number (shown on your booking details page), the lesson date and time, and a brief description
+          of the issue.
         </p>
         <p className="small muted">
           To report a problem with a lesson, use “Report issue” on the booking page — issue reports there are tracked

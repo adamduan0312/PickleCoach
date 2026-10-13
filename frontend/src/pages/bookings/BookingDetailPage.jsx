@@ -434,6 +434,7 @@ function BookingDetailLessonSection({ booking, payment, tz, isCoach, admin }) {
   return (
     <section className="card stack booking-detail-section booking-detail-lesson">
       <h2 className="booking-detail-section-title">Your lesson</h2>
+      <p className="small muted booking-detail-number">Booking #{booking.id}</p>
       <dl className="booking-detail-facts">
         {(!isCoach || admin) ? (
           <div>

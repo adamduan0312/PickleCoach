@@ -84,3 +84,11 @@ test('coach FAQ covers setup, requests, payouts and cancellations', () => {
   assert.match(COACH_TEXT, /Inside 24 hours, both sides must agree to a weather cancellation/);
   assert.doesNotMatch(COACH_TEXT, /sick|emergenc/i);
 });
+
+test('booking number: shown on the booking page for everyone, and the FAQ says where to find it', () => {
+  const detail = read('../src/pages/bookings/BookingDetailPage.jsx');
+  const lesson = detail.slice(detail.indexOf('>Your lesson</h2>'), detail.indexOf('<dl className="booking-detail-facts">', detail.indexOf('>Your lesson</h2>')));
+  assert.match(lesson, /<p className="small muted booking-detail-number">Booking #\{booking\.id\}<\/p>/, 'not gated on admin / role');
+  const faq = read('../src/pages/FaqPage.jsx').replace(/\s+/g, ' ');
+  assert.match(faq, /include your booking number \(shown on your booking details page\), the lesson date and time, and a brief description of the issue\./);
+});
