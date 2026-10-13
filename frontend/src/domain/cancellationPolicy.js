@@ -125,7 +125,9 @@ export function cancellationPolicySummary(booking, { audience = 'student', now =
   if (late) {
     return {
       headline: 'Cancelling now refunds 50%',
-      body: `The full-refund deadline was ${when}. If it’s because of bad weather, send your coach a weather cancellation request instead — if they agree, you get a full refund.`,
+      body: weatherRequestUsed(booking)
+        ? `The full-refund deadline was ${when}.`
+        : `The full-refund deadline was ${when}. If it’s because of bad weather, send your coach a weather cancellation request instead — if they agree, you get a full refund.`,
     };
   }
   return {
@@ -280,9 +282,13 @@ export function rescheduleHint(booking, audience, now = Date.now()) {
       : 'There is no reschedule option. If you need a different time, cancel this request (it’s free) and book a new slot.';
   }
   if (isWithinLateCancelWindow(booking, now)) {
-    return coach
-      ? 'There is no reschedule option. If you can’t make it, you can still cancel — the student gets a full refund. For bad weather, send a weather cancellation request so the student can agree to the cancellation.'
-      : 'There is no reschedule option. You can cancel this booking for a 50% refund. For bad weather, send your coach a weather cancellation request — if they agree, you get a full refund.';
+    const used = weatherRequestUsed(booking);
+    if (coach) {
+      const base = 'There is no reschedule option. If you can’t make it, you can still cancel — the student gets a full refund.';
+      return used ? base : `${base} For bad weather, send a weather cancellation request so the student can agree to the cancellation.`;
+    }
+    const base = 'There is no reschedule option. You can cancel this booking for a 50% refund.';
+    return used ? base : `${base} For bad weather, send your coach a weather cancellation request — if they agree, you get a full refund.`;
   }
   return coach
     ? 'There is no reschedule option. If the student needs a different time, cancel this booking and ask them to book a new slot.'
@@ -310,7 +316,11 @@ export const STUDENT_LATE_CANCEL_WEATHER_HINT =
 export function cancelWeatherHint(audience, booking, now = Date.now()) {
   if (booking?.status !== 'confirmed') return null;
   const late = weatherNeedsAgreement(booking, now);
-  if (audience === 'coach') return late ? `${COACH_CANCEL_RELIABILITY_WARNING} ${COACH_LATE_CANCEL_WEATHER_LINE}` : COACH_CANCEL_RELIABILITY_WARNING;
+  if (audience === 'coach') {
+    return late && !weatherRequestUsed(booking)
+      ? `${COACH_CANCEL_RELIABILITY_WARNING} ${COACH_LATE_CANCEL_WEATHER_LINE}`
+      : COACH_CANCEL_RELIABILITY_WARNING;
+  }
   return late && !weatherRequestUsed(booking) ? STUDENT_LATE_CANCEL_WEATHER_HINT : null;
 }
 

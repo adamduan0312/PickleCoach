@@ -244,3 +244,26 @@ test('stay on PickleCoach: checkout, coach pending request, messages — no “m
     assert.doesNotMatch(copy, /monitored|will be reviewed|detect/i);
   }
 });
+
+test('once the booking’s one weather request is used, no hint suggests sending another', () => {
+  const used = { status: 'confirmed', scheduled_at: at(2), weather_cancellation: { can_request: false, request: { id: 1, status: 'withdrawn' } } };
+  const unused = { status: 'confirmed', scheduled_at: at(2), weather_cancellation: { can_request: true, request: null } };
+  const suggestsRequest = /weather cancellation request/i;
+
+  for (const audience of ['student', 'coach']) {
+    assert.doesNotMatch(rescheduleHint(used, audience, NOW), suggestsRequest, `${audience}: Need a different time?`);
+    assert.match(rescheduleHint(unused, audience, NOW), suggestsRequest, `${audience}: still suggested while available`);
+    assert.doesNotMatch(cancelWeatherHint(audience, used, NOW) || '', suggestsRequest, `${audience}: cancel section`);
+    assert.match(cancelWeatherHint(audience, unused, NOW), suggestsRequest);
+  }
+  assert.equal(
+    rescheduleHint(used, 'coach', NOW),
+    'There is no reschedule option. If you can’t make it, you can still cancel — the student gets a full refund.',
+  );
+  assert.equal(rescheduleHint(used, 'student', NOW), 'There is no reschedule option. You can cancel this booking for a 50% refund.');
+  assert.equal(cancelWeatherHint('coach', used, NOW), 'Cancelling this booking may affect your reliability score. Please only cancel when necessary.');
+
+  const summary = (b) => cancellationPolicySummary(b, { audience: 'student', now: NOW, tz: TZ }).body;
+  assert.doesNotMatch(summary(used), suggestsRequest, 'student cancellation policy summary');
+  assert.match(summary(unused), suggestsRequest);
+});
