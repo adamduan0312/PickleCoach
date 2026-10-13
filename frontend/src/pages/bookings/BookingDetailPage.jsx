@@ -67,6 +67,7 @@ import {
   cancelReasonsFor,
   rescheduleHint,
   weatherCancellationView,
+  weatherRequestFailureMessage,
 } from '../../domain/cancellationPolicy.js';
 import { COACH_PENDING_BENEFITS_STEP } from '../../domain/platformBenefits.js';
 import {
@@ -596,6 +597,21 @@ export function BookingDetailPage({ admin = false }) {
     }
   }
 
+  // A rejected weather request usually means this page is stale (the other person already asked, or the
+  // booking's one request was answered). Reload so the outdated form is replaced by the current status.
+  async function requestWeatherCancellation(body) {
+    try {
+      await bookingsApi.requestWeatherCancellation(id, body);
+    } catch (err) {
+      let refreshed = null;
+      try {
+        refreshed = (await bookingsApi.getById(id)).data;
+        setData(refreshed);
+      } catch { /* keep the original error */ }
+      throw new Error(weatherRequestFailureMessage(err, refreshed));
+    }
+  }
+
   async function openMessages() {
     setBusy(true);
     setError(null);
@@ -742,7 +758,7 @@ export function BookingDetailPage({ admin = false }) {
       audience={audience}
       busy={busy}
       onRequest={(body) => run(
-        () => bookingsApi.requestWeatherCancellation(id, body),
+        () => requestWeatherCancellation(body),
         `Weather cancellation requested. We’ve let ${isCoach ? 'the student' : 'your coach'} know.`,
       )}
       onAccept={(requestId) => run(

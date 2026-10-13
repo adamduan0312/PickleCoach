@@ -228,6 +228,23 @@ export function weatherCancellationView(booking, { audience = 'student', now = D
   return null;
 }
 
+const WEATHER_REQUEST_ALREADY_MADE_CODES = new Set(['weather_request_already_pending', 'weather_request_already_used']);
+
+export const WEATHER_REQUEST_ALREADY_MADE_MESSAGE =
+  'Your weather request wasn’t sent because one has already been made for this lesson, and each lesson allows only one. This page now shows the lesson’s current status.';
+
+/**
+ * Error to show after a weather request is rejected and the booking has been re-fetched. When the page was
+ * stale (the booking's one request was already made), the refreshed page shows the real status, so the
+ * backend's wording — which may describe a state that has since changed — is replaced.
+ */
+export function weatherRequestFailureMessage(err, refreshedBooking) {
+  if (WEATHER_REQUEST_ALREADY_MADE_CODES.has(err?.code) && refreshedBooking?.weather_cancellation?.can_request === false) {
+    return WEATHER_REQUEST_ALREADY_MADE_MESSAGE;
+  }
+  return err?.message || 'Something went wrong. Please try again.';
+}
+
 /** Booking changes only happen through the app; chat or text agreements don't count. */
 export const IN_APP_BOOKING_CHANGES_LINE =
   'Cancellations, weather cancellations, attendance and issue reports only count when completed in PickleCoach. Agreements made in messages, by text, or elsewhere don’t change the booking. There is no reschedule option — to change the time, cancel and book a new slot.';

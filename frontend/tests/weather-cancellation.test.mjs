@@ -11,6 +11,8 @@ import {
   studentCancellationPolicyLines,
   weatherCancellationView,
   weatherRequestAwaitsResponse,
+  weatherRequestFailureMessage,
+  WEATHER_REQUEST_ALREADY_MADE_MESSAGE,
 } from '../src/domain/cancellationPolicy.js';
 import {
   bookingDisplayLabel,
@@ -230,4 +232,44 @@ test('booking detail wires the weather card to the API and offers Book a new tim
   assert.match(detailSrc, /bookingsApi\.withdrawWeatherCancellation\(id, requestId\)/);
   assert.match(detailSrc, /weatherView\?\.prominent \? weatherSection : null/);
   assert.match(detailSrc, />Book a new time<\/Link>/);
+});
+
+test('stale weather request form: rejected, then replaced by the refreshed booking status', () => {
+  const view = (b, audience) => weatherCancellationView(b, { audience, now: NOW, tz: TZ });
+  // Maya's open page still offers the form…
+  const stale = booking({ block: { can_request: true } });
+  assert.equal(view(stale, 'coach').kind, 'available');
+
+  const rejected = (code, message) => Object.assign(new Error(message), { code });
+  const cases = [
+    // Sam's request is still waiting for Maya → she now sees it to answer
+    { code: 'weather_request_already_pending', message: 'A weather cancellation request is already waiting for a response.',
+      block: { request: pending() }, audience: 'coach', kind: 'respond' },
+    // Sam's request was declined → the existing outcome card
+    { code: 'weather_request_already_used', message: 'A weather cancellation request has already been made for this lesson.',
+      block: { request: pending({ status: 'declined', can_respond: false }) }, audience: 'coach', kind: 'declined' },
+    // Sam's request was withdrawn → no form, nothing else to act on
+    { code: 'weather_request_already_used', message: 'A weather cancellation request has already been made for this lesson.',
+      block: { request: pending({ status: 'withdrawn', can_respond: false }) }, audience: 'coach', kind: null },
+    // Sam's own answered request, submitted again from an old tab → his outcome card
+    { code: 'weather_request_already_used', message: 'You’ve already sent a weather cancellation request for this lesson.',
+      block: { request: pending({ requested_by_me: true, can_respond: false, status: 'declined' }) }, audience: 'student', kind: 'declined' },
+  ];
+  for (const c of cases) {
+    const refreshed = booking({ block: { can_request: false, request_unavailable_code: 'weather_request_already_used', ...c.block } });
+    assert.equal(view(refreshed, c.audience)?.kind ?? null, c.kind, c.message);
+    assert.notEqual(view(refreshed, c.audience)?.kind, 'available', 'form is gone after the refresh');
+    assert.equal(weatherRequestFailureMessage(rejected(c.code, c.message), refreshed), WEATHER_REQUEST_ALREADY_MADE_MESSAGE, 'no stale backend wording');
+  }
+
+  // Other failures, or a refresh that didn't happen, keep the backend's message.
+  const closed = rejected('weather_request_window_closed', 'Weather cancellation closed 24 hours after the lesson ended.');
+  assert.equal(weatherRequestFailureMessage(closed, booking()), closed.message);
+  const pendingErr = rejected('weather_request_already_pending', 'A weather cancellation request is already waiting for a response.');
+  assert.equal(weatherRequestFailureMessage(pendingErr, null), pendingErr.message);
+
+  // The page re-fetches the booking when a weather request fails, before showing the error.
+  const fn = detailSrc.slice(detailSrc.indexOf('async function requestWeatherCancellation('), detailSrc.indexOf('async function openMessages('));
+  assert.match(fn, /catch \(err\) \{[\s\S]*bookingsApi\.getById\(id\)[\s\S]*setData\(refreshed\)[\s\S]*throw new Error\(weatherRequestFailureMessage\(err, refreshed\)\)/);
+  assert.match(detailSrc, /\(\) => requestWeatherCancellation\(body\)/);
 });
