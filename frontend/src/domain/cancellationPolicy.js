@@ -294,7 +294,12 @@ export function cancelWeatherHint(audience, booking, now = Date.now()) {
   if (booking?.status !== 'confirmed') return null;
   const late = weatherNeedsAgreement(booking, now);
   if (audience === 'coach') return late ? `${COACH_CANCEL_RELIABILITY_WARNING} ${COACH_LATE_CANCEL_WEATHER_LINE}` : COACH_CANCEL_RELIABILITY_WARNING;
-  return late ? STUDENT_LATE_CANCEL_WEATHER_HINT : null;
+  return late && !weatherRequestUsed(booking) ? STUDENT_LATE_CANCEL_WEATHER_HINT : null;
+}
+
+/** Each booking gets one weather request; once it's been sent, don't suggest sending another. */
+function weatherRequestUsed(booking) {
+  return Boolean(booking?.weather_cancellation?.request);
 }
 
 /** Cancel reasons are self-reported; say who sees them. */

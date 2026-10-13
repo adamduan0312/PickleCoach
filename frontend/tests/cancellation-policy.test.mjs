@@ -174,6 +174,11 @@ test('Weather: either side can pick it until 24h before; inside 24h it needs the
   assert.equal(hint('student', 2), 'Bad weather? Send your coach a weather cancellation request instead. If they agree, you get a full refund.');
   assert.equal(hint('student', 72), null);
   assert.equal(hint('student', 2, 'pending'), null, 'pending cancels are free');
+  assert.equal(
+    cancelWeatherHint('student', { status: 'confirmed', scheduled_at: at(2), weather_cancellation: { request: { id: 1, status: 'declined' } } }, NOW),
+    null,
+    'the booking’s one weather request is used: don’t suggest another',
+  );
   assert.doesNotMatch(hint('student', 2), RELIABILITY_WORDING);
   assert.match(detailSrc, /cancelWeatherHint\(isCoach \? 'coach' : 'student', booking, now\)/);
 

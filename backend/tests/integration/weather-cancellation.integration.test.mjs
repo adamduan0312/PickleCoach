@@ -222,6 +222,9 @@ describeHttp('HTTP integration: mutual weather cancellation', () => {
     const again = await api(baseUrl, 'POST', `/api/bookings/${bookingId}/weather-cancellation`, { token: tokens.coach, body: {} });
     assert.equal(again.status, 400, again.text);
     assert.equal(again.json.code, 'weather_request_already_used');
+    const studentAsks = await api(baseUrl, 'POST', `/api/bookings/${bookingId}/weather-cancellation`, { token: tokens.student, body: {} });
+    assert.equal(studentAsks.status, 400, studentAsks.text);
+    assert.equal(studentAsks.json.code, 'weather_request_already_used', 'one request per booking, whoever asks');
 
     const cancelRes = await api(baseUrl, 'POST', `/api/bookings/${bookingId}/cancel`, {
       token: tokens.student,

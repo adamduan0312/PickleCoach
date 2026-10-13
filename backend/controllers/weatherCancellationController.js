@@ -30,7 +30,7 @@ function respondWithError(res, error, label) {
   if (error instanceof UniqueConstraintError || error?.name === 'SequelizeUniqueConstraintError') {
     return errorResponse(
       res,
-      'You’ve already sent a weather cancellation request for this lesson.',
+      'A weather cancellation request has already been made for this lesson.',
       400,
       null,
       { code: 'weather_request_already_used' },

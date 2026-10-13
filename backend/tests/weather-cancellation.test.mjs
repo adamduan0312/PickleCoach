@@ -59,7 +59,7 @@ describe('weather request eligibility', () => {
     assert.equal(r.code, 'weather_request_dispute_open');
   });
 
-  it('one open request at a time, one request per person per booking', () => {
+  it('one open request at a time, one request per booking whoever sends it', () => {
     const b = confirmed(5);
     assert.equal(
       weatherRequestEligibility({ booking: b, requesterRole: 'student', requests: [pendingRow('coach')], now: NOW }).code,
@@ -69,10 +69,15 @@ describe('weather request eligibility', () => {
       weatherRequestEligibility({ booking: b, requesterRole: 'coach', requests: [pendingRow('coach', { status: 'declined' })], now: NOW }).code,
       'weather_request_already_used',
     );
-    assert.equal(
-      weatherRequestEligibility({ booking: b, requesterRole: 'student', requests: [pendingRow('coach', { status: 'declined' })], now: NOW }).ok,
-      true,
-      'the other participant can still ask after a decline',
+    for (const status of ['declined', 'withdrawn']) {
+      for (const requesterRole of ['student', 'coach']) {
+        const r = weatherRequestEligibility({ booking: b, requesterRole, requests: [pendingRow('coach', { status })], now: NOW });
+        assert.equal(r.code, 'weather_request_already_used', `${requesterRole} after a ${status} coach request`);
+      }
+    }
+    assert.match(
+      weatherRequestEligibility({ booking: b, requesterRole: 'student', requests: [pendingRow('coach', { status: 'declined' })], now: NOW }).message,
+      /already been made for this lesson/,
     );
   });
 

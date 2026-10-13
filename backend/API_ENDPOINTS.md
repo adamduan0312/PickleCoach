@@ -1916,7 +1916,7 @@ The only way to get weather treatment on a confirmed lesson inside 24h, for eith
 
 - **Window**: from 24 h before `scheduled_at` until **24 h after the lesson ends** (the financial review window, `weather_cancellation.closes_at`). Booking must be `confirmed` or `awaiting_verification`; accepting after the lesson moves the booking `awaiting_verification` → `cancelled` (via `mutual_weather_cancel`). Once the coach marks the lesson complete / no-show, auto-complete runs, or the window closes, an open request is reported `closed` / `expired`.
 - **Disputes**: opening a dispute (`POST /api/disputes`) closes any pending request, and no request can be made or accepted while a dispute is `open` / `under_review` (`weather_request_dispute_open`).
-- **Limit**: one request per participant per booking (whatever its outcome); one pending request at a time.
+- **Limit**: one request per booking, whichever participant sends it. Once it's declined, withdrawn, or expired, neither participant can send another.
 - **Auth**: Required (booking student or coach; verified email).
 
 | Endpoint | Who | Effect |
@@ -1924,7 +1924,7 @@ The only way to get weather treatment on a confirmed lesson inside 24h, for eith
 | `POST /api/bookings/:id/weather-cancellation` | either participant | Body `{ "note"?: string (≤255) }`. Creates a `pending` request → **201** `{ weather_cancellation }`. Notifies the other participant (`weather_cancellation_requested`). |
 | `POST /api/bookings/:id/weather-cancellation/:requestId/accept` | the other participant | Runs the locked cancel (also from `awaiting_verification` inside the review window) with `reason: weather`, `cancelled_by` = requester's role, `penalty_amount: 0`, `affects_reliability: false`, and a full refund (captured → `booking_cancel_refund` action; uncaptured → void). No late-cancel coach payout. Same response shape as `POST /api/bookings/:id/cancel`. Notifies the requester (`weather_cancellation_accepted`) instead of `booking_cancelled`. |
 | `POST /api/bookings/:id/weather-cancellation/:requestId/decline` | the other participant | Request → `declined`; lesson stays on. Notifies the requester (`weather_cancellation_declined`). |
-| `POST /api/bookings/:id/weather-cancellation/:requestId/withdraw` | the requester | Request → `withdrawn` (still counts as their one request). |
+| `POST /api/bookings/:id/weather-cancellation/:requestId/withdraw` | the requester | Request → `withdrawn` (still uses the booking's one request). |
 
 **Error codes** (400 unless noted): `weather_request_not_confirmed`, `weather_request_too_early`, `weather_request_window_closed`, `weather_request_dispute_open`, `weather_request_already_pending`, `weather_request_already_used`, `weather_request_not_found` (404 from decline/withdraw), `weather_request_own` (accept/decline your own request), `weather_request_not_own` (403, withdraw someone else's), `weather_request_{declined|withdrawn|expired|closed|accepted}` (no longer open).
 

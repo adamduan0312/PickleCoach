@@ -92,8 +92,16 @@ export function weatherRequestEligibility({ booking, requesterRole, requests = [
   if (requests.some((r) => effectiveWeatherRequestStatus(r, booking, now, ctx) === 'pending')) {
     return { ok: false, code: 'weather_request_already_pending', message: 'A weather cancellation request is already waiting for a response.' };
   }
-  if (requests.some((r) => r.requested_by_role === requesterRole)) {
-    return { ok: false, code: 'weather_request_already_used', message: 'You’ve already sent a weather cancellation request for this lesson.' };
+  // One attempt per booking, whoever sends it: a declined or withdrawn request can't be re-sent by either side.
+  if (requests.length > 0) {
+    const mine = requests.some((r) => r.requested_by_role === requesterRole);
+    return {
+      ok: false,
+      code: 'weather_request_already_used',
+      message: mine
+        ? 'You’ve already sent a weather cancellation request for this lesson.'
+        : 'A weather cancellation request has already been made for this lesson.',
+    };
   }
   return { ok: true };
 }
