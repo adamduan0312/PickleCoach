@@ -73,6 +73,10 @@ export const studentsApi = {
   myBookings: (params) => apiRequest(`/students/me/bookings${qs(params)}`),
   myReviews: (params) => apiRequest(`/students/me/reviews${qs(params)}`),
   myReliability: () => apiRequest('/students/me/reliability'),
+  favoriteCoachIds: () => apiRequest('/students/me/favorites/ids'),
+  favoriteCoaches: () => apiRequest('/students/me/favorites'),
+  addFavoriteCoach: (coachId) => apiRequest('/students/me/favorites', { method: 'POST', body: { coach_id: coachId } }),
+  removeFavoriteCoach: (coachId) => apiRequest(`/students/me/favorites/${coachId}`, { method: 'DELETE' }),
 };
 
 export const lessonsApi = {

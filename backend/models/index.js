@@ -35,6 +35,7 @@ const NotificationModule = await import('./Notification.js');
 const WeatherCancellationRequestModule = await import('./WeatherCancellationRequest.js');
 const CoachPhotoModule = await import('./CoachPhoto.js');
 const OsmCourtImportAttemptModule = await import('./OsmCourtImportAttempt.js');
+const FavoriteCoachModule = await import('./FavoriteCoach.js');
 
 // Extract default exports
 const User = UserModule.default;
@@ -68,6 +69,7 @@ const Notification = NotificationModule.default;
 const WeatherCancellationRequest = WeatherCancellationRequestModule.default;
 const CoachPhoto = CoachPhotoModule.default;
 const OsmCourtImportAttempt = OsmCourtImportAttemptModule.default;
+const FavoriteCoach = FavoriteCoachModule.default;
 
 // Initialize User model (it uses initModel pattern)
 User.initModel(sequelize);
@@ -97,6 +99,10 @@ User.hasMany(StudentFeedback, { foreignKey: 'student_id', as: 'feedbackReceived'
 User.hasMany(MessageTemplate, { foreignKey: 'owner_id', as: 'messageTemplates' });
 User.hasMany(CoachPhoto, { foreignKey: 'coach_id', as: 'coachPhotos' });
 CoachPhoto.belongsTo(User, { foreignKey: 'coach_id', as: 'coach' });
+User.hasMany(FavoriteCoach, { foreignKey: 'student_id', as: 'favoriteCoaches' });
+User.hasMany(FavoriteCoach, { foreignKey: 'coach_id', as: 'favoritedBy' });
+FavoriteCoach.belongsTo(User, { foreignKey: 'student_id', as: 'student' });
+FavoriteCoach.belongsTo(User, { foreignKey: 'coach_id', as: 'coach' });
 
 // CoachProfile associations
 CoachProfile.belongsTo(User, { foreignKey: 'user_id', as: 'user' });
@@ -235,4 +241,5 @@ export {
   WeatherCancellationRequest,
   CoachPhoto,
   OsmCourtImportAttempt,
+  FavoriteCoach,
 };

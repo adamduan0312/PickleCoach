@@ -2255,6 +2255,18 @@ Use this section as the admin decision guide for incidents, payouts/refunds, dis
 - **Auth**: Required (`student`)
 - **Description**: Reviews the authenticated student **wrote**. Optional `page` / `limit`.
 
+### Favorite coaches
+The student is always the authenticated user. Coaches are never told who saved them, and favorite counts are not public. Saving the same coach again, or removing one that isn’t saved, succeeds without creating a duplicate. A coach who is later unlisted or deactivated stays in the list with `available: false`.
+
+| Method | Path | Auth | Body |
+| --- | --- | --- | --- |
+| `GET` | `/api/students/me/favorites` | `student` | — |
+| `GET` | `/api/students/me/favorites/ids` | `student` | — returns `{ coach_ids: number[] }` |
+| `POST` | `/api/students/me/favorites` | `student` | `{ coach_id }` — 201 created, 200 already saved |
+| `DELETE` | `/api/students/me/favorites/:coachId` | `student` | — |
+
+`POST` returns 400 when saving your own profile, and 404 when the target isn’t an active coach with a live profile. List items use the Discover coach card fields plus `available` and `favorited_at`.
+
 ### `GET /api/coaches/me/reviews`
 - **Auth**: Required (`coach`)
 - **Description**: Reviews **about** the authenticated coach. Optional `page` / `limit`.

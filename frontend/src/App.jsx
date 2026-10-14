@@ -26,6 +26,7 @@ import { FAQ_PATH } from './domain/siteContent.js';
 import { PRIVACY_PATH, TERMS_PATH } from './domain/legal.js';
 import { StudentDashboardPage } from './pages/student/StudentDashboardPage.jsx';
 import { DiscoverPage } from './pages/student/DiscoverPage.jsx';
+import { FavoritesPage } from './pages/student/FavoritesPage.jsx';
 import { CoachPublicProfilePage } from './pages/student/CoachPublicProfilePage.jsx';
 import { BookingCheckoutPage } from './pages/student/BookingCheckoutPage.jsx';
 import { BookingConfirmingPage } from './pages/student/BookingConfirmingPage.jsx';
@@ -98,6 +99,16 @@ const router = createBrowserRouter(
       <Route element={<ShellLayout />}>
         <Route path="/dashboard" element={<RequireRole roles={['student']}><StudentDashboardPage /></RequireRole>} />
         <Route path="/discover" element={<RequireRole roles={['student', 'coach', 'admin']}><DiscoverPage /></RequireRole>} />
+        <Route
+          path="/favorites"
+          element={(
+            <RequireRole roles={['student']}>
+              <RequireStudentMode>
+                <FavoritesPage />
+              </RequireStudentMode>
+            </RequireRole>
+          )}
+        />
         <Route path="/coaches/:id" element={<RequireRole roles={['student', 'coach', 'admin']}><CoachPublicProfilePage /></RequireRole>} />
         <Route
           path="/book/:coachId/checkout"

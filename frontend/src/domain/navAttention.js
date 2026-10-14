@@ -7,7 +7,7 @@
  * @param {{ mode: string|null, student?: boolean, coach: boolean, admin: boolean }} opts
  * @returns {{ to: string, label: string, attention?: 'messages' | 'bookings' }[]}
  */
-export function buildPrimaryNavLinks({ mode, coach, admin }) {
+export function buildPrimaryNavLinks({ mode, student = false, coach, admin }) {
   /** @type {{ to: string, label: string, attention?: 'messages' | 'bookings' }[]} */
   const links = [];
 
@@ -30,6 +30,7 @@ export function buildPrimaryNavLinks({ mode, coach, admin }) {
   } else {
     links.push({ to: '/dashboard', label: 'Dashboard' });
     links.push({ to: '/discover', label: 'Find a coach' });
+    if (student) links.push({ to: '/favorites', label: 'Favorites' });
     links.push({ to: '/bookings', label: 'My bookings', attention: 'bookings' });
   }
 

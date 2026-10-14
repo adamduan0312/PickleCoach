@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useLocation, useSearchParams } from 'react-router-dom';
+import { useLocation, useSearchParams } from 'react-router-dom';
 import { coachesApi, asList } from '../../api/index.js';
 import { useAsync } from '../../hooks/useAsync.js';
 import { scrollResultsIntoView } from '../../utils/scrollToResults.js';
 import { useAuth } from '../../auth/AuthContext.jsx';
 import { Alert, EmptyState, ErrorState, LoadingState } from '../../components/ui/States.jsx';
-import { Avatar } from '../../components/ui/Avatar.jsx';
-import { StarRating } from '../../components/ui/StarRating.jsx';
-import { formatMilesAway, formatSkillRatingLine, formatReliabilityLabel, formatReliabilityHint, discoverTeachingPlaceLabel, coachRatingCompactParts } from '../../utils/format.js';
+import { CoachMarketplaceCard } from '../../components/student/CoachMarketplaceCard.jsx';
+import { hasStudentRole } from '../../domain/userReadiness.js';
+import { useFavoriteCoaches } from '../../hooks/useFavoriteCoaches.js';
 import {
   LOCATION_ACCESS_OFF_DETAIL,
   LOCATION_ACCESS_OFF_TITLE,
@@ -46,6 +46,8 @@ const DEFAULT_SEARCH_RADIUS = '25';
 export function DiscoverPage() {
   const { user, mode } = useAuth();
   const browseOnly = mode === 'coach';
+  const canFavorite = mode === 'student' && hasStudentRole(user?.roles);
+  const favorites = useFavoriteCoaches(canFavorite, user?.id);
   const [searchParams, setSearchParams] = useSearchParams();
   const routerLocation = useLocation();
   // Back / Forward to this history entry: pick up the search that was on screen.
@@ -628,62 +630,21 @@ export function DiscoverPage() {
                   : ` within ${applied.radius} miles of ${applied.location.label}`)
                 : ' · set a location to filter by distance (25-mile default)'}
             </p>
+            {favorites.error ? <Alert tone="error">{favorites.error}</Alert> : null}
             <div className="grid-2 discover-coach-grid">
               {coaches.map((coach) => {
-                const teachingLocation = discoverTeachingPlaceLabel(coach, { hasLocation });
-                const distanceAway = hasLocation ? formatMilesAway(coach.distance_miles) : null;
-                const skillLine = formatSkillRatingLine(coach.skill_rating, coach.rating_system);
-                const reliabilityLine = formatReliabilityLabel(coach.reliability_score);
-                const ratingParts = coachRatingCompactParts(coach.rating_average, coach.rating_count);
+                const showHeart = canFavorite && favorites.ready && String(coach.id) !== String(user?.id);
                 return (
-                  <Link
+                  <CoachMarketplaceCard
                     key={coach.id}
-                    to={`/coaches/${coach.id}`}
-                    className="card clickable discover-coach-card"
-                  >
-                    <div className="discover-coach-card-top">
-                      <Avatar name={coach.full_name} src={coach.avatar_url} size="lg" />
-                      <div className="discover-coach-card-identity">
-                        <h2 className="discover-coach-name">{coach.full_name}</h2>
-                        <p className="discover-coach-headline">{coach.headline || 'Pickleball coach'}</p>
-                        {(teachingLocation || distanceAway) ? (
-                          <p className="discover-coach-place">
-                            {teachingLocation ? <span>{teachingLocation}</span> : null}
-                            {teachingLocation && distanceAway ? <span aria-hidden="true"> · </span> : null}
-                            {distanceAway ? <span className="discover-coach-distance">{distanceAway}</span> : null}
-                          </p>
-                        ) : null}
-                      </div>
-                    </div>
-                    <ul className="discover-coach-stats" aria-label="Coach highlights">
-                      <li>
-                        <span className="discover-stat-label">Reviews</span>
-                        <span className="discover-stat-value">
-                          {ratingParts.hasReviews ? (
-                            <>
-                              {ratingParts.value}{' '}
-                              <StarRating variant="compact" />
-                              {' · '}
-                              {ratingParts.reviewLabel}
-                            </>
-                          ) : 'No reviews yet'}
-                        </span>
-                      </li>
-                      {skillLine ? (
-                        <li>
-                          <span className="discover-stat-label">Skill</span>
-                          <span className="discover-stat-value">{skillLine}</span>
-                        </li>
-                      ) : null}
-                      {reliabilityLine ? (
-                        <li title={formatReliabilityHint()}>
-                          <span className="discover-stat-label">Reliability</span>
-                          <span className="discover-stat-value">{reliabilityLine.replace(/^Reliability:\s*/i, '')}</span>
-                        </li>
-                      ) : null}
-                    </ul>
-                    <span className="btn secondary discover-card-cta">View profile</span>
-                  </Link>
+                    coach={coach}
+                    hasLocation={hasLocation}
+                    favorite={showHeart ? {
+                      saved: favorites.ids.has(Number(coach.id)),
+                      busy: favorites.busyId === Number(coach.id),
+                      onToggle: () => favorites.toggle(coach.id),
+                    } : null}
+                  />
                 );
               })}
             </div>

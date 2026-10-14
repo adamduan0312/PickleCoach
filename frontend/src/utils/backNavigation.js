@@ -6,6 +6,7 @@ export const BACK_DESTINATIONS = Object.freeze({
   '/coach': 'Back to dashboard',
   '/coach/profile': 'Back to coach profile',
   '/messages': 'Back to messages',
+  '/favorites': 'Back to favorites',
 });
 
 export const GENERIC_BACK_LABEL = 'Back';

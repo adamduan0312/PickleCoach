@@ -1198,10 +1198,92 @@ table.data th { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0
   text-decoration: none;
   min-height: 100%;
 }
+.discover-coach-card-wrap {
+  position: relative;
+  display: flex;
+  min-height: 100%;
+}
+.discover-coach-card-wrap > .discover-coach-card {
+  flex: 1;
+}
 .discover-coach-card-top {
   display: flex;
   gap: 0.85rem;
   align-items: flex-start;
+}
+.discover-coach-card-top.has-favorite {
+  padding-right: 2.25rem;
+}
+.favorite-heart {
+  position: absolute;
+  z-index: 2;
+  top: 0.4rem;
+  right: 0.4rem;
+  width: 44px;
+  height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  border: 1px solid var(--pc-border, #d5dde3);
+  background: #fff;
+  color: #5c6670;
+  cursor: pointer;
+  padding: 0;
+}
+.favorite-heart.is-saved {
+  color: #c0392b;
+  border-color: #e7b7be;
+}
+.favorite-heart:disabled {
+  opacity: 0.65;
+  cursor: default;
+}
+.favorite-heart-inline {
+  position: relative;
+  top: auto;
+  right: auto;
+  flex-shrink: 0;
+}
+.favorite-heart-tip {
+  position: absolute;
+  top: 50%;
+  right: calc(100% + 6px);
+  transform: translateY(-50%);
+  padding: 0.3rem 0.55rem;
+  border-radius: 6px;
+  background: var(--pc-ink);
+  color: #fff;
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1.3;
+  white-space: nowrap;
+  box-shadow: var(--pc-shadow);
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.12s ease, visibility 0s linear 0.12s;
+}
+@media (hover: hover) and (pointer: fine) {
+  .favorite-heart:hover .favorite-heart-tip {
+    opacity: 1;
+    visibility: visible;
+    transition: opacity 0.12s ease 0.4s, visibility 0s linear 0.4s;
+  }
+}
+.favorite-heart:focus-visible .favorite-heart-tip {
+  opacity: 1;
+  visibility: visible;
+  transition: opacity 0.12s ease;
+}
+.coach-profile-name-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+.discover-coach-unavailable {
+  margin: 0;
 }
 .discover-coach-card-identity {
   min-width: 0;

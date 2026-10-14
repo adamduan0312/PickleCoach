@@ -28,7 +28,7 @@ test('reliability explanations say what the score means, not how it is calculate
 test('coach profile shows an info icon beside the score; Discover keeps a hover hint inside its card link', () => {
   const profile = read('../src/pages/student/CoachPublicProfilePage.jsx');
   assert.match(profile, /<InfoTip label="What reliability scores mean">\{formatReliabilityHint\(\)\}<\/InfoTip>/);
-  assert.match(read('../src/pages/student/DiscoverPage.jsx'), /<li title=\{formatReliabilityHint\(\)\}>/);
+  assert.match(read('../src/components/student/CoachMarketplaceCard.jsx'), /<li title=\{formatReliabilityHint\(\)\}>/);
 });
 
 test('coach dashboard shows own score with info icon and a link to Settings', () => {

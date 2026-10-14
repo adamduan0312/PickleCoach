@@ -37,6 +37,8 @@ import { ownProfileLessonPreview } from '../../domain/coachSetup.js';
 import { GALLERY_TITLE } from '../../domain/coachPhotos.js';
 import { CoachPhotoGallery } from '../../components/coach/CoachPhotoGallery.jsx';
 import { BackLink } from '../../components/ui/BackLink.jsx';
+import { FavoriteHeartButton } from '../../components/student/FavoriteHeartButton.jsx';
+import { useFavoriteCoaches } from '../../hooks/useFavoriteCoaches.js';
 
 function courtTeachingLabel(court) {
   const name = court?.name || 'Court';
@@ -94,6 +96,8 @@ export function CoachPublicProfilePage() {
   const selectedCourt = (data?.courts || []).find((c) => String(c.court_id || c.id) === String(courtId));
   /** Coach mode may browse profiles but cannot initiate student bookings. */
   const bookingAllowed = mode === 'student' && !isOwnProfile;
+  const canFavorite = mode === 'student' && hasStudentRole(user?.roles) && !isOwnProfile;
+  const favorites = useFavoriteCoaches(canFavorite, user?.id);
 
   const slots = useMemo(() => {
     if (!data || !selectedLesson) return [];
@@ -194,7 +198,18 @@ export function CoachPublicProfilePage() {
         <div className="coach-profile-hero-top">
           <Avatar name={coach.full_name} src={coach.avatar_url} size="lg" />
           <div className="coach-profile-hero-identity">
-            <h1>{coach.full_name}</h1>
+            <div className="coach-profile-name-row">
+              <h1>{coach.full_name}</h1>
+              {canFavorite && favorites.ready ? (
+                <FavoriteHeartButton
+                  className="favorite-heart-inline"
+                  saved={favorites.ids.has(Number(id))}
+                  busy={favorites.busyId === Number(id)}
+                  onClick={() => favorites.toggle(id)}
+                />
+              ) : null}
+            </div>
+            {favorites.error ? <Alert tone="error">{favorites.error}</Alert> : null}
             <p className="coach-profile-headline">{profile.headline || 'Pickleball coach'}</p>
             <ul className="coach-profile-highlights" aria-label="Coach highlights">
               <li>
