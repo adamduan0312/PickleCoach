@@ -72,6 +72,24 @@ export function restoreScrollPosition(targetY, deps) {
   return () => finish('cancelled');
 }
 
+/** React Router's key for the first history entry of every page load. */
+export const FIRST_ENTRY_KEY = 'default';
+
+/**
+ * Every page load's first entry shares FIRST_ENTRY_KEY, so a position saved for it belongs to an earlier
+ * load. Keep it only when the browser is reloading or going Back/Forward into that same entry; a fresh
+ * load (typed URL, email or notification link) starts at the top.
+ *
+ * @param {Map<string, number>} positions
+ * @param {string | undefined} documentNavigationType  PerformanceNavigationTiming.type
+ */
+export function forgetStaleFirstEntry(positions, documentNavigationType) {
+  if (documentNavigationType !== 'reload' && documentNavigationType !== 'back_forward') {
+    positions.delete(FIRST_ENTRY_KEY);
+  }
+  return positions;
+}
+
 /** Keep only the most recent entries so sessionStorage stays small. */
 export function trimPositions(entries, max = MAX_SAVED_ENTRIES) {
   return entries.length > max ? entries.slice(entries.length - max) : entries;

@@ -5,7 +5,7 @@ import { backLinkTarget } from '../../utils/backNavigation.js';
  * "Back" that returns to the page the user actually came from inside the app, or to `fallbackTo`
  * when the page was opened directly (new tab, bookmark, email link).
  */
-export function BackLink({ fallbackTo, fallbackLabel, className }) {
+export function BackLink({ fallbackTo, fallbackLabel, className, alwaysFallback = false, arrow = false }) {
   const location = useLocation();
   const navigate = useNavigate();
   const target = backLinkTarget({
@@ -13,10 +13,17 @@ export function BackLink({ fallbackTo, fallbackLabel, className }) {
     historyIdx: window.history.state?.idx,
     fallbackTo,
     fallbackLabel,
+    alwaysFallback,
   });
+  const content = arrow ? (
+    <>
+      <span aria-hidden="true">←</span>
+      {target.label}
+    </>
+  ) : target.label;
 
   if (target.kind === 'link') {
-    return <Link className={className} to={target.href}>{target.label}</Link>;
+    return <Link className={className} to={target.href}>{content}</Link>;
   }
   return (
     <a
@@ -29,7 +36,7 @@ export function BackLink({ fallbackTo, fallbackLabel, className }) {
         navigate(-1);
       }}
     >
-      {target.label}
+      {content}
     </a>
   );
 }

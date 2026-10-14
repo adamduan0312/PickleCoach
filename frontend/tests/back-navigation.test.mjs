@@ -113,3 +113,30 @@ test('DiscoverPage restores per-entry state and skips the first-visit bootstrap 
   assert.match(s, /\}, \[routerLocation\.key, filters, applied, location, locationQuery\]\);/);
   assert.match(s, /if \(restored\) return;\s+const handoff = captureDiscoverUrlHandoff/);
 });
+
+const messages = { fallbackTo: '/messages', fallbackLabel: 'Back to messages', alwaysFallback: true };
+
+test('messages: from the inbox, Back steps through history so the inbox keeps its scroll', () => {
+  assert.deepEqual(backLinkTarget({ state: { backTo: '/messages' }, historyIdx: 4, ...messages }), {
+    kind: 'history', href: '/messages', label: 'Back to messages',
+  });
+});
+
+test('messages: from elsewhere (booking, notification) or opened directly, it links to the inbox', () => {
+  for (const [state, historyIdx] of [[null, 4], [{ backTo: '/coach' }, 4], [{ backTo: 'https://evil.example' }, 4], [{ backTo: '/messages' }, 0], [undefined, undefined]]) {
+    assert.deepEqual(backLinkTarget({ state, historyIdx, ...messages }), {
+      kind: 'link', href: '/messages', label: 'Back to messages',
+    });
+  }
+});
+
+test('messages pages: inbox cards tag the entry; conversation shows ← Back to messages for students and coaches', () => {
+  const s = src('pages/messages/MessagesPages.jsx');
+  assert.match(s, /to=\{`\/messages\/\$\{c\.id\}`\}\s+state=\{\{ backTo: '\/messages' \}\}/);
+  assert.match(s, /<BackLink className="back-link" arrow alwaysFallback fallbackTo="\/messages" fallbackLabel="Back to messages" \/>/);
+  assert.match(s, /mode === 'admin' \?/);
+  assert.match(s, /<div className="page page-conversation">\s+\{backLink\}/);
+  assert.equal((s.match(/\{backLink\}/g) || []).length, 4, 'shown while loading, on errors, when missing, and on the thread');
+  const link = src('components/ui/BackLink.jsx');
+  assert.match(link, /<span aria-hidden="true">←<\/span>/);
+});

@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import {
   RESTORE_WINDOW_MS,
   USER_SCROLL_INTENT_EVENTS,
+  forgetStaleFirstEntry,
   restoreScrollPosition,
   scrollActionFor,
   trimPositions,
@@ -147,4 +148,18 @@ test('element-level scrollIntoView (profile save status) is untouched by the glo
   const profile = readFileSync(new URL('../src/pages/coach/CoachProfileEditPage.jsx', import.meta.url), 'utf8');
   assert.match(profile, /statusRef\.current\?\.scrollIntoView\(/);
   assert.doesNotMatch(hook, /statusRef|scrollIntoView\(\{ ?behavior/);
+});
+
+test('fresh page loads drop the first-entry position left by an earlier load; reload and Back/Forward keep it', () => {
+  const saved = () => new Map([['default', 900], ['abc123', 400]]);
+  for (const type of ['navigate', 'prerender', undefined]) {
+    const m = forgetStaleFirstEntry(saved(), type);
+    assert.equal(m.has('default'), false, String(type));
+    assert.equal(m.get('abc123'), 400);
+  }
+  for (const type of ['reload', 'back_forward']) {
+    assert.equal(forgetStaleFirstEntry(saved(), type).get('default'), 900, type);
+  }
+  const hook = readFileSync(new URL('../src/hooks/useGlobalScrollRestoration.js', import.meta.url), 'utf8');
+  assert.match(hook, /forgetStaleFirstEntry\(loadPositions\(\), documentNavigationType\(\)\)/);
 });

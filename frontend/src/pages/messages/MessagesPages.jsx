@@ -5,6 +5,7 @@ import { messagesApi, asList } from '../../api/index.js';
 import { useAsync } from '../../hooks/useAsync.js';
 import { EmptyState, ErrorState, LoadingState, Alert } from '../../components/ui/States.jsx';
 import { CharacterCounter } from '../../components/ui/CharacterLimit.jsx';
+import { BackLink } from '../../components/ui/BackLink.jsx';
 import { CHAR_LIMITS } from '../../utils/charLimits.js';
 import { useAuth } from '../../auth/AuthContext.jsx';
 import { formatInZone, detectLocalTimezone, relativeFromNow } from '../../utils/datetime.js';
@@ -70,6 +71,7 @@ export function ConversationsPage() {
               <Link
                 key={c.id}
                 to={`/messages/${c.id}`}
+                state={{ backTo: '/messages' }}
                 className="card clickable messages-inbox-card"
               >
                 <div className="spread messages-inbox-card-top">
@@ -113,7 +115,7 @@ function scrollChatListToBottom(listEl, { smooth = false } = {}) {
 
 export function ConversationPage() {
   const { id } = useParams();
-  const { user } = useAuth();
+  const { user, mode } = useAuth();
   const [text, setText] = useState('');
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -195,9 +197,17 @@ export function ConversationPage() {
     }
   }
 
+  // Admins reach threads from disputes, not from an inbox of their own.
+  const backLink = mode === 'admin' ? (
+    <BackLink className="back-link" arrow fallbackTo="/admin/disputes" fallbackLabel="Back to disputes" />
+  ) : (
+    <BackLink className="back-link" arrow alwaysFallback fallbackTo="/messages" fallbackLabel="Back to messages" />
+  );
+
   if (loading) {
     return (
       <div className="page">
+        {backLink}
         <LoadingState />
       </div>
     );
@@ -205,6 +215,7 @@ export function ConversationPage() {
   if (loadError) {
     return (
       <div className="page">
+        {backLink}
         <ErrorState error={loadError} />
       </div>
     );
@@ -212,6 +223,7 @@ export function ConversationPage() {
   if (!data) {
     return (
       <div className="page">
+        {backLink}
         <EmptyState title="Conversation not found" />
       </div>
     );
@@ -231,6 +243,7 @@ export function ConversationPage() {
 
   return (
     <div className="page page-conversation">
+      {backLink}
       <div className="page-header conversation-header">
         <div className="conversation-header-text">
           <h1>{heading}</h1>

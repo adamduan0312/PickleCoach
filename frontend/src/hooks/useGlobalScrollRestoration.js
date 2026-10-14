@@ -3,6 +3,7 @@ import { useLocation, useNavigationType } from 'react-router-dom';
 import {
   STORAGE_KEY,
   USER_SCROLL_INTENT_EVENTS,
+  forgetStaleFirstEntry,
   restoreScrollPosition,
   scrollActionFor,
   trimPositions,
@@ -26,6 +27,14 @@ function persistPositions(positions) {
   }
 }
 
+function documentNavigationType() {
+  try {
+    return performance.getEntriesByType('navigation')[0]?.type;
+  } catch {
+    return undefined;
+  }
+}
+
 function maxWindowScroll() {
   return document.documentElement.scrollHeight - window.innerHeight;
 }
@@ -35,7 +44,9 @@ export function useGlobalScrollRestoration() {
   const location = useLocation();
   const navigationType = useNavigationType();
   const positionsRef = useRef(null);
-  if (positionsRef.current == null) positionsRef.current = loadPositions();
+  if (positionsRef.current == null) {
+    positionsRef.current = forgetStaleFirstEntry(loadPositions(), documentNavigationType());
+  }
   const keyRef = useRef(location.key);
   const pathnameRef = useRef(null);
   const restoringRef = useRef(false);
