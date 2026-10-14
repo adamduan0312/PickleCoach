@@ -17,13 +17,13 @@ export const reconcileStripePayments = async () => {
 
   const payments = await Payment.findAll({
     where: {
-      updatedAt: { [Op.gte]: since },
+      updated_at: { [Op.gte]: since },
       [Op.or]: [
         { charge_id: { [Op.ne]: null } },
         { payment_intent_id: { [Op.ne]: null } },
       ],
     },
-    order: [['updatedAt', 'DESC']],
+    order: [['updated_at', 'DESC']],
     limit: BATCH,
   });
 

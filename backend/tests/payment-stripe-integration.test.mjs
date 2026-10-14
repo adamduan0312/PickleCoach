@@ -22,6 +22,7 @@ import {
 } from '../services/paymentService.js';
 import * as stripeService from '../services/stripeService.js';
 import { createInMemoryStripeChargeDouble } from './helpers/inMemoryStripeChargeDouble.mjs';
+import { reconcileStripePayments } from '../workers/stripeReconciliationWorker.js';
 
 const RUN = process.env.RUN_PAYMENT_INTEGRATION === '1';
 let dbOk = false;
@@ -301,5 +302,20 @@ describeIntegration('payment stripe integration (DB + mocked Stripe)', () => {
     assert.equal(after.stripe_refund_id, mid.stripe_refund_id);
     assert.equal(double.state.refunds.length, 1);
     assert.equal(double.state.amountRefunded, 1800);
+  });
+
+  it('hourly reconciliation worker heals a refund whose webhook never arrived', async () => {
+    const { payment, double, ctx } = await createCapturedPaymentFixture();
+    lastCtx = ctx;
+    stripeService.setStripeTestDouble(double);
+
+    double.state.refunds.push({ id: 're_missed_webhook', amount: ctx.totalChargeCents, metadata: {} });
+    double.state.amountRefunded = ctx.totalChargeCents;
+
+    await reconcileStripePayments();
+
+    const pay = await Payment.findByPk(payment.id);
+    assert.equal(pay.payment_status, 'refunded');
+    assert.equal(dollarsToCents(pay.refunded_amount), ctx.totalChargeCents);
   });
 });
