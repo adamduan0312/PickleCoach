@@ -60,6 +60,9 @@ export function NotificationsPage() {
               {payload.summary || payload.preview ? (
                 <div className="notification-item-body">{payload.summary || payload.preview}</div>
               ) : null}
+              {payload.summary && payload.next_step ? (
+                <div className="notification-item-body">{payload.next_step}</div>
+              ) : null}
             </button>
           );
         })}

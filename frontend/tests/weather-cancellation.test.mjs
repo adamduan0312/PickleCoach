@@ -273,3 +273,8 @@ test('stale weather request form: rejected, then replaced by the refreshed booki
   assert.match(fn, /catch \(err\) \{[\s\S]*bookingsApi\.getById\(id\)[\s\S]*setData\(refreshed\)[\s\S]*throw new Error\(weatherRequestFailureMessage\(err, refreshed\)\)/);
   assert.match(detailSrc, /\(\) => requestWeatherCancellation\(body\)/);
 });
+
+test('in-app notifications show the next step under the summary (declined weather request)', () => {
+  const page = readFileSync(new URL('../src/pages/notifications/NotificationsPage.jsx', import.meta.url), 'utf8');
+  assert.match(page, /\{payload\.summary && payload\.next_step \? \(\s*<div className="notification-item-body">\{payload\.next_step\}<\/div>/);
+});

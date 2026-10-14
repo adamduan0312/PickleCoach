@@ -541,7 +541,7 @@ export function getEmailBodyFragment(type, payload = {}) {
     }),
     weather_cancellation_declined: weatherCancellationBody(payload, {
       heading: payload.headline || 'Weather cancellation declined',
-      paragraphs: [payload.summary],
+      paragraphs: [payload.summary, payload.next_step],
       cta: 'View booking',
     }),
     weather_cancellation_accepted: weatherCancellationBody(payload, {
