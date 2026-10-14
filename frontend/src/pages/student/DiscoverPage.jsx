@@ -117,6 +117,10 @@ export function DiscoverPage() {
   // on screen. A failed load leaves the student at the controls to retry.
   const resultsRef = useRef(null);
   const resultsScrollRef = useRef(null);
+  const latestDataRef = useRef(data);
+  latestDataRef.current = data;
+  // Dashboard "Browse coaches near me" only; the URL handoff below drops this state, so reloads don't repeat it.
+  const [scrollOnArrival] = useState(() => !restored && routerLocation.state?.scrollToResults === true);
   function scrollToResultsWhenLoaded() {
     resultsScrollRef.current = { before: data };
     setReloadToken((n) => n + 1);
@@ -303,6 +307,7 @@ export function DiscoverPage() {
           if (handoff.q) setLocationQuery(handoff.q);
           setLocation(next);
           applyLocation(next);
+          if (scrollOnArrival) resultsScrollRef.current = { before: latestDataRef.current };
           markDiscoverUrlHandoffDone();
           return;
         }

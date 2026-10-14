@@ -178,7 +178,7 @@ export function StudentDashboardPage() {
             <button
               className="btn"
               type="button"
-              onClick={() => navigate(discoverUrlForGeo(nearYou))}
+              onClick={() => navigate(discoverUrlForGeo(nearYou), { state: { scrollToResults: true } })}
               disabled={locBusy}
             >
               Browse coaches near me
